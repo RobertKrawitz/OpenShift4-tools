@@ -1,0 +1,16 @@
+#!/bin/bash
+
+logdir=${1:-.}
+
+declare nodes=$(oc get nodes --no-headers=true | awk '{print $1}')
+
+for node in $nodes ; do
+    echo "$node:"
+    ocx debug "node/$node" --no-tty=true -- chroot /host sh -c "journalctl -r -u kubelet.service" > "${logdir}/kubelet.log.${node}" &
+done
+wait
+
+while read namespace name rest ; do
+    echo "$namespace/$name:"
+    ocx logs -n $namespace $name > "${logdir}/${name}.log"
+done <<< "$(oc get pods --all-namespaces |grep -v installer |grep -v revision |grep -v operator |grep apiserver)"

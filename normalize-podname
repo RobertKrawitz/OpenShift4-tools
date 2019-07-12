@@ -1,0 +1,11 @@
+#!/bin/bash
+
+podname=$1
+
+# Remove hash and cluster name from pod name
+# See staging/src/k8s.io/apimachinery/pkg/util/rand/rand.go
+[[ $podname =~ (.*)(-ip(-([0-9]){1,3}){4}\.[-.a-z0-9]+)$ ]] && podname=${BASH_REMATCH[1]}
+[[ $podname =~ (.*)(-([bcdfghjklmnpqrstvwxz2456789]){5})$ ]] && podname=${BASH_REMATCH[1]}
+[[ $podname =~ (.*)(-[bcdfghjklmnpqrstvwxz2456789]{6,}) ]] && podname=${BASH_REMATCH[1]}
+[[ -n $OPENSHIFT_INSTALL_CLUSTER_NAME ]] && podname=${podname%-${OPENSHIFT_INSTALL_CLUSTER_NAME}*}
+echo "$podname"

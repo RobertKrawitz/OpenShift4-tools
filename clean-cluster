@@ -1,0 +1,71 @@
+#!/bin/sh
+
+statedir=${1:-.}
+
+function volume_present() {
+    vol="$1"
+    for v in $(virsh --quiet vol-list --pool default |awk '{print $1}') ; do
+	[[ $v == $vol ]] && return 0
+    done
+    return 1
+}
+
+function delete_volume() {
+    for vol in "$@" ; do
+	volume_present "$vol" && {
+	    echo "Deleting volume $vol"
+	    virsh vol-delete --pool default "$vol"
+	}
+    done
+}
+
+function destroy_net() {
+    for net in "$@" ; do
+	[[ -n $(virsh --quiet net-list --all |awk '{print $1}' |grep "$net") ]] && {
+	    echo "Destroying net $net"
+	    virsh net-destroy "$net"
+	    virsh net-undefine "$net"
+	}
+    done
+}
+
+function destroy_node() {
+    for node in "$@" ; do
+	[[ -n $(virsh --quiet list --all |awk '{print $2}' |grep "$node") ]] && {
+	    echo "Destroying $node"
+	    virsh destroy "$node"
+	    virsh undefine "$node"
+	    delete_volume "$node"
+	}
+    done
+}
+
+if [[ $OPENSHIFT_INSTALL_PLATFORM == libvirt ]] ; then
+    tmp_cluster_name=$(virsh --quiet net-list | awk '{print $1}' | grep "^${statedir}")
+    [[ -n $tmp_cluster_name ]] && {
+	statedir=$tmp_cluster_name
+	workers=$(virsh list --name |grep -E "^(${statedir}-)?worker-")
+	if [[ -n $workers ]] ; then
+	    echo -n "Destroying workers..."
+	    destroy_node $workers
+	    echo
+	fi
+	destroy_net "$statedir"
+	destroy_net $(virsh --quiet net-list | awk '{print $1}' | grep "^${statedir}")
+	destroy_node "${statedir}-bootstrap"
+	destroy_node "${statedir}-master-0"
+	for f in base master-0 master.ign worker.ign bootstrap bootstrap.ign ; do
+	    delete_volume ${statedir}-$f
+	done
+	delete_volume $(virsh --quiet vol-list --pool default | awk '{print $1}' | grep "^${statedir}")
+    }
+fi
+
+if [[ -n $statedir && $statedir != . && $statedir != .. ]] ; then
+    echo "Removing statedir $statedir"
+    rm -rf "$statedir"
+else
+    echo "Removing state"
+    rm -rf .openshift_install_state.json terraform.tfstate terraform.tfvars terraform.state metadata.json auth tectonic
+fi
+echo Done

@@ -1,0 +1,20 @@
+#!/bin/sh
+
+primary="$1"
+
+cmd='
+[foreach .items[] as $item
+([[],[]];0;
+if ($item.kind == "Node" and
+    ([(foreach $item.status.addresses[] as $address
+     ([[],[]];0;
+      if $address.type == "ExternalIP" and $address.address == "@DUMMYADDRESS@" then true else false end))] | flatten | map (select (. == true))[0]
+    )|not) then
+ [([(foreach $item.status.addresses[] as $address
+  ([[],[]];0;
+  if $address.type == "InternalIP" then $address.address else null end))])] | flatten | map (select (. != null))[0]
+ else null end)]|flatten | map(select (. != null))[]'
+
+cmd="${cmd//@DUMMYADDRESS@/$primary}"
+
+oc get nodes -o json | jq -r "$cmd"

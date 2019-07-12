@@ -1,0 +1,39 @@
+#!/bin/sh
+
+declare -r lkubelet="$1"
+declare -r expected_md5="$2"
+
+declare -r okubelet="/usr/bin/hyperkube"
+declare -r lbindir="/usr/local/bin"
+declare -r kubelet="$lbindir/hyperkube"
+declare -r kubelet_svc=/etc/systemd/system/kubelet.service
+
+whoami
+cd "$lbindir"
+if [ -f "$kubelet" ] ; then
+   mv "$kubelet" "$kubelet.OLD"
+fi
+cp "$lkubelet" "$kubelet"
+rm -f "$lkubelet"
+chown root "$kubelet"
+chgrp root "$kubelet"
+chmod +x "$kubelet"
+ls -l "$kubelet"
+found_md5=`md5sum "$kubelet" |awk '{print $1}'`
+if [ -f "$kubelet" -a "`ls -s $kubelet | awk '{print $1}'`" -ge 1000 -a "$expected_md5" == "$found_md5" ] ; then
+    echo "Good kubelet!"
+else
+    echo "Bad kubelet"
+    echo "Expected md5 $expected_md5, found $found_md5"
+    [[ -f "$kubelet.OLD" ]] && mv "$kubelet.OLD" "$kubelet"
+    exit 1
+fi
+
+if [ -f "$kubelet" -a -f "$kubelet_svc" ] ; then
+    if grep -qv "$kubelet" "$kubelet_svc" ; then
+        mv "$kubelet_svc" "$kubelet_svc.save"
+	sed -e "s,$okubelet,$kubelet," < "$kubelet_svc.save" > "$kubelet_svc"
+    fi
+    systemctl daemon-reload
+    systemctl restart kubelet.service
+fi

@@ -1,0 +1,1038 @@
+#!/bin/bash
+
+# Copyright 2019 Robert Krawitz/Red Hat
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+function fatal() {
+    echo "FATAL: $*" 1>&2
+    exit 1
+}
+
+set -u
+
+# Find our helpers
+function finddir() {
+    local path_to_file
+    path_to_file=$(readlink -f "$0")
+    if [[ -z $path_to_file ]] ; then
+	return 1
+    elif [[ -d $path_to_file ]] ; then
+	echo "$path_to_file/"
+    elif [[ -e $path_to_file ]] ; then
+	echo "${path_to_file%/*}/"
+    else
+	return 1
+    fi
+    return 0
+}
+
+declare realsc=
+if [[ -z ${___topsc:-} ]] ; then
+    export ___topsc="${0##*/}"
+    export ___topdir="$(finddir "$0")"
+    [[ -z $___topdir ]] && fatal "Can't find directory for $0"
+fi
+
+function help() {
+    [[ -n ${1:-} ]] && echo "$___topsc: Unknown option $1"
+    cat <<EOF
+Usage: $___topsc [options] install_type
+    install_type: one of
+       libvirt (default)
+       aws     (aws us-east-1)
+       aws2    (aws us-east-2)
+       aws3    (aws us-west-1)
+       aws4    (aws us-west-2)
+       aws-*   (specified AWS region)
+    Options:
+       -A master_type       Type of master instance (AWS only)
+       -a compute_type      Type of compute instance (AWS only)
+       -B port              Use the specified port for kubechart.  oschart
+                            runs at port+1.  Implies -b.  Default is 3000.
+       -b                   Launch kubechart and oschart (if available).
+       -C                   Only clean up (requires cluster already exists).
+                            Requires -d.
+       -c command           Run the specified command rather than an
+                            interactive shell on completion of installation.
+       -D domain            Use the specified domain name.
+                            For libvirt: default is taken from a unique entry
+                                in /etc/NetworkManager/dnsmasq.d, if available;
+                                if not (or there are multiple masqueraded
+                                domains), there is no default.
+                            For AWS: default is $aws_default_domain.
+       -d installdir        Use the specified dir as working directory and
+                            cluster name.  Default is ${LOGNAME:-}-<platform>.
+       -F                   Do not wait for console etc. to come on line.
+       -f configfile        Use the specified file as the install config file.
+       -H bits              Use the specified host prefix size (default $host_prefix_bits,
+                            must be between 8 and 24)
+       -i command           Use the specified command to install OpenShift.
+       -L                   Install using local workspace (currently hardcoded
+                            to \$GOPATH/src/github.com/openshift/installer)
+       -l                   Do not login to the console.
+       -M masterconfig	    Take master platform config from specified file.
+       -m masters           Number of master nodes (default by platform).
+       -N                   Don't clean up on exit.  If this is not used,
+                            exit with status 77 from the shell will have
+                            the same effect.  If this option is used,
+                            exit with status 88 will clean up.
+       -n channel           Use the specified release channel.
+                            Default $release_channel.
+                            Use 'openshift-release-info -l' to lists channels.
+       -O                   Overwrite an existing install directory.
+                            Normally $___topsc will refuse to overwrite
+                            an existing install directory.
+       -P pubkey_path       Specify the path to the desired public key
+                            Default $pubkey
+       -p pull_secret_path  Specify the path to the pull secret.
+                            Default $pull_secret
+       -R repo              Use the specified repo (default $default_repo).
+       -r                   Always rebuild the installer.
+       -S                   Do not create ssh bastion host.
+       -s                   Always run the postinstall even if setup fails.
+       -T platformconfig    Take platform configuration from specified file.
+       -V version           Install the specified image version.  Default
+                            is to use the latest version.
+                            If this is used, the matching toolchain is
+                            also used unless -X is specified.
+                            Use 'openshift-release-info -r' or
+                            'openshift-release-info -r -c <channel>'
+                            to list available versions.
+       -v                   Print debug information.
+       -W workerrconfig	    Take worker platform config from specified file.
+       -w workers           Number of worker nodes (default by platform).
+       -x                   Clean up local install cache (in case of corrupt
+                            image cache).
+       -y                   Do not prompt prior to starting install
+
+    The following options are normally not recommended:
+       -I api_version       Use the specified API version (default $api_version)
+       -o                   Override install image.
+       -X                   Use the local toolchain to install with
+EOF
+    exit 1
+}
+
+function clean_startup() {
+    [[ -f ${realsc:-} ]] && rm -f "$realsc"
+}
+
+# This allows us to edit the script while another instance is running
+# since this script sticks around until the user exits the spawned shell.
+# It's fine for the running script to be removed, since the shell still
+# has its open file descriptor.
+if [[ $# == 0 || $1 != "--DoIt=$0" ]] ; then
+    tmpsc=$(mktemp)
+    [[ -z $tmpsc || ! -f $tmpsc || -L $tmpsc ]] && fatal "Can't create temporary script file"
+    trap clean_startup EXIT SIGHUP SIGINT SIGQUIT SIGTERM
+    PATH+=${PATH:+:}$___topdir
+    cat "$0" > "$tmpsc"
+    chmod +x "$tmpsc"
+    exec "$tmpsc" "--DoIt=$tmpsc" "$@"
+else
+    realsc=${1#--DoIt=}
+    clean_startup
+    shift
+fi
+
+# Globals
+declare -r aws_default_domain=devcluster.openshift.com
+declare -r kubechart=${KUBECHART:-$GOPATH/src/github.com/sjenning/kubechart/kubechart}
+declare -r oschart=${OSCHART:-$GOPATH/src/github.com/sjenning/oschart/oschart}
+declare -r default_repo=openshift-release
+
+declare install_type=${OPENSHIFT_INSTALL_TYPE:-libvirt}
+declare install_domain=${OPENSHIFT_INSTALL_DOMAIN:-}
+declare install_dir=${OPENSHIFT_INSTALL_DIR:-$install_domain}
+declare install_version=latest_default
+declare pull_secret=${OPENSHIFT_INSTALL_PULL_SECRET_PATH:-$HOME/Downloads/pull-secret}
+declare pubkey=${OPENSHIFT_INSTALL_SSH_PUB_KEY_PATH:-$HOME/.ssh/id_rsa.pub}
+declare installer_registry=${OPENSHIFT_INSTALL_REGISTRY:-registry.svc.ci.openshift.org/ocp/release}
+declare srcdir=${GOPATH:-$HOME/go}/src/github.com/openshift/installer
+declare install=$srcdir/bin/openshift-install
+declare release_channel=4-stable
+declare repo=$default_repo
+
+# shellcheck disable=SC2155
+declare -r OC=$(type -p oc)
+[[ -z $OC ]] && fatal "Can't find oc command"
+# shellcheck disable=SC2155
+declare -r JQ=$(type -p jq)
+[[ -z $JQ ]] && fatal "Can't find jq command"
+# shellcheck disable=SC2155
+declare -r owd=$(pwd)
+declare -i clean_install_cache=0
+declare -i clean_shutdown=0
+declare -i cleanup_only=0
+declare -i cleanup_run=0
+declare -i create_bastion=1
+declare -i created_kubechart=0
+declare -i created_oschart=0
+declare -i created_proxy=0
+declare -i do_cleanup=1
+declare -i do_login=1
+declare -i do_override=0
+declare -i force_local_toolchain=0
+declare -i force_setup_postinstall=0
+declare -i install_stage=0
+declare -i login_succeeded=0
+declare -i master_count=0
+declare -i noconfirm=0
+declare -i overwrite=0
+declare -i rebuild=0
+declare -i run_kubechart=0
+declare -i run_oschart=0
+declare -i wait_for_complete=1
+declare -i worker_count=0
+declare -i host_prefix_bits=23
+declare api_version=v1
+declare aws_compute_type=
+declare aws_control_type=
+declare config_file=
+declare console_route=
+declare external_installer=
+declare kubechart_port=
+declare loglevel=
+declare oschart_port=
+declare release_source=
+declare run_command=
+declare masterconffile=
+declare workerconffile=
+declare platformconffile=
+
+# Running nested installs is liable to be problematic
+if [[ -n ${OPENSHIFT_INSTALL_INTERLOCK:-} ]] ; then
+    if [[ ${1:-} == -h* ]] ; then
+	echo "Already in ${___topsc:-} environment!"
+	help
+    fi
+    fatal "Already in ${___topsc:-} environment"
+fi
+
+# Detect classes of errors and suggest remediation
+declare -i api_plugin_incompatibility_detected=0
+
+[[ -z $OC ]] && fatal "Can't find oc command"
+
+function clear_env() {
+    local var
+    while read -r var ; do
+	[[ -n $var ]] && unset "$var"
+    done <<< "$(compgen -v |grep '^_*OPENSHIFT_INSTALL')"
+    unset KUBECONFIG
+}
+
+function cleanup() {
+    (( cleanup_run )) && exit
+    (( !clean_shutdown  && install_stage >= 2 )) && echo -en '\n*** '
+    case "$install_stage" in
+	0) ;;
+	1)
+	    [[ -n $srcdir && -n $install_dir && -d "$srcdir/$install_dir" ]] && rm -rf "${srcdir:?}/${install_dir:?}"
+	    ;;
+	*)
+	    echo "Cleaning up, please do not interrupt"
+	    if (( do_cleanup )) ; then
+		# Shut up some very uninteresting noise
+		exec 3>&2 2>/dev/null
+		if (( created_proxy )) ; then
+		    kill -9 %run_proxy
+		    wait %run_proxy
+		fi
+		if (( created_kubechart )) ; then
+		    kill -9 %run_kubechart
+		    wait %run_kubechart
+		fi
+		if (( created_oschart )) ; then
+		    kill -9 %run_oschart
+		    wait %run_oschart
+		fi
+		exec 2>&3 3>&-
+		# shellcheck disable=SC2086
+		"${install}" $loglevel "--dir=$srcdir/$install_dir" destroy cluster 2>&1 |timestamp
+		if (( PIPESTATUS[0] == 0 || clean_install_cache)) ; then
+		    [[ -n $srcdir && -n $install_dir && -d "$srcdir/$install_dir" ]] && rm -rf "${srcdir:?}/${install_dir:?}"
+		else
+		    echo "$install --dir=$srcdir/$install_dir destroy cluster failed, not removing install dir!"
+		fi
+	    else
+		cat 1>&2 <<EOF
+*** Not cleaning up!
+*** When you are finished, run:
+
+"${install}" $loglevel "--dir=$srcdir/$install_dir" destroy cluster
+EOF
+	    fi
+	    ;;
+    esac
+    cleanup_run=1
+    exit
+}
+
+function printerval() {
+    local milestone=$1
+    local interval=$2
+    echo -n "$milestone took "
+    local h=$((interval / 3600))
+    (( h > 0 )) && echo -n "$h:"
+    printf "%02d:%02d\n" $(((interval % 3600) / 60)) $((interval % 60))
+}
+
+function oc_login() {
+    local retry_limit=20
+    local try=0
+    while (( try++ < retry_limit )) ; do
+	echo -n "Login (try $try/$retry_limit)..."
+	if ${OC} login -u kubeadmin -p "${OPENSHIFT_INSTALL_PASSWORD:-}" ; then
+	    echo "success!"
+	    return 0
+	fi
+	echo "failed."
+	(( try < retry_limit )) && sleep 30
+    done
+    echo "Login failed."
+    return 1
+}
+
+function waitfor_console() {
+    local retry_limit=20
+    local try=0
+    while (( try++ <= retry_limit )) ; do
+	echo -n "Get console route (try $try/$retry_limit)..."
+	if ${OC} get route -n openshift-console -o name |grep -q '/console$' ; then
+	    echo "success!"
+	    return 0
+	fi
+	echo "failed."
+	(( try < retry_limit )) && sleep 30
+    done
+    echo "Unable to get console route."
+    return 1
+}
+
+function find_libvirt_default_domain() {
+    # shellcheck disable=SC2155
+    local files=$(find /etc/NetworkManager/dnsmasq.d/ -type f -name '*.conf' -print)
+    [[ -z $files ]] && fatal "No dnsmasq files in /etc/NetworkManager/dnsmasq.d"
+    local dnsmasq_domain=
+    for f in $files ; do
+	# shellcheck disable=SC2155
+	local data=$(< "$f")
+	data=${data#*/}
+	data=${data%/*}
+	[[ -n $dnsmasq_domain && $data != "$dnsmasq_domain" ]] &&
+	    fatal "Multiple domains found in /etc/NetworkManager/dnsmasq.d; pick one"
+	[[ -n $data ]] && dnsmasq_domain=$data
+    done
+    [[ -z $dnsmasq_domain ]] && fatal "No dnsmasq files in /etc/NetworkManager/dnsmasq.d"
+    echo "$dnsmasq_domain"
+}
+
+function openshift_libvirt() {
+    export OPENSHIFT_INSTALL_PLATFORM=libvirt
+    export OPENSHIFT_INSTALL_LIBVIRT_URI="qemu+tcp://192.168.122.1/system"
+    export OPENSHIFT_INSTALL_BASE_DOMAIN=${install_domain:-$(find_libvirt_default_domain)}
+    machineCIDR='192.168.126.0/24'
+    if [[ $install_version == latest_default ]] ; then
+	install_version=
+	force_local_toolchain=1
+	external_installer=
+	echo "*** Using local installer with libvirt"
+    fi
+    if (( clean_install_cache )) ; then
+	echo "Cleaning install cache in ~/.cache/openshift-install/libvirt"
+	[[ -d $HOME/.cache/openshift-install/libvirt ]] && rm -rf "$HOME/.cache/openshift-install/libvirt"
+    fi
+}
+
+function cmdline_replicas() {
+    local node_type=$1
+    local default=$2
+    local actual=0
+    case "$node_type" in
+	master) actual=$master_count ;;
+	worker) actual=$worker_count ;;
+	*)                           ;;
+    esac
+    (( actual == 0 )) && actual=$default
+    echo "$actual"
+}
+
+function libvirt_replicas() {
+    local node_type=$1		# Not used
+    cmdline_replicas "$node_type" 1
+}
+
+function aws_replicas() {
+    local node_type=$1		# Not used
+    cmdline_replicas "$node_type" 3
+}
+
+function libvirt_platform() {
+    # maipo is channel, not base.
+    #local baseURL='https://releases-rhcos.svc.ci.openshift.org/storage/releases/maipo'
+    #local install_version=${install_version:-"$(curl --silent "$baseURL/builds.json" | "$JQ" -r '.builds[0]')"}
+    cat <<EOF
+  libvirt:
+    URI: $OPENSHIFT_INSTALL_LIBVIRT_URI
+    network:
+      if: tt0
+EOF
+}
+
+function libvirt_master() {
+    echo '{}'
+}
+
+function libvirt_worker() {
+    echo '{}'
+}
+
+function libvirt_volume_present() {
+    local vol="$1"
+    local v
+    for v in $(virsh --quiet vol-list --pool default |awk '{print $1}') ; do
+	[[ $v == "$vol" ]] && return 0
+    done
+    return 1
+}
+
+function libvirt_delete_volume() {
+    local vol
+    for vol in "$@" ; do
+	if libvirt_volume_present "$vol" ; then
+	    echo "Deleting volume $vol"
+	    virsh vol-delete --pool default "$vol"
+	fi
+    done
+}
+
+function libvirt_destroy_net() {
+    local net
+    for net in "$@" ; do
+	if virsh --quiet net-list --all |awk '{print $1}' |grep -q "$net" ; then
+	    echo "Destroying net $net"
+	    virsh net-destroy "$net"
+	    virsh net-undefine "$net"
+	fi
+    done
+}
+
+function libvirt_destroy_node() {
+    local node
+    for node in "$@" ; do
+	if virsh --quiet list --all |awk '{print $2}' |grep -q "$node" ; then
+	    echo "Destroying $node"
+	    virsh destroy "$node"
+	    virsh undefine "$node"
+	    libvirt_delete_volume "$node"
+	fi
+    done
+}
+
+function libvirt_cleanup() {
+    # shellcheck disable=SC2155
+    local cluster_name=$(virsh --quiet net-list | awk '{print $1}' | grep "^$1")
+    [[ -z $cluster_name ]] && return
+    local tmp
+    echo -n "Destroying workers..."
+    while read -r tmp ; do
+	libvirt_destroy_node "$tmp"
+    done <<< "$(virsh list --name |grep -E "^(${cluster_name}-)?worker-")"
+    libvirt_destroy_net "$cluster_name"
+    while read -r tmp ; do
+	libvirt_destroy_net "$tmp"
+    done <<< "$(virsh --quiet net-list | awk '{print $1}' | grep "^${cluster_name}")"
+    libvirt_destroy_node "${cluster_name}-bootstrap"
+    libvirt_destroy_node "${cluster_name}-master-0"
+    for f in base master-0 master.ign worker.ign bootstrap bootstrap.ign ; do
+	libvirt_delete_volume "${cluster_name}-$f"
+    done
+    while read -r tmp ; do
+	libvirt_delete_volume "$tmp"
+    done <<< "$(virsh --quiet vol-list --pool default | awk '{print $1}' | grep "^${cluster_name}")"
+}
+
+function indent() {
+    local -i depth=${1:-2}
+    local sol=''
+    while (( depth-- > 0 )) ; do
+	sol+=' '
+    done
+    while IFS='' read -r line ; do
+	if [[ -n $line ]] ; then
+	    echo "$sol$line"
+	fi
+    done
+}
+
+function aws_master() {
+    if [[ -n $aws_control_type ]] ; then
+	cat <<EOF
+
+    aws:
+      type: "$aws_control_type"
+EOF
+    else
+	echo '{}'
+    fi
+}
+
+function aws_worker() {
+    if [[ -n $aws_compute_type ]] ; then
+	cat <<EOF
+
+    aws:
+      type: "$aws_compute_type"
+EOF
+    else
+	echo '{}'
+    fi
+}
+
+function aws_platform() {
+    cat <<EOF
+  aws:
+    region: $OPENSHIFT_INSTALL_AWS_REGION
+EOF
+}
+
+function platform() {
+    if [[ -n $platformconffile && -r $platformconffile ]] ; then
+	indent 2 < "$platformconffile"
+    else
+	"${platform}_platform"
+    fi
+}
+
+function master_platform() {
+    if [[ -n $masterconffile && -r $masterconffile ]] ; then
+	echo
+	indent 4 < "$masterconffile"
+    else
+	"${platform}_master"
+    fi
+}
+
+function worker_platform() {
+    if [[ -n $workerconffile && -r $workerconffile ]] ; then
+	echo
+	indent 4 < "$workerconffile"
+    else
+	"${platform}_worker"
+    fi
+}
+
+function aws_cleanup() {
+    :
+}
+
+# This has the problem that the install config format can change and
+# we're left chasing it.  But much of the idea of this script is that
+# people not have to run the installer interactively.
+function template() {
+    platform=$1
+    sed -e 's/[ \t]*$//' -e '/^$/d' <<EOF
+apiVersion: $api_version
+baseDomain: $OPENSHIFT_INSTALL_BASE_DOMAIN
+compute:
+- hyperthreading: Enabled
+  name: worker
+  platform: $(worker_platform)
+  replicas: $("${platform}_replicas" worker)
+controlPlane:
+  hyperthreading: Enabled
+  name: master
+  platform: $(master_platform)
+  replicas: $("${platform}_replicas" master)
+metadata:
+  creationTimestamp: null
+  name: $OPENSHIFT_INSTALL_CLUSTER_NAME
+networking:
+  clusterNetwork:
+  - cidr: 10.128.0.0/14
+    hostPrefix: $host_prefix_bits
+  machineCIDR: ${machineCIDR}
+  networkType: OpenShiftSDN
+  serviceNetwork:
+  - 172.30.0.0/16
+platform:
+$(platform)
+pullSecret: '$(< "$pull_secret")'
+sshKey: |
+  $(< "$pubkey")
+EOF
+}
+
+function openshift_aws() {
+    export OPENSHIFT_INSTALL_BASE_DOMAIN="${install_domain:-$aws_default_domain}"
+    export OPENSHIFT_INSTALL_PLATFORM=aws
+    machineCIDR='10.0.0.0/16'
+    region=${1#aws}
+    region=${region#[-._]}
+    case "$region" in
+	1|'') export OPENSHIFT_INSTALL_AWS_REGION=us-east-1 ;;
+	2)    export OPENSHIFT_INSTALL_AWS_REGION=us-east-2 ;;
+	3)    export OPENSHIFT_INSTALL_AWS_REGION=us-west-1 ;;
+	4)    export OPENSHIFT_INSTALL_AWS_REGION=us-west-2 ;;
+	?*)   export OPENSHIFT_INSTALL_AWS_REGION=$region   ;;
+    esac
+}
+
+# Use this to determine whether we need some particular workaround.
+# Most of the time it will be more problematic than it's worth to
+# do something like this, but occasionally we may need to
+# temporarily.
+function git_newer_than() {
+    local -l rev="$1"
+    git rev-parse -q --verify "$rev" -- >/dev/null 2>&1 || return 1
+    [[ -n $(git rev-list "@..$(git rev-parse "$rev")") ]]
+}
+
+function wait_and_run() {
+    until [[ -f $KUBECONFIG ]] ; do sleep 1; done
+    cmd=${1##*/}
+    echo "Starting $cmd..."
+    if [[ $loglevel == '--log-level=debug' ]] ; then
+	exec "$@"
+    else
+	exec "$@" >/dev/null 2>&1
+    fi
+}
+
+# We need actual commands/functions named run_kubechart and run_oschart with
+# known names, so that they can be waited for.
+function run_kubechart() {
+    wait_and_run "$kubechart" ${kubechart_port:+--http-port "$kubechart_port"}
+}
+
+function run_oschart() {
+    wait_and_run "$oschart" ${oschart_port:+--http-port "$oschart_port"}
+}
+
+# See https://github.com/openshift/installer/issues/411#issuecomment-446084083
+function run_proxy() {
+    # The proxy has a bad habit of dying every now and then.
+    while : ; do
+	# It's simply too noisy.
+	${OC} -n openshift-ingress port-forward svc/router-internal-default 443 >/dev/null 2>&1
+	# If we die by signal, stop.
+	(( $? >= 128 )) && break
+    done
+}
+
+function timestamp() {
+    # Make the message look vaguely Go-like.
+    while read -r ; do
+	case "$REPLY" in
+	    'Incompatible API version with plugin')
+		api_plugin_incompatibility_detected=1
+		;;
+	    *)  ;;
+	esac
+	printf 'T0000 %(%H:%M:%S)T.000000   %s\n' -1 "$REPLY"
+    done
+}
+
+function tsec() {
+    printf "%(%s)T" -1
+}
+
+function aws_postinstall() {
+    :
+}
+
+function libvirt_postinstall() {
+    (( ! wait_for_complete )) && return
+    echo -n "Waiting for DNS to come on line..."
+    "${___topdir:-}waitfor-pod" -r 10 dns-default
+    echo -n "Waiting for router to come on line..."
+    "${___topdir:-}waitfor-pod" -r 10 router-default
+    # See https://github.com/openshift/installer/issues/411#issuecomment-445202069
+    echo "Creating route proxy"
+    if getcap -vr "${OC}" | grep -q "cap_net_bind_service+eip" ; then
+	echo "Enabling bind to privileged port for ${OC}, may need sudo password"
+	sudo setcap CAP_NET_BIND_SERVICE=+eip "${OC}"
+    fi
+    run_proxy 2>&1 |grep -v 'Setting up router connection for 443' &
+    created_proxy=1
+}
+
+function run_shell() {
+    cd "$owd" || fatal "Cannot cd to $owd"
+    if [[ -n $run_command ]] ; then
+	exec "$SHELL" -c "$run_command"
+    else
+	if (( do_cleanup )) ; then
+	    echo "Spawning interactive shell.  Exit with status 77 to suppress cleanup."
+	else
+	    echo "Spawning interactive shell.  Exit with status 88 to clean up."
+	fi
+	exec "$SHELL" -i
+    fi
+}
+
+function warn_installer_fail() {
+    cat <<\EOF
+Could not extract installer from image.  Common reasons:
+
+1) You need to download your pull secret.
+
+   Visit https://cloud.openshift.com and log in.  Click on Create
+   Cluster/Self-Installed Cluster
+   (https://cloud.redhat.com/openshift/install) and select AWS (or as
+   appropriate).  From there, select User-Provisioned Infrastructure.
+   Download your pull secret and place it in ~/Downloads.
+
+2) You need to log in to quay.io.
+
+3) You need to oc login.
+
+   Go to https://api.ci.openshift.org/ and in
+   the upper right corner you will see the '?'.  Dropdown to Command
+   Line Tools that will give you an 'oc login' command to run from a
+   command line.
+
+4) Following oc login, run 'oc registry login'.
+
+5) Ensure that you have correct credentials for your cloud provider,
+   as appropriate.
+
+6) Ensure that you have correct credentials for quay.io.
+
+EOF
+}
+
+function fail_installer_extract() {
+    local image=$1
+    warn_installer_fail
+    fatal "Cannot extract openshift-install from image $image"
+}
+
+function fail_find_image() {
+    local install_version=$1
+    warn_installer_fail
+    fatal "Can't find image for version $install_version"
+}
+
+function do_installer_setup() {
+    local install_dir=$1
+    local image=$2
+    local install_version=$3
+    cd "$install_dir" || exit 1
+    "${OC}" image extract "${image}" --file /usr/bin/openshift-install || fail_installer_extract "$image"
+    [[ -f openshift-install ]] || fail_installer_extract "$image"
+    chmod +x openshift-install
+    echo "${install_version}" > version.txt
+}
+
+function installer_setup() {
+    local not_latest=1
+    local release_data
+    local image
+    if [[ $install_version == latest ]] ; then
+	not_latest=
+	echo "Retrieving release data from $release_source/$release_channel/latest"
+	release_data="$(curl --silent "$release_source/$release_channel/latest")"
+	[[ -n $release_data ]] || fatal "Can't extract release data!"
+	install_version="$("$JQ" -r '.name' <<< "$release_data")"
+	[[ -n $install_version ]] || fatal "Can't extract install version!"
+    fi
+    echo "Using version $install_version${not_latest:- (latest)}" 1>&2
+    local -r pullspec="$installer_registry:$install_version"
+    image=$(${OC} adm release info --pullspecs "$pullspec" | awk '{if ($1 == "installer") {print $2}}')
+    [[ -z $image ]] && fail_find_image "$install_version"
+    if (( ! force_local_toolchain )) ; then
+	echo "Using installer from image ${image} ($external_installer)" 1>&2
+	(do_installer_setup "$install_dir" "$image" "$install_version") || exit 1
+	external_installer="${install_dir}/openshift-install"
+	install="$external_installer"
+	echo -e "installer version:\n$("$external_installer" version)\n" 1>&2
+    fi
+    srcdir=.
+    if [[ $do_override == 1 && -n $not_latest ]] ; then
+	export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE=$pullspec
+	export _OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE=$pullspec
+    fi
+}
+
+function run_install() {
+    if (( !cleanup_only )) ; then
+	[[ -n $install_version ]] && srcdir=.
+	mkdir -p "$srcdir/$install_dir"
+	[[ -n $install_version ]] && installer_setup
+	if [[ -n $config_file ]] ; then
+	    [[ ! -r $config_file ]] && fatal "Cannot read config file $config_file"
+	    cp "$config_file" "$srcdir/$install_dir/install-config.yaml"
+	else
+	    template "$OPENSHIFT_INSTALL_PLATFORM" > "$srcdir/$install_dir/install-config.yaml"
+	fi
+    fi
+    # shellcheck disable=SC2155
+    export KUBECONFIG="$(cd $srcdir && echo "$(pwd)/$install_dir/auth/kubeconfig")"
+
+    # We will need the installer even in cleanup-only mode,
+    # in order to clean up the cluster.
+    local -i rebuild_installer=0
+    if [[ -z $external_installer ]] ; then
+	cd $srcdir || fatal "Can't cd to $srcdir"
+	local -r cur_rev=$(git rev-parse @)
+	[[ ! -x $install || $rebuild -gt 0 || $(${install} version) =~ $cur_rev ]] && rebuild_installer=1
+    else
+	srcdir=.
+    fi
+
+    # shellcheck disable=SC2155
+    local start=$(tsec)
+    trap cleanup EXIT SIGHUP SIGINT SIGQUIT SIGTERM
+
+    install_stage=1
+    cat <<EOF
+About to run installer:
+
+Installer:         $install
+Sourcedir:         $srcdir$([[ $srcdir != /* ]] && echo " ($(cd "$srcdir" && pwd))")
+Install dir:       $srcdir/$install_dir
+Current dir:       $(pwd)
+Install version:   $install_version
+Override:          ${OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE:-}
+Install command:   ${install} $loglevel --dir="$srcdir/$install_dir" create cluster
+Configuration:
+
+$(sed -e 's/^pullSecret:.*/pullSecret: .../' -e "s/'*ssh-rsa.*/.../" "$srcdir/$install_dir/install-config.yaml")
+EOF
+    if (( ! noconfirm )) ; then
+	local proceed
+	echo
+	while : ; do
+	    read -p "Proceed? [Yne!?] " -r proceed
+	    case "$proceed" in
+		y|Y|yes|YES|Yes|'')
+		    break
+		    ;;
+		n|N|no|NO|No)
+		    echo "Not confirmed"
+		    exit
+		    ;;
+		'!')
+		    echo "Spawning shell..."
+		    "$SHELL" -i
+		    ;;
+		e|E|edit|EDIT|Edit)
+		    echo "Running editor on config..."
+		    ${EDITOR:-vi} "$srcdir/$install_dir/install-config.yaml"
+		    ;;
+		'?')
+		    echo 'y   Proceed with installation'
+		    echo 'n   Do not proceed with installation'
+		    echo '!   Spawn shell'
+		    echo 'e   Edit install-config.yaml'
+		    echo '?   Print this help'
+		    echo 'Abort installation with any other input'
+		    ;;
+		*)
+		    ;;
+	    esac
+	done
+    fi
+    if (( rebuild_installer )) ; then
+	echo "Rebuilding installer"
+	TAGS=libvirt hack/build.sh || fatal "Can't rebuild installer"
+    fi
+
+    install_stage=2
+    # shellcheck disable=SC2086
+    echo "${install}" $loglevel "--dir=$srcdir/$install_dir" create cluster
+    # Start kubechart/oschart (if needed) prior to running the installer
+    [[ -n $kubechart_port ]] && run_kubechart=1
+    local run_oschart="$run_kubechart"
+    if [[ -n $run_kubechart ]] ; then
+	kubechart_port=${kubechart_port:-3000}
+	oschart_port=$((kubechart_port+1))
+    fi
+    if [[ -x $kubechart && $run_kubechart -gt 0 ]] ; then
+	created_kubechart=1
+	run_kubechart&
+	fi
+    if [[ -x $oschart && $run_oschart -gt 0 ]] ; then
+	created_oschart=1
+	run_oschart&
+    fi
+
+    # shellcheck disable=SC2086
+    "${install}" $loglevel "--dir=$srcdir/$install_dir" create cluster </dev/null 2>&1 | timestamp
+
+    local install_status=${PIPESTATUS[0]}
+    # shellcheck disable=SC2155
+    local -i end1=$(tsec)
+    local -i end2=0
+    local -i end3=0
+
+    if (( install_status )) ; then
+	echo "Cluster creation failed"
+	if (( api_plugin_incompatibility_detected )) ; then
+	    cat <<'EOF'
+Error message suggests a stray 'terraform-provider-libvirt' binary.
+Please remove all files of that name from your home directory and try
+again.
+EOF
+	fi
+	clean_shutdown=0
+    fi
+    if (( force_setup_postinstall || !install_status )) ; then
+	if [[ -f "${srcdir}/${install_dir}/auth/kubeadmin-password" ]] ; then
+	    # shellcheck disable=SC2155
+	    export OPENSHIFT_INSTALL_PASSWORD=$(< "${srcdir}/${install_dir}/auth/kubeadmin-password")
+	    if (( ! do_login )) ; then
+		echo "oc login skipped"
+	    elif oc_login ; then
+		login_succeeded=1
+		console_route=
+	    else
+		echo "oc login failed!"
+	    fi
+	fi
+	end2=$(tsec)
+
+	"${OPENSHIFT_INSTALL_PLATFORM}_postinstall"
+
+	if (( wait_for_complete && login_succeeded )) ; then
+	    echo -n "Waiting for console to come on line..."
+	    if "${___topdir:-}waitfor-pod" -r 10 console && waitfor_console ; then
+		console_route="$(${OC} get route -n openshift-console -o "custom-columns=HOST:.status.ingress[0].host" --no-headers=true |grep ^console)"
+		if [[ -n $console_route && $console_route != '<none>' ]] ; then
+		    export OPENSHIFT_INSTALL_CONSOLE_ROUTE="https://$console_route"
+		    echo "Console route: $OPENSHIFT_INSTALL_CONSOLE_ROUTE"
+		    (xdg-open "$OPENSHIFT_INSTALL_CONSOLE_ROUTE" </dev/null >/dev/null 2>&1 &)
+		fi
+	    fi
+	    echo "login: kubeadmin / $OPENSHIFT_INSTALL_PASSWORD"
+	    if (( create_bastion )) ; then
+		echo "Creating bastion host"
+		curl -s -S https://raw.githubusercontent.com/eparis/ssh-bastion/master/deploy/deploy.sh | bash
+		# shellcheck disable=SC2181
+		if (( $? )) ; then
+		    echo "Create bastion host failed"
+		else
+		    echo "Alternatively, you may prefer to use ${___topdir:-}bastion-ssh"
+		    # shellcheck disable=SC2155
+		    export OPENSHIFT_BASTION_ADDRESS="$(oc get service -n openshift-ssh-bastion ssh-bastion -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')"
+		    [[ -z $OPENSHIFT_BASTION_ADDRESS ]] && echo "Unable to find bastion address!"
+		fi
+	    fi
+	fi
+	end3=$(tsec)
+	# shellcheck disable=SC2155
+	export OPENSHIFT_INSTALL_NODES=$("${___topdir:-}"get-nodes)
+    fi
+    printerval "Installation" $((end1 - start))
+    (( end2 )) && printerval "Total setup to login" $((end2 - start))
+    (( end3 )) && printerval "Total setup to console online" $((end3 - start))
+    export OPENSHIFT_INSTALL_INTERLOCK=1
+    # Run a shell even if setup failed, so it's possible to poke around
+    (run_shell)
+    case $? in
+	77) do_cleanup=0 ;;
+	88) do_cleanup=1 ;;
+	*)               ;;
+    esac
+    clean_shutdown=1
+}
+
+while getopts ":A:a:B:bCc:D:d:Ff:H:hI:i:LlM:m:Nn:OoP:p:R:rsST:t:V:vW:wXxy" opt ; do
+    case "$opt" in
+	A) aws_control_type="$OPTARG"   ;;
+	a) aws_compute_type="$OPTARG"   ;;
+	B) kubechart_port="$OPTARG"	;;
+	b) run_kubechart=1		;;
+	C) cleanup_only=1		;;
+	c) run_command="$OPTARG"        ;;
+	D) install_domain="$OPTARG"     ;;
+	d) install_dir="$OPTARG"        ;;
+	F) wait_for_complete=0		;;
+	f) config_file="$OPTARG"	;;
+	H) host_prefix_bits="$OPTARG"   ;;
+	I) api_version="$OPTARG"	;;
+	i) external_installer="$OPTARG" ;;
+	l) do_login=0			;;
+	L) install_version=		;;
+	M) masterconffile="$OPTARG"     ;;
+	m) master_count="$OPTARG"       ;;
+	N) do_cleanup=0			;;
+	n) release_channel="$OPTARG"    ;;
+	O) overwrite=1                  ;;
+	o) do_override=0		;;
+	P) pubkey="$OPTARG"             ;;
+	p) pull_secret="$OPTARG"        ;;
+	R) repo="$OPTARG"               ;;
+	r) rebuild=1			;;
+	S) create_bastion=0             ;;
+	s) force_setup_postinstall=1    ;;
+	T) platformconffile="$OPTARG"   ;;
+	t) install_type="$OPTARG"       ;;
+	V) install_version="$OPTARG"    ;;
+	v) loglevel='--log-level=debug' ;;
+	W) workerconffile="$OPTARG"     ;;
+	w) worker_count="$OPTARG"       ;;
+	X) force_local_toolchain=1	;;
+	x) clean_install_cache=1	;;
+	y) noconfirm=1			;;
+	h) help				;;
+	*) help "$OPTARG"               ;;
+    esac
+done
+
+[[ -n $external_installer ]] && install="$external_installer"
+
+[[ -z $install_dir && $cleanup_only -gt 0 ]] &&
+    fatal "Must specify -d install_dir in combination with -C"
+
+[[ -n $masterconffile && ! -r $masterconffile ]] &&
+    fatal "Master platform config $masterconffile not readable"
+[[ -n $workerconffile && ! -r $workerconffile ]] &&
+    fatal "Worker platform config $workerconffile not readable"
+[[ -n $platformconffile && ! -r $platformconffile ]] &&
+    fatal "Platform config $platformconffile not readable"
+
+(( host_prefix_bits < 8 || host_prefix_bits > 24 )) &&
+    fatal "Host prefix size must be between 8 and 24"
+
+release_source=${OPENSHIFT_RELEASE_SOURCE:-https://openshift-release.svc.ci.openshift.org/api/v1/releasestream}
+
+shift $((OPTIND - 1))
+
+[[ -n ${1:-} ]] && install_type="$1"
+
+clear_env
+case "$install_type" in
+    libvirt) openshift_libvirt                     ;;
+    aws*)    openshift_aws "$install_type"         ;;
+    *)       fatal "Usage: $___topsc [type [dir]]" ;;
+esac
+[[ $install_version == latest_default ]] && install_version=latest
+export OPENSHIFT_INSTALL_CLUSTER_NAME=${install_dir:-${LOGNAME}-${OPENSHIFT_INSTALL_PLATFORM}}
+
+install_dir="${install_dir:-$OPENSHIFT_INSTALL_CLUSTER_NAME}"
+
+if (( cleanup_only )) ; then
+    if [[ ! -d $install_dir ]] ; then
+	echo "No install directory $install_dir to clean up"
+	exit 0
+    fi
+elif [[ -d $install_dir && $install_dir != . && $install_dir != .. &&
+	    -n $(ls "$install_dir") && $overwrite -eq 0 ]] ; then
+    fatal "Install directory $install_dir already present; will not overwrite without -O"
+fi
+
+run_install

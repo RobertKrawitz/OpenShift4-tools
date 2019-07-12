@@ -1,0 +1,26 @@
+#!/bin/bash
+
+function doit() {
+    declare last_namespace=
+    declare last_pod=
+    declare -A namehash
+    while read namespace pod container running status ; do
+	podname=$(normalize-podname "$pod")
+	cname="$namespace:$podname:$container"
+	[[ -n ${namehash[$cname]} ]] && continue
+	[[ $namespace != $last_namespace || -n $status ]] && echo -n "$namespace";
+	echo -en "\t"
+	[[ $podname != $last_pod || -n $status ]] && echo -n "$podname"
+	echo -e "\t$container\t$running\t$status"
+	last_namespace=$namespace
+	last_pod=$podname
+	namehash[$cname]=1
+    done
+}
+
+#cmd='foreach .items[] as $item ([[],[]];0; if $item.kind == "Pod" then (foreach $item.status.containerStatuses[] as $status ([[],[]];0;$item.metadata.namespace + " " + $item.metadata.name + " " + $status.name + " " + ($status.state | keys)[0] + (if $status.ready == false then "	Not ready: "+([($status.state | .. | (if has("reason") then .reason else "Unknown" end))] | join("")) else "" end ))) else null end) | select(. != null)'
+cmd='foreach .items[] as $item ([[],[]];0; if $item.kind == "Pod" then (if $item.status.containerStatuses == null then ($item.metadata.namespace + " " + $item.metadata.name + " " + "	" + "N/A" + " " + $item.status.phase + " " + $item.status.conditions[0].reason?) else (foreach $item.status.containerStatuses[]? as $status ([[],[]];0;$item.metadata.namespace + " " + $item.metadata.name + " " + $status.name + " " + ($status.state | keys)[0] + (if $status.ready == false then "	" + ([(if $status.state[(($status.state | keys)[0])]|has("reason") then $status.state[(($status.state | keys)[0])]|.reason else "Unhealthy" end)] | join("")) else "" end ))) end) else null end) | select(. != null)'
+
+get-os-header
+#oc get pods --all-namespaces -o json | jq -r "$cmd"
+oc get pods --all-namespaces -o json | jq -r "$cmd" | sort -k 5rb -k 1b -k 2b | doit

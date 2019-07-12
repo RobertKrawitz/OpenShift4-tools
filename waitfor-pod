@@ -1,0 +1,85 @@
+#!/bin/bash
+
+declare -i timeout=30
+declare -i retry=30
+declare namespace=
+declare pod=
+declare -i match_regexp=0
+
+function help() {
+    if [[ -n $@ && $@ != '?' ]] ; then
+	echo "Unknown option $@"
+    fi
+    cat <<EOF
+Usage: $0 [options...] pod
+  Options:
+    -m            Match regexp
+    -n namespace  Use this namespace to find the pod
+    -r retry      Retry this many times
+    -t timeout    Wait this long between retries
+EOF
+    exit 1
+}
+
+while getopts "mn:r:t:" opt ; do
+      case "$opt" in
+	  m) match_regexp=1      ;;
+	  n) namespace="$OPTARG" ;;
+	  t) timeout="$OPTARG"   ;;
+	  r) retry="$OPTARG"     ;;
+	  *) help "$opt"         ;;
+      esac
+done
+
+shift $((OPTIND - 1))
+pod=$1
+
+[[ -z $pod ]] && help
+
+if [[ -n $namespace ]] ; then
+    namespace="-n $namespace"
+else
+    namespace="--all-namespaces"
+fi
+    
+declare -i try=0
+
+cmd='foreach .items[] as $item ([[],[]];0; if $item.kind == "Pod" then (foreach $item.status.containerStatuses[]? as $status ([[],[]];0;$item.metadata.namespace + " " + $item.metadata.name + " " + $status.name + " " + ($status.state | keys)[0] + (if $status.ready == false then "	" + ([(if $status.state[(($status.state | keys)[0])]|has("reason") then $status.state[(($status.state | keys)[0])]|.reason else "Unhealthy" end)] | join("")) else "" end ))) else null end) | select(. != null)'
+
+function find_pods_named() {
+    local pod="$1"
+    local run_status=1
+    while read namespace podname container running status ; do
+	# See staging/src/k8s.io/apimachinery/pkg/util/rand/rand.go
+	# Shelling out to normalize-podname is remarkably expensive.
+	[[ $podname =~ (.*)(-ip(-([0-9]){1,3}){4}\.[-.a-z0-9]+)$ ]] && podname=${BASH_REMATCH[1]}
+	[[ $podname =~ (.*)(-([bcdfghjklmnpqrstvwxz2456789]){5})$ ]] && podname=${BASH_REMATCH[1]}
+	[[ $podname =~ (.*)(-[bcdfghjklmnpqrstvwxz2456789]{6,}) ]] && podname=${BASH_REMATCH[1]}
+	[[ -n $OPENSHIFT_INSTALL_CLUSTER_NAME ]] && podname=${podname%-${OPENSHIFT_INSTALL_CLUSTER_NAME}*}
+	[[ ($podname == $pod || ($match_regexp == 1 && $podname =~ $pod)) && $run_status -ge 0 ]] && {
+	    if [[ $running == "running" ]] ; then
+		run_status=0
+	    else
+		return 2
+	    fi
+	}
+    done
+    return $run_status
+}
+
+function get_pod() {
+    oc get pod $namespace -o json | jq -r "$cmd" | find_pods_named "$pod"
+}
+
+echo "Waiting for pod $pod"
+while ((try++ < retry)) ; do
+    echo -n "Try $try/$retry..."
+    get_pod $namespace $pod && {
+	echo "success!"
+	exit 0
+    }
+    echo "no"
+    (( try < retry )) && sleep $timeout
+done
+echo "failed, exiting"
+exit 1

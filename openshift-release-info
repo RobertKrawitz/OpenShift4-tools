@@ -1,0 +1,224 @@
+#!/usr/bin/perl
+
+use strict;
+use JSON;
+use Getopt::Long;
+Getopt::Long::Configure("bundling", "no_ignore_case", "pass_through");
+
+my $repo="openshift-release";
+my $base;
+my $dot_url;
+my $cincy_url;
+
+my @channels;
+my @release_channels;
+my @release_labels;
+my @release_urls;
+my @release_payloads;
+my %upgrades_from;
+my %upgrades_to;
+my %release_idx;
+
+my $opt_list_channels;
+my $opt_list_releases;
+my $opt_list_upgrades;
+my $opt_payload;
+my $opt_url;
+my $opt_channel;
+my $opt_all_upgrades;
+my $opt_repo;
+my $help;
+
+sub read_releases() {
+    open(DOT, "-|", "curl --silent $dot_url") || die "Can't read $dot_url: $!\n";
+    my ($current_channel);
+    while (<DOT>) {
+	chomp;
+	$_ =~ s/^[\s]*//;
+	if (/^label="Stream +(.*)";$/) {
+	    $current_channel=$1;
+	    push @channels, $current_channel;
+	} elsif (/^([0-9]+)->([0-9]+) *\[ *(.*) *];$/) {
+	    my ($from) = $2;
+	    my ($to) = $1;
+	    my ($attrs) = $3;
+	    if (! defined $upgrades_from{$from}) {
+		$upgrades_from{$from} = {};
+	    }
+	    $upgrades_from{$from}{$to} = $attrs;
+	    if (! defined $upgrades_to{$to}) {
+		$upgrades_to{$to} = {};
+	    }
+	    $upgrades_to{$to}{$from} = $attrs;
+	} elsif (/^([0-9]+) *\[ *(.*) *];$/) {
+	    my ($idx) = $1;
+	    my (%attrs) = parse_options($2);
+	    if ($release_labels[$idx]) {
+		warn "Attempt to redefine release $idx ($release_labels[$idx]) => $attrs{'label'}\n";
+	    }
+	    $release_labels[$idx] = $attrs{'label'};
+	    $release_channels[$idx] = $current_channel;
+	    $release_urls[$idx] = $attrs{'href'};
+	    $release_idx{$attrs{'label'}} = $idx;
+	}
+    }
+    close(DOT);
+}
+
+sub read_graph() {
+    open(GRAPH, "-|", "curl --silent $cincy_url") || die "Can't read $cincy_url: $!\n";
+    my ($jsontxt);
+    while (<GRAPH>) {
+	$jsontxt .= $_;
+    }
+    close GRAPH;
+    my $json = decode_json($jsontxt);
+    my $nodes = $$json{'nodes'};
+    if ($nodes) {
+	foreach my $node (@$nodes) {
+	    my $version = $$node{'version'};
+	    my $payload = $$node{'payload'};
+	    if (! $version) {
+		warn "Can't find version!\n";
+	    } elsif ($release_idx{$version}) {
+		$release_payloads[$release_idx{$version}] = $payload;
+	    }
+	}
+    }
+}
+
+sub print_channels() {
+    read_releases();
+    print join("\n", @channels), "\n";
+}
+
+sub print_releases($) {
+    my ($channel) = @_;
+    read_releases();
+    read_graph;
+    foreach my $idx (0..$#release_labels) {
+	if ($channel eq '' || $release_channels[$idx] eq $channel) {
+	    print "$release_labels[$idx]\n";
+	}
+    }
+}
+
+sub parse_options($) {
+    my ($string) = @_;
+    $string =~ s/\s*$//;
+    my (@attrs) = split(/, */, $string);
+    my (%attrs);
+    map { $_ =~ /^(.*)=(.*)$/;
+	  my $key = $1;
+	  my $val = $2;
+	  $val =~ s/^"(.*)"$/$1/;
+	  $attrs{$key} = $val;
+    } @attrs;
+    return %attrs;
+}
+
+sub print_upgrades($) {
+    my ($release) = @_;
+    if ($release eq "") {
+	print STDERR "Release must be specified.\n";
+	print_help_and_exit();
+    }
+    read_releases();
+    read_graph();
+    if (defined $release_idx{$release}) {
+	my ($idx) = $release_idx{$release};
+	if (defined $upgrades_from{$idx}) {
+	    foreach my $upgrade (sort keys %{$upgrades_to{$idx}}) {
+		my (%attrs) = parse_options($upgrades_to{$idx}{$upgrade});
+		if ($attrs{'style'} ne 'invis' &&
+		    ($opt_all_upgrades || $attrs{'color'} ne 'red')) {
+		    print "$release_labels[$upgrade]\n";
+		}
+	    }
+	}
+    }
+}
+
+sub print_payload($) {
+    my ($release) = @_;
+    if ($release eq "") {
+	print STDERR "Release must be specified.\n";
+	print_help_and_exit();
+    }
+    read_releases();
+    read_graph();
+    if (defined $release_idx{$release}) {
+	print "$release_payloads[$release_idx{$release}]\n";
+    }
+}
+
+sub print_url($) {
+    my ($release) = @_;
+    if ($release eq "") {
+	print STDERR "Release must be specified.\n";
+	print_help_and_exit();
+    }
+    read_releases();
+    read_graph();
+    if (defined $release_idx{$release}) {
+	print "$base$release_urls[$release_idx{$release}]\n";
+    }
+}
+
+GetOptions("l"   => \$opt_list_channels,
+	   "r"   => \$opt_list_releases,
+	   "R=s" => \$opt_repo,
+	   "u=s" => \$opt_list_upgrades,
+	   "p=s" => \$opt_payload,
+	   "U=s" => \$opt_url,
+	   "c=s" => \$opt_channel,
+	   "a"   => \$opt_all_upgrades,
+	   "h"   => \$help);
+
+sub print_help_and_exit() {
+    print STDERR <<EOF;
+Usage: release_status [-R repo] [-l | -r [-c channel] | -u release [-a] | -p release | -U release]
+    -R  Use specified repo (default $repo)
+    -l  List available channels
+    -r  List releases available (optionally with specified channnel).
+    -u  List available upgrades for specified release.
+    -p  Print payload for specified release.
+    -U  Print URL for specified release.
+EOF
+    exit 1;
+}
+
+if ($opt_repo) {
+    $repo = $opt_repo;
+}
+$base="https://$repo.svc.ci.openshift.org";
+$dot_url="${base}/graph?format=dot";
+$cincy_url="$base/graph";
+
+if ($help) {
+    print_help_and_exit();
+} elsif (($opt_list_channels && ($opt_list_releases || $opt_list_upgrades || 
+				 $opt_payload || $opt_url)) ||
+	 ($opt_list_releases && ($opt_list_upgrades || 
+				 $opt_payload || $opt_url)) ||
+	 ($opt_list_upgrades && ($opt_payload || $opt_url)) ||
+	 ($opt_payload && $opt_url)) {
+    
+    print STDERR "Only one of -r, -l, -u, -p, or -U may be specified\n";
+    print_help_and_exit();
+} elsif ($opt_list_releases) {
+    print_releases($opt_channel);
+} elsif ($opt_list_channels) {
+    print_channels();
+} else {
+    if ($opt_list_upgrades) {
+	print_upgrades($opt_list_upgrades);
+    } elsif ($opt_payload) {
+	print_payload($opt_payload);
+    } elsif ($opt_url) {
+	print_url($opt_url);
+    } else {
+	print STDERR "Unknown command!\n";
+	print_help_and_exit();
+    }
+}

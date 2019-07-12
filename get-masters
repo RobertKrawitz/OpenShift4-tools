@@ -1,0 +1,32 @@
+#!/bin/sh
+
+cmd='
+[foreach .items[] as $item
+([[],[]];0;
+if ($item.kind == "Node") then
+ (if ($item.metadata.labels|has("node-role.kubernetes.io/master")) then
+  [([(foreach $item.status.addresses[] as $address
+   ([[],[]];0;
+   if $address.type == "ExternalIP" then $address.address else null end))])] | flatten | map (select (. != null))[0]
+  else null end)
+ else null end)]|flatten | map(select (. != null))[]'
+
+out=$(oc get nodes -o json | jq -r "$cmd")
+
+[[ -z $out ]] && {
+    cmd='
+[foreach .items[] as $item
+([[],[]];0;
+if ($item.kind == "Node") then
+ (if ($item.metadata.labels|has("node-role.kubernetes.io/master")) then
+  [([(foreach $item.status.addresses[] as $address
+   ([[],[]];0;
+   if $address.type == "ExternalIP" then $address.address else null end)),
+   (foreach $item.status.addresses[] as $address
+   ([[],[]];0;
+   if $address.type == "InternalIP" then $address.address else null end))])] | flatten | map (select (. != null))[0]
+  else null end)
+ else null end)]|flatten | map(select (. != null))[]'
+  out=$(oc get nodes -o json | jq -r "$cmd")
+}
+echo $out

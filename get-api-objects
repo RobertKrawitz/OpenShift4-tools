@@ -1,0 +1,94 @@
+#!/bin/bash
+
+declare stuff="$(jq .)"
+
+declare -r tab=$(echo -e "\t")
+
+api_objects=$(jq -r 'foreach .items[] as $item ([[],[]];0; $item.kind)' <<< "$stuff" |sort |uniq |grep -v Pod)
+
+function print_data() {
+    last_apitype=
+    last_namespace=
+    last_name=
+    while read apitype namespace name subpod status args ; do
+	[[ $status == + ]] && status=
+	if [[ $apitype != $last_apitype ]] ; then
+	    echo -n "$apitype";
+	    last_apitype=$apitype
+	    last_namespace=
+	    last_name=
+	fi
+	echo -n "$tab"
+	if [[ $namespace != $last_namespace || -n $status ]] ; then
+	    echo -n "$namespace";
+	    last_namespace=$namespace
+	    last_name=
+	fi
+	echo -n "$tab"
+	if [[ $name != $last_name || -n $status ]] ; then
+	    echo -n "$name"
+	    last_name=
+	fi
+	for arg in "$subpod" "$status" $args ; do
+	    echo -n "$tab$arg"
+	done
+	echo
+    done
+}
+
+function runit() {
+    apitype=$1; shift
+    cmd='foreach .items[] as $item ([[],[]];0; if $item.kind == "'$apitype'" then ('"$*"') else null end) | select(. != null)'
+    jq -r "$cmd" | sort -k 1 -k 5b -k 2 -k 3 | print_data
+}
+
+function run_simple() {
+    apitype=$1; shift
+    runit "$apitype" '$item.kind + "'$tab'" + $item.metadata.namespace + "'$tab'" + $item.metadata.name + "'$tab'" + "" + "'$tab'"+ (if '"$*"' then "+" else "Mismatch" end) + "'$tab'" + ""'
+}
+
+function process_pods() {
+    runit Pod 'foreach $item.status.containerStatuses[] as $status ([[],[]];0; $item.kind + "'$tab'" + $item.metadata.namespace + "'$tab'" + $item.metadata.name + "'$tab'" + $status.name + "'$tab'"+ (if $status.ready == false then ([($status.state | .. | .reason?)] | join("")) else "+" end ) + "'$tab'" + ($status.state | keys)[0])'
+}
+
+function process_catalogsources() {
+    run_simple CatalogSource true
+}
+
+function process_daemonsets() {
+    run_simple DaemonSet '$item.status.numberAvailable == $item.status.desiredNumberScheduled '
+}
+
+function process_deployments() {
+    run_simple Deployment '$item.status.availableReplicas > 0'
+}
+
+function process_replicasets() {
+    run_simple ReplicaSet '$item.status.replicas > 0'
+}
+
+function process_statefulsets() {
+    run_simple StatefulSet '$item.status.replicas > 0'
+}
+
+function process_imagestreams() {
+    run_simple ImageStream true
+}
+
+function process_routes() {
+    run_simple Route true
+}
+
+function process_services() {
+    run_simple Service true
+}
+
+process_pods <<< "$stuff"
+process_daemonsets <<< "$stuff"
+process_deployments <<< "$stuff"
+process_replicasets <<< "$stuff"
+process_statefulsets <<< "$stuff"
+process_catalogsources <<< "$stuff"
+process_imagestreams <<< "$stuff"
+process_routes <<< "$stuff"
+process_services <<< "$stuff"

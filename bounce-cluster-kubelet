@@ -1,0 +1,63 @@
+#!/bin/sh
+
+# Find our helpers
+function finddir() {
+    local path_to_file
+    path_to_file=$(readlink -f "$0")
+    if [[ -z $path_to_file ]] ; then
+	return 1
+    elif [[ -d $path_to_file ]] ; then
+	echo "$path_to_file/"
+    elif [[ -e $path_to_file ]] ; then
+	echo "${path_to_file%/*}/"
+    else
+	return 1
+    fi
+    return 0
+}
+
+cmddir=$(finddir "$0")
+[[ -z $cmddir ]] && fatal "Can't find directory for $0"
+
+PATH="${cmddir}:$PATH"
+
+set -e
+
+declare godir=${GOPATH:$HOME/go}
+godir=${GOPATH%:*}
+declare -r srcdir="$godir/src/github.com/openshift/origin"
+declare -r lkubelet="$srcdir/_output/local/bin/linux/amd64/hyperkube"
+declare -r okubelet="/usr/bin/hyperkube"
+declare -r lbindir="/usr/local/bin"
+declare -r kubelet="$lbindir/hyperkube"
+declare -r kubelet_svc=/etc/systemd/system/kubelet.service
+kubeenable="$lbindir/kube-enable"
+declare nodes=$(oc get nodes --no-headers=true |grep master | awk '{print $1}')
+#declare nodes=$(oc get nodes --no-headers=true | awk '{print $1}')
+
+function rcmd() {
+    echo "$1:"
+    bastion-ssh "$@"
+}
+
+function build_upload() {
+    cd $srcdir
+    make WHAT=vendor/k8s.io/kubernetes/cmd/hyperkube
+    ls -l _output/local/bin/linux/amd64/hyperkube
+    md5sum _output/local/bin/linux/amd64/hyperkube
+}
+
+(build_upload)
+
+declare -r expected_md5=$(md5sum "$lkubelet" |awk '{print $1}')
+for node in $nodes ; do
+    bastion-scp "$cmddir/install-kubelet" "$node:/tmp"
+    bastion-scp "$cmddir/uninstall-kubelet" "$node:/tmp"
+    bastion-scp -C "$srcdir/_output/local/bin/linux/amd64/hyperkube" "$node:/tmp"
+    rcmd "$node" "sudo" "sudo mkdir -p /usr/local/bin; sudo chmod +x /tmp/install-kubelet; sudo /tmp/install-kubelet /tmp/hyperkube $expected_md5"
+done
+
+for node in $nodes ; do
+    rcmd "$node" "sudo" "sh" "-c" "ls -l $kubelet; ps aux |grep hyperkube; sudo sysctl vm.swappiness=0"
+done
+oc get nodes
