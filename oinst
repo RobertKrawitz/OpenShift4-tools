@@ -950,7 +950,7 @@ EOF
     clean_shutdown=1
 }
 
-while getopts ":A:a:B:bCc:D:d:Ff:H:hI:i:LlM:m:Nn:OoP:p:R:rsST:t:V:vW:wXxy" opt ; do
+while getopts ":A:a:B:bCc:D:d:Ff:H:hI:i:LlM:m:Nn:OoP:p:R:rSsT:t:V:vW:w:Xxy" opt ; do
     case "$opt" in
 	A) aws_control_type="$OPTARG"   ;;
 	a) aws_compute_type="$OPTARG"   ;;
