@@ -81,7 +81,7 @@ Usage: $___topsc [options] install_type
        -L                   Install using local workspace (currently hardcoded
                             to \$GOPATH/src/github.com/openshift/installer)
        -l                   Do not login to the console.
-       -M masterconfig	    Take master platform config from specified file.
+       -M masterconfig      Take master platform config from specified file.
        -m masters           Number of master nodes (default by platform).
        -N                   Don't clean up on exit.  If this is not used,
                             exit with status 77 from the shell will have
@@ -110,7 +110,7 @@ Usage: $___topsc [options] install_type
                             'openshift-release-info -r -c <channel>'
                             to list available versions.
        -v                   Print debug information.
-       -W workerrconfig	    Take worker platform config from specified file.
+       -W workerconfig      Take worker platform config from specified file.
        -w workers           Number of worker nodes (default by platform).
        -x                   Clean up local install cache (in case of corrupt
                             image cache).
@@ -798,6 +798,8 @@ function run_install() {
     trap cleanup EXIT SIGHUP SIGINT SIGQUIT SIGTERM
 
     install_stage=1
+    OPENSHIFT_INSTALL_CONFIG="$(sed -e 's/^pullSecret:.*/pullSecret: .../' -e "s/'*ssh-rsa.*/.../" "$srcdir/$install_dir/install-config.yaml")"
+    export OPENSHIFT_INSTALL_CONFIG
     cat <<EOF
 About to run installer:
 
@@ -810,7 +812,7 @@ Override:          ${OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE:-}
 Install command:   ${install} $loglevel --dir="$srcdir/$install_dir" create cluster
 Configuration:
 
-$(sed -e 's/^pullSecret:.*/pullSecret: .../' -e "s/'*ssh-rsa.*/.../" "$srcdir/$install_dir/install-config.yaml")
+$OPENSHIFT_INSTALL_CONFIG
 EOF
     if (( ! noconfirm )) ; then
 	local proceed
