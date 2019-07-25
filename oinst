@@ -703,12 +703,15 @@ Could not extract installer from image.  Common reasons:
    Line Tools that will give you an 'oc login' command to run from a
    command line.
 
-4) Following oc login, run 'oc registry login'.
+4) Following oc login, run 'oc registry login'.  This will generate
+   additional secrets in ~/.docker/config.json; these need to be
+   copied into ~/Downloads/pull-secret.
 
 5) Ensure that you have correct credentials for your cloud provider,
    as appropriate.
 
-6) Ensure that you have correct credentials for quay.io.
+6) Ensure that you have correct credentials for quay.io (should be
+   provided as a result of step 4).
 
 EOF
 }
