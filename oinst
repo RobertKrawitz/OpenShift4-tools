@@ -227,9 +227,8 @@ declare -i api_plugin_incompatibility_detected=0
 
 function clear_env() {
     local var
-    while read -r var ; do
-	[[ -n $var ]] && unset "$var"
-    done <<< "$(compgen -v |grep '^_*OPENSHIFT_INSTALL')"
+    for var in "${!OPENSHIFT_INSTALL@}" ; do unset $var; done
+    for var in "${!_OPENSHIFT_INSTALL@}" ; do unset $var; done
     unset KUBECONFIG
 }
 
@@ -942,6 +941,7 @@ EOF
     (( end2 )) && printerval "Total setup to login" $((end2 - start))
     (( end3 )) && printerval "Total setup to console online" $((end3 - start))
     export OPENSHIFT_INSTALL_INTERLOCK=1
+    for f in "${!OPENSHIFT@}" "${!_OPENSHIFT@}" ; do eval "echo export $f=\${$f@Q}"; done > "${srcdir}/${install_dir}/environment"
     # Run a shell even if setup failed, so it's possible to poke around
     (run_shell)
     case $? in
