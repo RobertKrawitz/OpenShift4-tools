@@ -98,7 +98,7 @@ Usage: $___topsc [options] install_type
        -p pull_secret_path  Specify the path to the pull secret.
                             Default $pull_secret
        -Q                   Query for release to use.
-       -R repo              Use the specified repo (default $default_repo).
+       -R repo              Use the specified repo (default $default_repo_base).
        -r                   Always rebuild the installer.
        -S                   Do not create ssh bastion host.
        -s                   Always run the postinstall even if setup fails.
@@ -148,10 +148,18 @@ else
 fi
 
 # Globals
+declare -A release_base_map
+release_base_map[origin-release]='4.2.0-0.okd'
+release_base_map[openshift-release]='4-stable'
+
+declare -A subdir_map
+subdir_map[origin-release]='origin'
+subdir_map[openshift-release]='ocp'
+
 declare -r aws_default_domain=devcluster.openshift.com
 declare -r kubechart=${KUBECHART:-$GOPATH/src/github.com/sjenning/kubechart/kubechart}
 declare -r oschart=${OSCHART:-$GOPATH/src/github.com/sjenning/oschart/oschart}
-declare -r default_repo=openshift-release
+declare -r default_repo_base=openshift-release
 
 declare install_type=${OPENSHIFT_INSTALL_TYPE:-libvirt}
 declare install_domain=${OPENSHIFT_INSTALL_DOMAIN:-}
@@ -159,12 +167,12 @@ declare install_dir=${OPENSHIFT_INSTALL_DIR:-$install_domain}
 declare install_version=latest_default
 declare pull_secret=${OPENSHIFT_INSTALL_PULL_SECRET_PATH:-$HOME/Downloads/pull-secret}
 declare pubkey=${OPENSHIFT_INSTALL_SSH_PUB_KEY_PATH:-$HOME/.ssh/id_rsa.pub}
-declare installer_registry=${OPENSHIFT_INSTALL_REGISTRY:-registry.svc.ci.openshift.org/ocp/release}
+declare installer_registry=
 declare srcdir=${GOPATH:-$HOME/go}/src/github.com/openshift/installer
 declare install=$srcdir/bin/openshift-install
-declare default_release_channel=4-stable
-declare release_channel=
-declare repo=$default_repo
+declare default_release_channel
+declare release_channel
+declare repo=$default_repo_base
 
 # shellcheck disable=SC2155
 declare -r OC=$(type -p oc)
@@ -756,21 +764,21 @@ function installer_setup() {
     if (( query )) ; then
 	if [[ -z $release_channel ]] ; then
 	    local -a channels=()
-	    readarray -t channels <<< "$(openshift-release-info -l < /dev/null | sort -r)"
+	    readarray -t channels <<< "$(openshift-release-info -b "$repo" -l < /dev/null | sort -r)"
 	    OPS3=${PS3:-}
 	    PS3="Select channel: "
 	    select release_channel in "${channels[@]}" ; do break; done
 	    PS3=$OPS3
 	fi
 	local -a versions
-	readarray -t versions <<< "$(openshift-release-info -r ${release_channel:+-c "$release_channel"} < /dev/null | sort -r)"
+	readarray -t versions <<< "$(openshift-release-info -b "$repo" -r ${release_channel:+-c "$release_channel"} < /dev/null | sort -r)"
 	OPS3=${PS3:-}
 	PS3="Select release: "
 	select install_version in "${versions[@]}" ; do break; done
 	PS3=$OPS3
     elif [[ $install_version == latest ]] ; then
 	not_latest=
-	release_channel=${release_channel:-$default_release_channel}
+	release_channel=${release_channel:-${release_base_map[$repo]}}
 	echo "Retrieving release data from $release_source/$release_channel/latest"
 	release_data="$(curl --silent "$release_source/$release_channel/latest")"
 	[[ -n $release_data ]] || fatal "Can't extract release data!"
@@ -1026,7 +1034,7 @@ while getopts ":A:a:B:bCc:D:d:Ff:H:hI:i:LlM:m:Nn:OoP:p:QR:rSsT:t:V:vW:w:Xxy" opt
 	P) pubkey="$OPTARG"             ;;
 	p) pull_secret="$OPTARG"        ;;
 	Q) query=1                      ;;
-	R) repo="$OPTARG"               ;;
+	R) repo="$OPTARG" 		;;
 	r) rebuild=1			;;
 	S) create_bastion=0             ;;
 	s) force_setup_postinstall=1    ;;
@@ -1059,7 +1067,9 @@ done
 (( host_prefix_bits < 8 || host_prefix_bits > 24 )) &&
     fatal "Host prefix size must be between 8 and 24"
 
-release_source=${OPENSHIFT_RELEASE_SOURCE:-https://openshift-release.svc.ci.openshift.org/api/v1/releasestream}
+release_source=${OPENSHIFT_RELEASE_SOURCE:-https://${repo}.svc.ci.openshift.org/api/v1/releasestream}
+installer_registry=${OPENSHIFT_INSTALL_REGISTRY:-registry.svc.ci.openshift.org/${subdir_map[$repo]}/release}
+release_channel=${release_base_map[$repo]}
 
 shift $((OPTIND - 1))
 

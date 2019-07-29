@@ -5,9 +5,10 @@ use JSON;
 use Getopt::Long;
 Getopt::Long::Configure("bundling", "no_ignore_case", "pass_through");
 
-my $base="https://openshift-release.svc.ci.openshift.org";
-my $dot_url="${base}/graph?format=dot";
-my $cincy_url="$base/graph";
+my $base_repo="openshift-release";
+my $base;
+my $dot_url;
+my $cincy_url;
 
 my @channels;
 my @release_channels;
@@ -243,12 +244,18 @@ GetOptions("l"   => \$opt_list_channels,
 	   "U=s" => \$opt_url,
 	   "c=s" => \$opt_channel,
 	   "o=s" => \$opt_os,
+	   "R=s" => \$base_repo,
 	   "a"   => \$opt_all_upgrades,
 	   "h"   => \$help);
 
+$base="https://$base_repo.svc.ci.openshift.org";
+$dot_url="${base}/graph?format=dot";
+$cincy_url="$base/graph";
+
 sub print_help_and_exit() {
     print STDERR <<EOF;
-Usage: release_status [-l | -r [-c channel] | -u release [-a] | -p release | -U release]
+Usage: release_status [-b base] [-l | -r [-c channel] | -u release [-a] | -p release | -U release]
+    -R  Use specified base repo (openshift-release or origin-release)
     -l  List available channels
     -r  List releases available (optionally with specified channnel).
     -u  List available upgrades for specified release.
