@@ -799,7 +799,7 @@ function installer_setup() {
 function validate_environment() {
     local f
     for f in quay.io registry.redhat.io registry.svc.ci.openshift.org ; do
-	local g=$(f//./\\.)
+	local g=${f//./\\.}
 	grep -q "$g" "$pull_secret" || warn "No secret for '$f' in pull secret $pull_secret; expect installation to fail"
     done
 }
