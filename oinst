@@ -97,6 +97,7 @@ Usage: $___topsc [options] install_type
                             Default $pubkey
        -p pull_secret_path  Specify the path to the pull secret.
                             Default $pull_secret
+       -Q                   Query for release to use.
        -R repo              Use the specified repo (default $default_repo).
        -r                   Always rebuild the installer.
        -S                   Do not create ssh bastion host.
@@ -161,7 +162,8 @@ declare pubkey=${OPENSHIFT_INSTALL_SSH_PUB_KEY_PATH:-$HOME/.ssh/id_rsa.pub}
 declare installer_registry=${OPENSHIFT_INSTALL_REGISTRY:-registry.svc.ci.openshift.org/ocp/release}
 declare srcdir=${GOPATH:-$HOME/go}/src/github.com/openshift/installer
 declare install=$srcdir/bin/openshift-install
-declare release_channel=4-stable
+declare default_release_channel=4-stable
+declare release_channel=
 declare repo=$default_repo
 
 # shellcheck disable=SC2155
@@ -190,6 +192,7 @@ declare -i login_succeeded=0
 declare -i master_count=0
 declare -i noconfirm=0
 declare -i overwrite=0
+declare -i query=0
 declare -i rebuild=0
 declare -i run_kubechart=0
 declare -i run_oschart=0
@@ -227,8 +230,8 @@ declare -i api_plugin_incompatibility_detected=0
 
 function clear_env() {
     local var
-    for var in "${!OPENSHIFT_INSTALL@}" ; do unset $var; done
-    for var in "${!_OPENSHIFT_INSTALL@}" ; do unset $var; done
+    for var in "${!OPENSHIFT_INSTALL@}" ; do unset "$var"; done
+    for var in "${!_OPENSHIFT_INSTALL@}" ; do unset "$var"; done
     unset KUBECONFIG
 }
 
@@ -568,7 +571,7 @@ networking:
   - 172.30.0.0/16
 platform:
 $(platform)
-pullSecret: '$(< "$pull_secret")'
+pullSecret: '$(jq -scM '.[0]' < "$pull_secret")'
 sshKey: |
   $(< "$pubkey")
 EOF
@@ -686,9 +689,9 @@ function warn_installer_fail() {
     cat <<\EOF
 Could not extract installer from image.  Common reasons:
 
-1) You need to download your pull secret.
+1) You need to download your pull secrets.
 
-   Visit https://cloud.openshift.com and log in.  Click on Create
+   Visit https://try.openshift.com and log in.  Click on Create
    Cluster/Self-Installed Cluster
    (https://cloud.redhat.com/openshift/install) and select AWS (or as
    appropriate).  From there, select User-Provisioned Infrastructure.
@@ -705,14 +708,14 @@ Could not extract installer from image.  Common reasons:
 
 4) Following oc login, run 'oc registry login'.  This will generate
    additional secrets in ~/.docker/config.json; these need to be
-   copied into ~/Downloads/pull-secret.
+   copied into ~/Downloads/pull-secret (in particular,
+   the secret for registry.svc.ci.openshift.org).
 
 5) Ensure that you have correct credentials for your cloud provider,
    as appropriate.
 
 6) Ensure that you have correct credentials for quay.io (should be
    provided as a result of step 4).
-
 EOF
 }
 
@@ -733,7 +736,14 @@ function do_installer_setup() {
     local image=$2
     local install_version=$3
     cd "$install_dir" || exit 1
-    "${OC}" image extract "${image}" --file /usr/bin/openshift-install || fail_installer_extract "$image"
+    for f in "openshift-"*".tar.gz" ; do
+	rm -f "$f"
+    done
+    "${OC}" adm release extract --tools "${image}" || fail_installer_extract "$image"
+    for f in "openshift-"*".tar.gz" ; do
+	echo "Extracting $f"
+	tar xf "$f" || fail_installer_extract "$image"
+    done
     [[ -f openshift-install ]] || fail_installer_extract "$image"
     chmod +x openshift-install
     echo "${install_version}" > version.txt
@@ -743,8 +753,24 @@ function installer_setup() {
     local not_latest=1
     local release_data
     local image
-    if [[ $install_version == latest ]] ; then
+    if (( query )) ; then
+	if [[ -z $release_channel ]] ; then
+	    local -a channels=()
+	    readarray -t channels <<< "$(openshift-release-info -l < /dev/null | sort -r)"
+	    OPS3=${PS3:-}
+	    PS3="Select channel: "
+	    select release_channel in "${channels[@]}" ; do break; done
+	    PS3=$OPS3
+	fi
+	local -a versions
+	readarray -t versions <<< "$(openshift-release-info -r ${release_channel:+-c "$release_channel"} < /dev/null | sort -r)"
+	OPS3=${PS3:-}
+	PS3="Select release: "
+	select install_version in "${versions[@]}" ; do break; done
+	PS3=$OPS3
+    elif [[ $install_version == latest ]] ; then
 	not_latest=
+	release_channel=${release_channel:-$default_release_channel}
 	echo "Retrieving release data from $release_source/$release_channel/latest"
 	release_data="$(curl --silent "$release_source/$release_channel/latest")"
 	[[ -n $release_data ]] || fatal "Can't extract release data!"
@@ -753,14 +779,14 @@ function installer_setup() {
     fi
     echo "Using version $install_version${not_latest:- (latest)}" 1>&2
     local -r pullspec="$installer_registry:$install_version"
-    image=$(${OC} adm release info --pullspecs "$pullspec" | awk '{if ($1 == "installer") {print $2}}')
+    image=$(${OC} adm release info --pullspecs "$pullspec" | awk '{if ($1 == "Pull") {print $3}}')
     [[ -z $image ]] && fail_find_image "$install_version"
     if (( ! force_local_toolchain )) ; then
 	echo "Using installer from image ${image} ($external_installer)" 1>&2
 	(do_installer_setup "$install_dir" "$image" "$install_version") || exit 1
 	external_installer="${install_dir}/openshift-install"
 	install="$external_installer"
-	echo -e "installer version:\n$("$external_installer" version)\n" 1>&2
+	echo -e "installer version:\n$("$external_installer" version |sed 's/^/    /')\n" 1>&2
     fi
     srcdir=.
     if [[ $do_override == 1 && -n $not_latest ]] ; then
@@ -769,7 +795,17 @@ function installer_setup() {
     fi
 }
 
+# Try to catch obvious failures
+function validate_environment() {
+    local f
+    for f in quay.io registry.redhat.io registry.svc.ci.openshift.org ; do
+	local g=$(f//./\\.)
+	grep -q "$g" "$pull_secret" || warn "No secret for '$f' in pull secret $pull_secret; expect installation to fail"
+    done
+}
+
 function run_install() {
+    validate_environment
     if (( !cleanup_only )) ; then
 	[[ -n $install_version ]] && srcdir=.
 	mkdir -p "$srcdir/$install_dir"
@@ -820,7 +856,7 @@ EOF
 	local proceed
 	echo
 	while : ; do
-	    read -p "Proceed? [Yne!?] " -r proceed
+	    read -p "Proceed? [YnevV!?] " -r proceed
 	    case "$proceed" in
 		y|Y|yes|YES|Yes|'')
 		    break
@@ -837,10 +873,18 @@ EOF
 		    echo "Running editor on config..."
 		    ${EDITOR:-vi} "$srcdir/$install_dir/install-config.yaml"
 		    ;;
+		V)
+		    env
+		    ;;
+		v)
+		    set
+		    ;;
 		'?')
 		    echo 'y   Proceed with installation'
 		    echo 'n   Do not proceed with installation'
 		    echo '!   Spawn shell'
+		    echo 'V   Print environment'
+		    echo 'v   Print all variable settings'
 		    echo 'e   Edit install-config.yaml'
 		    echo '?   Print this help'
 		    echo 'Abort installation with any other input'
@@ -944,6 +988,7 @@ EOF
     (( end2 )) && printerval "Total setup to login" $((end2 - start))
     (( end3 )) && printerval "Total setup to console online" $((end3 - start))
     export OPENSHIFT_INSTALL_INTERLOCK=1
+    export OPENSHIFT_INSTALL_VERSION=$install_version
     for f in "${!OPENSHIFT@}" "${!_OPENSHIFT@}" ; do eval "echo export $f=\${$f@Q}"; done > "${srcdir}/${install_dir}/environment"
     # Run a shell even if setup failed, so it's possible to poke around
     (run_shell)
@@ -955,7 +1000,7 @@ EOF
     clean_shutdown=1
 }
 
-while getopts ":A:a:B:bCc:D:d:Ff:H:hI:i:LlM:m:Nn:OoP:p:R:rSsT:t:V:vW:w:Xxy" opt ; do
+while getopts ":A:a:B:bCc:D:d:Ff:H:hI:i:LlM:m:Nn:OoP:p:QR:rSsT:t:V:vW:w:Xxy" opt ; do
     case "$opt" in
 	A) aws_control_type="$OPTARG"   ;;
 	a) aws_compute_type="$OPTARG"   ;;
@@ -977,9 +1022,10 @@ while getopts ":A:a:B:bCc:D:d:Ff:H:hI:i:LlM:m:Nn:OoP:p:R:rSsT:t:V:vW:w:Xxy" opt 
 	N) do_cleanup=0			;;
 	n) release_channel="$OPTARG"    ;;
 	O) overwrite=1                  ;;
-	o) do_override=0		;;
+	o) do_override=1		;;
 	P) pubkey="$OPTARG"             ;;
 	p) pull_secret="$OPTARG"        ;;
+	Q) query=1                      ;;
 	R) repo="$OPTARG"               ;;
 	r) rebuild=1			;;
 	S) create_bastion=0             ;;
@@ -1023,7 +1069,7 @@ clear_env
 case "$install_type" in
     libvirt) openshift_libvirt                     ;;
     aws*)    openshift_aws "$install_type"         ;;
-    *)       fatal "Usage: $___topsc [type [dir]]" ;;
+    *)       help   				   ;;
 esac
 [[ $install_version == latest_default ]] && install_version=latest
 export OPENSHIFT_INSTALL_CLUSTER_NAME=${install_dir:-${LOGNAME}-${OPENSHIFT_INSTALL_PLATFORM}}
