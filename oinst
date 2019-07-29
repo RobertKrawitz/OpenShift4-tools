@@ -989,7 +989,7 @@ EOF
     (( end3 )) && printerval "Total setup to console online" $((end3 - start))
     export OPENSHIFT_INSTALL_INTERLOCK=1
     export OPENSHIFT_INSTALL_VERSION=$install_version
-    for f in "${!OPENSHIFT@}" "${!_OPENSHIFT@}" ; do eval "echo export $f=\${$f@Q}"; done > "${srcdir}/${install_dir}/environment"
+    for f in "${!OPENSHIFT@}" "${!_OPENSHIFT@}" KUBECONFIG ; do eval "echo export $f=\${$f@Q}"; done > "${srcdir}/${install_dir}/environment"
     # Run a shell even if setup failed, so it's possible to poke around
     (run_shell)
     case $? in
