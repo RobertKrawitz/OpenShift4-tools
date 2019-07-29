@@ -5,10 +5,9 @@ use JSON;
 use Getopt::Long;
 Getopt::Long::Configure("bundling", "no_ignore_case", "pass_through");
 
-my $repo="openshift-release";
-my $base;
-my $dot_url;
-my $cincy_url;
+my $base="https://openshift-release.svc.ci.openshift.org";
+my $dot_url="${base}/graph?format=dot";
+my $cincy_url="$base/graph";
 
 my @channels;
 my @release_channels;
@@ -26,7 +25,7 @@ my $opt_payload;
 my $opt_url;
 my $opt_channel;
 my $opt_all_upgrades;
-my $opt_repo;
+my $opt_os;
 my $help;
 
 sub read_releases() {
@@ -87,6 +86,49 @@ sub read_graph() {
     }
 }
 
+sub get_release_info($) {
+    my ($release) = @_;
+    my $response;
+    open(INFO, "-|", "oc adm release info --image-for=machine-os-content $release") || die "Can't run oc adm release info: $!\n";
+    while (<INFO>) {
+	chomp;
+	$response .= $_;
+    }
+    close INFO;
+    return $response;
+}
+
+sub get_os_build($) {
+    my ($release) = @_;
+    my ($relinfo) = get_release_info($release);
+    if (not $relinfo) {
+	die "Can't read release info for $release\n";
+    }
+    open(RELINFO, "-|", "oc image info -o json $relinfo") || die "Can't run oc image info $relinfo: $!\n";
+    my ($jsontxt);
+    while (<RELINFO>) {
+	$jsontxt .= $_;
+    }
+    close RELINFO;
+    my $json = decode_json($jsontxt);
+    my ($config) = $$json{'config'};
+    if (! $config) {
+	warn "Unable to extract configuration\n";
+	return '';
+    }
+    my ($subconfig) = $$config{'config'};
+    if (! $subconfig) {
+	warn "Unable to extract sub-configuration\n";
+	return '';
+    }
+    my ($labels) = $$subconfig{'Labels'};
+    if (! $subconfig) {
+	warn "Unable to extract sub-labels\n";
+	return '';
+    }
+    return $$labels{'version'};
+}
+
 sub print_channels() {
     read_releases();
     print join("\n", @channels), "\n";
@@ -95,7 +137,7 @@ sub print_channels() {
 sub print_releases($) {
     my ($channel) = @_;
     read_releases();
-    read_graph;
+    read_graph();
     foreach my $idx (0..$#release_labels) {
 	if ($channel eq '' || $release_channels[$idx] eq $channel) {
 	    print "$release_labels[$idx]\n";
@@ -139,72 +181,94 @@ sub print_upgrades($) {
     }
 }
 
-sub print_payload($) {
-    my ($release) = @_;
-    if ($release eq "") {
-	print STDERR "Release must be specified.\n";
-	print_help_and_exit();
-    }
+sub get_releases($$) {
+    my ($release, $channel) = @_;
+    my (@releases) = ($release);
     read_releases();
     read_graph();
-    if (defined $release_idx{$release}) {
-	print "$release_payloads[$release_idx{$release}]\n";
+    if (! @releases || $releases[0] eq "all" || $releases[0] eq '') {
+	@releases = ();
+	foreach my $release (sort keys %release_idx) {
+	    if ($channel eq '' || $release_channels[$release_idx{$release}] eq $channel) {
+		push @releases, $release;
+	    }
+	}
+    }
+    return @releases;
+}
+
+sub print_payload($$) {
+    my ($release, $channel) = @_;
+    my (@releases) = get_releases($release, $channel);
+    foreach $release (@releases) {
+	if (defined $release_idx{$release}) {
+	    if ($#releases > 0) {
+		print "$release ";
+	    }
+	    print "$release_payloads[$release_idx{$release}]\n";
+	}
     }
 }
 
-sub print_url($) {
-    my ($release) = @_;
-    if ($release eq "") {
-	print STDERR "Release must be specified.\n";
-	print_help_and_exit();
+sub print_os($$) {
+    my ($release, $channel) = @_;
+    my (@releases) = get_releases($release, $channel);
+    foreach $release (@releases) {
+	if (defined $release_idx{$release}) {
+	    if ($#releases > 0) {
+		print "$release ";
+	    }
+	    print get_os_build($release_payloads[$release_idx{$release}]), "\n";
+	}
     }
-    read_releases();
-    read_graph();
-    if (defined $release_idx{$release}) {
-	print "$base$release_urls[$release_idx{$release}]\n";
+}
+
+sub print_url($$) {
+    my ($release, $channel) = @_;
+    my (@releases) = get_releases($release, $channel);
+    foreach $release (@releases) {
+	if (defined $release_idx{$release}) {
+	    if ($#releases > 0) {
+		print "$release ";
+	    }
+	    print "$base$release_urls[$release_idx{$release}]\n";
+	}
     }
 }
 
 GetOptions("l"   => \$opt_list_channels,
 	   "r"   => \$opt_list_releases,
-	   "R=s" => \$opt_repo,
 	   "u=s" => \$opt_list_upgrades,
 	   "p=s" => \$opt_payload,
 	   "U=s" => \$opt_url,
 	   "c=s" => \$opt_channel,
+	   "o=s" => \$opt_os,
 	   "a"   => \$opt_all_upgrades,
 	   "h"   => \$help);
 
 sub print_help_and_exit() {
     print STDERR <<EOF;
-Usage: release_status [-R repo] [-l | -r [-c channel] | -u release [-a] | -p release | -U release]
-    -R  Use specified repo (default $repo)
+Usage: release_status [-l | -r [-c channel] | -u release [-a] | -p release | -U release]
     -l  List available channels
     -r  List releases available (optionally with specified channnel).
     -u  List available upgrades for specified release.
+    -o  List OS for specified release
     -p  Print payload for specified release.
     -U  Print URL for specified release.
 EOF
     exit 1;
 }
 
-if ($opt_repo) {
-    $repo = $opt_repo;
-}
-$base="https://$repo.svc.ci.openshift.org";
-$dot_url="${base}/graph?format=dot";
-$cincy_url="$base/graph";
-
 if ($help) {
     print_help_and_exit();
 } elsif (($opt_list_channels && ($opt_list_releases || $opt_list_upgrades || 
-				 $opt_payload || $opt_url)) ||
+				 $opt_payload || $opt_url || $opt_os)) ||
 	 ($opt_list_releases && ($opt_list_upgrades || 
-				 $opt_payload || $opt_url)) ||
-	 ($opt_list_upgrades && ($opt_payload || $opt_url)) ||
-	 ($opt_payload && $opt_url)) {
-    
-    print STDERR "Only one of -r, -l, -u, -p, or -U may be specified\n";
+				 $opt_payload || $opt_url || $opt_os)) ||
+	 ($opt_list_upgrades && ($opt_payload || $opt_url || $opt_os)) ||
+	 ($opt_payload && ($opt_url || $opt_os)) ||
+	 ($opt_url && $opt_os)) {
+    print STDERR "Only one of -r, -l, -u, -p, -o, or -U may be specified\n";
     print_help_and_exit();
 } elsif ($opt_list_releases) {
     print_releases($opt_channel);
@@ -214,9 +278,11 @@ if ($help) {
     if ($opt_list_upgrades) {
 	print_upgrades($opt_list_upgrades);
     } elsif ($opt_payload) {
-	print_payload($opt_payload);
+	print_payload($opt_payload, $opt_channel);
     } elsif ($opt_url) {
-	print_url($opt_url);
+	print_url($opt_url, $opt_channel);
+    } elsif ($opt_os) {
+	print_os($opt_url, $opt_channel);
     } else {
 	print STDERR "Unknown command!\n";
 	print_help_and_exit();
