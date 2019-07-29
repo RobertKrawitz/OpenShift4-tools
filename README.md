@@ -2,7 +2,7 @@
 
 My tools for installing etc. OpenShift 4.
 
-- *oinst*: OpenShift 4.0 installer wrapper.
+- *oinst*: OpenShift 4.x installer wrapper.
 
   You may want to install kubechart
   (github.com/sjenning/kubechart/kubechart) and oschart
@@ -11,6 +11,9 @@ My tools for installing etc. OpenShift 4.
 
 - *bastion-ssh* and *bastion-scp* -- use an ssh bastion to access
    cluster nodes.
+   
+- *openshift-release-info* -- get various information about one or
+  more releases.
 
 - *clean-cluster*: clean up a libvirt cluster if
   `openshift-install destroy cluster` doesn't work.
