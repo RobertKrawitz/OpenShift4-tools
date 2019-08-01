@@ -195,11 +195,11 @@ sub do_command($$\@) {
 	my ($answer);
 	my ($idx) = $release_idx{$release};
 	if ($command eq "os") {
-	    $answer = get_os_build($release_payloads[$idx]), "\n";
+	    $answer = get_os_build($release_payloads[$idx]);
 	} elsif ($command eq "payload") {
-	    $answer = "$release_payloads[$idx]\n";
+	    $answer = "$release_payloads[$idx]";
 	} elsif ($command eq "url") {
-	    $answer = "$base$release_urls[$idx]\n";
+	    $answer = "$base$release_urls[$idx]";
 	} elsif ($command eq "upgrades") {
 	    if (defined $upgrades_from{$idx}) {
 		my (@answers);
