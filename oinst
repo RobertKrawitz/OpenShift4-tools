@@ -40,6 +40,7 @@ function finddir() {
 declare realsc=
 if [[ -z ${___topsc:-} ]] ; then
     export ___topsc="${0##*/}"
+    # shellcheck disable=SC2155
     export ___topdir="$(finddir "$0")"
     [[ -z $___topdir ]] && fatal "Can't find directory for $0"
 fi
@@ -89,7 +90,8 @@ Usage: $___topsc [options] install_type
                             exit with status 88 will clean up.
        -n channel           Use the specified release channel.
                             Default $release_channel.
-                            Use 'openshift-release-info -l' to lists channels.
+                            Use 'openshift-release-info channels' to
+                            list channels.
        -O                   Overwrite an existing install directory.
                             Normally $___topsc will refuse to overwrite
                             an existing install directory.
@@ -107,8 +109,8 @@ Usage: $___topsc [options] install_type
                             is to use the latest version.
                             If this is used, the matching toolchain is
                             also used unless -X is specified.
-                            Use 'openshift-release-info -r' or
-                            'openshift-release-info -r -c <channel>'
+                            Use 'openshift-release-info releases' or
+                            'openshift-release-info -c <channel> releases'
                             to list available versions.
        -v                   Print debug information.
        -W workerconfig      Take worker platform config from specified file.
@@ -170,7 +172,6 @@ declare pubkey=${OPENSHIFT_INSTALL_SSH_PUB_KEY_PATH:-$HOME/.ssh/id_rsa.pub}
 declare installer_registry=
 declare srcdir=${GOPATH:-$HOME/go}/src/github.com/openshift/installer
 declare install=$srcdir/bin/openshift-install
-declare default_release_channel
 declare release_channel
 declare repo=$default_repo_base
 
@@ -764,21 +765,21 @@ function installer_setup() {
     if (( query )) ; then
 	if [[ -z $release_channel ]] ; then
 	    local -a channels=()
-	    readarray -t channels <<< "$(openshift-release-info -b "$repo" -l < /dev/null | sort -r)"
+	    readarray -t channels <<< "$(openshift-release-info -B "$repo" channels < /dev/null | sort -r)"
 	    OPS3=${PS3:-}
 	    PS3="Select channel: "
 	    select release_channel in "${channels[@]}" ; do break; done
 	    PS3=$OPS3
 	fi
 	local -a versions
-	readarray -t versions <<< "$(openshift-release-info -b "$repo" -r ${release_channel:+-c "$release_channel"} < /dev/null | sort -r)"
+	readarray -t versions <<< "$(openshift-release-info -B "$repo" ${release_channel:+-c "$release_channel"} releases < /dev/null | sort -r)"
 	OPS3=${PS3:-}
 	PS3="Select release: "
 	select install_version in "${versions[@]}" ; do break; done
 	PS3=$OPS3
     elif [[ $install_version == latest ]] ; then
 	not_latest=
-	release_channel=${release_channel:-${release_base_map[$repo]}}
+	release_channel=${release_channel:-${release_base_map[$repo]:-}}
 	echo "Retrieving release data from $release_source/$release_channel/latest"
 	release_data="$(curl --silent "$release_source/$release_channel/latest")"
 	[[ -n $release_data ]] || fatal "Can't extract release data!"
@@ -1068,8 +1069,8 @@ done
     fatal "Host prefix size must be between 8 and 24"
 
 release_source=${OPENSHIFT_RELEASE_SOURCE:-https://${repo}.svc.ci.openshift.org/api/v1/releasestream}
-installer_registry=${OPENSHIFT_INSTALL_REGISTRY:-registry.svc.ci.openshift.org/${subdir_map[$repo]}/release}
-release_channel=${release_base_map[$repo]}
+installer_registry=${OPENSHIFT_INSTALL_REGISTRY:-registry.svc.ci.openshift.org/${subdir_map[$repo]:-}/release}
+release_channel=${release_channel:-${release_base_map[$repo]:-}}
 
 shift $((OPTIND - 1))
 

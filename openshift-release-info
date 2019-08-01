@@ -78,8 +78,10 @@ sub read_graph() {
 	foreach my $node (@$nodes) {
 	    my $version = $$node{'version'};
 	    my $payload = $$node{'payload'};
-	    if (! $version) {
+	    if ($version eq '') {
 		warn "Can't find version!\n";
+	    } elsif ($payload eq '') {
+		warn "Can't find payload!\n";
 	    } elsif ($release_idx{$version}) {
 		$release_payloads[$release_idx{$version}] = $payload;
 	    }
@@ -90,12 +92,15 @@ sub read_graph() {
 sub get_release_info($) {
     my ($release) = @_;
     my $response;
-    open(INFO, "-|", "oc adm release info --image-for=machine-os-content $release") || die "Can't run oc adm release info: $!\n";
+    open(INFO, "-|", "oc adm release info --image-for=machine-os-content $release") || warn "Can't run oc adm release info: $!\n";
     while (<INFO>) {
 	chomp;
 	$response .= $_;
     }
     close INFO;
+    if (not $response) {
+	warn "Can't read release info for $release\n";
+    }
     return $response;
 }
 
@@ -103,31 +108,53 @@ sub get_os_build($) {
     my ($release) = @_;
     my ($relinfo) = get_release_info($release);
     if (not $relinfo) {
-	die "Can't read release info for $release\n";
+	return '';
     }
-    open(RELINFO, "-|", "oc image info -o json $relinfo") || die "Can't run oc image info $relinfo: $!\n";
+    open(RELINFO, "-|", "oc image info -o json $relinfo") || warn "Can't run oc image info $relinfo: $!\n";
     my ($jsontxt);
     while (<RELINFO>) {
 	$jsontxt .= $_;
     }
     close RELINFO;
     my $json = decode_json($jsontxt);
-    my ($config) = $$json{'config'};
-    if (! $config) {
-	warn "Unable to extract configuration\n";
-	return '';
+    if (defined $$json{'config'}{'config'}{'Labels'}{'version'}) {
+	return $$json{'config'}{'config'}{'Labels'}{'version'};
     }
-    my ($subconfig) = $$config{'config'};
-    if (! $subconfig) {
-	warn "Unable to extract sub-configuration\n";
-	return '';
+    warn "Unable to parse configuration for $release\n";
+    return '';
+}
+
+sub get_releases($\@) {
+    my ($channel, $releases) = @_;
+    my (%requested_releases);
+    my ($explicit_release_count) = 0;
+    my ($invalid_release_count) = 0;
+    read_releases();
+    read_graph();
+    foreach (@$releases) {
+	if (! defined $release_idx{$_}) {
+	    print STDERR "Invalid release $_\n";
+	    $invalid_release_count++;
+	} else {
+	    $requested_releases{$_} = $explicit_release_count++;
+	}
     }
-    my ($labels) = $$subconfig{'Labels'};
-    if (! $subconfig) {
-	warn "Unable to extract sub-labels\n";
-	return '';
+    if ($explicit_release_count == 0 && $invalid_release_count > 0) {
+	print STDERR "No valid releases specified\n";
+	exit 1;
     }
-    return $$labels{'version'};
+    my (@answer);
+    foreach my $release (sort keys %release_idx) {
+	if (($channel eq '' || $release_channels[$release_idx{$release}] eq $channel) &&
+	    $release_payloads[$release_idx{$release}] ne '' &&
+	    ($explicit_release_count == 0 || defined $requested_releases{$release})) {
+	    push @answer, $release;
+	}
+    }
+    if (! @answer) {
+	print STDERR "No valid releases found\n";
+    }
+    return @answer;
 }
 
 sub print_channels() {
@@ -160,138 +187,100 @@ sub parse_options($) {
     return %attrs;
 }
 
-sub print_upgrades($) {
-    my ($release) = @_;
-    if ($release eq "") {
-	print STDERR "Release must be specified.\n";
-	print_help_and_exit();
-    }
-    read_releases();
-    read_graph();
-    if (defined $release_idx{$release}) {
+sub do_command($$\@) {
+    my ($command, $channel, $releases) = @_;
+    my (@releases) = get_releases($channel, @$releases);
+    foreach my $release (@releases) {
+	my ($always_print_release) = 0;
+	my ($answer);
 	my ($idx) = $release_idx{$release};
-	if (defined $upgrades_from{$idx}) {
-	    foreach my $upgrade (sort keys %{$upgrades_to{$idx}}) {
-		my (%attrs) = parse_options($upgrades_to{$idx}{$upgrade});
-		if ($attrs{'style'} ne 'invis' &&
-		    ($opt_all_upgrades || $attrs{'color'} ne 'red')) {
-		    print "$release_labels[$upgrade]\n";
+	if ($command eq "os") {
+	    $answer = get_os_build($release_payloads[$idx]), "\n";
+	} elsif ($command eq "payload") {
+	    $answer = "$release_payloads[$idx]\n";
+	} elsif ($command eq "url") {
+	    $answer = "$base$release_urls[$idx]\n";
+	} elsif ($command eq "upgrades") {
+	    if (defined $upgrades_from{$idx}) {
+		my (@answers);
+		foreach my $upgrade (sort keys %{$upgrades_to{$idx}}) {
+		    my (%attrs) = parse_options($upgrades_to{$idx}{$upgrade});
+		    if ($attrs{'style'} ne 'invis' &&
+			($opt_all_upgrades || $attrs{'color'} ne 'red')) {
+			push @answers, "$release_labels[$upgrade]";
+			$always_print_release = 1;
+		    }
+		}
+		if (@answers) {
+		    $answer = "\n  " . join("\n  ", @answers) . "\n";
 		}
 	    }
 	}
-    }
-}
-
-sub get_releases($$) {
-    my ($release, $channel) = @_;
-    my (@releases) = ($release);
-    read_releases();
-    read_graph();
-    if (! @releases || $releases[0] eq "all" || $releases[0] eq '') {
-	@releases = ();
-	foreach my $release (sort keys %release_idx) {
-	    if ($channel eq '' || $release_channels[$release_idx{$release}] eq $channel) {
-		push @releases, $release;
-	    }
-	}
-    }
-    return @releases;
-}
-
-sub print_payload($$) {
-    my ($release, $channel) = @_;
-    my (@releases) = get_releases($release, $channel);
-    foreach $release (@releases) {
-	if (defined $release_idx{$release}) {
-	    if ($#releases > 0) {
+	if ($answer ne '') {
+	    if ($#releases > 0 || $always_print_release) {
 		print "$release ";
 	    }
-	    print "$release_payloads[$release_idx{$release}]\n";
+	    print "$answer\n";
 	}
     }
 }
 
-sub print_os($$) {
-    my ($release, $channel) = @_;
-    my (@releases) = get_releases($release, $channel);
-    foreach $release (@releases) {
-	if (defined $release_idx{$release}) {
-	    if ($#releases > 0) {
-		print "$release ";
-	    }
-	    print get_os_build($release_payloads[$release_idx{$release}]), "\n";
-	}
-    }
+sub print_help_and_exit() {
+    print STDERR <<EOF;
+  Usage: openshift-release-info [opts] command args...
+    Commands:
+      channels                List available channels.
+      os [releases...]        Print OS version for specified release[s] or all
+                              if none specified.
+      payload [releases...]   Print payload for specified release[s].
+      releases                List available releases.
+      upgrades <release>      List available upgrades for the specified
+                              release.
+      url [releases...]       Print URL for specified release[s].
+      help                    Print this help
+    Options:
+      -B base                 Use the specified base.  At present, this should
+                              be openshift-release or origin-release.
+      -c channel              Restrict releases to the specified channel.
+EOF
+    exit 1;
 }
 
-sub print_url($$) {
-    my ($release, $channel) = @_;
-    my (@releases) = get_releases($release, $channel);
-    foreach $release (@releases) {
-	if (defined $release_idx{$release}) {
-	    if ($#releases > 0) {
-		print "$release ";
-	    }
-	    print "$base$release_urls[$release_idx{$release}]\n";
-	}
-    }
-}
-
-GetOptions("l"   => \$opt_list_channels,
-	   "r"   => \$opt_list_releases,
-	   "u=s" => \$opt_list_upgrades,
-	   "p=s" => \$opt_payload,
-	   "U=s" => \$opt_url,
+GetOptions("B=s" => \$base_repo,
 	   "c=s" => \$opt_channel,
-	   "o=s" => \$opt_os,
-	   "R=s" => \$base_repo,
-	   "a"   => \$opt_all_upgrades,
 	   "h"   => \$help);
+
+if ($help) {
+    print_help_and_exit();
+}
+
+if (! @ARGV) {
+    print STDERR "No command specified.\n";
+    print_help_and_exit();
+}
+
+my $command = lc shift @ARGV;
 
 $base="https://$base_repo.svc.ci.openshift.org";
 $dot_url="${base}/graph?format=dot";
 $cincy_url="$base/graph";
 
-sub print_help_and_exit() {
-    print STDERR <<EOF;
-Usage: release_status [-b base] [-l | -r [-c channel] | -u release [-a] | -p release | -U release]
-    -R  Use specified base repo (openshift-release or origin-release)
-    -l  List available channels
-    -r  List releases available (optionally with specified channnel).
-    -u  List available upgrades for specified release.
-    -o  List OS for specified release
-    -p  Print payload for specified release.
-    -U  Print URL for specified release.
-EOF
-    exit 1;
-}
+my %generic_commands = (
+    "os"       => 1,
+    "payload"  => 1,
+    "url"      => 1,
+    "upgrades" => 1,
+    );
 
-if ($help) {
+if ($command eq "help") {
     print_help_and_exit();
-} elsif (($opt_list_channels && ($opt_list_releases || $opt_list_upgrades || 
-				 $opt_payload || $opt_url || $opt_os)) ||
-	 ($opt_list_releases && ($opt_list_upgrades || 
-				 $opt_payload || $opt_url || $opt_os)) ||
-	 ($opt_list_upgrades && ($opt_payload || $opt_url || $opt_os)) ||
-	 ($opt_payload && ($opt_url || $opt_os)) ||
-	 ($opt_url && $opt_os)) {
-    print STDERR "Only one of -r, -l, -u, -p, -o, or -U may be specified\n";
-    print_help_and_exit();
-} elsif ($opt_list_releases) {
-    print_releases($opt_channel);
-} elsif ($opt_list_channels) {
+} elsif ($command eq "channels") {
     print_channels();
+} elsif ($command eq "releases") {
+    print_releases($opt_channel);
+} elsif ($generic_commands{$command}) {
+    do_command($command, $opt_channel, @ARGV);
 } else {
-    if ($opt_list_upgrades) {
-	print_upgrades($opt_list_upgrades);
-    } elsif ($opt_payload) {
-	print_payload($opt_payload, $opt_channel);
-    } elsif ($opt_url) {
-	print_url($opt_url, $opt_channel);
-    } elsif ($opt_os) {
-	print_os($opt_url, $opt_channel);
-    } else {
-	print STDERR "Unknown command!\n";
-	print_help_and_exit();
-    }
+    print STDERR "Unknown command '$command'.\n";
+    print_help_and_exit();
 }
