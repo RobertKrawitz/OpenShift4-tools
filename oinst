@@ -89,7 +89,7 @@ Usage: $___topsc [options] install_type
                             the same effect.  If this option is used,
                             exit with status 88 will clean up.
        -n channel           Use the specified release channel.
-                            Default $release_channel.
+                            Default ${release_channel:-current Origin default}.
                             Use 'openshift-release-info channels' to
                             list channels.
        -O                   Overwrite an existing install directory.
@@ -763,7 +763,7 @@ function installer_setup() {
     local release_data
     local image
     if (( query )) ; then
-	if [[ -z $release_channel ]] ; then
+	if [[ -z ${release_channel:-} ]] ; then
 	    local -a channels=()
 	    readarray -t channels <<< "$(openshift-release-info -B "$repo" channels < /dev/null | sort -r)"
 	    OPS3=${PS3:-}
@@ -1070,7 +1070,7 @@ done
 
 release_source=${OPENSHIFT_RELEASE_SOURCE:-https://${repo}.svc.ci.openshift.org/api/v1/releasestream}
 installer_registry=${OPENSHIFT_INSTALL_REGISTRY:-registry.svc.ci.openshift.org/${subdir_map[$repo]:-}/release}
-release_channel=${release_channel:-${release_base_map[$repo]:-}}
+#release_channel=${release_channel:-${release_base_map[$repo]:-}}
 
 shift $((OPTIND - 1))
 
