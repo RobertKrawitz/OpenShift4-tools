@@ -62,8 +62,7 @@ Usage: $___topsc [options] install_type
        -B port              Use the specified port for kubechart.  oschart
                             runs at port+1.  Implies -b.  Default is 3000.
        -b                   Launch kubechart and oschart (if available).
-       -C                   Only clean up (requires cluster already exists).
-                            Requires -d.
+       -C directory         Only clean up (requires cluster already exists).
        -c command           Run the specified command rather than an
                             interactive shell on completion of installation.
        -D domain            Use the specified domain name.
@@ -185,7 +184,6 @@ declare -r JQ=$(type -p jq)
 declare -r owd=$(pwd)
 declare -i clean_install_cache=0
 declare -i clean_shutdown=0
-declare -i cleanup_only=0
 declare -i cleanup_run=0
 declare -i create_bastion=1
 declare -i created_kubechart=0
@@ -211,6 +209,7 @@ declare -i host_prefix_bits=23
 declare api_version=v1
 declare aws_compute_type=
 declare aws_control_type=
+declare cleanup_only_dir=
 declare config_file=
 declare console_route=
 declare external_installer=
@@ -477,14 +476,10 @@ function libvirt_cleanup() {
 
 function indent() {
     local -i depth=${1:-2}
-    local sol=''
-    while (( depth-- > 0 )) ; do
-	sol+=' '
-    done
+    # shellcheck disable=SC2155
+    local sol=$(printf "%${depth}s" '')
     while IFS='' read -r line ; do
-	if [[ -n $line ]] ; then
-	    echo "$sol$line"
-	fi
+	[[ -z $line ]] || echo "$sol$line"
     done
 }
 
@@ -644,14 +639,15 @@ function run_proxy() {
 }
 
 function timestamp() {
-    # Make the message look vaguely Go-like.
     while read -r ; do
+	# Try to diagnose errors to some extent
 	case "$REPLY" in
 	    'Incompatible API version with plugin')
 		api_plugin_incompatibility_detected=1
 		;;
 	    *)  ;;
 	esac
+	# Make the message look vaguely Go-like.
 	printf 'T0000 %(%H:%M:%S)T.000000   %s\n' -1 "$REPLY"
     done
 }
@@ -725,6 +721,9 @@ Could not extract installer from image.  Common reasons:
 
 6) Ensure that you have correct credentials for quay.io (should be
    provided as a result of step 4).
+
+7) You've specified an installer version that does not exist (even if
+   you've used the query option).
 EOF
 }
 
@@ -740,6 +739,7 @@ function fail_find_image() {
     fatal "Can't find image for version $install_version"
 }
 
+# This should run in a subshell to not change the current directory
 function do_installer_setup() {
     local install_dir=$1
     local image=$2
@@ -813,9 +813,91 @@ function validate_environment() {
     done
 }
 
+function confirm_install() {
+    (( noconfirm )) && return 0
+    local proceed
+    echo
+    while : ; do
+	read -p "Proceed? [YnevV!?] " -r proceed
+	case "$proceed" in
+	    y|Y|yes|YES|Yes|'')
+		break
+		;;
+	    n|N|no|NO|No)
+		echo "Not confirmed"
+		return 1
+		;;
+	    '!')
+		echo "Spawning shell..."
+		"$SHELL" -i
+		;;
+	    e|E|edit|EDIT|Edit)
+		echo "Running editor on config..."
+		${EDITOR:-vi} "$srcdir/$install_dir/install-config.yaml"
+		;;
+	    V)
+		env
+		;;
+	    v)
+		set
+		;;
+	    '?')
+		echo 'y   Proceed with installation'
+		echo 'n   Do not proceed with installation'
+		echo '!   Spawn shell'
+		echo 'V   Print environment'
+		echo 'v   Print all variable settings'
+		echo 'e   Edit install-config.yaml'
+		echo '?   Print this help'
+		echo 'Abort installation with any other input'
+		;;
+	    *)
+		;;
+	esac
+    done
+    return 0
+}
+
+function start_kubechart_if_requested() {
+    [[ -n $kubechart_port ]] && run_kubechart=1
+    local run_oschart="$run_kubechart"
+    if [[ -n $run_kubechart ]] ; then
+	kubechart_port=${kubechart_port:-3000}
+	oschart_port=$((kubechart_port+1))
+    fi
+    if [[ -x $kubechart && $run_kubechart -gt 0 ]] ; then
+	created_kubechart=1
+	run_kubechart&
+    fi
+    if [[ -x $oschart && $run_oschart -gt 0 ]] ; then
+	created_oschart=1
+	run_oschart&
+    fi
+}
+
+function clean_secret() {
+    local min_indent_prefix=
+    while IFS= read -r line ; do
+	if [[ -n $min_indent_prefix ]] ; then
+	    if [[ $line == "${min_indent_prefix}"* ]] ; then
+		continue
+	    else
+		min_indent_prefix=
+	    fi
+	fi
+	if [[ $line =~ (( *)(sshKey: |pullSecret: ))([|]|.*) ]] ; then
+	    [[ ${BASH_REMATCH[4]} == '|' ]] && min_indent_prefix="${BASH_REMATCH[2]} "
+	    echo "${BASH_REMATCH[1]}..."
+	else
+	    echo "$line"
+	fi
+    done
+    return 0
+}
+
 function run_install() {
     validate_environment
-    if (( !cleanup_only )) ; then
+    if [[ -z $cleanup_only_dir ]] ; then
 	[[ -n $install_version ]] && srcdir=.
 	mkdir -p "$srcdir/$install_dir"
 	[[ -n $install_version ]] && installer_setup
@@ -845,7 +927,7 @@ function run_install() {
     trap cleanup EXIT SIGHUP SIGINT SIGQUIT SIGTERM
 
     install_stage=1
-    OPENSHIFT_INSTALL_CONFIG="$(sed -e 's/^pullSecret:.*/pullSecret: .../' -e "s/'*ssh-rsa.*/.../" "$srcdir/$install_dir/install-config.yaml")"
+    OPENSHIFT_INSTALL_CONFIG="$(clean_secret < "$srcdir/$install_dir/install-config.yaml")"
     export OPENSHIFT_INSTALL_CONFIG
     cat <<EOF
 About to run installer:
@@ -861,72 +943,18 @@ Configuration:
 
 $OPENSHIFT_INSTALL_CONFIG
 EOF
-    if (( ! noconfirm )) ; then
-	local proceed
-	echo
-	while : ; do
-	    read -p "Proceed? [YnevV!?] " -r proceed
-	    case "$proceed" in
-		y|Y|yes|YES|Yes|'')
-		    break
-		    ;;
-		n|N|no|NO|No)
-		    echo "Not confirmed"
-		    exit
-		    ;;
-		'!')
-		    echo "Spawning shell..."
-		    "$SHELL" -i
-		    ;;
-		e|E|edit|EDIT|Edit)
-		    echo "Running editor on config..."
-		    ${EDITOR:-vi} "$srcdir/$install_dir/install-config.yaml"
-		    ;;
-		V)
-		    env
-		    ;;
-		v)
-		    set
-		    ;;
-		'?')
-		    echo 'y   Proceed with installation'
-		    echo 'n   Do not proceed with installation'
-		    echo '!   Spawn shell'
-		    echo 'V   Print environment'
-		    echo 'v   Print all variable settings'
-		    echo 'e   Edit install-config.yaml'
-		    echo '?   Print this help'
-		    echo 'Abort installation with any other input'
-		    ;;
-		*)
-		    ;;
-	    esac
-	done
-    fi
+    confirm_install || exit 1
+
     if (( rebuild_installer )) ; then
 	echo "Rebuilding installer"
 	TAGS=libvirt hack/build.sh || fatal "Can't rebuild installer"
     fi
 
     install_stage=2
-    # shellcheck disable=SC2086
-    echo "${install}" $loglevel "--dir=$srcdir/$install_dir" create cluster
     # Start kubechart/oschart (if needed) prior to running the installer
-    [[ -n $kubechart_port ]] && run_kubechart=1
-    local run_oschart="$run_kubechart"
-    if [[ -n $run_kubechart ]] ; then
-	kubechart_port=${kubechart_port:-3000}
-	oschart_port=$((kubechart_port+1))
-    fi
-    if [[ -x $kubechart && $run_kubechart -gt 0 ]] ; then
-	created_kubechart=1
-	run_kubechart&
-	fi
-    if [[ -x $oschart && $run_oschart -gt 0 ]] ; then
-	created_oschart=1
-	run_oschart&
-    fi
+    start_kubechart_if_requested
 
+    echo
     # shellcheck disable=SC2086
     "${install}" $loglevel "--dir=$srcdir/$install_dir" create cluster </dev/null 2>&1 | timestamp
 
@@ -991,7 +1019,11 @@ EOF
 	fi
 	end3=$(tsec)
 	# shellcheck disable=SC2155
-	export OPENSHIFT_INSTALL_NODES=$("${___topdir:-}"get-nodes)
+	export OPENSHIFT_INSTALL_NODE_IPS=$("${___topdir:-}"get-nodes)
+	# shellcheck disable=SC2155
+	export OPENSHIFT_INSTALL_WORKER_NODES=$(oc get nodes -l node-role.kubernetes.io/worker --no-headers=true -o name|sed -e 's,node/,,')
+	# shellcheck disable=SC2155
+	export OPENSHIFT_INSTALL_MASTER_NODES=$(oc get nodes -l node-role.kubernetes.io/master --no-headers=true -o name|sed -e 's,node/,,')
     fi
     printerval "Installation" $((end1 - start))
     (( end2 )) && printerval "Total setup to login" $((end2 - start))
@@ -1009,13 +1041,13 @@ EOF
     clean_shutdown=1
 }
 
-while getopts ":A:a:B:bCc:D:d:Ff:H:hI:i:LlM:m:Nn:OoP:p:QR:rSsT:t:V:vW:w:Xxy" opt ; do
+while getopts ":A:a:B:bC:c:D:d:Ff:H:hI:i:LlM:m:Nn:OoP:p:QR:rSsT:t:V:vW:w:Xxy" opt ; do
     case "$opt" in
 	A) aws_control_type="$OPTARG"   ;;
 	a) aws_compute_type="$OPTARG"   ;;
 	B) kubechart_port="$OPTARG"	;;
 	b) run_kubechart=1		;;
-	C) cleanup_only=1		;;
+	C) cleanup_only_dir="$OPTARG"	;;
 	c) run_command="$OPTARG"        ;;
 	D) install_domain="$OPTARG"     ;;
 	d) install_dir="$OPTARG"        ;;
@@ -1055,9 +1087,6 @@ done
 
 [[ -n $external_installer ]] && install="$external_installer"
 
-[[ -z $install_dir && $cleanup_only -gt 0 ]] &&
-    fatal "Must specify -d install_dir in combination with -C"
-
 [[ -n $masterconffile && ! -r $masterconffile ]] &&
     fatal "Master platform config $masterconffile not readable"
 [[ -n $workerconffile && ! -r $workerconffile ]] &&
@@ -1065,8 +1094,8 @@ done
 [[ -n $platformconffile && ! -r $platformconffile ]] &&
     fatal "Platform config $platformconffile not readable"
 
-(( host_prefix_bits < 8 || host_prefix_bits > 24 )) &&
-    fatal "Host prefix size must be between 8 and 24"
+(( host_prefix_bits < 8 || host_prefix_bits > 23 )) &&
+    fatal "Host prefix size must be between 8 and 23"
 
 release_source=${OPENSHIFT_RELEASE_SOURCE:-https://${repo}.svc.ci.openshift.org/api/v1/releasestream}
 installer_registry=${OPENSHIFT_INSTALL_REGISTRY:-registry.svc.ci.openshift.org/${subdir_map[$repo]:-}/release}
@@ -1074,7 +1103,12 @@ installer_registry=${OPENSHIFT_INSTALL_REGISTRY:-registry.svc.ci.openshift.org/$
 
 shift $((OPTIND - 1))
 
-[[ -n ${1:-} ]] && install_type="$1"
+if [[ -n ${1:-} ]] ; then
+    install_type="$1"
+    shift
+fi
+
+[[ -z "$*" ]] || echo "Warning: extraneous arguments $# after $install_type will be ignored!" 1>&2
 
 clear_env
 case "$install_type" in
@@ -1087,7 +1121,7 @@ export OPENSHIFT_INSTALL_CLUSTER_NAME=${install_dir:-${LOGNAME}-${OPENSHIFT_INST
 
 install_dir="${install_dir:-$OPENSHIFT_INSTALL_CLUSTER_NAME}"
 
-if (( cleanup_only )) ; then
+if [[ -n $cleanup_only_dir ]] ; then
     if [[ ! -d $install_dir ]] ; then
 	echo "No install directory $install_dir to clean up"
 	exit 0
