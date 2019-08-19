@@ -45,10 +45,9 @@ if [[ -z ${___topsc:-} ]] ; then
     [[ -z $___topdir ]] && fatal "Can't find directory for $0"
 fi
 
-function help() {
-    [[ -n ${1:-} ]] && echo "$___topsc: Unknown option $1"
+function print_help() {
     cat <<EOF
-Usage: $___topsc [options] install_type
+Usage: $___topsc [options] [install_type]
     install_type: one of
        libvirt (default)
        aws     (aws us-east-1)
@@ -57,73 +56,181 @@ Usage: $___topsc [options] install_type
        aws4    (aws us-west-2)
        aws-*   (specified AWS region)
     Options:
-       -A master_type       Type of master instance (AWS only)
-       -a compute_type      Type of compute instance (AWS only)
-       -B port              Use the specified port for kubechart.  oschart
-                            runs at port+1.  Implies -b.  Default is 3000.
+       -p profile           Read the specified profile file.  Profile
+                            may be a JSON file or shell code.
+                            Option names are given below.
+			    Note that command line options specified
+			    after the -p override the profile.
+       -X option=value      Evaluate the specified extended option.
+       -H                   Print list of additional extended command
+                            line options.
+
        -b                   Launch kubechart and oschart (if available).
-       -C directory         Only clean up (requires cluster already exists).
-       -c command           Run the specified command rather than an
-                            interactive shell on completion of installation.
-       -D domain            Use the specified domain name.
+                            KEY: run_kubechart (default=0)
+       -C cleanup_only_dir  Only clean up (requires cluster already exists).
+       -c                   Clean install cache, in case it is corrupted.
+                            KEY: clean_install_cache (default=1)
+       -d install_dir       Use the specified dir as working directory and
+                            cluster name.  Default is ${LOGNAME:-}-<platform>.
+       -N                   Don't clean up on exit.  If this is not used,
+                            exit with status 77 from the shell will have
+                            the same effect.  If this option is used,
+                            exit with status 88 will clean up.
+                            KEY: do_cleanup (default=1)
+       -n release_channel   Use the specified release channel.
+                            Default ${release_channel:-current Origin default}.
+                            Use 'openshift-release-info channels' to
+                            list channels.
+       -O                   Allow overwrite an existing install directory.
+                            KEY: overwrite (default=0)
+       -Q                   Query for release to use.
+                            KEY: query (default=0)
+       -R repo              Use the specified repo (default $default_repo_base).
+       -V install_version   Install the specified image version (default 
+                            latest).  Use '$___topsc -H' for more details
+                            or to use local installer.
+       -v                   Print debug information.
+                            KEY/VALUE: loglevel='--log-level=debug'
+       -w worker_count      Number of worker nodes (default by platform).
+       -x                   Clean up local install cache (in case of corrupt
+                            image cache).
+                            KEY: clean_install_cache (default=0)
+       -y                   Do not prompt prior to starting install
+                            KEY: noconfirm (default=0)
+EOF
+}
+
+function help() {
+    [[ -n ${1:-} ]] && echo "$___topsc: Unknown option $1"
+    print_help
+    exit 1
+}
+
+function help_extended() {
+    print_help
+    cat <<EOF
+
+    Other options with no short command line option (with -X):
+      Cluster configuration:
+        aws_master_type     Type of master instance (AWS only)
+        aws_compute_type    Type of compute instance (AWS only)
+        host_prefix_bits    Use the specified host prefix size (default $host_prefix_bits,
+                            must be between 8 and 24)
+        master_count        Use the specified number of master nodes.
+                            Default by platform.
+        masterconfdata      Specify the data for master configuration.
+        masterconffile      Take master platform config from specified file.
+        platformconfdata    Specify the data for platform configuration.
+        platformconffile    Take platform configuration from specified file.
+        worker_count        Use the specified number of worker nodes.
+                            Default by platform.
+        workerconfdata      Specify the data for worker configuration.
+        workerconffile      Take master platform config from specified file.
+
+      Installation options:
+        config_file         Use the specified file as the install config file.
+        create_bastion      Create ssh bastion host (default=1)
+        do_login            Login to the console (default=1)
+        ext_installer       Use the specified command to install OpenShift.
+        force_postinstall   Always run the postinstall even if setup fails.
+        install_domain      Use the specified domain name.
                             For libvirt: default is taken from a unique entry
                                 in /etc/NetworkManager/dnsmasq.d, if available;
                                 if not (or there are multiple masqueraded
                                 domains), there is no default.
                             For AWS: default is $aws_default_domain.
-       -d installdir        Use the specified dir as working directory and
-                            cluster name.  Default is ${LOGNAME:-}-<platform>.
-       -F                   Do not wait for console etc. to come on line.
-       -f configfile        Use the specified file as the install config file.
-       -H bits              Use the specified host prefix size (default $host_prefix_bits,
-                            must be between 8 and 24)
-       -i command           Use the specified command to install OpenShift.
-       -L                   Install using local workspace (currently hardcoded
-                            to \$GOPATH/src/github.com/openshift/installer)
-       -l                   Do not login to the console.
-       -M masterconfig      Take master platform config from specified file.
-       -m masters           Number of master nodes (default by platform).
-       -N                   Don't clean up on exit.  If this is not used,
-                            exit with status 77 from the shell will have
-                            the same effect.  If this option is used,
-                            exit with status 88 will clean up.
-       -n channel           Use the specified release channel.
-                            Default ${release_channel:-current Origin default}.
-                            Use 'openshift-release-info channels' to
-                            list channels.
-       -O                   Overwrite an existing install directory.
-                            Normally $___topsc will refuse to overwrite
-                            an existing install directory.
-       -P pubkey_path       Specify the path to the desired public key
-                            Default $pubkey
-       -p pull_secret_path  Specify the path to the pull secret.
-                            Default $pull_secret
-       -Q                   Query for release to use.
-       -R repo              Use the specified repo (default $default_repo_base).
-       -r                   Always rebuild the installer.
-       -S                   Do not create ssh bastion host.
-       -s                   Always run the postinstall even if setup fails.
-       -T platformconfig    Take platform configuration from specified file.
-       -V version           Install the specified image version.  Default
+        install_version     Install the specified image version.  Default
                             is to use the latest version.
                             If this is used, the matching toolchain is
                             also used unless -X is specified.
                             Use 'openshift-release-info releases' or
                             'openshift-release-info -c <channel> releases'
                             to list available versions.
-       -v                   Print debug information.
-       -W workerconfig      Take worker platform config from specified file.
-       -w workers           Number of worker nodes (default by platform).
-       -x                   Clean up local install cache (in case of corrupt
-                            image cache).
-       -y                   Do not prompt prior to starting install
+                            Use empty value to install from local workspace
+                            (currently hardcoded
+                            to \$GOPATH/src/github.com/openshift/installer)
+        install_type        Specify the install type, as described above.
+        kubechart_port      Use the specified port for kubechart.  oschart
+                            runs at port+1.  Implies -b.  Default is 3000.
+        pubkey_file         Specify the path to the desired public key
+                            Default $pubkey_file
+        pull_secret         Specify the path to the pull secret.
+                            Default $pull_secret
+        rebuild             Always rebuild the installer, when using local
+                            installer.
+        run_command         Run the specified command rather than an
+                            interactive shell on completion of installation.
+        wait_for_complete   Wait for console to come online (default=1)
 
-    The following options are normally not recommended:
-       -I api_version       Use the specified API version (default $api_version)
-       -o                   Override install image.
-       -X                   Use the local toolchain to install with
+    The following extended options are normally not recommended:
+       api_version          Use the specified API version (default $api_version).
+       do_override          Override install image.
+       force_local_tools    Use the local toolchain to install with.
 EOF
     exit 1
+}
+
+function list_aws_instance_types_1() {
+    cat <<\EOF
+Currently known AWS instance types.  Note that not all types are
+available in all regions, and AWS may add additional types at
+any time.  See https://aws.amazon.com/ec2/instance-types/
+for more information.
+
+EOF
+    local last_class=
+    local i
+    for i in "${known_aws_instance_types[@]}" ; do
+	case "$i" in
+	    X.*)
+		echo -en "$  {last_class:+\n\n}${i#X.}:"
+		;;
+	    Y.*)
+		echo -ne "\n    ${i#*.}"
+		;;
+	    Z.*)
+		echo -ne " ${i#*.}"
+		;;
+	    ${last_class}.*)
+		echo -n " ${i#*.}"
+		;;
+	    *)
+		echo -ne "\n    ${i%%.*}: ${i#*.}"
+		last_class=${i%%.*}
+		;;
+	esac
+    done
+    echo
+    exit 1
+}
+
+function list_aws_instance_types() {
+    list_aws_instance_types_1
+    exit 1
+}
+
+function check_aws_instance_type() {
+    local aws_type="${1:-}"
+    [[ -z $aws_type ]] && return 0
+    local i
+    for i in "${known_aws_instance_types[@]}" ; do
+	[[ $i == "$aws_type" ]] && return 0
+    done
+    echo "*** WARNING: '$aws_type' is not a currently known AWS instance type!"
+    local aws_prefix=${aws_type%%.*}
+    local j=0
+    for i in "${known_aws_instance_types[@]}" ; do
+	if [[ $aws_prefix = "${i%%.*}" ]] ; then
+	   (( j++ )) || echo "Possible candidates:"
+	   echo -n " $i"
+	fi
+    done
+    if (( j )) ; then
+	echo
+    else
+	list_aws_instance_types
+    fi
+    return 1
 }
 
 function clean_startup() {
@@ -167,7 +274,7 @@ declare install_domain=${OPENSHIFT_INSTALL_DOMAIN:-}
 declare install_dir=${OPENSHIFT_INSTALL_DIR:-$install_domain}
 declare install_version=latest_default
 declare pull_secret=${OPENSHIFT_INSTALL_PULL_SECRET_PATH:-$HOME/Downloads/pull-secret}
-declare pubkey=${OPENSHIFT_INSTALL_SSH_PUB_KEY_PATH:-$HOME/.ssh/id_rsa.pub}
+declare pubkey_file=${OPENSHIFT_INSTALL_SSH_PUB_KEY_PATH:-$HOME/.ssh/id_rsa.pub}
 declare installer_registry=
 declare srcdir=${GOPATH:-$HOME/go}/src/github.com/openshift/installer
 declare install=$srcdir/bin/openshift-install
@@ -192,8 +299,8 @@ declare -i created_proxy=0
 declare -i do_cleanup=1
 declare -i do_login=1
 declare -i do_override=0
-declare -i force_local_toolchain=0
-declare -i force_setup_postinstall=0
+declare -i force_local_tools=0
+declare -i force_postinstall=0
 declare -i install_stage=0
 declare -i login_succeeded=0
 declare -i master_count=0
@@ -208,19 +315,50 @@ declare -i worker_count=0
 declare -i host_prefix_bits=23
 declare api_version=v1
 declare aws_compute_type=
-declare aws_control_type=
+declare aws_master_type=
 declare cleanup_only_dir=
 declare config_file=
 declare console_route=
-declare external_installer=
+declare ext_installer=
 declare kubechart_port=
 declare loglevel=
 declare oschart_port=
 declare release_source=
 declare run_command=
 declare masterconffile=
+declare masterconfdata=
 declare workerconffile=
+declare workerconfdata=
 declare platformconffile=
+declare platformconfdata=
+declare -ar known_aws_instance_types=("X.General Purpose"
+				     m5{,d}.{{,{,2,4,8,12,16}x}large,metal}
+				     m4.{,{,2,4,10,16}x}large
+				     m5a.{,{2,4,8,12,16,24}x}large
+				     t{2,3,3a}.{nano,micro,small,medium,{,x,2x}large}
+				     "X.Compute Optimized"
+				     c4.{,{,2,4,8}x}large
+				     c5.{,{,{,2,4,9,12,18,24}x}large,metal}
+				     c5{d,n}.{{,{,2,4,9,18}x}large,metal}
+				     r5ad.{,{,2,4,12,24}x}large
+				     "X.Memory Optimized"
+				     r4.{,{,2,4,8,16}x}large
+				     r5a.{,{2,4,8,12,16,24}x}large
+				     r5{,d}.{{,{,2,4,8,12,16}x}large,metal}
+				     x1e.{,{,2,4,8,16,32}x}large
+				     x1.{16,32}xlarge
+				     Y.u-6.tb1.metal Z.u-t{9,12}tb1.metal
+				     z1d.{{,{,2,3,6,12}x}large,metal}
+				     "X.GPU"
+				     p3.{2,8,16,24}xlarge
+				     p2.{,8,16}xlarge
+				     g3s.xlarge g3.{4,8,16}xlarge
+				     f1.{2,4,16}xlarge
+				     "X.Storage Optimized"
+				     i3.{{,{2,4,8,16}x}large,metal}
+				     i3n.{{,{2,3,6,12,24}x}large,metal}
+				     d2.{,2,4,8}xlarge
+				     h1.{2,4,8,16}xlarge)
 
 # Running nested installs is liable to be problematic
 if [[ -n ${OPENSHIFT_INSTALL_INTERLOCK:-} ]] ; then
@@ -356,8 +494,8 @@ function openshift_libvirt() {
     machineCIDR='192.168.126.0/24'
     if [[ $install_version == latest_default ]] ; then
 	install_version=
-	force_local_toolchain=1
-	external_installer=
+	force_local_tools=1
+	ext_installer=
 	echo "*** Using local installer with libvirt"
     fi
     if (( clean_install_cache )) ; then
@@ -484,11 +622,11 @@ function indent() {
 }
 
 function aws_master() {
-    if [[ -n $aws_control_type ]] ; then
+    if [[ -n $aws_master_type ]] ; then
 	cat <<EOF
 
     aws:
-      type: "$aws_control_type"
+      type: "$aws_master_type"
 EOF
     else
 	echo '{}'
@@ -515,7 +653,9 @@ EOF
 }
 
 function platform() {
-    if [[ -n $platformconffile && -r $platformconffile ]] ; then
+    if [[ -n $platformconfdata ]] ; then
+	indent 2 <<< "$platformconfdata"
+    elif [[ -n $platformconffile && -r $platformconffile ]] ; then
 	indent 2 < "$platformconffile"
     else
 	"${platform}_platform"
@@ -523,8 +663,10 @@ function platform() {
 }
 
 function master_platform() {
-    if [[ -n $masterconffile && -r $masterconffile ]] ; then
+    if [[ -n $masterconfdata ]] ; then
 	echo
+	indent 2 <<< "$masterconfdata"
+    elif [[ -n $masterconffile && -r $masterconffile ]] ; then
 	indent 4 < "$masterconffile"
     else
 	"${platform}_master"
@@ -532,7 +674,10 @@ function master_platform() {
 }
 
 function worker_platform() {
-    if [[ -n $workerconffile && -r $workerconffile ]] ; then
+    if [[ -n $workerconfdata ]] ; then
+	echo
+	indent 2 <<< "$workerconfdata"
+    elif [[ -n $workerconffile && -r $workerconffile ]] ; then
 	echo
 	indent 4 < "$workerconffile"
     else
@@ -577,7 +722,7 @@ platform:
 $(platform)
 pullSecret: '$(jq -scM '.[0]' < "$pull_secret")'
 sshKey: |
-  $(< "$pubkey")
+  $(< "$pubkey_file")
 EOF
 }
 
@@ -690,41 +835,69 @@ function run_shell() {
     fi
 }
 
+function warn_authentication_failure() {
+cat <<\EOF
+* You need to download your pull secrets.
+
+  Visit https://try.openshift.com and log in.  Click on Create
+  Cluster/Self-Installed Cluster
+  (https://cloud.redhat.com/openshift/install) and select AWS (or as
+  appropriate).  From there, select User-Provisioned Infrastructure.
+  Download your pull secret and place it in ~/Downloads.
+
+* You need an appropriate quay.io credential.  This may be done in
+  one of two ways:
+
+  a) The Easy Way: Get the required key from
+     https://access.redhat.com/solutions/3533201).
+     Add the auth for quay.io to your ~/.docker/config.json
+     and ~/Downloads/pull-secret.
+
+  b) The Hard Way (but will allow you to push your own images): from
+     the OpenShift Wiki (https://mojo.redhat.com/docs/DOC-1074351)
+     navigate to Set Up Accounts
+     (https://mojo.redhat.com/docs/DOC-1081313) and Quay.io Access
+     (https://mojo.redhat.com/docs/DOC-1167707#jive_content_id_How_to_play_around_with_Quay_RH_Internal)
+     and follow the instructions to get an account.  This will take
+     long enough that you should use the "easy way" also.
+
+     You need to log in to quay.io.  After logging in, click on the
+     settings (gear) icon in the left bar and click on "CLI Password"
+     under Docker CLI Password at the top.  You will be prompted for
+     your quay.io password.  Click on "Docker Configuration" and
+     either download or view the result.  Copy the result into
+     ~/.docker/config.json.
+
+* You need to oc login.
+
+  Go to https://api.ci.openshift.org/ and in
+  the upper right corner you will see the '?'.  Dropdown to Command
+  Line Tools that will give you an 'oc login' command to run from a
+  command line.
+
+  Not doing this can lead to very strange errors; see
+  https://bugzilla.redhat.com/show_bug.cgi?id=1647479
+
+* Following oc login, run 'oc registry login'.  This will generate
+  additional secrets in ~/.docker/config.json; these need to be
+  copied into ~/Downloads/pull-secret (in particular,
+  the secret for registry.svc.ci.openshift.org).
+
+* Ensure that you have correct credentials for your cloud provider,
+  as appropriate.
+EOF
+}
+
 function warn_installer_fail() {
     cat <<\EOF
 Could not extract installer from image.  Common reasons:
 
-1) You need to download your pull secrets.
+* You've specified an installer version that does not exist (even if
+  you've used the query option).  This will fail quickly with a
+  clear error message.
 
-   Visit https://try.openshift.com and log in.  Click on Create
-   Cluster/Self-Installed Cluster
-   (https://cloud.redhat.com/openshift/install) and select AWS (or as
-   appropriate).  From there, select User-Provisioned Infrastructure.
-   Download your pull secret and place it in ~/Downloads.
-
-2) You need to log in to quay.io.
-
-3) You need to oc login.
-
-   Go to https://api.ci.openshift.org/ and in
-   the upper right corner you will see the '?'.  Dropdown to Command
-   Line Tools that will give you an 'oc login' command to run from a
-   command line.
-
-4) Following oc login, run 'oc registry login'.  This will generate
-   additional secrets in ~/.docker/config.json; these need to be
-   copied into ~/Downloads/pull-secret (in particular,
-   the secret for registry.svc.ci.openshift.org).
-
-5) Ensure that you have correct credentials for your cloud provider,
-   as appropriate.
-
-6) Ensure that you have correct credentials for quay.io (should be
-   provided as a result of step 4).
-
-7) You've specified an installer version that does not exist (even if
-   you've used the query option).
 EOF
+    warn_authentication_failure
 }
 
 function fail_installer_extract() {
@@ -790,12 +963,12 @@ function installer_setup() {
     local -r pullspec="$installer_registry:$install_version"
     image=$(${OC} adm release info --pullspecs "$pullspec" | awk '{if ($1 == "Pull") {print $3}}')
     [[ -z $image ]] && fail_find_image "$install_version"
-    if (( ! force_local_toolchain )) ; then
-	echo "Using installer from image ${image} ($external_installer)" 1>&2
+    if (( ! force_local_tools )) ; then
+	echo "Using installer from image ${image} ($ext_installer)" 1>&2
 	(do_installer_setup "$install_dir" "$image" "$install_version") || exit 1
-	external_installer="${install_dir}/openshift-install"
-	install="$external_installer"
-	echo -e "installer version:\n$("$external_installer" version |sed 's/^/    /')\n" 1>&2
+	ext_installer="${install_dir}/openshift-install"
+	install="$ext_installer"
+	echo -e "installer version:\n$("$ext_installer" version |sed 's/^/    /')\n" 1>&2
     fi
     srcdir=.
     if [[ $do_override == 1 && -n $not_latest ]] ; then
@@ -914,7 +1087,7 @@ function run_install() {
     # We will need the installer even in cleanup-only mode,
     # in order to clean up the cluster.
     local -i rebuild_installer=0
-    if [[ -z $external_installer ]] ; then
+    if [[ -z $ext_installer ]] ; then
 	cd $srcdir || fatal "Can't cd to $srcdir"
 	local -r cur_rev=$(git rev-parse @)
 	[[ ! -x $install || $rebuild -gt 0 || $(${install} version) =~ $cur_rev ]] && rebuild_installer=1
@@ -971,11 +1144,18 @@ EOF
 Error message suggests a stray 'terraform-provider-libvirt' binary.
 Please remove all files of that name from your home directory and try
 again.
+
 EOF
 	fi
+	cat <<'EOF'
+There are a number of problems that may cause failure to install, most
+commonly authentication problems:
+
+EOF
+	warn_authentication_failure
 	clean_shutdown=0
     fi
-    if (( force_setup_postinstall || !install_status )) ; then
+    if (( force_postinstall || !install_status )) ; then
 	if [[ -f "${srcdir}/${install_dir}/auth/kubeadmin-password" ]] ; then
 	    # shellcheck disable=SC2155
 	    export OPENSHIFT_INSTALL_PASSWORD=$(< "${srcdir}/${install_dir}/auth/kubeadmin-password")
@@ -1041,51 +1221,51 @@ EOF
     clean_shutdown=1
 }
 
-while getopts ":A:a:B:bC:c:D:d:Ff:H:hI:i:LlM:m:Nn:OoP:p:QR:rSsT:t:V:vW:w:Xxy" opt ; do
+function read_profile() {
+    local profile="$1"
+    if [[ ! -r $profile ]] ; then
+	fatal "Can't read profile $profile"
+    fi
+    local value
+    if [[ $profile = *.json ]] ; then
+	while read -r key <<<"$(jq -r 'keys[]' "$profile")" ; do
+	    value="$(jq -r ".\"$key\"" "$profile")" || fatal "Cannot process $key"
+	    eval "key=\"$value\"" || fatal "Cannot process $key=$value"
+	done
+    else
+	# shellcheck source=/dev/null
+	. "$profile" || fatal "Cannot process profile $profile"
+    fi
+}
+
+function process_option() {
+    local option="$1"
+    eval "$1" || fatal "Cannot process option $option"
+}
+
+while getopts ":bC:cd:H:hNn:Op:QR:V:vX:y" opt ; do
     case "$opt" in
-	A) aws_control_type="$OPTARG"   ;;
-	a) aws_compute_type="$OPTARG"   ;;
-	B) kubechart_port="$OPTARG"	;;
 	b) run_kubechart=1		;;
 	C) cleanup_only_dir="$OPTARG"	;;
-	c) run_command="$OPTARG"        ;;
-	D) install_domain="$OPTARG"     ;;
+	c) clean_install_cache=1	;;
 	d) install_dir="$OPTARG"        ;;
-	F) wait_for_complete=0		;;
-	f) config_file="$OPTARG"	;;
-	H) host_prefix_bits="$OPTARG"   ;;
-	I) api_version="$OPTARG"	;;
-	i) external_installer="$OPTARG" ;;
-	l) do_login=0			;;
-	L) install_version=		;;
-	M) masterconffile="$OPTARG"     ;;
-	m) master_count="$OPTARG"       ;;
 	N) do_cleanup=0			;;
 	n) release_channel="$OPTARG"    ;;
 	O) overwrite=1                  ;;
-	o) do_override=1		;;
-	P) pubkey="$OPTARG"             ;;
-	p) pull_secret="$OPTARG"        ;;
+	p) read_profile "$OPTARG"       ;;
 	Q) query=1                      ;;
 	R) repo="$OPTARG" 		;;
-	r) rebuild=1			;;
-	S) create_bastion=0             ;;
-	s) force_setup_postinstall=1    ;;
-	T) platformconffile="$OPTARG"   ;;
-	t) install_type="$OPTARG"       ;;
 	V) install_version="$OPTARG"    ;;
 	v) loglevel='--log-level=debug' ;;
-	W) workerconffile="$OPTARG"     ;;
-	w) worker_count="$OPTARG"       ;;
-	X) force_local_toolchain=1	;;
-	x) clean_install_cache=1	;;
+	X) process_option "$OPTARG"     ;;
 	y) noconfirm=1			;;
+	H) help_extended		;;
 	h) help				;;
 	*) help "$OPTARG"               ;;
     esac
 done
 
-[[ -n $external_installer ]] && install="$external_installer"
+[[ -n $ext_installer ]] && install="$ext_installer"
 
 [[ -n $masterconffile && ! -r $masterconffile ]] &&
     fatal "Master platform config $masterconffile not readable"
@@ -1096,6 +1276,9 @@ done
 
 (( host_prefix_bits < 8 || host_prefix_bits > 23 )) &&
     fatal "Host prefix size must be between 8 and 23"
+
+check_aws_instance_type "$aws_master_type"
+check_aws_instance_type "$aws_compute_type"
 
 release_source=${OPENSHIFT_RELEASE_SOURCE:-https://${repo}.svc.ci.openshift.org/api/v1/releasestream}
 installer_registry=${OPENSHIFT_INSTALL_REGISTRY:-registry.svc.ci.openshift.org/${subdir_map[$repo]:-}/release}
