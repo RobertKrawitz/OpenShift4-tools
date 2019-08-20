@@ -183,7 +183,7 @@ EOF
     for i in "${known_aws_instance_types[@]}" ; do
 	case "$i" in
 	    X.*)
-		echo -en "$  {last_class:+\n\n}${i#X.}:"
+		echo -en "${last_class:+\n\n}${i#X.}:"
 		;;
 	    Y.*)
 		echo -ne "\n    ${i#*.}"
@@ -332,20 +332,22 @@ declare workerconfdata=
 declare platformconffile=
 declare platformconfdata=
 declare -ar known_aws_instance_types=("X.General Purpose"
-				     m5{,d}.{{,{,2,4,8,12,16}x}large,metal}
+				     m5{,d}.{{,{,2,4,8,12,16,24}x}large,metal}
+				     m5a.{,{,2,4,8,12,16,24}x}large
+				     m5ad.{,{,2,4,12,24}x}large
 				     m4.{,{,2,4,10,16}x}large
-				     m5a.{,{2,4,8,12,16,24}x}large
 				     t{2,3,3a}.{nano,micro,small,medium,{,x,2x}large}
 				     "X.Compute Optimized"
 				     c4.{,{,2,4,8}x}large
-				     c5.{,{,{,2,4,9,12,18,24}x}large,metal}
-				     c5{d,n}.{{,{,2,4,9,18}x}large,metal}
-				     r5ad.{,{,2,4,12,24}x}large
+				     c5.{{,{,2,4,9,12,18,24}x}large,metal}
+				     c5d.{,{,2,4,9,18}x}large
+				     c5n.{{,{,2,4,9,18}x}large,metal}
 				     "X.Memory Optimized"
 				     r4.{,{,2,4,8,16}x}large
-				     r5a.{,{2,4,8,12,16,24}x}large
-				     r5{,d}.{{,{,2,4,8,12,16}x}large,metal}
-				     x1e.{,{,2,4,8,16,32}x}large
+				     r5{,d}.{{,{,2,4,8,12,16,24}x}large,metal}
+				     r5a.{,{,2,4,8,12,16,24}x}large
+				     r5ad.{,{,2,4,12,24}x}large
+				     x1e.{,2,4,8,16,32}xlarge
 				     x1.{16,32}xlarge
 				     Y.u-6.tb1.metal Z.u-t{9,12}tb1.metal
 				     z1d.{{,{,2,3,6,12}x}large,metal}
@@ -355,8 +357,8 @@ declare -ar known_aws_instance_types=("X.General Purpose"
 				     g3s.xlarge g3.{4,8,16}xlarge
 				     f1.{2,4,16}xlarge
 				     "X.Storage Optimized"
-				     i3.{{,{2,4,8,16}x}large,metal}
-				     i3n.{{,{2,3,6,12,24}x}large,metal}
+				     i3.{{,{,2,4,8,16}x}large,metal}
+				     i3en.{{,{,2,3,6,12,24}x}large,metal}
 				     d2.{,2,4,8}xlarge
 				     h1.{2,4,8,16}xlarge)
 
