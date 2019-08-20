@@ -86,7 +86,7 @@ Usage: $___topsc [options] [install_type]
        -Q                   Query for release to use.
                             KEY: query (default=0)
        -R repo              Use the specified repo (default $default_repo_base).
-       -V install_version   Install the specified image version (default 
+       -V install_version   Install the specified image version (default
                             latest).  Use '$___topsc -H' for more details
                             or to use local installer.
        -v                   Print debug information.
@@ -179,6 +179,8 @@ for more information.
 
 EOF
     local last_class=
+    local -i tot_cols=0
+    local -i max_width=$(tput cols 2>/dev/null)
     local i
     for i in "${known_aws_instance_types[@]}" ; do
 	case "$i" in
@@ -192,10 +194,17 @@ EOF
 		echo -ne " ${i#*.}"
 		;;
 	    ${last_class}.*)
-		echo -n " ${i#*.}"
+		tot_cols+=9
+		if (( max_width > 20 && tot_cols > (max_width - 9) )) ; then
+		    printf "\n%19s" "${i#*.}"
+		    tot_cols=19
+		else
+		    printf " %8s" "${i#*.}"
+		fi
 		;;
 	    *)
-		echo -ne "\n    ${i%%.*}: ${i#*.}"
+		printf "\n    %5s: %8s" "${i%%.*}" "${i#*.}"
+		tot_cols=10
 		last_class=${i%%.*}
 		;;
 	esac
@@ -349,8 +358,8 @@ declare -ar known_aws_instance_types=("X.General Purpose"
 				     r5ad.{,{,2,4,12,24}x}large
 				     x1e.{,2,4,8,16,32}xlarge
 				     x1.{16,32}xlarge
-				     Y.u-6.tb1.metal Z.u-t{9,12}tb1.metal
 				     z1d.{{,{,2,3,6,12}x}large,metal}
+				     Y.u-6.tb1.metal Z.u-t{9,12}tb1.metal
 				     "X.GPU"
 				     p3.{2,8,16,24}xlarge
 				     p2.{,8,16}xlarge
