@@ -49,12 +49,13 @@ function print_help() {
     cat <<EOF
 Usage: $___topsc [options] [install_type]
     install_type: one of
-       libvirt (default)
        aws     (aws us-east-1)
        aws2    (aws us-east-2)
        aws3    (aws us-west-1)
        aws4    (aws us-west-2)
+       libvirt
        aws-*   (specified AWS region)
+      Default is random aws zone.
     Options:
        -p profile           Read the specified profile file.  Profile
                             may be a JSON file or shell code.
@@ -212,7 +213,7 @@ declare -r kubechart=${KUBECHART:-$GOPATH/src/github.com/sjenning/kubechart/kube
 declare -r oschart=${OSCHART:-$GOPATH/src/github.com/sjenning/oschart/oschart}
 declare -r default_repo_base=openshift-release
 
-declare install_type=${OPENSHIFT_INSTALL_TYPE:-libvirt}
+declare install_type=${OPENSHIFT_INSTALL_TYPE:-$(for a in aws aws2 aws3 aws4; do echo $a; done | shuf | head -1)}
 declare install_domain=${OPENSHIFT_INSTALL_DOMAIN:-}
 declare install_dir=${OPENSHIFT_INSTALL_DIR:-$install_domain}
 declare install_version=latest_default
@@ -293,7 +294,7 @@ declare -ar known_aws_instance_types=("X.General Purpose"
 				     x1e.{,2,4,8,16,32}xlarge
 				     x1.{16,32}xlarge
 				     z1d.{{,{,2,3,6,12}x}large,metal}
-				     Y.\ u-t{6,9}tb1.metal
+				     Y.u-t{6,9}tb1.metal
 				     Y.u-t12tb1.metal
 				     "X.Storage Optimized"
 				     i3.{{,{,2,4,8,16}x}large,metal}
@@ -586,7 +587,7 @@ EOF
 		echo -en "${last_class:+\n\n}${i#X.}:"
 		;;
 	    Y.*)
-		echo -ne "\n        ${i#*.}"
+		echo -ne "\n ${i#*.}"
 		;;
 	    Z.*)
 		echo -ne " ${i#*.}"
@@ -594,14 +595,14 @@ EOF
 	    ${last_class}.*)
 		tot_cols+=9
 		if (( term_width > 20 && tot_cols > (term_width - 5) )) ; then
-		    printf "\n%16s" "${i#*.}"
+		    printf "\n        %-8s" "${i#*.}"
 		    tot_cols=16
 		else
-		    printf " %8s" "${i#*.}"
+		    printf " %-8s" "${i#*.}"
 		fi
 		;;
 	    *)
-		printf "\n %5s: %8s" "${i%%.*}" "${i#*.}"
+		printf "\n %-6s %-8s" "${i%%.*}:" "${i#*.}"
 		tot_cols=10
 		last_class=${i%%.*}
 		;;
@@ -1276,7 +1277,7 @@ function process_option() {
     eval "$1" || fatal "Cannot process option $option"
 }
 
-while getopts ":bC:cd:H:hNn:Op:QR:V:vX:y" opt ; do
+while getopts ":bC:cd:HhNn:Op:QR:V:vX:y" opt ; do
     case "$opt" in
 	b) run_kubechart=1		;;
 	C) cleanup_only_dir="$OPTARG"	;;
