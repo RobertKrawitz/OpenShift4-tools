@@ -276,36 +276,41 @@ declare workerconfdata=
 declare platformconffile=
 declare platformconfdata=
 declare -ar known_aws_instance_types=("X.General Purpose"
-				     m5{,d}.{{,{,2,4,8,12,16,24}x}large,metal}
-				     m5a.{,{,2,4,8,12,16,24}x}large
-				     m5ad.{,{,2,4,12,24}x}large
-				     m4.{,{,2,4,10,16}x}large
-				     t{2,3,3a}.{nano,micro,small,medium,{,x,2x}large}
-				     "X.Compute Optimized"
-				     c4.{,{,2,4,8}x}large
-				     c5.{{,{,2,4,9,12,18,24}x}large,metal}
-				     c5d.{,{,2,4,9,18}x}large
-				     c5n.{{,{,2,4,9,18}x}large,metal}
-				     "X.Memory Optimized"
-				     r4.{,{,2,4,8,16}x}large
-				     r5{,d}.{{,{,2,4,8,12,16,24}x}large,metal}
-				     r5a.{,{,2,4,8,12,16,24}x}large
-				     r5ad.{,{,2,4,12,24}x}large
-				     x1e.{,2,4,8,16,32}xlarge
-				     x1.{16,32}xlarge
-				     z1d.{{,{,2,3,6,12}x}large,metal}
-				     Y.u-t{6,9}tb1.metal
-				     Y.u-t12tb1.metal
-				     "X.Storage Optimized"
-				     i3.{{,{,2,4,8,16}x}large,metal}
-				     i3en.{{,{,2,3,6,12,24}x}large,metal}
-				     d2.{,2,4,8}xlarge
-				     h1.{2,4,8,16}xlarge
-				     "X.GPU"
-				     p3.{2,8,16,24}xlarge
-				     p2.{,8,16}xlarge
-				     g3s.xlarge g3.{4,8,16}xlarge
-				     f1.{2,4,16}xlarge
+				      # ARM instances aren't useful
+				      # a1.{medium,{,{,2,4}x}large}
+				      m5{,d}.{{,{,2,4,8,12,16,24}x}large,metal}
+				      m5a.{,{,2,4,8,12,16,24}x}large
+				      m5ad.{,{,2,4,12,24}x}large
+				      m4.{,{,2,4,10,16}x}large
+				      t{2,3,3a}.{nano,micro,small,medium,{,x,2x}large}
+				      "X.Compute Optimized"
+				      c4.{,{,2,4,8}x}large
+				      c5.{{,{,2,4,9,12,18,24}x}large,metal}
+				      c5d.{,{,2,4,9,18}x}large
+				      c5n.{{,{,2,4,9,18}x}large,metal}
+				      "X.Memory Optimized"
+				      r4.{,{,2,4,8,16}x}large
+				      r5{,d}.{{,{,2,4,8,12,16,24}x}large,metal}
+				      r5a.{,{,2,4,8,12,16,24}x}large
+				      r5ad.{,{,2,4,12,24}x}large
+				      x1e.{,2,4,8,16,32}xlarge
+				      x1.{16,32}xlarge
+				      z1d.{{,{,2,3,6,12}x}large,metal}
+				      # These are special dedicated-only hosts
+				      # Y.u-t{6,9}tb1.metal
+				      # Y.u-t12tb1.metal
+				      "X.Storage Optimized"
+				      i3.{{,{,2,4,8,16}x}large,metal}
+				      i3en.{{,{,2,3,6,12,24}x}large,metal}
+				      d2.{,2,4,8}xlarge
+				      h1.{2,4,8,16}xlarge
+				      "X.GPU"
+				      p3.{2,8,16,24}xlarge
+				      p2.{,8,16}xlarge
+				      g3s.xlarge g3.{4,8,16}xlarge
+				      # FPGA instances are of no use for
+				      # running OpenShift
+				      # f1.{2,4,16}xlarge
 				     )
 
 # Running nested installs is liable to be problematic
@@ -569,21 +574,31 @@ function libvirt_cleanup() {
 }
 
 function list_aws_instance_types() {
+    local -i list_all=0
     cat <<\EOF
 Currently known AWS instance types.  Note that not all types are
 available in all regions, and AWS may add additional types at
 any time.  See https://aws.amazon.com/ec2/instance-types/
-for more information.
-
+for current information about what instance types exist, and
+https://aws.amazon.com/ec2/pricing/on-demand/ for information
+about what instance types are available in a particular region.
 EOF
+    if [[ ${1:-} = list_all ]] ; then
+	list_all=1
+    else
+	echo "Use '$___topsc -X aws_master_type=list-all' to list all instance types."
+    fi
+    echo
     local last_class=
     local -i tot_cols=0
+    local -i groups_printed=0
     # shellcheck disable=SC2155
     local -i term_width=$(tput cols 2>/dev/null)
     local i
     for i in "${known_aws_instance_types[@]}" ; do
 	case "$i" in
 	    X.*)
+		(( list_all == 0 && groups_printed++ )) && break
 		echo -en "${last_class:+\n\n}${i#X.}:"
 		;;
 	    Y.*)
@@ -636,6 +651,11 @@ function check_aws_instance_type() {
 }
 
 function aws_validate() {
+    if [[ $aws_master_type == list-all || $aws_worker_type == list-all ||
+	  $aws_master_type == list_all || $aws_worker_type == list_all ]] ; then
+	list_aws_instance_types list_all
+	exit
+    fi
     if [[ $aws_master_type == list || $aws_worker_type == list ]] ; then
 	list_aws_instance_types
 	exit
