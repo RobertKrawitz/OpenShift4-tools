@@ -53,49 +53,36 @@ Usage: $___topsc [options] [install_type]
        aws2    (aws us-east-2)
        aws3    (aws us-west-1)
        aws4    (aws us-west-2)
-       libvirt
        aws-*   (specified AWS region)
+       libvirt
       Default is random aws zone.
-    Options:
+    Options (all are processed in order):
        -p profile           Read the specified profile file.  Profile
                             may be a JSON file or shell code.
-                            Option names are given below.
-                            Note that command line options specified
-                            after the -p override the profile.
-       -X option=value      Evaluate the specified extended option.
+       -X option=value      Set the specified extended option.
        -H                   Print list of additional extended command
                             line options.
 
        -b                   Launch kubechart and oschart (if available).
+                            See https://github.com/sjenning/kubechart
                             KEY: run_kubechart (default=0)
        -C cleanup_only_dir  Only clean up (requires cluster already exists).
        -c                   Clean install cache, in case it is corrupted.
-                            KEY: clean_install_cache (default=1)
+                            KEY: clean_install_cache (default=0)
        -d install_dir       Use the specified dir as working directory and
                             cluster name.  Default is ${LOGNAME:-}-<platform>.
-       -N                   Don't clean up on exit.  If this is not used,
-                            exit with status 77 from the shell will have
-                            the same effect.  If this option is used,
-                            exit with status 88 will clean up.
+       -N                   Don't clean up on exit.  You can exit with status
+                            77 for no cleanup or 88 to force cleanup.
                             KEY: do_cleanup (default=1)
        -n release_channel   Use the specified release channel.
-                            Default ${release_channel:-current Origin default}.
-                            Use 'openshift-release-info channels' to
-                            list channels.
        -O                   Allow overwrite an existing install directory.
                             KEY: overwrite (default=0)
-       -Q                   Query for release to use.
+       -Q                   Query for release (and optionally channel) to use.
                             KEY: query (default=0)
-       -R repo              Use the specified repo (default $default_repo_base).
        -V install_version   Install the specified image version (default
-                            latest).  Use '$___topsc -H' for more details
-                            or to use local installer.
+                            latest).  Use '$___topsc -H' for more details.
        -v                   Print debug information.
                             KEY/VALUE: loglevel='--log-level=debug'
-       -w worker_count      Number of worker nodes (default by platform).
-       -x                   Clean up local install cache (in case of corrupt
-                            image cache).
-                            KEY: clean_install_cache (default=0)
        -y                   Do not prompt prior to starting install
                             KEY: noconfirm (default=0)
 EOF
@@ -127,12 +114,9 @@ function help_extended() {
         workerconffile      Take master platform config from specified file.
 
       AWS-specific cluster configuration:
-        aws_master_type     Type of master instance (AWS only)
-                            Use -X aws_master_type=list to get a (known) list
-                            of instance types.
-        aws_worker_type     Type of worker instance (AWS only)
-                            Use -X aws_worker_type=list to get a (known) list
-                            of instance types.
+        aws_master_type     Type of master instance.
+        aws_worker_type     Type of worker instance.
+          Use "list"  with either to get a (known) list of instance types.
 
       Installation options:
         config_file         Use the specified file as the install config file.
@@ -142,20 +126,12 @@ function help_extended() {
         force_postinstall   Always run the postinstall even if setup fails.
         install_domain      Use the specified domain name.
                             For libvirt: default is taken from a unique entry
-                                in /etc/NetworkManager/dnsmasq.d, if available;
-                                if not (or there are multiple masqueraded
-                                domains), there is no default.
+                                in /etc/NetworkManager/dnsmasq.d, if available.
                             For AWS: default is $aws_default_domain.
         install_version     Install the specified image version.  Default
                             is to use the latest version.
-                            If this is used, the matching toolchain is
-                            also used unless -X is specified.
-                            Use 'openshift-release-info releases' or
-                            'openshift-release-info -c <channel> releases'
-                            to list available versions.
                             Use empty value to install from local workspace
-                            (currently hardcoded
-                            to \$GOPATH/src/github.com/openshift/installer)
+                            (\$GOPATH/src/github.com/openshift/installer)
         install_type        Specify the install type, as described above.
         kubechart_port      Use the specified port for kubechart.  oschart
                             runs at port+1.  Implies -b.  Default is 3000.
@@ -165,6 +141,7 @@ function help_extended() {
                             Default $pull_secret
         rebuild             Always rebuild the installer, when using local
                             installer.
+        repo                Use the specified repo (default $default_repo_base).
         run_command         Run the specified command rather than an
                             interactive shell on completion of installation.
         wait_for_complete   Wait for console to come online (default=1)
@@ -282,7 +259,8 @@ declare -ar known_aws_instance_types=("X.General Purpose"
 				      m5a.{,{,2,4,8,12,16,24}x}large
 				      m5ad.{,{,2,4,12,24}x}large
 				      m4.{,{,2,4,10,16}x}large
-				      t{2,3,3a}.{nano,micro,small,medium,{,x,2x}large}
+				      "X.Burstable"
+				      t{3,3a,2}.{nano,micro,small,medium,{,x,2x}large}
 				      "X.Compute Optimized"
 				      c4.{,{,2,4,8}x}large
 				      c5.{{,{,2,4,9,12,18,24}x}large,metal}
@@ -295,6 +273,7 @@ declare -ar known_aws_instance_types=("X.General Purpose"
 				      r5ad.{,{,2,4,12,24}x}large
 				      x1e.{,2,4,8,16,32}xlarge
 				      x1.{16,32}xlarge
+				      "X.Single Thread Optimized"
 				      z1d.{{,{,2,3,6,12}x}large,metal}
 				      # These are special dedicated-only hosts
 				      # Y.u-t{6,9}tb1.metal
@@ -305,7 +284,8 @@ declare -ar known_aws_instance_types=("X.General Purpose"
 				      d2.{,2,4,8}xlarge
 				      h1.{2,4,8,16}xlarge
 				      "X.GPU"
-				      p3.{2,8,16,24}xlarge
+				      p3.{2,8,16}xlarge
+				      p3dn.24xlarge
 				      p2.{,8,16}xlarge
 				      g3s.xlarge g3.{4,8,16}xlarge
 				      # FPGA instances are of no use for
@@ -898,28 +878,11 @@ cat <<\EOF
   appropriate).  From there, select User-Provisioned Infrastructure.
   Download your pull secret and place it in ~/Downloads.
 
-* You need an appropriate quay.io credential.  This may be done in
-  one of two ways:
+* You need an appropriate quay.io credential.
 
-  a) The Easy Way: Get the required key from
-     https://access.redhat.com/solutions/3533201).
-     Add the auth for quay.io to your ~/.docker/config.json
-     and ~/Downloads/pull-secret.
-
-  b) The Hard Way (but will allow you to push your own images): from
-     the OpenShift Wiki (https://mojo.redhat.com/docs/DOC-1074351)
-     navigate to Set Up Accounts
-     (https://mojo.redhat.com/docs/DOC-1081313) and Quay.io Access
-     (https://mojo.redhat.com/docs/DOC-1167707#jive_content_id_How_to_play_around_with_Quay_RH_Internal)
-     and follow the instructions to get an account.  This will take
-     long enough that you should use the "easy way" also.
-
-     You need to log in to quay.io.  After logging in, click on the
-     settings (gear) icon in the left bar and click on "CLI Password"
-     under Docker CLI Password at the top.  You will be prompted for
-     your quay.io password.  Click on "Docker Configuration" and
-     either download or view the result.  Copy the result into
-     ~/.docker/config.json.
+  Get the required key from
+  https://access.redhat.com/solutions/3533201.  Add the auth for
+  quay.io to your ~/.docker/config.json and ~/Downloads/pull-secret.
 
 * You need to oc login.
 
@@ -928,6 +891,8 @@ cat <<\EOF
   Line Tools that will give you an 'oc login' command to run from a
   command line.
 
+  This (and the following step) needs to be refreshed periodically.
+
   Not doing this can lead to very strange errors; see
   https://bugzilla.redhat.com/show_bug.cgi?id=1647479
 
@@ -935,6 +900,8 @@ cat <<\EOF
   additional secrets in ~/.docker/config.json; these need to be
   copied into ~/Downloads/pull-secret (in particular,
   the secret for registry.svc.ci.openshift.org).
+
+  This *always* needs to be done after oc login.
 
 * Ensure that you have correct credentials for your cloud provider,
   as appropriate.
@@ -1297,7 +1264,7 @@ function process_option() {
     eval "$1" || fatal "Cannot process option $option"
 }
 
-while getopts ":bC:cd:HhNn:Op:QR:V:vX:y" opt ; do
+while getopts ":bC:cd:HhNn:Op:QV:vX:y" opt ; do
     case "$opt" in
 	b) run_kubechart=1		;;
 	C) cleanup_only_dir="$OPTARG"	;;
@@ -1308,7 +1275,6 @@ while getopts ":bC:cd:HhNn:Op:QR:V:vX:y" opt ; do
 	O) overwrite=1                  ;;
 	p) read_profile "$OPTARG"       ;;
 	Q) query=1                      ;;
-	R) repo="$OPTARG" 		;;
 	V) install_version="$OPTARG"    ;;
 	v) loglevel='--log-level=debug' ;;
 	X) process_option "$OPTARG"     ;;
