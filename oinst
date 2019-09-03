@@ -63,27 +63,28 @@ Usage: $___topsc [options] [install_type]
        -H                   Print list of additional extended command
                             line options.
 
-       -b                   Launch kubechart and oschart (if available).
+    Options listed as -a/-A are inverted by the second listed option.
+       -b/-B                Launch kubechart and oschart (if available).
                             See https://github.com/sjenning/kubechart
                             KEY: run_kubechart (default=0)
-       -C cleanup_only_dir  Only clean up (requires cluster already exists).
-       -c                   Clean install cache, in case it is corrupted.
+       -c/-C                Clean install cache, in case it is corrupted.
                             KEY: clean_install_cache (default=0)
        -d install_dir       Use the specified dir as working directory and
                             cluster name.  Default is ${LOGNAME:-}-<platform>.
-       -N                   Don't clean up on exit.  You can exit with status
+       -l/-L                Don't clean up on exit.  You can exit with status
                             77 for no cleanup or 88 to force cleanup.
                             KEY: do_cleanup (default=1)
        -n release_channel   Use the specified release channel.
-       -O                   Allow overwrite an existing install directory.
+       -O/-o                Allow overwrite an existing install directory.
                             KEY: overwrite (default=0)
-       -Q                   Query for release (and optionally channel) to use.
+       -u/-U                Query for release (and optionally channel) to use.
                             KEY: query (default=0)
        -V install_version   Install the specified image version (default
                             latest).  Use '$___topsc -H' for more details.
-       -v                   Print debug information.
+       -v/-q                Print debug information.
                             KEY/VALUE: loglevel='--log-level=debug'
-       -y                   Do not prompt prior to starting install
+       -x cleanup_only_dir  Only clean up (requires cluster already exists).
+       -y/-Y                Do not prompt prior to starting install
                             KEY: noconfirm (default=0)
 EOF
 }
@@ -1264,20 +1265,27 @@ function process_option() {
     eval "$1" || fatal "Cannot process option $option"
 }
 
-while getopts ":bC:cd:HhNn:Op:QV:vX:y" opt ; do
+while getopts ":BbCcd:HhLln:Oop:qUuV:vX:xYy" opt ; do
     case "$opt" in
+	B) run_kubechart=0		;;
 	b) run_kubechart=1		;;
-	C) cleanup_only_dir="$OPTARG"	;;
+	C) clean_install_cache=0	;;
 	c) clean_install_cache=1	;;
 	d) install_dir="$OPTARG"        ;;
-	N) do_cleanup=0			;;
+	L) do_cleanup=1			;;
+	l) do_cleanup=0			;;
 	n) release_channel="$OPTARG"    ;;
 	O) overwrite=1                  ;;
+	o) overwrite=0                  ;;
 	p) read_profile "$OPTARG"       ;;
-	Q) query=1                      ;;
+	q) loglevel=			;;
+	U) query=0                      ;;
+	u) query=1                      ;;
 	V) install_version="$OPTARG"    ;;
 	v) loglevel='--log-level=debug' ;;
 	X) process_option "$OPTARG"     ;;
+	x) cleanup_only_dir="$OPTARG"	;;
+	Y) noconfirm=0			;;
 	y) noconfirm=1			;;
 	H) help_extended		;;
 	h) help				;;
