@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 
 # Find our helpers
 function finddir() {
@@ -23,41 +23,250 @@ PATH="${cmddir}:$PATH"
 
 set -e
 
-declare godir=${GOPATH:$HOME/go}
+declare godir=${GOPATH:-$HOME/go}
 godir=${GOPATH%:*}
 declare -r srcdir="$godir/src/github.com/openshift/origin"
-declare -r lkubelet="$srcdir/_output/local/bin/linux/amd64/hyperkube"
-declare -r okubelet="/usr/bin/hyperkube"
-declare -r lbindir="/usr/local/bin"
-declare -r kubelet="$lbindir/hyperkube"
-declare -r kubelet_svc=/etc/systemd/system/kubelet.service
-kubeenable="$lbindir/kube-enable"
-declare nodes=$(oc get nodes --no-headers=true |grep master | awk '{print $1}')
+declare lkubelet="$srcdir/_output/local/bin/linux/amd64/hyperkube"
+declare bastion=bastion-
+declare -i rebuild=1
+declare -i do_setup_cert=0
+declare -i do_uninstall=0
+
+function help() {
+    cat <<EOF
+Usage: $0 [-B|-b] [-C|-c] [-U|-u] [-k kubelet]
+    Args:
+      -B        Don't use ssh bastion host (direct ssh)
+      -b	Use a bastion ssh host (default)
+      -C	Don't setup node certs for ssh (default)
+      -c	Set up node certs for ssh (must be done once)
+      -d file	Use the specified kubelet file
+      -U        Install custom kubelet (default)
+      -u	Uninstall (restore original kubelet)
+EOF
+    exit 1
+}
+
+while getopts "BbCchk:Uu" opt ; do
+    case "$opt" in
+	B) bastion=                      ;;
+	b) bastion=bastion-              ;;
+	C) do_setup_cert=0		 ;;
+	c) do_setup_cert=1		 ;;
+	k) lkubelet="$OPTARG"; rebuild=0 ;;
+	U) do_uninstall=0		 ;;
+	u) do_uninstall=1		 ;;
+	*) help				 ;;
+    esac
+done
+
+#declare nodes=$(oc get nodes --no-headers=true |grep master | awk '{print $1}')
 #declare nodes=$(oc get nodes --no-headers=true | awk '{print $1}')
+declare -a other_nodes=()
+declare firstnode
+
+while read -r node ; do
+    if [[ -z $firstnode ]] ; then
+	firstnode=$node
+    else
+	other_nodes+=("$node")
+    fi
+done <<< "$(oc get nodes --no-headers=true |grep worker | awk '{print $1}')"
 
 function rcmd() {
-    echo "$1:"
-    bastion-ssh "$@"
+    "${bastion}ssh" "$@"
+}
+
+function rcp() {
+    "${bastion}scp" "$@"
 }
 
 function build_upload() {
-    cd $srcdir
+    cd "$srcdir"
     make WHAT=vendor/k8s.io/kubernetes/cmd/hyperkube
     ls -l _output/local/bin/linux/amd64/hyperkube
     md5sum _output/local/bin/linux/amd64/hyperkube
 }
 
-(build_upload)
+if (( rebuild && !do_uninstall )) ; then
+    (build_upload)
+fi
 
-declare -r expected_md5=$(md5sum "$lkubelet" |awk '{print $1}')
-for node in $nodes ; do
-    bastion-scp "$cmddir/install-kubelet" "$node:/tmp"
-    bastion-scp "$cmddir/uninstall-kubelet" "$node:/tmp"
-    bastion-scp -C "$srcdir/_output/local/bin/linux/amd64/hyperkube" "$node:/tmp"
-    rcmd "$node" "sudo" "sudo mkdir -p /usr/local/bin; sudo chmod +x /tmp/install-kubelet; sudo /tmp/install-kubelet /tmp/hyperkube $expected_md5"
-done
+declare expected_md5
+expected_md5=$(md5sum "$lkubelet" |awk '{print $1}') || {
+    echo "Can't checksum $lkubelet"
+    exit 1
+}
 
-for node in $nodes ; do
-    rcmd "$node" "sudo" "sh" "-c" "ls -l $kubelet; ps aux |grep hyperkube; sudo sysctl vm.swappiness=0"
+function generate_uninstall_kubelet() {
+    cat <<'EOF'
+#!/bin/bash
+declare -r lbindir="/usr/bin"
+cd "$lbindir" || {
+    echo "Can't cd $lbindir!"
+    exit 1
+}
+
+if [[ -f hyperkube.OLD ]] ; then
+    echo "Restoring old kubelet"
+    sudo mount -o remount,rw /usr || {
+	echo "Can't remount /usr rw"
+	exit 1
+    }
+    sudo mv hyperkube.OLD hyperkube || {
+	echo "Can't rename hyperkube.OLD to hyperkube"
+	cd /
+	mount -o remount,ro /usr
+	exit 1
+    }
+    cd /
+    sudo mount -o remount,ro /usr
+    sudo systemctl restart kubelet.service
+else
+    echo "No old hyperkube to restore"
+fi
+EOF
+}
+
+function generate_install_kubelet() {
+    cat <<'EOF'
+#!/bin/bash
+
+declare lkubelet="$1"
+declare -r expected_md5="$2"
+
+declare -r lbindir="/usr/bin"
+
+if [[ $lkubelet = *.gz ]] ; then
+    if [[ -e ${lkubelet%.gz} ]] ; then
+        rm -f "${lkubelet%.gz}"
+    fi
+    gunzip "$lkubelet"
+    lkubelet=${lkubelet%.gz}
+fi
+
+cd "$lbindir" || {
+    echo "Can't cd $lbindir!"
+    exit 1
+}
+found_md5=$(md5sum "$lkubelet" |awk '{print $1}')
+if [[ -f "$lkubelet" && $(stat -c %s "$lkubelet") -ge 1048576 && "$expected_md5" == "$found_md5" ]] ; then
+    echo "Good kubelet!"
+else
+    echo "Bad kubelet"
+    echo "Expected md5 $expected_md5, found $found_md5"
+    exit 1
+fi
+
+sudo mount -o remount,rw /usr || {
+    echo "Can't remount /usr rw"
+    exit 1
+}
+sudo cp "$lkubelet" hyperkube.NEW
+cmp "$lkubelet" hyperkube.NEW || {
+    echo "$lkubelet and hyperkube.NEW failed compare!"
+    cd /
+    mount -o remount,ro /usr
+    exit 1
+}
+if [[ -f hyperkube && ! -f hyperkube.OLD ]] ; then
+    sudo mv hyperkube hyperkube.OLD
+fi
+sudo mv hyperkube.NEW hyperkube || {
+    echo "Can't rename hyperkube.NEW to hyperkube!"
+    cd /
+    sudo mount -o remount,ro /usr
+    exit 1
+}
+cd /
+sudo mount -o remount,ro /usr
+sudo systemctl restart kubelet.service
+EOF
+}
+
+function generate_grappling_hook_install() {
+    cat <<'EOF'
+#!/bin/bash
+set -e
+expected_md5="$1"
+shift
+cd /tmp
+chmod +x hyperkube
+./install-kubelet /tmp/hyperkube "$expected_md5"
+if [[ -f /tmp/hyperkube.gz ]] ; then
+    rm -f /tmp/hyperkube.gz
+fi
+gzip /tmp/hyperkube
+for node in "$@" ; do
+    echo "$node":
+    scp -o StrictHostKeyChecking=no -i ~/.ssh/temp_install -p install-kubelet /tmp/hyperkube.gz "$node:/tmp"
+    ssh -o StrictHostKeyChecking=no -i ~/.ssh/temp_install "$node" /tmp/install-kubelet /tmp/hyperkube.gz "$expected_md5"
 done
+ls -l /usr/bin/hyperkube
+ps aux |grep hyperkube
+for node in "$@" ; do
+    echo "$node":
+    ssh -o StrictHostKeyChecking=no -i ~/.ssh/temp_install  "$node" sh -c "ls -l /usr/bin/hyperkube; ps aux |grep hyperkube"
+done
+EOF
+}
+
+function generate_grappling_hook_uninstall() {
+    cat <<'EOF'
+#!/bin/bash
+set -e
+shift
+cd /tmp
+./uninstall-kubelet
+for node in "$@" ; do
+    echo "$node":
+    scp -o StrictHostKeyChecking=no -i ~/.ssh/temp_install -p uninstall-kubelet "$node:/tmp"
+    ssh -o StrictHostKeyChecking=no -i ~/.ssh/temp_install "$node" /tmp/uninstall-kubelet
+done
+ls -l /usr/bin/hyperkube
+ps aux |grep hyperkube
+for node in "$@" ; do
+    echo "$node":
+    ssh -o StrictHostKeyChecking=no -i ~/.ssh/temp_install  "$node" sh -c "ls -l /usr/bin/hyperkube; ps aux |grep hyperkube"
+done
+EOF
+}
+
+function generate_grappling_hook() {
+    if (( do_uninstall )) ; then
+	generate_grappling_hook_uninstall
+    else
+	generate_grappling_hook_install
+    fi
+}
+
+function setup_cert() {
+    declare tmpdir
+    tmpdir=$(mktemp -d) || {
+	echo "Can't create temporary cert dir"
+	exit 1
+    }
+    ssh-keygen -q -f "$tmpdir/temp_install" -N '' || {
+	echo "Can't create temporary key"
+	rm -rf "$tmpdir"
+	exit 1
+    }
+    for f in "${other_nodes[@]}" ; do
+	rcmd "$f" "cat >> .ssh/authorized_keys" < "$tmpdir/temp_install.pub"
+    done
+    rcp "$tmpdir/temp_install" "$firstnode:.ssh/temp_install"
+    rm -rf "$tmpdir"
+}
+
+if (( do_setup_cert )) ; then
+    setup_cert
+fi
+
+if (( ! do_uninstall )) ; then
+    rcp -C "$lkubelet" "$firstnode:/tmp"
+    generate_install_kubelet | rcmd "$firstnode" "cat > /tmp/install-kubelet; chmod +x /tmp/install-kubelet"
+else
+    generate_uninstall_kubelet | rcmd "$firstnode" "cat > /tmp/uninstall-kubelet; chmod +x /tmp/uninstall-kubelet"
+fi
+generate_grappling_hook | rcmd "$firstnode" "cat > /tmp/kubelet-grappling-hook; chmod +x /tmp/kubelet-grappling-hook; /tmp/kubelet-grappling-hook $expected_md5 ${other_nodes[*]}"
 oc get nodes
