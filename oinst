@@ -270,6 +270,7 @@ fi
 
 # Detect classes of errors and suggest remediation
 declare -i api_plugin_incompatibility_detected=0
+declare -i existing_resource_detected=0
 
 [[ -z $OC ]] && fatal "Can't find oc command"
 
@@ -293,6 +294,9 @@ function timestamp_line() {
     case "$*" in
 	'Incompatible API version with plugin')
 	    api_plugin_incompatibility_detected=1
+	    ;;
+	'Tried to create resource record set')
+	    existing_resource_detected=1
 	    ;;
 	*)  ;;
     esac
@@ -838,6 +842,7 @@ function cleanup() {
 	    echo "Cleaning up, please do not interrupt"
 	    if (( do_cleanup )) ; then
 		# Shut up some very uninteresting noise
+		exec 3>&2 2>/dev/null
 		if (( created_kubechart )) ; then
 		    kill -9 %run_kubechart
 		    wait %run_kubechart
@@ -1323,20 +1328,29 @@ EOF
     local -i end3=0
 
     if (( install_status )) ; then
-	echo "Cluster creation failed"
-	if (( api_plugin_incompatibility_detected )) ; then
+	cat <<'EOF'
+
+Cluster creation failed.
+
+There are a number of problems that may cause failure to install:
+
+EOF
+	if (( existing_resource_detected )) ; then
 	    cat <<'EOF'
-Error message suggests a stray 'terraform-provider-libvirt' binary.
-Please remove all files of that name from your home directory and try
-again.
+* Error message suggests that the installer tried to create a resource
+  that already exists.  This resource needs to be tracked down and
+  cleaned up.
 
 EOF
 	fi
-	cat <<'EOF'
-There are a number of problems that may cause failure to install, most
-commonly authentication problems:
+	if (( api_plugin_incompatibility_detected )) ; then
+	    cat <<'EOF'
+* Error message suggests a stray 'terraform-provider-libvirt' binary.
+  Please remove all files of that name from your home directory and
+  try again.
 
 EOF
+	fi
 	warn_authentication_failure
 	clean_shutdown=0
     fi
