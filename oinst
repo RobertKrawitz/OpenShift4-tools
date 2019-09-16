@@ -882,7 +882,7 @@ function platform() {
     else
 	local answer
 	answer=$(platform_dispatch platform)
-	echo "${answer:-\{\}}"
+	echo "${answer:-{\}}"
     fi
 }
 
@@ -895,7 +895,7 @@ function master_platform() {
     else
 	local answer
 	answer=$(platform_dispatch master)
-	echo "${answer:-{}}"
+	echo "${answer:-{\}}"
     fi
 }
 
@@ -909,7 +909,7 @@ function worker_platform() {
     else
 	local answer
 	answer=$(platform_dispatch worker)
-	echo "${answer:-{}}"
+	echo "${answer:-{\}}"
     fi
 }
 
@@ -1199,10 +1199,12 @@ function start_kubechart_if_requested() {
     if [[ -x $kubechart && $run_kubechart -gt 0 ]] ; then
 	created_kubechart=1
 	run_kubechart&
+	export OPENSHIFT_INSTALL_KUBECHART_URL=http://localhost:$kubechart_port/
     fi
     if [[ -x $oschart && $run_oschart -gt 0 ]] ; then
 	created_oschart=1
 	run_oschart&
+	export OPENSHIFT_INSTALL_OSCHART_URL=http://localhost:$oschart_port/
     fi
 }
 
