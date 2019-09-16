@@ -45,26 +45,6 @@ if [[ -z ${___topsc:-} ]] ; then
     [[ -z $___topdir ]] && fatal "Can't find directory for $0"
 fi
 
-function do_platforms() {
-    local -i status=0
-    local platform
-    for platform in "${global_platforms[@]}" ; do
-	platform_dispatch -p "$platform" "$@" || status=1
-    done
-    return $status
-}
-
-function find_first_platform() {
-    local platform
-    for platform in "${global_platforms[@]}" ; do
-	if platform_dispatch -p "$platform" "$@" ; then
-	    echo "$platform"
-	    return 0
-	fi
-    done
-    return 1
-}
-
 function print_help() {
     cat <<EOF
 Usage: $___topsc [options] [install_type]
@@ -131,7 +111,6 @@ $(do_platforms help options |indent -6)
 
       Installation options:
         config_file         Use the specified file as the install config file.
-        create_bastion      Create ssh bastion host (default=1)
         do_login            Login to the console (default=1)
         ext_installer       Use the specified command to install OpenShift.
         force_postinstall   Always run the postinstall even if setup fails.
@@ -200,6 +179,8 @@ declare -r default_repo_base=openshift-release
 
 declare -a global_platforms=(aws libvirt)
 
+declare -A global_diagnostics=()
+
 declare install_type
 declare install_domain=${OPENSHIFT_INSTALL_DOMAIN:-}
 declare install_dir=${OPENSHIFT_INSTALL_DIR:-$install_domain}
@@ -222,7 +203,6 @@ declare -r owd=$(pwd)
 declare -i clean_install_cache=0
 declare -i clean_shutdown=0
 declare -i cleanup_run=0
-declare -i create_bastion=1
 declare -i created_kubechart=0
 declare -i created_oschart=0
 declare -i do_cleanup=1
@@ -268,16 +248,11 @@ if [[ -n ${OPENSHIFT_INSTALL_INTERLOCK:-} ]] ; then
     fatal "Already in ${___topsc:-} environment"
 fi
 
-# Detect classes of errors and suggest remediation
-declare -i api_plugin_incompatibility_detected=0
-declare -i existing_resource_detected=0
-
 [[ -z $OC ]] && fatal "Can't find oc command"
 
 function clear_env() {
     local var
-    for var in "${!_OPENSHIFT_INSTALL@}" "${!OPENSHIFT_INSTALL@}" ; do unset "$var"; done
-    unset KUBECONFIG
+    for var in "${!_OPENSHIFT_INSTALL@}" "${!OPENSHIFT_INSTALL@}" KUBECONFIG ; do unset "$var"; done
 }
 
 function printerval() {
@@ -289,17 +264,14 @@ function printerval() {
     printf "%02d:%02d\n" $(((interval % 3600) / 60)) $((interval % 60))
 }
 
-# This isn't platform-neutral
+function set_diagnostic() {
+    local diagnostic_id="$1"
+    local print_diagnostic_message_func="$2"
+    global_diagnostics["$diagnostic_id"]="$print_diagnostic_message_func"
+}
+
 function timestamp_line() {
-    case "$*" in
-	'Incompatible API version with plugin')
-	    api_plugin_incompatibility_detected=1
-	    ;;
-	'Tried to create resource record set')
-	    existing_resource_detected=1
-	    ;;
-	*)  ;;
-    esac
+    do_platforms diagnose "$*"
     # Make the message look vaguely Go-like.
     printf 'T0000 %(%H:%M:%S)T.000000   %s\n' -1 "$*"
 }
@@ -351,6 +323,22 @@ function dispatch_unknown() {
     die "Unexpected command ($platform): $*"
 }
 
+# The exact operation of the ssh-bastion varies between providers, and
+# isn't supported by everything (e. g. libvirt).
+function do_create_bastion() {
+    echo "Creating bastion host"
+    curl -s -S https://raw.githubusercontent.com/eparis/ssh-bastion/master/deploy/deploy.sh | bash
+    # shellcheck disable=SC2181
+    if (( $? )) ; then
+	echo "Create bastion host failed"
+    else
+	echo "Alternatively, you may prefer to use ${___topdir:-}bastion-ssh"
+	# shellcheck disable=SC2155
+	export OPENSHIFT_BASTION_ADDRESS="$(oc get service -n openshift-ssh-bastion ssh-bastion -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')"
+	[[ -z $OPENSHIFT_BASTION_ADDRESS ]] && echo "Unable to find bastion address!"
+    fi
+}
+
 ################################################################
 ### libvirt platform code				     ###
 ################################################################
@@ -394,8 +382,7 @@ function libvirt_base_domain() {
 }
 
 function libvirt_replicas() {
-    local node_type=$1		# Not used
-    cmdline_replicas "$node_type" 1
+    cmdline_replicas "$1" 1
 }
 
 function libvirt_platform() {
@@ -537,6 +524,27 @@ function libvirt_is_install_type() {
     [[ $1 == libvirt ]]
 }
 
+function libvirt_print_diagnostics() {
+    case "$1" in
+	libvirt_api_plugin_incompatibility_detected)
+	    cat <<'EOF'
+* Error message suggests a stray 'terraform-provider-libvirt' binary.
+  Please remove all files of that name from your home directory and
+  try again.
+
+EOF
+	    ;;
+    esac
+}
+
+function libvirt_diagnose() {
+    case "$*" in
+	'Tried to create resource record set')
+	    set_diagnostic libvirt_api_plugin_incompatibility_detected libvirt_print_diagnostic
+	    ;;
+    esac
+}
+
 function libvirt_dispatch() {
     local op="$1"
     shift
@@ -544,6 +552,7 @@ function libvirt_dispatch() {
 	base_domain)          libvirt_base_domain "$@"          ;;
 	cleanup)              libvirt_cleanup "$@"              ;;
 	default_install_type) libvirt_default_install_type "$@" ;;
+	diagnose)	      libvirt_diagnose "$@"		;;
 	help)                 libvirt_help "$@"		        ;;
 	is_install_type)      libvirt_is_install_type "$@"      ;;
 	machine_cidr)         libvirt_machine_cidr "$@"         ;;
@@ -563,6 +572,7 @@ function libvirt_dispatch() {
 ################################################################
 declare aws_worker_type=
 declare aws_master_type=
+declare -i aws_create_bastion=1
 declare -r aws_default_domain=devcluster.openshift.com
 
 declare -ar known_aws_instance_types=("X.General Purpose"
@@ -715,8 +725,7 @@ function aws_setup() {
 }
 
 function aws_replicas() {
-    local node_type=$1		# Not used
-    cmdline_replicas "$node_type" 3
+    cmdline_replicas "$1" 3
 }
 
 function aws_default_install_type() {
@@ -743,6 +752,7 @@ EOF
 AWS-specific cluster configuration:
   aws_master_type     Type of master instance.
   aws_worker_type     Type of worker instance.
+  aws_create_bastion  Create ssh bastion host (default=1)
     Use "list" with either to get a (known) list of instance types.
 EOF
 	    ;;
@@ -794,6 +804,33 @@ function aws_is_install_type() {
     [[ $1 == aws* ]]
 }
 
+function aws_postinstall() {
+    if (( aws_create_bastion )) ; then
+	do_create_bastion
+    fi
+}
+
+function aws_print_diagnostic() {
+    case "$1" in
+	'Tried to create resource record set')
+	    cat <<'EOF'
+* Error message suggests that the installer tried to create a resource
+  that already exists.  This resource needs to be tracked down and
+  cleaned up.
+
+EOF
+	    ;;
+    esac
+}
+
+function aws_diagnose() {
+    case "$*" in
+	'Tried to create resource record set')
+	    set_diagnostic aws_existing_resource_detected aws_print_diagnostic
+	    ;;
+    esac
+}
+
 function aws_dispatch() {
     local op="$1"
     shift
@@ -801,12 +838,13 @@ function aws_dispatch() {
 	base_domain)          aws_base_domain "$@"          ;;
 	cleanup)              :                             ;;
 	default_install_type) aws_default_install_type "$@" ;;
+	diagnose)	      aws_diagnose "$@"		    ;;
 	help)                 aws_help "$@"                 ;;
 	is_install_type)      aws_is_install_type "$@"      ;;
 	machine_cidr)         aws_machine_cidr "$@"         ;;
 	master)               aws_master "$@"               ;;
 	platform)             aws_platform "$@"             ;;
-	postinstall)          :                             ;;
+	postinstall)          aws_postinstall "$@"          ;;
 	replicas)             aws_replicas "$@"             ;;
 	setup)                aws_setup "$@"                ;;
 	validate)             aws_validate "$@"             ;;
@@ -825,9 +863,31 @@ function platform_dispatch() {
 	local platform=$1
 	shift
 	"${platform}_dispatch" "$@"
-    else
+    elif [[ -n ${OPENSHIFT_INSTALL_PLATFORM} ]] ; then
 	"${OPENSHIFT_INSTALL_PLATFORM}_dispatch" "$@"
+    else
+	local -i status=0
+	local platform
+	for platform in "${global_platforms[@]}" ; do
+	     "${platform}_dispatch" "$@" || status=1
+	done
+	return $status
     fi
+}
+
+function do_platforms() {
+    OPENSHIFT_INSTALL_PLATFORM='' platform_dispatch "$@"
+}
+
+function find_first_platform() {
+    local platform
+    for platform in "${global_platforms[@]}" ; do
+	if platform_dispatch -p "$platform" "$@" ; then
+	    echo "$platform"
+	    return 0
+	fi
+    done
+    return 1
 }
 
 function cleanup() {
@@ -879,20 +939,19 @@ function platform_data() {
     local data=${2:-}
     local file=${3:-}
     local -i indent=${4:-0}
+    local platform_code
     if [[ -n $data ]] ; then
-	echo
-	indent "$indent" <<< "$data"
+	platform_code="$data"
     elif [[ -n $file && -r $file ]] ; then
-	echo
-	indent "$indent" < "$file"
+	platform_code="$(< "$file")"
     else
-	local answer
-	answer=${what:+$(platform_dispatch "$what")}
-	if [[ -z $answer ]] ; then
-	    echo '{}'
-	else
-	    indent "$indent" <<< "$answer"
-	fi
+	platform_code=${what:+$(platform_dispatch "$what")}
+    fi
+    if [[ -z $platform_code ]] ; then
+	echo '{}'
+    else
+	echo
+	indent "$indent" <<< "$platform_code"
     fi
 }
 
@@ -1075,7 +1134,7 @@ function installer_setup() {
 	    select release_channel in "${channels[@]}" ; do break; done
 	    PS3=$OPS3
 	fi
-	local -a versions
+	local -a versions=()
 	readarray -t versions <<< "$(openshift-release-info -B "$repo" ${release_channel:+-c "$release_channel"} releases < /dev/null | sort -r)"
 	OPS3=${PS3:-}
 	PS3="Select release: "
@@ -1127,6 +1186,20 @@ function validate_environment() {
 }
 
 function confirm_install() {
+    cat <<EOF
+About to run installer:
+
+Installer:         $install
+Sourcedir:         $srcdir$([[ $srcdir != /* ]] && echo " ($(cd "$srcdir" && pwd))")
+Install dir:       $srcdir/$install_dir
+Current dir:       $(pwd)
+Install version:   $install_version
+Override:          ${OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE:-}
+Install command:   ${install} $loglevel --dir="$srcdir/$install_dir" create cluster
+Configuration:
+
+$OPENSHIFT_INSTALL_CONFIG
+EOF
     (( noconfirm )) && return 0
     local proceed
     echo
@@ -1242,6 +1315,50 @@ function waitfor_console() {
     return 1
 }
 
+function report_install_failure() {
+    local diagnostic_id
+    for diagnostic_id in "${!global_diagnostics[@]}" ; do
+	"${global_diagnostics[$diagnostic_id]}" "$diagnostic_id"
+    done
+    warn_authentication_failure
+}
+
+function run_postinstall() {
+    if [[ -f "${srcdir}/${install_dir}/auth/kubeadmin-password" ]] ; then
+	# shellcheck disable=SC2155
+	export OPENSHIFT_INSTALL_PASSWORD=$(< "${srcdir}/${install_dir}/auth/kubeadmin-password")
+	if (( ! do_login )) ; then
+	    echo "oc login skipped"
+	elif oc_login ; then
+	    login_succeeded=1
+	    console_route=
+	else
+	    echo "oc login failed!"
+	fi
+    fi
+
+    platform_dispatch postinstall
+
+    if (( wait_for_complete && login_succeeded )) ; then
+	echo -n "Waiting for console to come on line..."
+	if "${___topdir:-}waitfor-pod" -r 10 console && waitfor_console ; then
+	    console_route="$(${OC} get route -n openshift-console -o "custom-columns=HOST:.status.ingress[0].host" --no-headers=true |grep ^console)"
+	    if [[ -n $console_route && $console_route != '<none>' ]] ; then
+		export OPENSHIFT_INSTALL_CONSOLE_ROUTE="https://$console_route"
+		echo "Console route: $OPENSHIFT_INSTALL_CONSOLE_ROUTE"
+		(xdg-open "$OPENSHIFT_INSTALL_CONSOLE_ROUTE" </dev/null >/dev/null 2>&1 &)
+	    fi
+	fi
+	echo "login: kubeadmin / $OPENSHIFT_INSTALL_PASSWORD"
+    fi
+    # shellcheck disable=SC2155
+    export OPENSHIFT_INSTALL_NODE_IPS=$("${___topdir:-}"get-nodes)
+    # shellcheck disable=SC2155
+    export OPENSHIFT_INSTALL_WORKER_NODES=$(oc get nodes -l node-role.kubernetes.io/worker --no-headers=true -o name|sed -e 's,node/,,')
+    # shellcheck disable=SC2155
+    export OPENSHIFT_INSTALL_MASTER_NODES=$(oc get nodes -l node-role.kubernetes.io/master --no-headers=true -o name|sed -e 's,node/,,')
+}
+
 function run_install() {
     validate_environment
     if [[ -z $cleanup_only_dir ]] ; then
@@ -1276,22 +1393,9 @@ function run_install() {
     install_stage=1
     OPENSHIFT_INSTALL_CONFIG="$(clean_secret < "$srcdir/$install_dir/install-config.yaml")"
     export OPENSHIFT_INSTALL_CONFIG
-    cat <<EOF
-About to run installer:
-
-Installer:         $install
-Sourcedir:         $srcdir$([[ $srcdir != /* ]] && echo " ($(cd "$srcdir" && pwd))")
-Install dir:       $srcdir/$install_dir
-Current dir:       $(pwd)
-Install version:   $install_version
-Override:          ${OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE:-}
-Install command:   ${install} $loglevel --dir="$srcdir/$install_dir" create cluster
-Configuration:
-
-$OPENSHIFT_INSTALL_CONFIG
-EOF
     confirm_install || exit 1
 
+    # Not platform-independent
     if (( rebuild_installer )) ; then
 	echo "Rebuilding installer"
 	TAGS=libvirt hack/build.sh || fatal "Can't rebuild installer"
@@ -1309,88 +1413,17 @@ EOF
     # shellcheck disable=SC2155
     local -i end1=$(tsec)
     local -i end2=0
-    local -i end3=0
 
     if (( install_status )) ; then
-	cat <<'EOF'
-
-Cluster creation failed.
-
-There are a number of problems that may cause failure to install:
-
-EOF
-	if (( existing_resource_detected )) ; then
-	    cat <<'EOF'
-* Error message suggests that the installer tried to create a resource
-  that already exists.  This resource needs to be tracked down and
-  cleaned up.
-
-EOF
-	fi
-	if (( api_plugin_incompatibility_detected )) ; then
-	    cat <<'EOF'
-* Error message suggests a stray 'terraform-provider-libvirt' binary.
-  Please remove all files of that name from your home directory and
-  try again.
-
-EOF
-	fi
-	warn_authentication_failure
+	report_install_failure
 	clean_shutdown=0
     fi
     if (( force_postinstall || !install_status )) ; then
-	if [[ -f "${srcdir}/${install_dir}/auth/kubeadmin-password" ]] ; then
-	    # shellcheck disable=SC2155
-	    export OPENSHIFT_INSTALL_PASSWORD=$(< "${srcdir}/${install_dir}/auth/kubeadmin-password")
-	    if (( ! do_login )) ; then
-		echo "oc login skipped"
-	    elif oc_login ; then
-		login_succeeded=1
-		console_route=
-	    else
-		echo "oc login failed!"
-	    fi
-	fi
+	run_postinstall
 	end2=$(tsec)
-
-	platform_dispatch postinstall
-
-	if (( wait_for_complete && login_succeeded )) ; then
-	    echo -n "Waiting for console to come on line..."
-	    if "${___topdir:-}waitfor-pod" -r 10 console && waitfor_console ; then
-		console_route="$(${OC} get route -n openshift-console -o "custom-columns=HOST:.status.ingress[0].host" --no-headers=true |grep ^console)"
-		if [[ -n $console_route && $console_route != '<none>' ]] ; then
-		    export OPENSHIFT_INSTALL_CONSOLE_ROUTE="https://$console_route"
-		    echo "Console route: $OPENSHIFT_INSTALL_CONSOLE_ROUTE"
-		    (xdg-open "$OPENSHIFT_INSTALL_CONSOLE_ROUTE" </dev/null >/dev/null 2>&1 &)
-		fi
-	    fi
-	    echo "login: kubeadmin / $OPENSHIFT_INSTALL_PASSWORD"
-	    if (( create_bastion )) ; then
-		echo "Creating bastion host"
-		curl -s -S https://raw.githubusercontent.com/eparis/ssh-bastion/master/deploy/deploy.sh | bash
-		# shellcheck disable=SC2181
-		if (( $? )) ; then
-		    echo "Create bastion host failed"
-		else
-		    echo "Alternatively, you may prefer to use ${___topdir:-}bastion-ssh"
-		    # shellcheck disable=SC2155
-		    export OPENSHIFT_BASTION_ADDRESS="$(oc get service -n openshift-ssh-bastion ssh-bastion -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')"
-		    [[ -z $OPENSHIFT_BASTION_ADDRESS ]] && echo "Unable to find bastion address!"
-		fi
-	    fi
-	fi
-	end3=$(tsec)
-	# shellcheck disable=SC2155
-	export OPENSHIFT_INSTALL_NODE_IPS=$("${___topdir:-}"get-nodes)
-	# shellcheck disable=SC2155
-	export OPENSHIFT_INSTALL_WORKER_NODES=$(oc get nodes -l node-role.kubernetes.io/worker --no-headers=true -o name|sed -e 's,node/,,')
-	# shellcheck disable=SC2155
-	export OPENSHIFT_INSTALL_MASTER_NODES=$(oc get nodes -l node-role.kubernetes.io/master --no-headers=true -o name|sed -e 's,node/,,')
     fi
     printerval "Installation" $((end1 - start))
-    (( end2 )) && printerval "Total setup to login" $((end2 - start))
-    (( end3 )) && printerval "Total setup to console online" $((end3 - start))
+    (( end2 )) && printerval "Total setup to console online" $((end2 - start))
     export OPENSHIFT_INSTALL_INTERLOCK=1
     export OPENSHIFT_INSTALL_VERSION=$install_version
     for f in "${!OPENSHIFT@}" "${!_OPENSHIFT@}" KUBECONFIG ; do eval "echo export $f=\${$f@Q}"; done > "${srcdir}/${install_dir}/environment"
