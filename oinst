@@ -403,10 +403,10 @@ function libvirt_platform() {
     #local baseURL='https://releases-rhcos.svc.ci.openshift.org/storage/releases/maipo'
     #local install_version=${install_version:-"$(curl --silent "$baseURL/builds.json" | "$JQ" -r '.builds[0]')"}
     cat <<EOF
-  libvirt:
-    URI: $OPENSHIFT_INSTALL_LIBVIRT_URI
-    network:
-      if: tt0
+libvirt:
+  URI: $OPENSHIFT_INSTALL_LIBVIRT_URI
+  network:
+    if: tt0
 EOF
 }
 
@@ -759,8 +759,8 @@ function aws_master() {
     if [[ -n $aws_master_type ]] ; then
 	cat <<EOF
 
-    aws:
-      type: "$aws_master_type"
+aws:
+  type: "$aws_master_type"
 EOF
     fi
 }
@@ -769,16 +769,16 @@ function aws_worker() {
     if [[ -n $aws_worker_type ]] ; then
 	cat <<EOF
 
-    aws:
-      type: "$aws_worker_type"
+aws:
+  type: "$aws_worker_type"
 EOF
     fi
 }
 
 function aws_platform() {
     cat <<EOF
-  aws:
-    region: $OPENSHIFT_INSTALL_AWS_REGION
+aws:
+  region: $OPENSHIFT_INSTALL_AWS_REGION
 EOF
 }
 
@@ -874,42 +874,25 @@ EOF
     exit
 }
 
-function platform() {
-    if [[ -n $platformconfdata ]] ; then
-	indent 2 <<< "$platformconfdata"
-    elif [[ -n $platformconffile && -r $platformconffile ]] ; then
-	indent 2 < "$platformconffile"
+function platform_data() {
+    local what=${1:-}
+    local data=${2:-}
+    local file=${3:-}
+    local -i indent=${4:-0}
+    if [[ -n $data ]] ; then
+	echo
+	indent "$indent" <<< "$data"
+    elif [[ -n $file && -r $file ]] ; then
+	echo
+	indent "$indent" < "$file"
     else
 	local answer
-	answer=$(platform_dispatch platform)
-	echo "${answer:-{\}}"
-    fi
-}
-
-function master_platform() {
-    if [[ -n $masterconfdata ]] ; then
-	echo
-	indent 2 <<< "$masterconfdata"
-    elif [[ -n $masterconffile && -r $masterconffile ]] ; then
-	indent 4 < "$masterconffile"
-    else
-	local answer
-	answer=$(platform_dispatch master)
-	echo "${answer:-{\}}"
-    fi
-}
-
-function worker_platform() {
-    if [[ -n $workerconfdata ]] ; then
-	echo
-	indent 2 <<< "$workerconfdata"
-    elif [[ -n $workerconffile && -r $workerconffile ]] ; then
-	echo
-	indent 4 < "$workerconffile"
-    else
-	local answer
-	answer=$(platform_dispatch worker)
-	echo "${answer:-{\}}"
+	answer=${what:+$(platform_dispatch "$what")}
+	if [[ -z $answer ]] ; then
+	    echo '{}'
+	else
+	    indent "$indent" <<< "$answer"
+	fi
     fi
 }
 
@@ -923,12 +906,12 @@ baseDomain: $(platform_dispatch base_domain)
 compute:
 - hyperthreading: Enabled
   name: worker
-  platform: $(worker_platform)
+  platform: $(platform_data master "${masterconfdata:-}" "${masterconfdata:-}" 4)
   replicas: $(platform_dispatch replicas worker)
 controlPlane:
   hyperthreading: Enabled
   name: master
-  platform: $(master_platform)
+  platform: $(platform_data worker "${workerconfdata:-}" "${workerconfdata:-}" 4)
   replicas: $(platform_dispatch replicas master)
 metadata:
   creationTimestamp: null
@@ -941,8 +924,7 @@ networking:
   networkType: OpenShiftSDN
   serviceNetwork:
   - 172.30.0.0/16
-platform:
-$(platform)
+platform: $(platform_data platform "${platformconfdata:-}" "${platformconfdata:-}" 4)
 pullSecret: '$(jq -scM '.[0]' < "$pull_secret")'
 sshKey: |
   $(< "$pubkey_file")
