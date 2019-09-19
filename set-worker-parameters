@@ -1,0 +1,110 @@
+#!/bin/bash
+
+declare -a workers
+
+readarray workers <<< "$(oc get nodes -l node-role.kubernetes.io/worker --no-headers=true -o name)"
+workers=(${workers[@]#node/})
+totalnodes=${#workers[@]}
+
+declare -A args
+args[maxPods]=250		# The default value
+
+declare -a maxpods
+
+function help() {
+    cat <<EOF
+Usage: $0 [options]
+       -p maxPods
+       -b KubeAPIBurst
+       -q KubeAPIQPS
+       -X option=value
+EOF
+    exit 1
+}
+
+while getopts "hp:b:q:X:" opt ; do
+    case "$opt" in
+	p) args[maxPods]="$OPTARG"      ;;
+	b) args[KubaAPIBurst]="$OPTARG" ;;
+	q) args[KubeAPIQPS]="$OPTARG"   ;;
+	X)
+	    option=${OPTARG%%=*}
+	    value=${OPTARG#*=}
+	    if [[ -n $value ]] ; then
+		args[$option]=$value
+	    else
+		unset "args[$option]"
+	    fi
+	    ;;
+	h) help				;;
+    esac
+done
+
+function tsec() {
+    printf "%(%s)T" -1
+}
+
+function ptime() {
+    local -i start=$1
+    local -i interval="$(($(tsec) - start))"
+    if (( interval >= 3600 )) ; then
+	printf "%d:%02d:%02d" "$((interval / 3600))" "$(((interval % 3600) / 60))" "$((interval % 60))"
+    else
+	printf "%d:%02d" "$((interval / 60))" "$((interval % 60))"
+    fi
+}
+
+readarray -t maxpods <<< "$(oc get -ojson node "${workers[@]}" | jq -r '.items[].status.capacity.pods')"
+
+# Pick a value for maxpods that doesn't match any of the current nodes
+# It's harder to tell what KubeAPIBurst and KubeAPIQPS are, but maxPods
+# is visible in the YAML.
+[[ -n ${args[maxPods]} ]] || args[maxPods]=$((${maxpods[0]}+1))
+while : ; do
+    for i in "${maxpods[@]}" ; do
+	if (( args[maxPods] == i )) ; then
+	    args[maxPods]=$((args[maxPods]+1))
+	    continue 2
+	fi
+    done
+    break
+done
+desiredpods=${args[maxPods]}
+
+if [[ $(oc get machineconfigpool worker -o json | jq -r '.metadata.labels."custom-kubelet"?' 2>/dev/null) != 'large-pods' ]] ; then
+    oc label --overwrite machineconfigpool worker custom-kubelet=large-pods
+fi
+
+oc apply -f - <<EOF
+apiVersion: machineconfiguration.openshift.io/v1
+kind: KubeletConfig
+metadata:
+  name: set-max-pods
+spec:
+  machineConfigPoolSelector:
+    matchLabels:
+      custom-kubelet: large-pods
+  kubeletConfig:
+$(for arg in "${!args[@]}" ; do
+      echo "    $arg: ${args[$arg]}"
+done)
+EOF
+
+declare -i readynodes
+declare -i start
+start=$(tsec)
+while : ; do
+    readynodes="$(oc get -ojson node "${workers[@]}" | jq -r "[if .items[].status.capacity.pods == \"$desiredpods\" then 1 else 0 end] | add")"
+    echo -en "\r($(ptime "$start")) Waiting for pods $pods -> $desiredpods ($readynodes / $totalnodes)..."
+    if ((readynodes == totalnodes)) ; then
+	echo 'ready!'
+	break
+    fi
+    sleep 30
+done
+
+while [[ -n "$(oc get nodes --no-headers=true "${workers[@]}" |grep '\(NotReady\|SchedulingDisabled\)')" ]] ; do
+    echo -en "\r($(ptime "$start")) Waiting for all nodes to become ready..."
+    sleep 10
+done
+echo 'ready!'
