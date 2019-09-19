@@ -39,7 +39,7 @@ declare private_key=
 
 function help() {
     cat <<EOF
-Usage: $0 [-B|-b] [-C|-c] [-U|-u] [-M|-m] [-W|-w] [-k kubelet]
+Usage: $0 [-B|-b] [-C|-c] [-U|-u] [-M|-m] [-W|-w] [-k kubelet] [nodes...]
     Args:
       -B        Don't use ssh bastion host (direct ssh)
       -b	Use a bastion ssh host (default)
@@ -85,16 +85,20 @@ while getopts "BbCchIiK:k:MmNnRrUuWw" opt ; do
     esac
 done
 
-#declare nodes=$(oc get nodes --no-headers=true |grep master | awk '{print $1}')
-#declare nodes=$(oc get nodes --no-headers=true | awk '{print $1}')
+shift $((OPTIND - 1))
+
 declare -a all_nodes=()
 
-while read -r node status class rest ; do
-    if [[ $install_infra -eq 0 && $class == *infra* ]] ; then continue; fi
-    if [[ $install_master -eq 0 && $class == *master* ]] ; then continue; fi
-    if [[ $install_worker -eq 0 && $class == *worker* ]] ; then continue; fi
-    all_nodes+=("$node")
-done <<< "$(oc get nodes --no-headers=true)"
+if [[ -n "$*" ]] ; then
+    all_nodes=("$@")
+else
+    while read -r node status class rest ; do
+	if [[ $install_infra -eq 0 && $class == *infra* ]] ; then continue; fi
+	if [[ $install_master -eq 0 && $class == *master* ]] ; then continue; fi
+	if [[ $install_worker -eq 0 && $class == *worker* ]] ; then continue; fi
+	all_nodes+=("$node")
+    done <<< "$(oc get nodes --no-headers=true)"
+fi
 
 function rcmd() {
     "${bastion}ssh" "$@"
@@ -279,7 +283,7 @@ function setup_cert() {
     fi
     for f in "${all_nodes[@]}" ; do
 	rcp "$private_key" "$f:.ssh"&
-	rcmd "$f" "echo $(cat "${private_key}.pub") >> .ssh/authorized_keys"&
+	rcmd "$f" "sudo chown core .ssh/authorized_keys; sudo chmod 644 .ssh/authorized_keys; echo $(cat "${private_key}.pub") >> .ssh/authorized_keys"&
     done
     wait
     rm -rf "$tmpdir"

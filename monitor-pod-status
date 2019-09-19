@@ -1,0 +1,48 @@
+#!/bin/bash
+
+declare -i delay="${1:-60}"
+declare -i start
+declare -i end
+declare -A podstatus
+declare -A nsstatus
+declare -A secstatus
+declare -i podcount
+declare -i nscount
+
+while :; do
+    start=$(printf "%(%s)T" -1)
+    podcount=0
+    nscount=0
+    podstatus=()
+    nsstatus=()
+    secstatus=()
+    while read ns pod count status rest ; do
+	[[ -n $pod ]] || break
+	status=${status:0:1}
+	podcount=$((podcount+1))
+	podstatus[$status]=$((${podstatus[$status]:-0}+1))
+    done <<< "$(oc get pods --all-namespaces -l minipause=true --no-headers --ignore-not-found=true)"
+    while read ns status rest ; do
+	[[ -n $ns ]] || break
+	status=${status:0:1}
+	nscount=$((nscount+1))
+	nsstatus[$status]=$((${nsstatus[$status]:-0}+1))
+    done <<< "$(oc get namespaces -l minipause=true --no-headers --ignore-not-found=true)"
+    while read ns name stype rest ; do
+	[[ -n $ns ]] || break
+	if [[ $stype == Opaque ]] ; then
+	    stype=A
+	else
+	    stype=S
+	fi
+	secstatus[$stype]=$((${secstatus[$stype]:-0}+1))
+	# We're looking for other secrets that can't be tagged.
+    done <<< "$(oc get secrets --all-namespaces --no-headers --ignore-not-found=true |grep minipause)"
+    printf "%s " "$(printf "%(%T)T" -1)" Pods: "$(for s in P R C T E ; do echo -n "${podstatus[$s]:-0}$s "; done)" "/ $podcount" "  Namespaces:" "$(for s in A T ; do echo -n "${nsstatus[$s]:-0}$s "; done)" "/ $nscount" "  Secrets:" "$(for s in A S ; do echo -n "${secstatus[$s]:-0}$s "; done)"
+    echo
+    end=$(printf "%(%s)T" -1)
+    stime=$((start+delay-end))
+    if (( stime > 0 )) ; then
+	sleep "$stime"
+    fi
+done
