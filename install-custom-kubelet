@@ -287,7 +287,9 @@ function setup_cert() {
 	rcmd "$f" "sudo chown core .ssh/authorized_keys; sudo chmod 644 .ssh/authorized_keys; echo $(cat "${private_key}.pub") >> .ssh/authorized_keys"&
     done
     wait
-    rm -rf "$tmpdir"
+    if [[ -n "${tmpdir:-}" && -d "${tmpdir:-}" ]] ; then
+	rm -rf "$tmpdir"
+    fi
 }
 
 if [[ -n $TERM ]] ; then
