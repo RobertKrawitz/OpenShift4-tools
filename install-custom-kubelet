@@ -93,10 +93,11 @@ if [[ -n "$*" ]] ; then
     all_nodes=("$@")
 else
     while read -r node status class rest ; do
-	if [[ $install_infra -eq 0 && $class == *infra* ]] ; then continue; fi
-	if [[ $install_master -eq 0 && $class == *master* ]] ; then continue; fi
-	if [[ $install_worker -eq 0 && $class == *worker* ]] ; then continue; fi
-	all_nodes+=("$node")
+	if [[ ($install_infra -eq 1 && $class == *infra*) ||
+		  ($install_master -eq 1 && $class == *master*) ||
+		  ($install_worker -eq 1 && $class == *worker*) ]] ; then
+	    all_nodes+=("$node")
+	fi
     done <<< "$(oc get nodes --no-headers=true)"
 fi
 
