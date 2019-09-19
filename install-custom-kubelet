@@ -21,57 +21,80 @@ cmddir=$(finddir "$0")
 
 PATH="${cmddir}:$PATH"
 
-set -e
+set -eu
 
 declare godir=${GOPATH:-$HOME/go}
-godir=${GOPATH%:*}
 declare -r srcdir="$godir/src/github.com/openshift/origin"
 declare lkubelet="$srcdir/_output/local/bin/linux/amd64/hyperkube"
 declare bastion=bastion-
 declare -i rebuild=1
 declare -i do_setup_cert=0
 declare -i do_uninstall=0
+declare -i twidth=1000
+declare -i install_infra=0
+declare -i install_master=0
+declare -i install_worker=1
+declare -i copy_kubelet=1
+declare private_key=
 
 function help() {
     cat <<EOF
-Usage: $0 [-B|-b] [-C|-c] [-U|-u] [-k kubelet]
+Usage: $0 [-B|-b] [-C|-c] [-U|-u] [-M|-m] [-W|-w] [-k kubelet]
     Args:
       -B        Don't use ssh bastion host (direct ssh)
       -b	Use a bastion ssh host (default)
       -C	Don't setup node certs for ssh (default)
       -c	Set up node certs for ssh (must be done once)
-      -d file	Use the specified kubelet file
+      -I        Don't install on infra nodes (default)
+      -i        Install on infra nodes
+      -k file	Use the specified kubelet file
+      -K file	Use the specified private key file
+      -M        Don't install on master nodes (default)
+      -m        Install on master nodes
+      -R        Don't attempt to rebuild the kubelet
+      -r        Rebuild the kubelet (default)
       -U        Install custom kubelet (default)
       -u	Uninstall (restore original kubelet)
+      -W        Don't install on worker nodes
+      -w        Install on worker nodes (default)
 EOF
     exit 1
 }
 
-while getopts "BbCchk:Uu" opt ; do
+while getopts "BbCchIiK:k:MmNnRrUuWw" opt ; do
     case "$opt" in
 	B) bastion=                      ;;
 	b) bastion=bastion-              ;;
 	C) do_setup_cert=0		 ;;
 	c) do_setup_cert=1		 ;;
+	I) install_infra=0		 ;;
+	i) install_infra=1		 ;;
+	K) private_key="$OPTARG"	 ;;
 	k) lkubelet="$OPTARG"; rebuild=0 ;;
+	M) install_master=0		 ;;
+	m) install_master=1		 ;;
+	N) copy_kubelet=0		 ;;
+	n) copy_kubelet=1		 ;;
+	R) rebuild=0			 ;;
+	r) rebuild=1			 ;;
 	U) do_uninstall=0		 ;;
 	u) do_uninstall=1		 ;;
+	W) install_worker=0		 ;;
+	w) install_worker=1		 ;;
 	*) help				 ;;
     esac
 done
 
 #declare nodes=$(oc get nodes --no-headers=true |grep master | awk '{print $1}')
 #declare nodes=$(oc get nodes --no-headers=true | awk '{print $1}')
-declare -a other_nodes=()
-declare firstnode
+declare -a all_nodes=()
 
-while read -r node ; do
-    if [[ -z $firstnode ]] ; then
-	firstnode=$node
-    else
-	other_nodes+=("$node")
-    fi
-done <<< "$(oc get nodes --no-headers=true |grep worker | awk '{print $1}')"
+while read -r node status class rest ; do
+    if [[ $install_infra -eq 0 && $class == *infra* ]] ; then continue; fi
+    if [[ $install_master -eq 0 && $class == *master* ]] ; then continue; fi
+    if [[ $install_worker -eq 0 && $class == *worker* ]] ; then continue; fi
+    all_nodes+=("$node")
+done <<< "$(oc get nodes --no-headers=true)"
 
 function rcmd() {
     "${bastion}ssh" "$@"
@@ -190,23 +213,22 @@ function generate_grappling_hook_install() {
 set -e
 expected_md5="$1"
 shift
+myname="$1"
+shift
 cd /tmp
 chmod +x hyperkube
-./install-kubelet /tmp/hyperkube "$expected_md5"
-if [[ -f /tmp/hyperkube.gz ]] ; then
-    rm -f /tmp/hyperkube.gz
-fi
-gzip /tmp/hyperkube
+echo "$myname: " "$(./install-kubelet /tmp/hyperkube "$expected_md5")"
+rm -f /tmp/hyperkube.gz
+gzip -c /tmp/hyperkube > /tmp/hyperkube.gz
+chmod +x /tmp/hyperkube.gz
 for node in "$@" ; do
-    echo "$node":
-    scp -o StrictHostKeyChecking=no -i ~/.ssh/temp_install -p install-kubelet /tmp/hyperkube.gz "$node:/tmp"
-    ssh -o StrictHostKeyChecking=no -i ~/.ssh/temp_install "$node" /tmp/install-kubelet /tmp/hyperkube.gz "$expected_md5"
+    echo "$node: " "$(scp -o StrictHostKeyChecking=no -i ~/.ssh/temp_install -p install-kubelet /tmp/hyperkube.gz "$node:/tmp")" "$(ssh -o StrictHostKeyChecking=no -i ~/.ssh/temp_install "$node" /tmp/install-kubelet /tmp/hyperkube.gz "$expected_md5")"
 done
+rm -f /tmp/hyperkube.gz
 ls -l /usr/bin/hyperkube
-ps aux |grep hyperkube
+echo "$myname: " "$(ps aux |grep hyperkube |grep -v grep)"
 for node in "$@" ; do
-    echo "$node":
-    ssh -o StrictHostKeyChecking=no -i ~/.ssh/temp_install  "$node" sh -c "ls -l /usr/bin/hyperkube; ps aux |grep hyperkube"
+    echo "$node: " "$(ssh -o StrictHostKeyChecking=no -i ~/.ssh/temp_install  "$node" ps aux |grep hyperkube |grep -v grep)"
 done
 EOF
 }
@@ -216,18 +238,17 @@ function generate_grappling_hook_uninstall() {
 #!/bin/bash
 set -e
 shift
+myname="$1"
+shift
 cd /tmp
 ./uninstall-kubelet
 for node in "$@" ; do
-    echo "$node":
-    scp -o StrictHostKeyChecking=no -i ~/.ssh/temp_install -p uninstall-kubelet "$node:/tmp"
-    ssh -o StrictHostKeyChecking=no -i ~/.ssh/temp_install "$node" /tmp/uninstall-kubelet
+    echo "$node: " "$(scp -o StrictHostKeyChecking=no -i ~/.ssh/temp_install -p uninstall-kubelet "$node:/tmp")" "$(ssh -o StrictHostKeyChecking=no -i ~/.ssh/temp_install "$node" /tmp/uninstall-kubelet)"
 done
 ls -l /usr/bin/hyperkube
-ps aux |grep hyperkube
+echo "$myname: " "$(ps aux |grep hyperkube |grep -v grep)"
 for node in "$@" ; do
-    echo "$node":
-    ssh -o StrictHostKeyChecking=no -i ~/.ssh/temp_install  "$node" sh -c "ls -l /usr/bin/hyperkube; ps aux |grep hyperkube"
+    echo "$node: " "$(ssh -o StrictHostKeyChecking=no -i ~/.ssh/temp_install  "$node" ps aux |grep hyperkube |grep -v grep)"
 done
 EOF
 }
@@ -241,32 +262,44 @@ function generate_grappling_hook() {
 }
 
 function setup_cert() {
-    declare tmpdir
-    tmpdir=$(mktemp -d) || {
-	echo "Can't create temporary cert dir"
-	exit 1
-    }
-    ssh-keygen -q -f "$tmpdir/temp_install" -N '' || {
-	echo "Can't create temporary key"
-	rm -rf "$tmpdir"
-	exit 1
-    }
-    for f in "${other_nodes[@]}" ; do
-	rcmd "$f" "cat >> .ssh/authorized_keys" < "$tmpdir/temp_install.pub"
+    local tmpdir
+    local private_key="$1"
+
+    if [[ -z "$private_key" ]] ; then
+	tmpdir=$(mktemp -d) || {
+	    echo "Can't create temporary cert dir"
+	    exit 1
+	}
+	private_key="$tmpdir/temp_install"
+	ssh-keygen -q -f "$private_key" -N '' || {
+	    echo "Can't create temporary key"
+	    rm -rf "$tmpdir"
+	    exit 1
+	}
+    fi
+    for f in "${all_nodes[@]}" ; do
+	rcp "$private_key" "$f:.ssh"&
+	rcmd "$f" "echo $(cat "${private_key}.pub") >> .ssh/authorized_keys"&
     done
-    rcp "$tmpdir/temp_install" "$firstnode:.ssh/temp_install"
+    wait
     rm -rf "$tmpdir"
 }
 
+if [[ -n $TERM ]] ; then
+    twidth=$(tput cols)
+fi
+
 if (( do_setup_cert )) ; then
-    setup_cert
+    setup_cert "$private_key"
 fi
 
 if (( ! do_uninstall )) ; then
-    rcp -C "$lkubelet" "$firstnode:/tmp"
-    generate_install_kubelet | rcmd "$firstnode" "cat > /tmp/install-kubelet; chmod +x /tmp/install-kubelet"
+    if (( copy_kubelet )) ; then
+	rcp -C "$lkubelet" "${all_nodes[0]}:/tmp"
+    fi
+    generate_install_kubelet | rcmd "${all_nodes[0]}" "cat > /tmp/install-kubelet; chmod +x /tmp/install-kubelet"
 else
-    generate_uninstall_kubelet | rcmd "$firstnode" "cat > /tmp/uninstall-kubelet; chmod +x /tmp/uninstall-kubelet"
+    generate_uninstall_kubelet | rcmd "${all_nodes[0]}" "cat > /tmp/uninstall-kubelet; chmod +x /tmp/uninstall-kubelet"
 fi
-generate_grappling_hook | rcmd "$firstnode" "cat > /tmp/kubelet-grappling-hook; chmod +x /tmp/kubelet-grappling-hook; /tmp/kubelet-grappling-hook $expected_md5 ${other_nodes[*]}"
+generate_grappling_hook | rcmd "${all_nodes[0]}" "cat > /tmp/kubelet-grappling-hook; chmod +x /tmp/kubelet-grappling-hook; /tmp/kubelet-grappling-hook $expected_md5 ${all_nodes[*]}" |cut "-c1-$twidth"
 oc get nodes
