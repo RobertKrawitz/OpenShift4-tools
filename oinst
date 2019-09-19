@@ -1250,7 +1250,7 @@ function start_kubechart_if_requested() {
     [[ -n $kubechart_port ]] && run_kubechart=1
     local run_oschart="$run_kubechart"
     if [[ -n $run_kubechart ]] ; then
-	kubechart_port=${kubechart_port:-${default_kubechart_port}
+	kubechart_port=${kubechart_port:-${default_kubechart_port}}
 	oschart_port=$((kubechart_port+1))
     fi
     if [[ -x $kubechart && $run_kubechart -gt 0 ]] ; then
