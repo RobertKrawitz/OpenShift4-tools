@@ -37,7 +37,8 @@ function finddir() {
     return 0
 }
 
-declare realsc=
+declare ___realsc=
+declare ___topsc
 if [[ -z ${___topsc:-} ]] ; then
     export ___topsc="${0##*/}"
     # shellcheck disable=SC2155
@@ -122,7 +123,7 @@ $(do_platforms help default_domain | indent -28)
                             (\$GOPATH/src/github.com/openshift/installer)
         install_type        Specify the install type, as described above.
         kubechart_port      Use the specified port for kubechart.  oschart
-                            runs at port+1.  Implies -b.  Default is 3000.
+                            runs at port+1.  Implies -b.  Default is ${default_kubechart_port}.
         pubkey_file         Specify the path to the desired public key
                             Default $pubkey_file
         pull_secret         Specify the path to the pull secret.
@@ -143,7 +144,7 @@ EOF
 }
 
 function clean_startup() {
-    [[ -f ${realsc:-} ]] && rm -f "$realsc"
+    [[ -f $___realsc ]] && rm -f "$___realsc"
 }
 
 # This allows us to edit the script while another instance is running
@@ -159,17 +160,17 @@ if [[ $# == 0 || $1 != "--DoIt=$0" ]] ; then
     chmod +x "$tmpsc"
     exec "$tmpsc" "--DoIt=$tmpsc" "$@"
 else
-    realsc=${1#--DoIt=}
+    ___realsc=${1#--DoIt=}
     clean_startup
     shift
 fi
 
 # Globals
-declare -A release_base_map
+declare -A release_base_map=()
 release_base_map[origin-release]='4.2.0-0.okd'
 release_base_map[openshift-release]='4-stable'
 
-declare -A subdir_map
+declare -A subdir_map=()
 subdir_map[origin-release]='origin'
 subdir_map[openshift-release]='ocp'
 
@@ -181,7 +182,7 @@ declare -a global_platforms=(aws libvirt)
 
 declare -A global_diagnostics=()
 
-declare install_type
+declare install_type=
 declare install_domain=${OPENSHIFT_INSTALL_DOMAIN:-}
 declare install_dir=${OPENSHIFT_INSTALL_DIR:-$install_domain}
 declare install_version=latest_default
@@ -189,7 +190,7 @@ declare pull_secret=${OPENSHIFT_INSTALL_PULL_SECRET_PATH:-$HOME/Downloads/pull-s
 declare pubkey_file=${OPENSHIFT_INSTALL_SSH_PUB_KEY_PATH:-$HOME/.ssh/id_rsa.pub}
 declare srcdir=${GOPATH:-$HOME/go}/src/github.com/openshift/installer
 declare install=$srcdir/bin/openshift-install
-declare release_channel
+declare release_channel=
 declare repo=$default_repo_base
 
 # shellcheck disable=SC2155
@@ -227,6 +228,7 @@ declare cleanup_only_dir=
 declare config_file=
 declare console_route=
 declare ext_installer=
+declare -r -i default_kubechart_port=3000
 declare kubechart_port=
 declare loglevel=
 declare oschart_port=
@@ -242,10 +244,10 @@ declare platformconfdata=
 # Running nested installs is liable to be problematic
 if [[ -n ${OPENSHIFT_INSTALL_INTERLOCK:-} ]] ; then
     if [[ ${1:-} == -h* ]] ; then
-	echo "Already in ${___topsc:-} environment!"
+	echo "Already in ${___topsc:-oinst} environment!"
 	help
     fi
-    fatal "Already in ${___topsc:-} environment"
+    fatal "Already in ${___topsc:-oinst} environment"
 fi
 
 [[ -z $OC ]] && fatal "Can't find oc command"
@@ -731,7 +733,7 @@ function aws_replicas() {
 function aws_default_install_type() {
     for a in aws aws2 aws3 aws4; do
 	echo $a
-    done | shuf | head -1
+    done | shuf -- head-count 1
 }
 
 function aws_help() {
@@ -1248,7 +1250,7 @@ function start_kubechart_if_requested() {
     [[ -n $kubechart_port ]] && run_kubechart=1
     local run_oschart="$run_kubechart"
     if [[ -n $run_kubechart ]] ; then
-	kubechart_port=${kubechart_port:-3000}
+	kubechart_port=${kubechart_port:-${default_kubechart_port}
 	oschart_port=$((kubechart_port+1))
     fi
     if [[ -x $kubechart && $run_kubechart -gt 0 ]] ; then
@@ -1519,7 +1521,7 @@ export OPENSHIFT_INSTALL_BASE_DOMAIN
 
 [[ -n $ext_installer ]] && install="$ext_installer"
 [[ $install_version == latest_default ]] && install_version=latest
-export OPENSHIFT_INSTALL_CLUSTER_NAME=${install_dir:-${LOGNAME}-${OPENSHIFT_INSTALL_PLATFORM}}
+export OPENSHIFT_INSTALL_CLUSTER_NAME=${install_dir:-${LOGNAME:-NOUSER}-${OPENSHIFT_INSTALL_PLATFORM}}
 
 install_dir="${install_dir:-$OPENSHIFT_INSTALL_CLUSTER_NAME}"
 
