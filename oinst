@@ -733,7 +733,7 @@ function aws_replicas() {
 function aws_default_install_type() {
     for a in aws aws2 aws3 aws4; do
 	echo $a
-    done | shuf -- head-count 1
+    done | shuf --head-count 1
 }
 
 function aws_help() {
