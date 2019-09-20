@@ -1053,24 +1053,20 @@ cat <<\EOF
   https://access.redhat.com/solutions/3533201.  Add the auth for
   quay.io to your ~/.docker/config.json and ~/Downloads/pull-secret.
 
-* You need to oc login.
+* You need to oc login (or periodically refresh your login).  All
+  three steps must be performed.  Not doing this can lead to very
+  strange errors; see https://bugzilla.redhat.com/show_bug.cgi?id=1647479.
 
-  Go to https://api.ci.openshift.org/ and in
-  the upper right corner you will see the '?'.  Dropdown to Command
-  Line Tools that will give you an 'oc login' command to run from a
-  command line.
+  + Go to https://api.ci.openshift.org/ and in the upper right corner
+    you will see the '?'.  Dropdown to Command Line Tools that will
+    give you an 'oc login' command to run from a command line.
 
-  This (and the following step) needs to be refreshed periodically.
+  + Run 'oc registry login'.
 
-  Not doing this can lead to very strange errors; see
-  https://bugzilla.redhat.com/show_bug.cgi?id=1647479
-
-* Following oc login, run 'oc registry login'.  This will generate
-  additional secrets in ~/.docker/config.json; these need to be
-  copied into ~/Downloads/pull-secret (in particular,
-  the secret for registry.svc.ci.openshift.org).
-
-  This *always* needs to be done after oc login.
+  + This will generate or update additional secrets in
+    ~/.docker/config.json; these need to be copied into
+    ~/Downloads/pull-secret.  In particular, the secret for
+    registry.svc.ci.openshift.org will change.
 
 * Ensure that you have correct credentials for your cloud provider,
   as appropriate.
