@@ -600,7 +600,7 @@ declare -ar known_aws_instance_types=("X.General Purpose"
 				      x1.{16,32}xlarge
 				      "X.Single Thread Optimized"
 				      z1d.{{,{,2,3,6,12}x}large,metal}
-				      # These are special dedicated-only hosts
+				      # High Memory are special dedicated-only hosts
 				      # Y.u-t{6,9}tb1.metal
 				      # Y.u-t12tb1.metal
 				      "X.Storage Optimized"
@@ -612,6 +612,7 @@ declare -ar known_aws_instance_types=("X.General Purpose"
 				      p3.{2,8,16}xlarge
 				      p3dn.24xlarge
 				      p2.{,8,16}xlarge
+				      g4dh.{{,2,4,8,12,16}xlarge,metal}
 				      g3s.xlarge g3.{4,8,16}xlarge
 				      # FPGA instances are of no use for
 				      # running OpenShift
