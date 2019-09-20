@@ -967,12 +967,12 @@ baseDomain: $(platform_dispatch base_domain)
 compute:
 - hyperthreading: Enabled
   name: worker
-  platform: $(platform_data master "${masterconfdata:-}" "${masterconfdata:-}" 4)
+  platform: $(platform_data worker "${workerconfdata:-}" "${workerconfdata:-}" 4)
   replicas: $(platform_dispatch replicas worker)
 controlPlane:
   hyperthreading: Enabled
   name: master
-  platform: $(platform_data worker "${workerconfdata:-}" "${workerconfdata:-}" 4)
+  platform: $(platform_data master "${masterconfdata:-}" "${masterconfdata:-}" 4)
   replicas: $(platform_dispatch replicas master)
 metadata:
   creationTimestamp: null
