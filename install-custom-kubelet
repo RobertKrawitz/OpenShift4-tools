@@ -214,7 +214,7 @@ sudo mv hyperkube.NEW hyperkube || {
 }
 cd /
 sudo mount -o remount,ro /usr
-sudo sysctl -w kernel.pid_max=262144
+sudo sysctl -w kernel.pid_max=4194304
 sudo systemctl restart kubelet.service
 EOF
 }
