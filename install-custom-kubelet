@@ -44,20 +44,22 @@ function help() {
 Usage: $0 [options] [specific_nodes...]
     Args:
       -B        Don't use ssh bastion host (direct ssh)
-      -b	Use a bastion ssh host (default)
-      -C	Don't setup node certs for ssh (default)
-      -c	Set up node certs for ssh (must be done once)
+      -b        Use a bastion ssh host (default)
+      -C        Don't setup node certs for ssh (default)
+      -c        Set up node certs for ssh (must be done once)
       -I        Don't install on infra nodes (default)
       -i        Install on infra nodes
-      -k file	Use the specified kubelet file
-      -K file	Use the specified private key file
+      -k file   Use the specified kubelet file
+      -K file   Use the specified private key file
       -M        Don't install on master nodes (default)
       -m        Install on master nodes
+      -N        Don't copy the kubelet to remote (must be there)
+      -n        Copy the kubelet to the remote (default)
       -p N      Set up ssh keys N-way parallel
       -R        Don't attempt to rebuild the kubelet
       -r        Rebuild the kubelet (default)
       -U        Install custom kubelet (default)
-      -u	Uninstall (restore original kubelet)
+      -u        Uninstall (restore original kubelet)
       -W        Don't install on worker nodes
       -w        Install on worker nodes (default)
 EOF
@@ -76,7 +78,7 @@ while getopts "BbCchIiK:k:MmNnp:RrUuWw" opt ; do
 	k) lkubelet="$OPTARG"; rebuild=0 ;;
 	M) install_master=0		 ;;
 	m) install_master=1		 ;;
-	N) copy_kubelet=0		 ;;
+	N) copy_kubelet=0 		 ;;
 	n) copy_kubelet=1		 ;;
 	p) parallel="$OPTARG"		 ;;
 	R) rebuild=0			 ;;
@@ -120,7 +122,7 @@ function build_upload() {
     md5sum _output/local/bin/linux/amd64/hyperkube
 }
 
-if (( rebuild && !do_uninstall )) ; then
+if (( rebuild && !do_uninstall && copy_kubelet )) ; then
     (build_upload)
 fi
 
