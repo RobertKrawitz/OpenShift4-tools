@@ -6,19 +6,32 @@ declare -i end
 declare -A podstatus
 declare -A nsstatus
 declare -A secstatus
+declare -A nodestatus
 declare -i podcount
 declare -i nscount
+declare -i nodestatus
 
 while :; do
     start=$(printf "%(%s)T" -1)
     podcount=0
     nscount=0
+    nodecount=0
     podstatus=()
     nsstatus=()
     secstatus=()
+    nodestatus=()
     while read ns pod count status rest ; do
 	[[ -n $pod ]] || break
-	status=${status:0:1}
+	case "$status" in
+	    Running) status=R ;;
+	    ContainerCreating)    status=C ;;
+	    Error)                status=E ;;
+	    CreateContainerError) status=X ;;
+	    Terminating)          status=T ;;
+	    Pending)              status=P ;;
+	    Running)              status=R ;;
+	    *)                    status=U ;;
+	esac
 	podcount=$((podcount+1))
 	podstatus[$status]=$((${podstatus[$status]:-0}+1))
     done <<< "$(oc get pods --all-namespaces -l minipause=true --no-headers --ignore-not-found=true)"
@@ -38,7 +51,13 @@ while :; do
 	secstatus[$stype]=$((${secstatus[$stype]:-0}+1))
 	# We're looking for other secrets that can't be tagged.
     done <<< "$(oc get secrets --all-namespaces --no-headers --ignore-not-found=true |grep minipause)"
-    printf "%s " "$(printf "%(%T)T" -1)" Pods: "$(for s in P R C T E ; do echo -n "${podstatus[$s]:-0}$s "; done)" "/ $podcount" "  Namespaces:" "$(for s in A T ; do echo -n "${nsstatus[$s]:-0}$s "; done)" "/ $nscount" "  Secrets:" "$(for s in A S ; do echo -n "${secstatus[$s]:-0}$s "; done)"
+    while read node status rest ; do
+	[[ -n $node ]] || break
+	status=${status:0:1}
+	nodecount=$((nodecount+1))
+	nodestatus[$status]=$((${nodestatus[$status]:-0}+1))
+    done <<< "$(oc get nodes -l node-role.kubernetes.io/worker --no-headers --ignore-not-found=true)"
+    printf "%s " "$(printf "%(%T)T" -1)" Pods: "$(for s in P R C T E X U ; do echo -n "${podstatus[$s]:-0}$s "; done)" "/ $podcount" "  NS:" "$(for s in A T ; do echo -n "${nsstatus[$s]:-0}$s "; done)" "/ $nscount" "  Sec:" "$(for s in A S ; do echo -n "${secstatus[$s]:-0}$s "; done)" "  Node:" "$(for s in R N ; do echo -n "${nodestatus[$s]:-0}$s "; done)" "/ $nodecount"
     echo
     end=$(printf "%(%s)T" -1)
     stime=$((start+delay-end))

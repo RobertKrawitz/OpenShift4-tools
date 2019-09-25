@@ -35,11 +35,13 @@ declare -i install_infra=0
 declare -i install_master=0
 declare -i install_worker=1
 declare -i copy_kubelet=1
+declare -i parallel=1
+declare -i pcount=0
 declare private_key=
 
 function help() {
     cat <<EOF
-Usage: $0 [-B|-b] [-C|-c] [-U|-u] [-M|-m] [-W|-w] [-k kubelet] [nodes...]
+Usage: $0 [options] [specific_nodes...]
     Args:
       -B        Don't use ssh bastion host (direct ssh)
       -b	Use a bastion ssh host (default)
@@ -51,6 +53,7 @@ Usage: $0 [-B|-b] [-C|-c] [-U|-u] [-M|-m] [-W|-w] [-k kubelet] [nodes...]
       -K file	Use the specified private key file
       -M        Don't install on master nodes (default)
       -m        Install on master nodes
+      -p N      Set up ssh keys N-way parallel
       -R        Don't attempt to rebuild the kubelet
       -r        Rebuild the kubelet (default)
       -U        Install custom kubelet (default)
@@ -61,7 +64,7 @@ EOF
     exit 1
 }
 
-while getopts "BbCchIiK:k:MmNnRrUuWw" opt ; do
+while getopts "BbCchIiK:k:MmNnp:RrUuWw" opt ; do
     case "$opt" in
 	B) bastion=                      ;;
 	b) bastion=bastion-              ;;
@@ -75,6 +78,7 @@ while getopts "BbCchIiK:k:MmNnRrUuWw" opt ; do
 	m) install_master=1		 ;;
 	N) copy_kubelet=0		 ;;
 	n) copy_kubelet=1		 ;;
+	p) parallel="$OPTARG"		 ;;
 	R) rebuild=0			 ;;
 	r) rebuild=1			 ;;
 	U) do_uninstall=0		 ;;
@@ -208,6 +212,7 @@ sudo mv hyperkube.NEW hyperkube || {
 }
 cd /
 sudo mount -o remount,ro /usr
+sudo sysctl -w kernel.pid_max=262144
 sudo systemctl restart kubelet.service
 EOF
 }
@@ -266,6 +271,18 @@ function generate_grappling_hook() {
     fi
 }
 
+function waitforit() {
+    if ((++pcount >= parallel)) ; then
+	wait -n
+	pcount=$((pcount-1))
+    fi
+}
+
+function waitforall() {
+    wait
+    pcount=0
+}
+
 function setup_cert() {
     local tmpdir
     local private_key="$1"
@@ -283,10 +300,10 @@ function setup_cert() {
 	}
     fi
     for f in "${all_nodes[@]}" ; do
-	rcp "$private_key" "$f:.ssh"&
-	rcmd "$f" "sudo chown core .ssh/authorized_keys; sudo chmod 644 .ssh/authorized_keys; echo $(cat "${private_key}.pub") >> .ssh/authorized_keys"&
+	(rcp "$private_key" "$f:.ssh" && rcmd "$f" "sudo chown core .ssh/authorized_keys; sudo chmod 644 .ssh/authorized_keys; cat >> .ssh/authorized_keys" < "${private_key}.pub")&
+	waitforit
     done
-    wait
+    waitforall
     if [[ -n "${tmpdir:-}" && -d "${tmpdir:-}" ]] ; then
 	rm -rf "$tmpdir"
     fi

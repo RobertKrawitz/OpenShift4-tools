@@ -13,6 +13,7 @@ declare -i sleeptime=0
 declare -i doit=1
 declare -i blocksize=1
 declare -i blockitemcount=0
+declare podType=Minipause
 declare podsleeptime=infinity
 declare basename=minipause
 declare opt
@@ -25,6 +26,7 @@ Usage: $0 [options] [name]
        Default 1 namespace
     Options:
        -n              Print what would be done without doing it
+       -P              Use PausePod rather than minipause
        -b blocksize    Number of objects to create in one oc call (default 1)
        -c containers   Number of containers per pod
        -d deployments  Number of deployments per namespace (default 1)
@@ -43,9 +45,10 @@ EOF
 
 trap exit INT
 
-while getopts ":b:c:ns:d:p:r:w:z:hN:" opt ; do
+while getopts ":b:c:ns:d:p:r:w:z:hN:P" opt ; do
     case "$opt" in
 	n) doit=0			;;
+	P) podType=Pausepod		;;
 	b) blocksize="$OPTARG"          ;;
 	c) containers="$OPTARG"         ;;
 	N) namespaces="$OPTARG"         ;;
@@ -193,7 +196,7 @@ EOF
     fi
 }
 
-function createContainersYAML() {
+function createContainersMinipauseYAML() {
     local namespace=$1
     local i=$2
     local secretCount=$3
@@ -203,12 +206,14 @@ function createContainersYAML() {
     for j in $(seq 0 $((containers - 1))) ; do
 cat <<EOF
         - name: ${namespace}-$i-$j
+          imagePullPolicy: IfNotPresent
           image: "busybox"
-$(createVolumeMountsYAML "$namespace" "$i" "$secretCount")
-          resources:
-            requests:
-              cpu: 1m
-              memory: 5Mi
+#          resources:
+#            requests:
+#              cpu: 1m
+#              memory: 5Mi
+          securityContext:
+            privileged: false
           command:
             - /bin/sh
           args:
@@ -218,9 +223,30 @@ $(createVolumeMountsYAML "$namespace" "$i" "$secretCount")
               (while : ; do date ; sleep 60 ; done)&
               sleep $podsleeptime
               exit 1
+$(createVolumeMountsYAML "$namespace" "$i" "$secretCount")
 EOF
     done
 }
+
+function createContainersPausepodYAML() {
+    local namespace=$1
+    local i=$2
+    local secretCount=$3
+    local -i pods=$4
+    local -i containers=$5
+    local -i j
+    for j in $(seq 0 $((containers - 1))) ; do
+cat <<EOF
+        - name: ${namespace}-$i-$j
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            privileged: false
+          image: "gcr.io/google_containers/pause-amd64:3.0"
+$(createVolumeMountsYAML "$namespace" "$i" "$secretCount")
+EOF
+    done
+}
+
 
 function createDeploymentYAML() {
     local namespace=$1
@@ -243,7 +269,6 @@ spec:
       app: ${namespace}-$i
   strategy:
     type: RollingUpdate
-  restartPolicy: IfNotPresent
   template:
     metadata:
       labels:
@@ -254,7 +279,7 @@ spec:
       terminationGracePeriodSeconds: 1
       restartPolicy: Always
       containers:
-$(createContainersYAML "$@")
+$(createContainers${podType}YAML "$@")
 $(createVolumesYAML "$namespace" "$i" "$secretCount")
 EOF
 }

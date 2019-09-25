@@ -36,7 +36,7 @@ while getopts "hp:b:q:X:" opt ; do
 		unset "args[$option]"
 	    fi
 	    ;;
-	h) help				;;
+	*) help				;;
     esac
 done
 
