@@ -98,13 +98,8 @@ function createObject() {
 	    accumulateddata=
 	    blockitemcount=0
 	    if (( pcount++ >= parallel )) ; then
-		if (( parallel > 1 )) ; then
-		    wait -n
-		    pcount=$((pcount-1))
-		else
-		    wait
-		    pcount=0
-		fi
+		wait
+		pcount=0
 	    fi
 	    if (( sleeptime )) ; then
 		sleep "$sleeptime"
