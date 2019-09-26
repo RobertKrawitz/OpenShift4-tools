@@ -275,7 +275,11 @@ function generate_grappling_hook() {
 
 function waitforit() {
     if ((++pcount >= parallel)) ; then
-	wait -n
+	if (( parallel <= 1 )) ; then
+	    wait
+	else
+	    wait -n
+	fi
 	pcount=$((pcount-1))
     fi
 }
