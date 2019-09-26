@@ -76,7 +76,6 @@ function waitforall() {
 	    oc apply -f - <<< "$accumulateddata"
 	    accumulateddata=
 	fi
-	wait
     fi
     pcount=0
 }
@@ -94,13 +93,9 @@ function createObject() {
     if (( doit )) ; then
 	accumulateddata+="$data"
 	if (( ++blockitemcount >= blocksize )) ; then
-	    (oc apply -f - <<< "$accumulateddata") &
+	    (oc apply -f - <<< "$accumulateddata")
 	    accumulateddata=
 	    blockitemcount=0
-	    if (( pcount++ >= parallel )) ; then
-		wait
-		pcount=0
-	    fi
 	    if (( sleeptime )) ; then
 		sleep "$sleeptime"
 	    fi
