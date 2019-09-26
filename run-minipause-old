@@ -100,10 +100,11 @@ function createObject() {
 	    if (( pcount++ >= parallel )) ; then
 		if (( parallel > 1 )) ; then
 		    wait -n
+		    pcount=$((pcount-1))
 		else
 		    wait
+		    pcount=0
 		fi
-		pcount=$((pcount-1))
 	    fi
 	    if (( sleeptime )) ; then
 		sleep "$sleeptime"
