@@ -146,6 +146,9 @@ function createSecrets() {
     local secrets=${3:-1}
     local -i i
     local -i j
+    if ((secrets <= 0)) ; then
+	return
+    fi
     for i in $(seq 0 $((depsPerNamespace - 1))) ; do
 	for j in $(seq 0 $((secrets - 1))) ; do
 	    createObject <<< "$(createSecretYAML "$namespace" "$i" "$j")"
@@ -157,6 +160,9 @@ function createVolumeMountsYAML() {
     local namespace=$1
     local deployment=${2:-1}
     local secrets=${3:-1}
+    if ((secrets <= 0)) ; then
+	return
+    fi
     local -i i
     if (( count )) ; then
 	echo "          volumeMounts:"
@@ -175,6 +181,9 @@ function createVolumesYAML() {
     local namespace=$1
     local deployment=${2:-1}
     local secrets=${3:-1}
+    if ((secrets <= 0)) ; then
+	return
+    fi
     local -i i
     if (( count )) ; then
 	echo "      volumes:"
