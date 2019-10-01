@@ -8,6 +8,7 @@ totalnodes=${#workers[@]}
 
 declare -A args
 args[maxPods]=250		# The default value
+declare argsSet=0
 
 declare -a maxpods
 
@@ -24,9 +25,9 @@ EOF
 
 while getopts "hp:b:q:X:" opt ; do
     case "$opt" in
-	p) args[maxPods]="$OPTARG"      ;;
-	b) args[KubaAPIBurst]="$OPTARG" ;;
-	q) args[KubeAPIQPS]="$OPTARG"   ;;
+	p) args[maxPods]="$OPTARG"; argsSet=1      ;;
+	b) args[KubaAPIBurst]="$OPTARG"; argsSet=1 ;;
+	q) args[KubeAPIQPS]="$OPTARG"; argsSet=1   ;;
 	X)
 	    option=${OPTARG%%=*}
 	    value=${OPTARG#*=}
@@ -39,6 +40,11 @@ while getopts "hp:b:q:X:" opt ; do
 	*) help				;;
     esac
 done
+
+if ((! argsSet )) ; then
+    echo "No options set"
+    help
+fi
 
 function tsec() {
     printf "%(%s)T" -1
