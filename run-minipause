@@ -7,7 +7,6 @@ declare -i depsPerNamespace=1
 declare -i secrets=0
 declare -i replicas=1
 declare -i parallel=1
-declare -i pcount=1
 declare -i containers=1
 declare -i sleeptime=0
 declare -i doit=1
@@ -72,15 +71,13 @@ fi
 
 [[ -z "$*" ]] || echo "Warning: extraneous arguments $# after basename will be ignored!" 1>&2
 
-function waitforall() {
+function finishCreation() {
     if (( doit )) ; then
 	if [[ -n $accumulateddata ]] ; then
 	    oc apply -f - <<< "$accumulateddata"
 	    accumulateddata=
 	fi
-	wait
     fi
-    pcount=0
 }
 
 declare accumulateddata=
@@ -96,13 +93,9 @@ function createObject() {
     if (( doit )) ; then
 	accumulateddata+="$data"
 	if (( ++blockitemcount >= blocksize )) ; then
-	    (oc apply -f - <<< "$accumulateddata") &
+	    oc apply -f - <<< "$accumulateddata"
 	    accumulateddata=
 	    blockitemcount=0
-	    if (( pcount++ >= parallel )) ; then
-		wait -n
-		pcount=$((pcount-1))
-	    fi
 	    if (( sleeptime )) ; then
 		sleep "$sleeptime"
 	    fi
@@ -313,21 +306,64 @@ function stop_heartbeat() {
     exec 2>&3 3>&-
 }
 
+function createNamespaces_n() {
+    local parallel=$1; shift
+    local rotor=$1; shift
+    local orotor=$rotor
+    while (( rotor < ${#nsids[@]} )) ; do
+	local j=0
+	while (( j < blocksize )) ; do
+	    createNamespace "${basename}-$((rotor + j))"
+	    j=$((j+1))
+	done
+	rotor=$((rotor + (parallel * blocksize)))
+    done
+    finishCreation
+}
+
+function createSecrets_n() {
+    local parallel=$1; shift
+    local rotor=$1; shift
+    while (( rotor < ${#nsids[@]} )) ; do
+	local j=0
+	while (( j < blocksize )) ; do
+	    createSecrets "${basename}-$((rotor + j))" "$@"
+	    j=$((j+1))
+	done
+	rotor=$((rotor + (parallel * blocksize)))
+    done
+    finishCreation
+}
+
+function createDeployments_n() {
+    local parallel=$1; shift
+    local rotor=$1; shift
+    while (( rotor < ${#nsids[@]} )) ; do
+	local j=0
+	while (( j < blocksize )) ; do
+	    createDeployment "${basename}-$((rotor + j))" "$@"
+	    j=$((j+1))
+	done
+	rotor=$((rotor + (parallel * blocksize)))
+    done
+    finishCreation
+}
+
 function run_minipause_1() {
-    for i in "${nsids[@]}" ; do
-	createNamespace "${basename}-$i"
+    for i in $(seq 0 "$((parallel - 1))") ; do
+	createNamespaces_n "$parallel" "$((i * blocksize))" &
     done
-    waitforall
+    wait
 
-    for i in "${nsids[@]}" ; do
-	createSecrets "${basename}-$i" "$depsPerNamespace" "$secrets"
+    for i in $(seq 0 "$((parallel - 1))") ; do
+	createSecrets_n "$parallel" "$((i * blocksize))" "$depsPerNamespace" "$secrets" &
     done
-    waitforall
+    wait
 
-    for i in "${nsids[@]}" ; do
-	createDeployment "${basename}-$i" "$depsPerNamespace" "$secrets" "$replicas" "$containers"
+    for i in $(seq 0 "$((parallel - 1))") ; do
+	createDeployments_n "$parallel" "$((i * blocksize))" "$depsPerNamespace" "$secrets" "$replicas" "$containers" &
     done
-    waitforall
+    wait
 }
 
 trap stop_heartbeat INT EXIT
