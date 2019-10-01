@@ -159,7 +159,7 @@ cd "$lbindir" || {
 }
 found_md5=$(md5sum "$lkubelet" |awk '{print $1}')
 if [[ -f "$lkubelet" && $(stat -c %s "$lkubelet") -ge 1048576 && "$expected_md5" == "$found_md5" ]] ; then
-    echo "Good kubelet!"
+    :
 else
     echo "Bad kubelet"
     echo "Expected md5 $expected_md5, found $found_md5"
@@ -188,8 +188,9 @@ sudo mv hyperkube.NEW hyperkube || {
 }
 cd /
 sudo mount -o remount,ro /usr
-sudo sysctl -w kernel.pid_max=4194304
+sudo sysctl -w kernel.pid_max=4194304 >/dev/null
 sudo systemctl restart kubelet.service
+ps aux |grep /usr/bin/hyperkube |grep kubelet |grep -v grep
 EOL
 }
 
@@ -201,7 +202,7 @@ function install_kubelet_n() {
     set -e
     while (( rotor < ${#all_nodes[@]} )) ; do
 	local node=${all_nodes[$rotor]}
-	echo "$node: " "$(scp -o StrictHostKeyChecking=no -i ~/.ssh/temp_install -p install-kubelet /tmp/hyperkube.gz "$node:/tmp")" "$(ssh -o StrictHostKeyChecking=no -i ~/.ssh/temp_install "$node" /tmp/install-kubelet /tmp/hyperkube.gz "$expected_md5")"
+	echo "$node: " "$(tar cf - install-kubelet hyperkube.gz | ssh -o StrictHostKeyChecking=no -i ~/.ssh/temp_install "$node" 'cd /var/tmp; rm -f install-kubelet hyperkube.gz; tar xf -; /var/tmp/install-kubelet /var/tmp/hyperkube.gz '"$expected_md5")"
 	rotor=$((rotor + parallel_kube))
     done
 }
@@ -215,27 +216,21 @@ if (( ${#all_nodes[@]} < parallel_kube - 1)) ; then
     parallel_kube=$((${#all_nodes[@]} - 1))
 fi
 
-cd /tmp
+cd /var/tmp
 generate_install_kubelet > install-kubelet
 chmod +x install-kubelet
 chmod +x hyperkube
-echo "$myname: " "$(./install-kubelet /tmp/hyperkube "$expected_md5")"
-rm -f /tmp/hyperkube.gz
-gzip -c /tmp/hyperkube > /tmp/hyperkube.gz
-chmod +x /tmp/hyperkube.gz
+echo "$myname: " "$(./install-kubelet /var/tmp/hyperkube "$expected_md5")"
+rm -f /var/tmp/hyperkube.gz
+gzip -c /var/tmp/hyperkube > /var/tmp/hyperkube.gz
+chmod +x /var/tmp/hyperkube.gz
 # Don't try to copy this to ourself.
 for i in $(seq 1 $parallel_kube) ; do
     install_kubelet_n "$parallel_kube" "$i" &
 done
 wait
-rm -f /tmp/hyperkube.gz
+rm -f /var/tmp/hyperkube.gz
 ls -l /usr/bin/hyperkube
-echo "$myname: " "$(ps aux |grep hyperkube |grep kubelet |grep -v grep)"
-for node in "${all_nodes[@]}" ; do
-    if [[ $node != $myname ]] ; then
-        echo "$node: " "$(ssh -o StrictHostKeyChecking=no -i ~/.ssh/temp_install  "$node" ps aux |grep hyperkube |grep kubelet |grep -v grep)"
-    fi
-done
 EOF
 }
 
@@ -265,6 +260,7 @@ if [[ -f hyperkube.OLD ]] ; then
     cd /
     sudo mount -o remount,ro /usr
     sudo systemctl restart kubelet.service
+    ps aux |grep hyperkube |grep kubelet |grep -v grep
 else
     echo "No old hyperkube to restore"
 fi
@@ -278,7 +274,7 @@ function uninstall_kubelet_n() {
     shift
     while (( rotor < ${#all_nodes[@]} )) ; do
 	local node=${all_nodes[$rotor]}
-	echo "$node: " "$(scp -o StrictHostKeyChecking=no -i ~/.ssh/temp_install -p uninstall-kubelet "$node:/tmp")" "$(ssh -o StrictHostKeyChecking=no -i ~/.ssh/temp_install "$node" /tmp/uninstall-kubelet)"
+	echo "$node: " "$(ssh -o StrictHostKeyChecking=no -i ~/.ssh/temp_install "$node" 'cat > /var/tmp/uninstall-kubelet; chmod +x /var/tmp/uninstall-kubelet; /var/tmp/uninstall-kubelet' < uninstall-kubelet)"
 	rotor=$((rotor + parallel_kube))
     done
 }
@@ -291,22 +287,16 @@ if (( ${#all_nodes[@]} < parallel_kube - 1)) ; then
     parallel_kube=$((${#all_nodes[@]} - 1))
 fi
 
-cd /tmp
+cd /var/tmp
 generate_uninstall_kubelet > uninstall-kubelet
 chmod +x uninstall-kubelet
-./uninstall-kubelet
+echo "$myname: " "$(./uninstall-kubelet)"
 # Don't try to re-uninstall ourself.
 for i in $(seq 1 $parallel_kube) ; do
     uninstall_kubelet_n "$parallel_kube" "$i" &
 done
 wait
 ls -l /usr/bin/hyperkube
-echo "$myname: " "$(ps aux |grep hyperkube |grep kubelet |grep -v grep)"
-for node in "${all_nodes[@]}" ; do
-    if [[ $node != $myname ]] ; then
-        echo "$node: " "$(ssh -o StrictHostKeyChecking=no -i ~/.ssh/temp_install  "$node" ps aux |grep hyperkube |grep kubelet |grep -v grep)"
-    fi
-done
 EOF
 }
 
@@ -325,11 +315,16 @@ function generate_grappling_hook() {
 function install_ssh_key_n() {
     local parallel_key=$1
     local rotor=$2
+    local orotor=$rotor
+    local pdir=${private_key%/*}
+    if [[ -n "$pdir" ]] ; then
+	pdir="-C $pdir"
+    fi
+    local pkey=${private_key##*/}
     set -e
     while (( rotor < ${#all_nodes[@]} )) ; do
 	local f=${all_nodes[$rotor]}
-	rcp "$private_key" "$f:.ssh" 
-	rcmd "$f" "sudo chown core .ssh/authorized_keys; sudo chmod 644 .ssh/authorized_keys; cat >> .ssh/authorized_keys" < "${private_key}.pub"
+	tar c $pdir -f - "$pkey" "${pkey}.pub" | rcmd "$f" "cd .ssh; rm -f '$pkey' '${pkey}.pub'; tar xf -; sudo chown core authorized_keys; sudo chmod 644 authorized_keys; cat '${pkey}.pub' >> authorized_keys"
 	rotor=$((rotor + parallel_key))
     done
 }
@@ -354,6 +349,7 @@ function setup_cert() {
 	    exit 1
 	}
     fi
+    echo "Install key:"
     for i in $(seq 0 $((parallel_key - 1))) ; do
 	install_ssh_key_n "$parallel_key" "$i"&
     done
@@ -377,8 +373,10 @@ if (( do_setup_cert )) ; then
 fi
 
 if (( copy_kubelet && ! do_uninstall )) ; then
-    rcp -C "$lkubelet" "${all_nodes[0]}:/tmp"
+    echo "Copy $lkubelet to remote"
+    rcp -C "$lkubelet" "${all_nodes[0]}:/var/tmp"
 fi
 
-generate_grappling_hook <<< "$(print_node_names "$@")" | rcmd "${all_nodes[0]}" "cat > /tmp/kubelet-grappling-hook; chmod +x /tmp/kubelet-grappling-hook; /tmp/kubelet-grappling-hook $expected_md5 $parallel_kube" |cut "-c1-$twidth"
+echo "Set up kubelet"
+generate_grappling_hook <<< "$(print_node_names "$@")" | rcmd "${all_nodes[0]}" "cat > /var/tmp/kubelet-grappling-hook; chmod +x /var/tmp/kubelet-grappling-hook; /var/tmp/kubelet-grappling-hook $expected_md5 $parallel_kube" |cut "-c1-$twidth"
 oc get nodes
