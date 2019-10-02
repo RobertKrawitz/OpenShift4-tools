@@ -145,49 +145,36 @@ declare -r expected_md5="$2"
 
 declare -r lbindir="/usr/bin"
 
-if [[ $lkubelet = *.gz ]] ; then
-    if [[ -e ${lkubelet%.gz} ]] ; then
-        rm -f "${lkubelet%.gz}"
+function die() {
+    if [[ $1 = -r ]] ; then
+	cd /
+	mount -o remount,ro /usr 2>&1 |grep -v 'mount point is busy'
     fi
+    echo "$*"
+    exit 1
+}
+
+if [[ $lkubelet = *.gz ]] ; then
+    rm -f "${lkubelet%.gz}"
     gunzip "$lkubelet"
     lkubelet=${lkubelet%.gz}
 fi
 
-cd "$lbindir" || {
-    echo "Can't cd $lbindir!"
-    exit 1
-}
+cd "$lbindir" || die "Can't cd $lbindir!"
+[[ -f "$lkubelet" ]] || die "Missing kubelet $lkubelet"
 found_md5=$(md5sum "$lkubelet" |awk '{print $1}')
-if [[ -f "$lkubelet" && $(stat -c %s "$lkubelet") -ge 1048576 && "$expected_md5" == "$found_md5" ]] ; then
-    :
-else
-    echo "Bad kubelet"
-    echo "Expected md5 $expected_md5, found $found_md5"
-    exit 1
-fi
+[[ $(stat -c %s "$lkubelet") -ge 1048576 && "$expected_md5" = "$found_md5" ]] || die "Bad kubelet (expected $expected_md5, found $found_md5)"
 
-sudo mount -o remount,rw /usr || {
-    echo "Can't remount /usr rw"
-    exit 1
-}
+sudo mount -o remount,rw /usr || die "Can't remount /usr rw"
+
 sudo cp "$lkubelet" hyperkube.NEW
-cmp "$lkubelet" hyperkube.NEW || {
-    echo "$lkubelet and hyperkube.NEW failed compare!"
-    cd /
-    mount -o remount,ro /usr
-    exit 1
-}
+cmp "$lkubelet" hyperkube.NEW || die -r "$lkubelet and hyperkube.NEW failed compare!"
 if [[ -f hyperkube && ! -f hyperkube.OLD ]] ; then
     sudo mv hyperkube hyperkube.OLD
 fi
-sudo mv hyperkube.NEW hyperkube || {
-    echo "Can't rename hyperkube.NEW to hyperkube!"
-    cd /
-    sudo mount -o remount,ro /usr
-    exit 1
-}
+sudo mv hyperkube.NEW hyperkube || die -r "Can't rename hyperkube.NEW to hyperkube!"
 cd /
-sudo mount -o remount,ro /usr
+sudo mount -o remount,ro /usr 2>&1 |grep -v 'mount point is busy'
 sudo sysctl -w kernel.pid_max=4194304 >/dev/null
 sudo systemctl restart kubelet.service
 ps aux |grep /usr/bin/hyperkube |grep kubelet |grep -v grep
@@ -240,25 +227,23 @@ function generate_uninstall_kubelet() {
     cat <<'EOL'
 #!/bin/bash
 declare -r lbindir="/usr/bin"
-cd "$lbindir" || {
-    echo "Can't cd $lbindir!"
+
+function die() {
+    if [[ $1 = -r ]] ; then
+	cd /
+	mount -o remount,ro /usr 2>&1 |grep -v 'mount point is busy'
+    fi
+    echo "$*"
     exit 1
 }
 
+cd "$lbindir" || die "Can't cd $lbindir!"
+
 if [[ -f hyperkube.OLD ]] ; then
-    echo "Restoring old kubelet"
-    sudo mount -o remount,rw /usr || {
-	echo "Can't remount /usr rw"
-	exit 1
-    }
-    sudo mv hyperkube.OLD hyperkube || {
-	echo "Can't rename hyperkube.OLD to hyperkube"
-	cd /
-	mount -o remount,ro /usr
-	exit 1
-    }
+    sudo mount -o remount,rw /usr || die "Can't remount /usr rw"
+    sudo mv hyperkube.OLD hyperkube || die -r "Can't rename hyperkube.OLD to hyperkube"
     cd /
-    sudo mount -o remount,ro /usr
+    sudo mount -o remount,ro /usr 2>&1 |grep -v 'mount point is busy'
     sudo systemctl restart kubelet.service
     ps aux |grep hyperkube |grep kubelet |grep -v grep
 else
