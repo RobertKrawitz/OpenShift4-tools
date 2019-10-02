@@ -31,6 +31,7 @@ declare -i rebuild=1
 declare -i do_setup_cert=0
 declare -i do_uninstall=0
 declare -i twidth=1000
+declare -i install_all=0
 declare -i install_infra=0
 declare -i install_master=0
 declare -i install_worker=1
@@ -43,6 +44,8 @@ function help() {
     cat <<EOF
 Usage: $0 [options] [specific_nodes...]
     Args:
+      -A        Don't install on all nodes (default)
+      -a        Install on all nodes
       -B        Don't use ssh bastion host (direct ssh)
       -b        Use a bastion ssh host (default)
       -C        Don't setup node certs for ssh (default)
@@ -67,8 +70,10 @@ EOF
     exit 1
 }
 
-while getopts "BbCchIiK:k:MmNnP:p:RrUuWw" opt ; do
+while getopts "AaBbCchIiK:k:MmNnP:p:RrUuWw" opt ; do
     case "$opt" in
+	A) install_all=0		 ;;
+	a) install_all=1		 ;;
 	B) bastion=                      ;;
 	b) bastion=bastion-              ;;
 	C) do_setup_cert=0		 ;;
@@ -100,8 +105,10 @@ declare -a all_nodes=()
 if [[ -n "$*" ]] ; then
     all_nodes=("$@")
 else
+    # shellcheck disable=SC2034
     while read -r node status class rest ; do
-	if [[ ($install_infra -eq 1 && $class == *infra*) ||
+	if [[ ($install_all -eq 1) ||
+		  ($install_infra -eq 1 && $class == *infra*) ||
 		  ($install_master -eq 1 && $class == *master*) ||
 		  ($install_worker -eq 1 && $class == *worker*) ]] ; then
 	    all_nodes+=("$node")
@@ -300,7 +307,6 @@ function generate_grappling_hook() {
 function install_ssh_key_n() {
     local parallel_key=$1
     local rotor=$2
-    local orotor=$rotor
     local pdir=${private_key%/*}
     if [[ -n "$pdir" ]] ; then
 	pdir="-C $pdir"
@@ -309,6 +315,7 @@ function install_ssh_key_n() {
     set -e
     while (( rotor < ${#all_nodes[@]} )) ; do
 	local f=${all_nodes[$rotor]}
+	# shellcheck disable=SC2086
 	tar c $pdir -f - "$pkey" "${pkey}.pub" | rcmd "$f" "cd .ssh; rm -f '$pkey' '${pkey}.pub'; tar xf -; sudo chown core authorized_keys; sudo chmod 644 authorized_keys; cat '${pkey}.pub' >> authorized_keys"
 	rotor=$((rotor + parallel_key))
     done
