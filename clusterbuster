@@ -307,10 +307,10 @@ function stop_heartbeat() {
 }
 
 function createNamespaces_n() {
+    trap exit INT
     local parallel=$1; shift
     local rotor=$1; shift
-    local orotor=$rotor
-    while (( rotor < ${#nsids[@]} )) ; do
+    while (( rotor < $namespaces )) ; do
 	local j=0
 	while (( j < blocksize )) ; do
 	    createNamespace "${basename}-$((rotor + j))"
@@ -322,9 +322,10 @@ function createNamespaces_n() {
 }
 
 function createSecrets_n() {
+    trap exit INT
     local parallel=$1; shift
     local rotor=$1; shift
-    while (( rotor < ${#nsids[@]} )) ; do
+    while (( rotor < $namespaces )) ; do
 	local j=0
 	while (( j < blocksize )) ; do
 	    createSecrets "${basename}-$((rotor + j))" "$@"
@@ -336,9 +337,10 @@ function createSecrets_n() {
 }
 
 function createDeployments_n() {
+    trap exit INT
     local parallel=$1; shift
     local rotor=$1; shift
-    while (( rotor < ${#nsids[@]} )) ; do
+    while (( rotor < $namespaces )) ; do
 	local j=0
 	while (( j < blocksize )) ; do
 	    createDeployment "${basename}-$((rotor + j))" "$@"
@@ -350,6 +352,7 @@ function createDeployments_n() {
 }
 
 function run_clusterbuster_1() {
+    trap 'kill -9 $(jobs -p); exit' INT
     for i in $(seq 0 "$((parallel - 1))") ; do
 	createNamespaces_n "$parallel" "$((i * blocksize))" &
     done
