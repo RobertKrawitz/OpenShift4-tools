@@ -1,19 +1,20 @@
 #!/bin/bash
 
+set -u
+
 declare -i namespaces=1
 declare -i depsPerNamespace=1
 declare -i secrets=0
 declare -i replicas=1
 declare -i parallel=1
-declare -i pcount=1
 declare -i containers=1
 declare -i sleeptime=0
 declare -i doit=1
 declare -i blocksize=1
 declare -i blockitemcount=0
-declare podType=Minipause
+declare podType=ClusterBuster
 declare podsleeptime=infinity
-declare basename=minipause
+declare basename=clusterbuster
 declare opt
 declare -r nl='
 '
@@ -24,7 +25,7 @@ Usage: $0 [options] [name]
        Default 1 namespace
     Options:
        -n              Print what would be done without doing it
-       -P              Use PausePod rather than minipause
+       -P              Use PausePod rather than clusterbuster
        -b blocksize    Number of objects to create in one oc call (default 1)
        -c containers   Number of containers per pod
        -d deployments  Number of deployments per namespace (default 1)
@@ -63,21 +64,20 @@ done
 
 shift $((OPTIND - 1))
 
-if [[ -n $1 ]] ; then
+if [[ -n ${1:-} ]] ; then
     basename="$1"
     shift
 fi
 
 [[ -z "$*" ]] || echo "Warning: extraneous arguments $# after basename will be ignored!" 1>&2
 
-function waitforall() {
+function finishCreation() {
     if (( doit )) ; then
 	if [[ -n $accumulateddata ]] ; then
 	    oc apply -f - <<< "$accumulateddata"
 	    accumulateddata=
 	fi
     fi
-    pcount=0
 }
 
 declare accumulateddata=
@@ -93,7 +93,7 @@ function createObject() {
     if (( doit )) ; then
 	accumulateddata+="$data"
 	if (( ++blockitemcount >= blocksize )) ; then
-	    (oc apply -f - <<< "$accumulateddata")
+	    oc apply -f - <<< "$accumulateddata"
 	    accumulateddata=
 	    blockitemcount=0
 	    if (( sleeptime )) ; then
@@ -146,9 +146,6 @@ function createSecrets() {
     local secrets=${3:-1}
     local -i i
     local -i j
-    if ((secrets <= 0)) ; then
-	return
-    fi
     for i in $(seq 0 $((depsPerNamespace - 1))) ; do
 	for j in $(seq 0 $((secrets - 1))) ; do
 	    createObject <<< "$(createSecretYAML "$namespace" "$i" "$j")"
@@ -160,9 +157,6 @@ function createVolumeMountsYAML() {
     local namespace=$1
     local deployment=${2:-1}
     local secrets=${3:-1}
-    if ((secrets <= 0)) ; then
-	return
-    fi
     local -i i
     if (( count )) ; then
 	echo "          volumeMounts:"
@@ -181,9 +175,6 @@ function createVolumesYAML() {
     local namespace=$1
     local deployment=${2:-1}
     local secrets=${3:-1}
-    if ((secrets <= 0)) ; then
-	return
-    fi
     local -i i
     if (( count )) ; then
 	echo "      volumes:"
@@ -198,7 +189,7 @@ EOF
     fi
 }
 
-function createContainersMinipauseYAML() {
+function createContainersClusterBusterYAML() {
     local namespace=$1
     local i=$2
     local secretCount=$3
@@ -315,24 +306,68 @@ function stop_heartbeat() {
     exec 2>&3 3>&-
 }
 
-function run_minipause_1() {
-    for i in $nsids ; do
-	createNamespace "${basename}-$i"
+function createNamespaces_n() {
+    local parallel=$1; shift
+    local rotor=$1; shift
+    local orotor=$rotor
+    while (( rotor < ${#nsids[@]} )) ; do
+	local j=0
+	while (( j < blocksize )) ; do
+	    createNamespace "${basename}-$((rotor + j))"
+	    j=$((j+1))
+	done
+	rotor=$((rotor + (parallel * blocksize)))
     done
-    waitforall
+    finishCreation
+}
 
-    for i in $nsids ; do
-	createSecrets "${basename}-$i" "$depsPerNamespace" "$secrets"
+function createSecrets_n() {
+    local parallel=$1; shift
+    local rotor=$1; shift
+    while (( rotor < ${#nsids[@]} )) ; do
+	local j=0
+	while (( j < blocksize )) ; do
+	    createSecrets "${basename}-$((rotor + j))" "$@"
+	    j=$((j+1))
+	done
+	rotor=$((rotor + (parallel * blocksize)))
     done
-    waitforall
+    finishCreation
+}
 
-    for i in $nsids ; do
-	createDeployment "${basename}-$i" "$depsPerNamespace" "$secrets" "$replicas" "$containers"
+function createDeployments_n() {
+    local parallel=$1; shift
+    local rotor=$1; shift
+    while (( rotor < ${#nsids[@]} )) ; do
+	local j=0
+	while (( j < blocksize )) ; do
+	    createDeployment "${basename}-$((rotor + j))" "$@"
+	    j=$((j+1))
+	done
+	rotor=$((rotor + (parallel * blocksize)))
     done
-    waitforall
+    finishCreation
+}
+
+function run_clusterbuster_1() {
+    for i in $(seq 0 "$((parallel - 1))") ; do
+	createNamespaces_n "$parallel" "$((i * blocksize))" &
+    done
+    wait
+
+    for i in $(seq 0 "$((parallel - 1))") ; do
+	createSecrets_n "$parallel" "$((i * blocksize))" "$depsPerNamespace" "$secrets" &
+    done
+    wait
+
+    for i in $(seq 0 "$((parallel - 1))") ; do
+	createDeployments_n "$parallel" "$((i * blocksize))" "$depsPerNamespace" "$secrets" "$replicas" "$containers" &
+    done
+    wait
 }
 
 trap stop_heartbeat INT EXIT
 heartbeat&
-nsids="$(seq 0 $((namespaces - 1)))"
-(run_minipause_1)
+declare -a nsids=()
+readarray -t nsids <<< $(seq 0 $((namespaces - 1)))
+(run_clusterbuster_1)

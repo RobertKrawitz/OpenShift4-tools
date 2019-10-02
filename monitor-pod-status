@@ -34,13 +34,13 @@ while :; do
 	esac
 	podcount=$((podcount+1))
 	podstatus[$status]=$((${podstatus[$status]:-0}+1))
-    done <<< "$(oc get pods --all-namespaces -l minipause=true --no-headers --ignore-not-found=true)"
+    done <<< "$(oc get pods --all-namespaces -l clusterbuster=true --no-headers --ignore-not-found=true)"
     while read ns status rest ; do
 	[[ -n $ns ]] || break
 	status=${status:0:1}
 	nscount=$((nscount+1))
 	nsstatus[$status]=$((${nsstatus[$status]:-0}+1))
-    done <<< "$(oc get namespaces -l minipause=true --no-headers --ignore-not-found=true)"
+    done <<< "$(oc get namespaces -l clusterbuster=true --no-headers --ignore-not-found=true)"
     while read ns name stype rest ; do
 	[[ -n $ns ]] || break
 	if [[ $stype == Opaque ]] ; then
@@ -50,7 +50,7 @@ while :; do
 	fi
 	secstatus[$stype]=$((${secstatus[$stype]:-0}+1))
 	# We're looking for other secrets that can't be tagged.
-    done <<< "$(oc get secrets --all-namespaces --no-headers --ignore-not-found=true |grep minipause)"
+    done <<< "$(oc get secrets --all-namespaces --no-headers --ignore-not-found=true |grep clusterbuster)"
     while read node status rest ; do
 	[[ -n $node ]] || break
 	status=${status:0:1}
