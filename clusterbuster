@@ -350,7 +350,13 @@ function createServerContainerPerl() {
 use Socket;
 use strict;
 use Time::Piece;
+use Time::HiRes qw(gettimeofday);
 $SIG{TERM} = sub { exit 0; };
+sub timestamp($) {
+    my ($str) = @_;
+    my (@now) = gettimeofday();
+    sprintf "%s.%06d %s", localtime($now[0])->strftime("%Y-%m-%d.%T"), $now[1], $str;
+}    
 my $listen_port = $ARGV[0];
 my $sockaddr = "S n a4 x8";
 socket(SOCK, PF_INET, SOCK_STREAM, getprotobyname('tcp')) || die "socket: $!";
@@ -361,7 +367,7 @@ listen(SOCK, 1) || die "listen: $!";
 my $mysockaddr = getsockname(SOCK);
 my ($junk, $port, $addr) = unpack($sockaddr, $mysockaddr);
 die "can't get port $port: $!\n" if ($port ne $listen_port);
-print STDERR localtime->strftime("%Y-%m-%dT%T "), "Listening on port $listen_port\n";
+print STDERR timestamp("Listening on port $listen_port\n");
 
 for (;;) {
     accept(CLIENT, SOCK) or next;
@@ -371,7 +377,7 @@ for (;;) {
         my ($port, $addr) = sockaddr_in($peeraddr);
         my $peerhost = gethostbyaddr($addr, AF_INET);
         my $peeraddr = inet_ntoa($addr);
-        print STDERR localtime->strftime("%Y-%m-%dT%T "), "Accepted connection from $peerhost ($peeraddr) on $port!\n";
+        print STDERR timestamp("Accepted connection from $peerhost ($peeraddr) on $port!\n");
         while (1) {
             my $buffer;
             my $nread;
@@ -383,7 +389,7 @@ for (;;) {
                 die "Write failed: $!\n";
             }
             if ($ntotal == 0) {
-                print STDERR localtime->strftime("%Y-%m-%dT%T "), "Exiting $port\n";
+                print STDERR timestamp("Exiting $port\n");
                 exit(0);
             }
             my $nwrite;
@@ -391,7 +397,7 @@ for (;;) {
                 $ntotal -= $nwrite;
             }
             if ($nwrite < 0) {
-                die "Write failed: $!\n";
+                die timestamp("Write failed: $!\n");
             }
         }
     } else {
@@ -424,6 +430,7 @@ spec:
         name: ${namespace}-$i
         app: ${namespace}-$i
         k8s-app: ${namespace}-${i}-server
+        ${basename}: "true"
     spec:
       terminationGracePeriodSeconds: 1
       containers:
@@ -453,20 +460,25 @@ use strict;
 use Time::HiRes qw(gettimeofday usleep);
 use Time::Piece;
 $SIG{TERM} = sub { exit 0; };
+sub timestamp($) {
+    my ($str) = @_;
+    my (@now) = gettimeofday();
+    sprintf "%s.%06d %s", localtime($now[0])->strftime("%Y-%m-%d.%T"), $now[1], $str;
+}    
 my $connect_port = $ARGV[0];
 my $sockaddr = "S n a4 x8";
 my ($fname,$faliases,$ftype,$flen,$faddr)= gethostbyname($ARGV[1]);
 my $sockmeta = pack($sockaddr, PF_INET, $connect_port, $faddr);
-socket(CONN, PF_INET, SOCK_STREAM, getprotobyname('tcp')) || die "can't make socket: $!\n";
+socket(CONN, PF_INET, SOCK_STREAM, getprotobyname('tcp')) || die "can't make socket: $!";
 while (! connect(CONN, $sockmeta)) {
-    print STDERR localtime->strftime("%Y-%m-%dT%T "), "Could not connect to $ARGV[1] on port $connect_port: $!\n";
+    print STDERR timestamp(" Could not connect to $ARGV[1] on port $connect_port: $!\n");
     sleep(5);
 }
 my $peeraddr = getpeername(CONN);
 my ($port, $addr) = sockaddr_in($peeraddr);
 my $peerhost = gethostbyaddr($addr, AF_INET);
 $peeraddr = inet_ntoa($addr);
-print STDERR localtime->strftime("%Y-%m-%dT%T "),"Connected to $peerhost ($peeraddr) on $port!\n";
+print STDERR timestamp("Connected to $peerhost ($peeraddr) on $port!\n");
 my $buffer = "0";
 my $tbuf;
 my $nread;
@@ -481,7 +493,7 @@ if ($MBSec <= 0) {
     exit 0;
 }
 while (1) {
-    print STDERR localtime->strftime("%Y-%m-%dT%T "),"Read/Write $MBSec MiB  ";
+    print STDERR timestamp("Read/Write $MBSec MiB  ");
     for (my $i = 0; $i < $MBSec * 32; $i++) {
         my $nwrite;
         my $nleft = $bufsize;
@@ -505,7 +517,7 @@ while (1) {
     my $curtime = gettimeofday();
     $starttime += 1;
     if ($curtime < $starttime) {
-        print STDERR "Sleeping ", ($starttime - $curtime), "\n";
+        printf STDERR "Sleeping %8.6f\n", ($starttime - $curtime);
         usleep(($starttime - $curtime) * 1000000);
     } else {
         print STDERR "Not sleeping\n";
@@ -538,6 +550,7 @@ spec:
       labels:
         name: ${namespace}-${i}-client
         app: ${namespace}-${i}-client
+        ${basename}: "true"
     spec:
       terminationGracePeriodSeconds: 1
 #      affinity:
@@ -620,7 +633,7 @@ function createNamespaces_n() {
     local rotor=$1; shift
     while (( rotor < namespaces )) ; do
 	local j=0
-	while (( j < blocksize )) ; do
+	while (( j < blocksize && j + rotor < namespaces )) ; do
 	    createNamespace "${basename}-$((rotor + j))"
 	    j=$((j+1))
 	done
@@ -635,7 +648,7 @@ function createSecrets_n() {
     local rotor=$1; shift
     while (( rotor < namespaces )) ; do
 	local j=0
-	while (( j < blocksize )) ; do
+	while (( j < blocksize && j + rotor < namespaces )) ; do
 	    createSecrets "${basename}-$((rotor + j))" "$@"
 	    j=$((j+1))
 	done
@@ -650,7 +663,7 @@ function createDeployments_n() {
     local rotor=$1; shift
     while (( rotor < namespaces )) ; do
 	local j=0
-	while (( j < blocksize )) ; do
+	while (( j < blocksize && j + rotor < namespaces )) ; do
 	    "createDeployment${podType}" "${basename}-$((rotor + j))" "$@"
 	    j=$((j+1))
 	done
