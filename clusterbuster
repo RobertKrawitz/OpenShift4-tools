@@ -12,6 +12,8 @@ declare -i sleeptime=0
 declare -i doit=1
 declare -i blocksize=1
 declare -i blockitemcount=0
+declare -i port=7777
+declare dataRate=0
 declare podType=ClusterBuster
 declare podsleeptime=infinity
 declare basename=clusterbuster
@@ -25,9 +27,10 @@ Usage: $0 [options] [name]
        Default 1 namespace
     Options:
        -n              Print what would be done without doing it
-       -P              Use PausePod rather than clusterbuster
+       -P podtype      Pod type (classic, pause, server)
        -b blocksize    Number of objects to create in one oc call (default 1)
        -c containers   Number of containers per pod
+       -D data rate    Data rate for client/server (MB/sec) (default 1)
        -d deployments  Number of deployments per namespace (default 1)
        -N namespaces   Number of namespaces to create (default 1)
        -p parallel     Number of operations to perform in parallel (default 1)
@@ -44,13 +47,14 @@ EOF
 
 trap exit INT
 
-while getopts ":b:c:ns:d:p:r:w:z:hN:P" opt ; do
+while getopts ":b:c:ns:D:d:p:r:w:z:hN:P:" opt ; do
     case "$opt" in
 	n) doit=0			;;
-	P) podType=Pausepod		;;
+	P) podType="$OPTARG"		;;
 	b) blocksize="$OPTARG"          ;;
 	c) containers="$OPTARG"         ;;
 	N) namespaces="$OPTARG"         ;;
+	D) dataRate="$OPTARG"           ;;
 	d) depsPerNamespace="$OPTARG"   ;;
 	s) secrets="$OPTARG"            ;;
 	r) replicas="$OPTARG"           ;;
@@ -64,12 +68,36 @@ done
 
 shift $((OPTIND - 1))
 
+case "$podType" in
+    classic|ClusterBuster) podType=ClusterBuster ;;
+    server)                podType=Server        ;;
+    pause|PausePod|*)      podType=PausePod      ;;
+esac
+
 if [[ -n ${1:-} ]] ; then
     basename="$1"
     shift
 fi
 
 [[ -z "$*" ]] || echo "Warning: extraneous arguments $# after basename will be ignored!" 1>&2
+
+function indent() {
+    local -i column="$1"
+    shift
+    if [[ -n "$*" ]] ; then
+	while IFS= read -r 'line' ; do
+	    if [[ -n "$line" ]] ; then
+		printf "%${column}s%s\n" " " "$line"
+	    fi
+	done <<< "$*"
+    else
+	while IFS= read -r 'line' ; do
+	    if [[ -n "$line" ]] ; then
+		printf "%${column}s%s\n" " " "$line"
+	    fi
+	done
+    fi
+}
 
 function finishCreation() {
     if (( doit )) ; then
@@ -83,9 +111,12 @@ function finishCreation() {
 declare accumulateddata=
 
 function createObject() {
-    local data+="---$nl"
+    local data=
     while IFS='' read -r line ; do
 	if [[ -n $line ]] ; then
+	    if [[ -z $data ]] ; then
+		data="---$nl"
+	    fi
 	    data+="$line$nl"
 	fi
     done
@@ -105,9 +136,9 @@ function createObject() {
     fi
 }
 
-function createNSYaml() {
+function createNamespace() {
     local namespace=$1
-    cat <<EOF
+    createObject <<EOF
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -117,15 +148,11 @@ metadata:
 EOF
 }
 
-function createNamespace() {
-    createObject <<< "$(createNSYaml "$@")"
-}
-
 function createSecretYAML() {
     local namespace=$1
     local deployment=$2
     local i=$3
-cat <<EOF
+    cat <<EOF
 apiVersion: v1
 kind: Secret
 metadata:
@@ -162,10 +189,10 @@ function createVolumeMountsYAML() {
 	echo "          volumeMounts:"
 	for i in $(seq 0 $((secrets - 1))) ; do
 	    local name="secret-${namespace}-${deployment}-$i"
-	    cat <<EOF
-            - name: $name
-              mountPath: /etc/$name
-              readOnly: true
+	    indent 12 <<EOF
+- name: $name
+  mountPath: /etc/$name
+  readOnly: true
 EOF
 	done
     fi
@@ -180,10 +207,10 @@ function createVolumesYAML() {
 	echo "      volumes:"
 	for i in $(seq 0 $((secrets - 1))) ; do
 	    local name="secret-${namespace}-${deployment}-$i"
-	    cat <<EOF
-        - name: $name
-          secret:
-            secretName: $name
+	    indent 8 <<EOF
+- name: $name
+  secret:
+    secretName: $name
 EOF
 	done
     fi
@@ -197,25 +224,25 @@ function createContainersClusterBusterYAML() {
     local -i containers=$5
     local -i j
     for j in $(seq 0 $((containers - 1))) ; do
-cat <<EOF
-        - name: ${namespace}-$i-$j
-          imagePullPolicy: IfNotPresent
-          image: "busybox"
-#          resources:
-#            requests:
-#              cpu: 1m
-#              memory: 5Mi
-          securityContext:
-            privileged: false
-          command:
-            - /bin/sh
-          args:
-            - -c
-            - |
-              trap 'exit 0' TERM
-              (while : ; do date ; sleep 60 ; done)&
-              sleep $podsleeptime
-              exit 1
+	indent 8 <<EOF
+- name: ${namespace}-$i-$j
+  imagePullPolicy: IfNotPresent
+  image: "busybox"
+# resources:
+#   requests:
+#     cpu: 1m
+#     memory: 5Mi
+  securityContext:
+    privileged: false
+  command:
+    - /bin/sh
+  args:
+    - -c
+    - |
+      trap 'exit 0' TERM
+      (while : ; do date ; sleep 60 ; done)&
+      sleep $podsleeptime
+      exit 1
 $(createVolumeMountsYAML "$namespace" "$i" "$secretCount")
 EOF
     done
@@ -229,19 +256,18 @@ function createContainersPausepodYAML() {
     local -i containers=$5
     local -i j
     for j in $(seq 0 $((containers - 1))) ; do
-cat <<EOF
-        - name: ${namespace}-$i-$j
-          imagePullPolicy: IfNotPresent
-          securityContext:
-            privileged: false
-          image: "gcr.io/google_containers/pause-amd64:3.0"
+	indent 8 <<EOF
+- name: ${namespace}-$i-$j
+  imagePullPolicy: IfNotPresent
+  securityContext:
+    privileged: false
+  image: "gcr.io/google_containers/pause-amd64:3.0"
 $(createVolumeMountsYAML "$namespace" "$i" "$secretCount")
 EOF
     done
 }
 
-
-function createDeploymentYAML() {
+function createDeploymentClassicYAML() {
     local namespace=$1
     local i=$2
     local secretCount=$3
@@ -277,7 +303,271 @@ $(createVolumesYAML "$namespace" "$i" "$secretCount")
 EOF
 }
 
-function createDeployment() {
+function createService() {
+    local namespace=$1
+    local deployment=$2
+    createObject <<EOF
+apiVersion: v1
+kind: Service
+metadata:
+  name: "service-${deployment}"
+  namespace: "$namespace"
+  labels:
+    ${basename}: "true"
+spec:
+  ports:
+    - port: $port
+      targetPort: $port
+  selector:
+    name: "${deployment}"
+EOF
+}
+
+function createRoute() {
+    local namespace=$1
+    local deployment=$2
+    createObject <<EOF
+apiVersion: v1
+kind: Route
+metadata:
+  name: "route-${deployment}"
+  namespace: "$namespace"
+  labels:
+    ${basename}: "true"
+spec:
+  host: "service-${deployment}"
+  to:
+    kind: Service
+    name: "service-${deployment}"
+  selector:
+    name: "${deployment}"
+EOF
+}
+
+function createServerContainerPerl() {
+    indent 14 <<'EOF'
+#!/usr/bin/perl
+use Socket;
+use strict;
+use Time::Piece;
+$SIG{TERM} = sub { exit 0; };
+my $listen_port = $ARGV[0];
+my $sockaddr = "S n a4 x8";
+socket(SOCK, PF_INET, SOCK_STREAM, getprotobyname('tcp')) || die "socket: $!";
+setsockopt(SOCK,SOL_SOCKET, SO_REUSEADDR, pack("l",1)) || die "setsockopt reuseaddr: $!\n";
+setsockopt(SOCK,SOL_SOCKET, SO_KEEPALIVE, pack("l",1)) || die "setsockopt keepalive: $!\n";
+bind(SOCK, pack($sockaddr, PF_INET, $listen_port, "\0\0\0\0")) || die "bind: $!\n";
+listen(SOCK, 1) || die "listen: $!";
+my $mysockaddr = getsockname(SOCK);
+my ($junk, $port, $addr) = unpack($sockaddr, $mysockaddr);
+die "can't get port $port: $!\n" if ($port ne $listen_port);
+print STDERR localtime->strftime("%Y-%m-%dT%T "), "Listening on port $listen_port\n";
+
+for (;;) {
+    accept(CLIENT, SOCK) or next;
+    if ((my $child = fork()) == 0) {
+        close(SOCK);
+        my $peeraddr = getpeername(CLIENT);
+        my ($port, $addr) = sockaddr_in($peeraddr);
+        my $peerhost = gethostbyaddr($addr, AF_INET);
+        my $peeraddr = inet_ntoa($addr);
+        print STDERR localtime->strftime("%Y-%m-%dT%T "), "Accepted connection from $peerhost ($peeraddr) on $port!\n";
+        while (1) {
+            my $buffer;
+            my $nread;
+            my $ntotal = 0;
+            while ($ntotal < 32768 && ($nread = sysread(CLIENT, $buffer, 32768, $ntotal)) > 0) {
+                $ntotal += $nread;
+            }
+            if ($nread < 0) {
+                die "Write failed: $!\n";
+            }
+            if ($ntotal == 0) {
+                print STDERR localtime->strftime("%Y-%m-%dT%T "), "Exiting $port\n";
+                exit(0);
+            }
+            my $nwrite;
+            while ($ntotal > 0 && ($nwrite = syswrite(CLIENT, $buffer, $ntotal)) > 0) {
+                $ntotal -= $nwrite;
+            }
+            if ($nwrite < 0) {
+                die "Write failed: $!\n";
+            }
+        }
+    } else {
+        close(CLIENT);
+    }
+}
+EOF
+}
+
+function createServerDeploymentYAML() {
+    local namespace=$1
+    local i=$2
+    local secretCount=$3
+    cat <<EOF
+kind: Deployment
+apiVersion: apps/v1
+metadata:
+  name: ${namespace}-${i}-server
+  namespace: $namespace
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ${namespace}-$i
+  strategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        name: ${namespace}-$i
+        app: ${namespace}-$i
+        k8s-app: ${namespace}-${i}-server
+    spec:
+      terminationGracePeriodSeconds: 1
+      containers:
+        - name: ${namespace}-${i}-server
+          image: perl
+          ports:
+            - containerPort:
+                $port
+          command:
+            - perl
+          args:
+            - -e
+            - |
+$(createServerContainerPerl)
+            - "$port"
+$(createVolumesYAML "$namespace" "$i" "$secretCount")
+EOF
+}
+
+function createClientContainerPerl() {
+    indent 14 << 'EOF'
+#!/usr/bin/perl
+
+use Socket;
+use POSIX;
+use strict;
+use Time::HiRes qw(gettimeofday usleep);
+use Time::Piece;
+$SIG{TERM} = sub { exit 0; };
+my $connect_port = $ARGV[0];
+my $sockaddr = "S n a4 x8";
+my ($fname,$faliases,$ftype,$flen,$faddr)= gethostbyname($ARGV[1]);
+my $sockmeta = pack($sockaddr, PF_INET, $connect_port, $faddr);
+socket(CONN, PF_INET, SOCK_STREAM, getprotobyname('tcp')) || die "can't make socket: $!\n";
+while (! connect(CONN, $sockmeta)) {
+    print STDERR localtime->strftime("%Y-%m-%dT%T "), "Could not connect to $ARGV[1] on port $connect_port: $!\n";
+    sleep(5);
+}
+my $peeraddr = getpeername(CONN);
+my ($port, $addr) = sockaddr_in($peeraddr);
+my $peerhost = gethostbyaddr($addr, AF_INET);
+$peeraddr = inet_ntoa($addr);
+print STDERR localtime->strftime("%Y-%m-%dT%T "),"Connected to $peerhost ($peeraddr) on $port!\n";
+my $buffer = "0";
+my $tbuf;
+my $nread;
+for (my $i = 0; $i < 15; $i++) {
+    $buffer = "$buffer$buffer"
+}
+my $bufsize = length($buffer);
+my $starttime = gettimeofday();
+my $MBSec = $ARGV[2] * 1;
+if ($MBSec <= 0) {
+    pause();
+    exit 0;
+}
+while (1) {
+    print STDERR localtime->strftime("%Y-%m-%dT%T "),"Read/Write $MBSec MiB  ";
+    for (my $i = 0; $i < $MBSec * 32; $i++) {
+        my $nwrite;
+        my $nleft = $bufsize;
+        while ($nleft > 0 && ($nwrite = syswrite(CONN, $buffer, $nleft)) > 0) {
+            $nleft -= $nwrite;
+        }
+        if ($nwrite == 0) {
+            exit 0;
+        } elsif ($nwrite < 0) {
+            die "Write failed: $!\n";
+        }
+        $nleft = $bufsize;
+        my $tbuf;
+        while (($nread = sysread(CONN, $tbuf, $nleft)) > 0) {
+            $nleft -= $nread;
+        }
+        if ($nread < 0) {
+            die "Read failed: $!\n";
+        }
+    }
+    my $curtime = gettimeofday();
+    $starttime += 1;
+    if ($curtime < $starttime) {
+        print STDERR "Sleeping ", ($starttime - $curtime), "\n";
+        usleep(($starttime - $curtime) * 1000000);
+    } else {
+        print STDERR "Not sleeping\n";
+    }
+}
+EOF
+}
+
+function createClientDeploymentYAML() {
+    local namespace=$1
+    local i=$2
+    local secretCount=$3
+    local replicas=$4
+    local dataRate=$5
+    cat <<EOF
+kind: Deployment
+apiVersion: apps/v1
+metadata:
+  name: ${namespace}-${i}-client
+  namespace: $namespace
+spec:
+  replicas: $replicas
+  selector:
+    matchLabels:
+      app: ${namespace}-${i}-client
+  strategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        name: ${namespace}-${i}-client
+        app: ${namespace}-${i}-client
+    spec:
+      terminationGracePeriodSeconds: 1
+#      affinity:
+#        podAntiAffinity:
+#          requiredDuringSchedulingPreferredDuringExecution:
+#            podAffinityTerm:
+#              labelSelector:
+#                matchExpressions:
+#                  - key: k8s-app
+#                    operator: In
+#                    values:
+#                      - ${namespace}-${i}-server
+#              topologyKey: kubernetes.io/hostname
+      containers:
+        - name: ${namespace}-${i}-client
+          image: "perl"
+          command:
+            - perl
+          args:
+            - -e
+            - |
+$(createClientContainerPerl)
+            - "$port"
+            - "service-${namespace}-$i"
+            - "$dataRate"
+$(createVolumesYAML "$namespace" "$i" "$secretCount")
+EOF
+}
+
+function createDeploymentPausePod() {
     local namespace=$1
     local count=${2:-1}
     local secretCount=${3:-1}
@@ -285,7 +575,25 @@ function createDeployment() {
     local containers=${5:-1}
     local -i i
     for i in $(seq 0 $((count - 1))) ; do
-	createObject <<< "$(createDeploymentYAML "$namespace" "$i" "$secretCount"  "$replicas" "$containers")"
+	createObject <<< "$(createDeploymentClassicYAML "$namespace" "$i" "$secretCount"  "$replicas" "$containers")"
+    done
+}
+
+function createDeploymentClusterBuster() {
+    createDeploymentPausePod "$@"
+}
+
+function createDeploymentServer() {
+    local namespace=$1
+    local count=${2:-1}
+    local secretCount=${3:-1}
+    local pods=${4:-1}
+    local -i i
+    for i in $(seq 0 $((count - 1))) ; do
+	createService "$namespace" "$namespace-$i"
+	createRoute "$namespace" "$namespace-$i"
+	createObject <<< "$(createServerDeploymentYAML "$namespace" "$i" "$secretCount")"
+	createObject <<< "$(createClientDeploymentYAML "$namespace" "$i" "$secretCount" "$replicas" "$dataRate")"
     done
 }
 
@@ -310,7 +618,7 @@ function createNamespaces_n() {
     trap exit INT
     local parallel=$1; shift
     local rotor=$1; shift
-    while (( rotor < $namespaces )) ; do
+    while (( rotor < namespaces )) ; do
 	local j=0
 	while (( j < blocksize )) ; do
 	    createNamespace "${basename}-$((rotor + j))"
@@ -325,7 +633,7 @@ function createSecrets_n() {
     trap exit INT
     local parallel=$1; shift
     local rotor=$1; shift
-    while (( rotor < $namespaces )) ; do
+    while (( rotor < namespaces )) ; do
 	local j=0
 	while (( j < blocksize )) ; do
 	    createSecrets "${basename}-$((rotor + j))" "$@"
@@ -340,10 +648,10 @@ function createDeployments_n() {
     trap exit INT
     local parallel=$1; shift
     local rotor=$1; shift
-    while (( rotor < $namespaces )) ; do
+    while (( rotor < namespaces )) ; do
 	local j=0
 	while (( j < blocksize )) ; do
-	    createDeployment "${basename}-$((rotor + j))" "$@"
+	    "createDeployment${podType}" "${basename}-$((rotor + j))" "$@"
 	    j=$((j+1))
 	done
 	rotor=$((rotor + (parallel * blocksize)))
@@ -371,6 +679,4 @@ function run_clusterbuster_1() {
 
 trap stop_heartbeat INT EXIT
 heartbeat&
-declare -a nsids=()
-readarray -t nsids <<< $(seq 0 $((namespaces - 1)))
 (run_clusterbuster_1)
