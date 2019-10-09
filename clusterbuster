@@ -21,6 +21,9 @@ declare opt
 declare -r nl='
 '
 
+declare accumulateddata=
+
+
 function help() {
     cat <<EOF
 Usage: $0 [options] [name]
@@ -83,42 +86,35 @@ fi
 
 [[ -z "$*" ]] || echo "Warning: extraneous arguments $# after basename will be ignored!" 1>&2
 
+function indent_1() {
+    local -i column="$1"
+    while IFS= read -r 'line' ; do
+	 [[ -z "$line" ]] || printf "%${column}s%s\n" "" "$line"
+    done
+}
+
 function indent() {
     local -i column="$1"
     shift
     if [[ -n "$*" ]] ; then
-	while IFS= read -r 'line' ; do
-	    if [[ -n "$line" ]] ; then
-		printf "%${column}s%s\n" " " "$line"
-	    fi
-	done <<< "$*"
+	indent_1 "$column" <<< "$*"
     else
-	while IFS= read -r 'line' ; do
-	    if [[ -n "$line" ]] ; then
-		printf "%${column}s%s\n" " " "$line"
-	    fi
-	done
+	indent_1 "$column"
     fi
 }
 
 function finishCreation() {
-    if (( doit )) ; then
-	if [[ -n $accumulateddata ]] ; then
-	    oc apply -f - <<< "$accumulateddata"
-	    accumulateddata=
-	fi
+    if [[ $doit -ne 0 && -n $accumulateddata ]] ; then
+	oc apply -f - <<< "$accumulateddata"
+	accumulateddata=
     fi
 }
-
-declare accumulateddata=
 
 function createObject() {
     local data=
     while IFS='' read -r line ; do
 	if [[ -n $line ]] ; then
-	    if [[ -z $data ]] ; then
-		data="---$nl"
-	    fi
+	    [[ -n $data ]] || data="---$nl"
 	    data+="$line$nl"
 	fi
     done
@@ -129,9 +125,7 @@ function createObject() {
 	    oc apply -f - <<< "$accumulateddata"
 	    accumulateddata=
 	    blockitemcount=0
-	    if (( sleeptime )) ; then
-		sleep "$sleeptime"
-	    fi
+	    (( !sleeptime )) || sleep "$sleeptime"
 	fi
     else
 	echo "$data"
@@ -175,6 +169,7 @@ function createSecrets() {
     local secrets=${3:-1}
     local -i i
     local -i j
+    (( secrets )) || return;
     for i in $(seq 0 $((depsPerNamespace - 1))) ; do
 	for j in $(seq 0 $((secrets - 1))) ; do
 	    createObject <<< "$(createSecretYAML "$namespace" "$i" "$j")"
@@ -187,17 +182,16 @@ function createVolumeMountsYAML() {
     local deployment=${2:-1}
     local secrets=${3:-1}
     local -i i
-    if (( secrets )) ; then
-	echo "volumeMounts:"
-	for i in $(seq 0 $((secrets - 1))) ; do
-	    local name="secret-${namespace}-${deployment}-$i"
-	    indent 2 <<EOF
+    (( secrets )) || return;
+    echo "volumeMounts:"
+    for i in $(seq 0 $((secrets - 1))) ; do
+	local name="secret-${namespace}-${deployment}-$i"
+	indent 2 <<EOF
 - name: $name
   mountPath: /etc/$name
   readOnly: true
 EOF
-	done
-    fi
+    done
 }
 
 function createVolumesYAML() {
@@ -205,17 +199,16 @@ function createVolumesYAML() {
     local deployment=${2:-1}
     local secrets=${3:-1}
     local -i i
-    if (( secrets )) ; then
-	echo "volumes:"
-	for i in $(seq 0 $((secrets - 1))) ; do
-	    local name="secret-${namespace}-${deployment}-$i"
-	    indent 2 <<EOF
+    (( secrets )) || return;
+    echo "volumes:"
+    for i in $(seq 0 $((secrets - 1))) ; do
+	local name="secret-${namespace}-${deployment}-$i"
+	indent 2 <<EOF
 - name: $name
   secret:
     secretName: $name
 EOF
-	done
-    fi
+    done
 }
 
 function createContainersClusterBusterYAML() {
@@ -633,6 +626,10 @@ function createDeploymentServer() {
     done
 }
 
+function createDeployment() {
+    "createDeployment${podType}" "$@"
+}
+
 function heartbeat() {
     trap exit INT
     while : ; do
@@ -650,44 +647,15 @@ function stop_heartbeat() {
     exec 2>&3 3>&-
 }
 
-function createNamespaces_n() {
+function createObjects_n() {
     trap exit INT
+    local objtype=$1; shift
     local parallel=$1; shift
     local rotor=$1; shift
     while (( rotor < namespaces )) ; do
 	local j=0
 	while (( j < blocksize && j + rotor < namespaces )) ; do
-	    createNamespace "${basename}-$((rotor + j))"
-	    j=$((j+1))
-	done
-	rotor=$((rotor + (parallel * blocksize)))
-    done
-    finishCreation
-}
-
-function createSecrets_n() {
-    trap exit INT
-    local parallel=$1; shift
-    local rotor=$1; shift
-    while (( rotor < namespaces )) ; do
-	local j=0
-	while (( j < blocksize && j + rotor < namespaces )) ; do
-	    createSecrets "${basename}-$((rotor + j))" "$@"
-	    j=$((j+1))
-	done
-	rotor=$((rotor + (parallel * blocksize)))
-    done
-    finishCreation
-}
-
-function createDeployments_n() {
-    trap exit INT
-    local parallel=$1; shift
-    local rotor=$1; shift
-    while (( rotor < namespaces )) ; do
-	local j=0
-	while (( j < blocksize && j + rotor < namespaces )) ; do
-	    "createDeployment${podType}" "${basename}-$((rotor + j))" "$@"
+	    "create${objtype}" "${basename}-$((rotor + j))" "$@"
 	    j=$((j+1))
 	done
 	rotor=$((rotor + (parallel * blocksize)))
@@ -698,17 +666,17 @@ function createDeployments_n() {
 function run_clusterbuster_1() {
     trap 'kill -9 $(jobs -p); exit' INT
     for i in $(seq 0 "$((parallel - 1))") ; do
-	createNamespaces_n "$parallel" "$((i * blocksize))" &
+	createObjects_n Namespace "$parallel" "$((i * blocksize))" &
     done
     wait
 
     for i in $(seq 0 "$((parallel - 1))") ; do
-	createSecrets_n "$parallel" "$((i * blocksize))" "$depsPerNamespace" "$secrets" &
+	createObjects_n Secrets "$parallel" "$((i * blocksize))" "$depsPerNamespace" "$secrets" &
     done
     wait
 
     for i in $(seq 0 "$((parallel - 1))") ; do
-	createDeployments_n "$parallel" "$((i * blocksize))" "$depsPerNamespace" "$secrets" "$replicas" "$containers" &
+	createObjects_n Deployment "$parallel" "$((i * blocksize))" "$depsPerNamespace" "$secrets" "$replicas" "$containers" &
     done
     wait
 }
