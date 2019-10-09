@@ -13,6 +13,7 @@ declare -i doit=1
 declare -i blocksize=1
 declare -i blockitemcount=0
 declare -i port=7777
+declare -i affinity=0
 declare dataRate=0
 declare podType=ClusterBuster
 declare podsleeptime=infinity
@@ -41,6 +42,8 @@ Usage: $0 [options] [name]
        -r replicas     Number of replicas per deployment (default 1)
        -s secrets      Number of secrets per deployment (default 0)
        -w wait         Number of seconds to wait between ops (default 0)
+       -x              Use pod affinity between client and server (default no)
+       -X              Use pod anti-affinity between client/server (default no)
        -z podsleep     Amount of time in seconds for pod to sleep before exit
                        (default infinity).  This may be an expression evaluated
                        as an argument to sleep(1) and need not be a numeric
@@ -51,7 +54,7 @@ EOF
 
 trap exit INT
 
-while getopts ":B:b:c:ns:D:d:p:r:w:z:hN:P:" opt ; do
+while getopts ":B:b:c:ns:D:d:p:r:w:z:hN:P:xX" opt ; do
     case "$opt" in
 	n) doit=0			;;
 	P) podType="$OPTARG"		;;
@@ -66,6 +69,8 @@ while getopts ":B:b:c:ns:D:d:p:r:w:z:hN:P:" opt ; do
 	p) parallel="$OPTARG"           ;;
 	w) sleeptime="$OPTARG"          ;;
 	z) podsleeptime="$OPTARG"	;;
+	x) affinity=1			;;
+	X) affinity=2			;;
 	h) help				;;
 	*) help "$OPTARG"               ;;
     esac
@@ -97,7 +102,7 @@ function indent() {
     local -i column="$1"
     shift
     if [[ -n "$*" ]] ; then
-	indent_1 "$column" <<< "$*"
+	"$@" | indent_1 "$column"
     else
 	indent_1 "$column"
     fi
@@ -186,7 +191,7 @@ function createVolumeMountsYAML() {
     echo "volumeMounts:"
     for i in $(seq 0 $((secrets - 1))) ; do
 	local name="secret-${namespace}-${deployment}-$i"
-	indent 2 <<EOF
+	cat <<EOF
 - name: $name
   mountPath: /etc/$name
   readOnly: true
@@ -203,7 +208,7 @@ function createVolumesYAML() {
     echo "volumes:"
     for i in $(seq 0 $((secrets - 1))) ; do
 	local name="secret-${namespace}-${deployment}-$i"
-	indent 2 <<EOF
+	cat<<EOF
 - name: $name
   secret:
     secretName: $name
@@ -223,22 +228,16 @@ function createContainersClusterBusterYAML() {
 - name: ${namespace}-$i-$j
   imagePullPolicy: IfNotPresent
   image: "busybox"
-# resources:
-#   requests:
-#     cpu: 1m
-#     memory: 5Mi
-  securityContext:
-    privileged: false
   command:
-    - /bin/sh
+  - /bin/sh
   args:
-    - -c
-    - |
-      trap 'exit 0' TERM
-      (while : ; do date ; sleep 60 ; done)&
-      sleep $podsleeptime
-      exit 1
-$(createVolumeMountsYAML "$namespace" "$i" "$secretCount" | indent 2)
+  - -c
+  - |
+    trap 'exit 0' TERM
+    (while : ; do date ; sleep 60 ; done)&
+    sleep $podsleeptime
+    exit 1
+$(indent 2 createVolumeMountsYAML "$namespace" "$i" "$secretCount")
 EOF
     done
 }
@@ -252,12 +251,10 @@ function createContainersPausePodYAML() {
     local -i j
     for j in $(seq 0 $((containers - 1))) ; do
 	cat <<EOF
+containers:
 - name: ${namespace}-$i-$j
-  imagePullPolicy: IfNotPresent
-  securityContext:
-    privileged: false
   image: "gcr.io/google_containers/pause-amd64:3.0"
-$(createVolumeMountsYAML "$namespace" "$i" "$secretCount" | indent 2)
+$(indent 2 createVolumeMountsYAML "$namespace" "$i" "$secretCount")
 EOF
     done
 }
@@ -269,8 +266,8 @@ function createDeploymentClassicYAML() {
     local -i pods=$4
     local -i containers=$5
     cat <<EOF
-kind: Deployment
 apiVersion: apps/v1
+kind: Deployment
 metadata:
   name: ${namespace}-$i
   namespace: $namespace
@@ -292,9 +289,8 @@ spec:
     spec:
       terminationGracePeriodSeconds: 1
       restartPolicy: Always
-      containers:
-$(createContainers${podType}YAML "$@" | indent 8)
-$(createVolumesYAML "$namespace" "$i" "$secretCount" | indent 6)
+$(indent 6 createContainers${podType}YAML "$@")
+$(indent 6 createVolumesYAML "$namespace" "$i" "$secretCount")
 EOF
 }
 
@@ -311,8 +307,8 @@ metadata:
     ${basename}: "true"
 spec:
   ports:
-    - port: $port
-      targetPort: $port
+  - port: $port
+    targetPort: $port
   selector:
     name: "${deployment}"
 EOF
@@ -407,19 +403,20 @@ function createServerContainerYAML() {
     local i=$2
     local secretCount=$3
     cat <<EOF
+containers:
 - name: ${namespace}-${i}-server
   image: perl
   ports:
-    - containerPort:
-        $port
+  - containerPort:
+      $port
   command:
-    - perl
+  - perl
   args:
-    - -e
-    - |
-$(createServerContainerPerl | indent 6)
-    - "$port"
-$(createVolumeMountsYAML "$namespace" "$i" "$secretCount" | indent 2)
+  - -e
+  - |
+$(indent 4 createServerContainerPerl)
+  - "$port"
+$(indent 2 createVolumeMountsYAML "$namespace" "$i" "$secretCount")
 EOF
 }
 
@@ -428,8 +425,8 @@ function createServerDeploymentYAML() {
     local i=$2
     local secretCount=$3
     cat <<EOF
-kind: Deployment
 apiVersion: apps/v1
+kind: Deployment
 metadata:
   name: ${namespace}-${i}-server
   namespace: $namespace
@@ -449,9 +446,8 @@ spec:
         ${basename}: "true"
     spec:
       terminationGracePeriodSeconds: 1
-      containers:
-$(createServerContainerYAML "$namespace" "$i" "$secretCount" | indent 8)
-$(createVolumesYAML "$namespace" "$i" "$secretCount" | indent 6)
+$(indent 6 createServerContainerYAML "$namespace" "$i" "$secretCount")
+$(indent 6 createVolumesYAML "$namespace" "$i" "$secretCount")
 EOF
 }
 
@@ -494,6 +490,7 @@ my $bufsize = length($buffer);
 my $starttime = gettimeofday();
 my $MBSec = $ARGV[2] * 1;
 if ($MBSec <= 0) {
+    print STDERR "Not sending data (use -D to actually send data)\n";
     pause();
     exit 0;
 }
@@ -537,18 +534,41 @@ function createClientContainerYAML() {
     local secretCount=$3
     local dataRate=$4
     cat <<EOF
+containers:
 - name: ${namespace}-${i}-client
   image: "perl"
   command:
-    - perl
+  - perl
   args:
-    - -e
-    - |
-$(createClientContainerPerl | indent 6)
-    - "$port"
-    - "service-${namespace}-$i"
-    - "$dataRate"
-$(createVolumeMountsYAML "$namespace" "$i" "$secretCount" | indent 2)
+  - -e
+  - |
+$(indent 4 createClientContainerPerl)
+  - "$port"
+  - "service-${namespace}-$i"
+  - "$dataRate"
+$(indent 2 createVolumeMountsYAML "$namespace" "$i" "$secretCount")
+EOF
+}
+
+function createClientAffinityYAML() {
+    (( affinity )) || return 0
+    local server=$1
+    local affinityType
+    case "$affinity" in
+	1) affinityType=Affinity     ;;
+	*) affinityType=AntiAffinity ;;
+    esac
+    cat << EOF
+affinity:
+  pod$affinityType:
+    requiredDuringSchedulingIgnoredDuringExecution:
+    - labelSelector:
+        matchExpressions:
+        - key: k8s-app
+          operator: In
+          values:
+          - "$server"
+      topologyKey: kubernetes.io/hostname
 EOF
 }
 
@@ -559,8 +579,8 @@ function createClientDeploymentYAML() {
     local replicas=$4
     local dataRate=$5
     cat <<EOF
-kind: Deployment
 apiVersion: apps/v1
+kind: Deployment
 metadata:
   name: ${namespace}-${i}-client
   namespace: $namespace
@@ -579,20 +599,9 @@ spec:
         ${basename}: "true"
     spec:
       terminationGracePeriodSeconds: 1
-#      affinity:
-#        podAntiAffinity:
-#          requiredDuringSchedulingPreferredDuringExecution:
-#            podAffinityTerm:
-#              labelSelector:
-#                matchExpressions:
-#                  - key: k8s-app
-#                    operator: In
-#                    values:
-#                      - ${namespace}-${i}-server
-#              topologyKey: kubernetes.io/hostname
-      containers:
-$(createClientContainerYAML "$namespace" "$i" "$secretCount" "$dataRate" | indent 8)
-$(createVolumesYAML "$namespace" "$i" "$secretCount" | indent 6)
+$(indent 6 createClientAffinityYAML "${namespace}-${i}-server")
+$(indent 6 createClientContainerYAML "$namespace" "$i" "$secretCount" "$dataRate")
+$(indent 6 createVolumesYAML "$namespace" "$i" "$secretCount")
 EOF
 }
 
