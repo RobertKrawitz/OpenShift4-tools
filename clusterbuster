@@ -248,7 +248,7 @@ EOF
     done
 }
 
-function createContainersPausepodYAML() {
+function createContainersPausePodYAML() {
     local namespace=$1
     local i=$2
     local secretCount=$3
