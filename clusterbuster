@@ -28,6 +28,7 @@ Usage: $0 [options] [name]
     Options:
        -n              Print what would be done without doing it
        -P podtype      Pod type (classic, pause, server)
+       -B basename     Base name of pods (default clusterbuster)
        -b blocksize    Number of objects to create in one oc call (default 1)
        -c containers   Number of containers per pod
        -D data rate    Data rate for client/server (MB/sec) (default 1)
@@ -47,10 +48,11 @@ EOF
 
 trap exit INT
 
-while getopts ":b:c:ns:D:d:p:r:w:z:hN:P:" opt ; do
+while getopts ":B:b:c:ns:D:d:p:r:w:z:hN:P:" opt ; do
     case "$opt" in
 	n) doit=0			;;
 	P) podType="$OPTARG"		;;
+	B) basename="$OPTARG"		;;
 	b) blocksize="$OPTARG"          ;;
 	c) containers="$OPTARG"         ;;
 	N) namespaces="$OPTARG"         ;;
@@ -186,10 +188,10 @@ function createVolumeMountsYAML() {
     local secrets=${3:-1}
     local -i i
     if (( secrets )) ; then
-	echo "          volumeMounts:"
+	echo "volumeMounts:"
 	for i in $(seq 0 $((secrets - 1))) ; do
 	    local name="secret-${namespace}-${deployment}-$i"
-	    indent 12 <<EOF
+	    indent 2 <<EOF
 - name: $name
   mountPath: /etc/$name
   readOnly: true
@@ -204,10 +206,10 @@ function createVolumesYAML() {
     local secrets=${3:-1}
     local -i i
     if (( secrets )) ; then
-	echo "      volumes:"
+	echo "volumes:"
 	for i in $(seq 0 $((secrets - 1))) ; do
 	    local name="secret-${namespace}-${deployment}-$i"
-	    indent 8 <<EOF
+	    indent 2 <<EOF
 - name: $name
   secret:
     secretName: $name
@@ -224,7 +226,7 @@ function createContainersClusterBusterYAML() {
     local -i containers=$5
     local -i j
     for j in $(seq 0 $((containers - 1))) ; do
-	indent 8 <<EOF
+	cat <<EOF
 - name: ${namespace}-$i-$j
   imagePullPolicy: IfNotPresent
   image: "busybox"
@@ -243,7 +245,7 @@ function createContainersClusterBusterYAML() {
       (while : ; do date ; sleep 60 ; done)&
       sleep $podsleeptime
       exit 1
-$(createVolumeMountsYAML "$namespace" "$i" "$secretCount")
+$(createVolumeMountsYAML "$namespace" "$i" "$secretCount" | indent 2)
 EOF
     done
 }
@@ -256,13 +258,13 @@ function createContainersPausePodYAML() {
     local -i containers=$5
     local -i j
     for j in $(seq 0 $((containers - 1))) ; do
-	indent 8 <<EOF
+	cat <<EOF
 - name: ${namespace}-$i-$j
   imagePullPolicy: IfNotPresent
   securityContext:
     privileged: false
   image: "gcr.io/google_containers/pause-amd64:3.0"
-$(createVolumeMountsYAML "$namespace" "$i" "$secretCount")
+$(createVolumeMountsYAML "$namespace" "$i" "$secretCount" | indent 2)
 EOF
     done
 }
@@ -298,8 +300,8 @@ spec:
       terminationGracePeriodSeconds: 1
       restartPolicy: Always
       containers:
-$(createContainers${podType}YAML "$@")
-$(createVolumesYAML "$namespace" "$i" "$secretCount")
+$(createContainers${podType}YAML "$@" | indent 8)
+$(createVolumesYAML "$namespace" "$i" "$secretCount" | indent 6)
 EOF
 }
 
@@ -345,7 +347,7 @@ EOF
 }
 
 function createServerContainerPerl() {
-    indent 14 <<'EOF'
+    cat <<'EOF'
 #!/usr/bin/perl
 use Socket;
 use strict;
@@ -407,6 +409,27 @@ for (;;) {
 EOF
 }
 
+function createServerContainerYAML() {
+    local namespace=$1
+    local i=$2
+    local secretCount=$3
+    cat <<EOF
+- name: ${namespace}-${i}-server
+  image: perl
+  ports:
+    - containerPort:
+        $port
+  command:
+    - perl
+  args:
+    - -e
+    - |
+$(createServerContainerPerl | indent 6)
+    - "$port"
+$(createVolumeMountsYAML "$namespace" "$i" "$secretCount" | indent 2)
+EOF
+}
+
 function createServerDeploymentYAML() {
     local namespace=$1
     local i=$2
@@ -434,24 +457,13 @@ spec:
     spec:
       terminationGracePeriodSeconds: 1
       containers:
-        - name: ${namespace}-${i}-server
-          image: perl
-          ports:
-            - containerPort:
-                $port
-          command:
-            - perl
-          args:
-            - -e
-            - |
-$(createServerContainerPerl)
-            - "$port"
-$(createVolumesYAML "$namespace" "$i" "$secretCount")
+$(createServerContainerYAML "$namespace" "$i" "$secretCount" | indent 8)
+$(createVolumesYAML "$namespace" "$i" "$secretCount" | indent 6)
 EOF
 }
 
 function createClientContainerPerl() {
-    indent 14 << 'EOF'
+    cat << 'EOF'
 #!/usr/bin/perl
 
 use Socket;
@@ -526,6 +538,27 @@ while (1) {
 EOF
 }
 
+function createClientContainerYAML() {
+    local namespace=$1
+    local i=$2
+    local secretCount=$3
+    local dataRate=$4
+    cat <<EOF
+- name: ${namespace}-${i}-client
+  image: "perl"
+  command:
+    - perl
+  args:
+    - -e
+    - |
+$(createClientContainerPerl | indent 6)
+    - "$port"
+    - "service-${namespace}-$i"
+    - "$dataRate"
+$(createVolumeMountsYAML "$namespace" "$i" "$secretCount" | indent 2)
+EOF
+}
+
 function createClientDeploymentYAML() {
     local namespace=$1
     local i=$2
@@ -565,18 +598,8 @@ spec:
 #                      - ${namespace}-${i}-server
 #              topologyKey: kubernetes.io/hostname
       containers:
-        - name: ${namespace}-${i}-client
-          image: "perl"
-          command:
-            - perl
-          args:
-            - -e
-            - |
-$(createClientContainerPerl)
-            - "$port"
-            - "service-${namespace}-$i"
-            - "$dataRate"
-$(createVolumesYAML "$namespace" "$i" "$secretCount")
+$(createClientContainerYAML "$namespace" "$i" "$secretCount" "$dataRate" | indent 8)
+$(createVolumesYAML "$namespace" "$i" "$secretCount" | indent 6)
 EOF
 }
 
