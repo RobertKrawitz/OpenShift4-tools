@@ -581,7 +581,7 @@ declare -ar known_aws_instance_types=("X.General Purpose"
 				      # ARM instances aren't useful
 				      # a1.{medium,{,{,2,4}x}large}
 				      m5{,d}.{{,{,2,4,8,12,16,24}x}large,metal}
-				      m5a.{,{,2,4,8,12,16,24}x}large
+				      m5{a,n,dn}.{,{,2,4,8,12,16,24}x}large
 				      m5ad.{,{,2,4,12,24}x}large
 				      m4.{,{,2,4,10,16}x}large
 				      "X.Burstable"
@@ -594,7 +594,7 @@ declare -ar known_aws_instance_types=("X.General Purpose"
 				      "X.Memory Optimized"
 				      r4.{,{,2,4,8,16}x}large
 				      r5{,d}.{{,{,2,4,8,12,16,24}x}large,metal}
-				      r5a.{,{,2,4,8,12,16,24}x}large
+				      r5{a,n,dn}.{,{,2,4,8,12,16,24}x}large
 				      r5ad.{,{,2,4,12,24}x}large
 				      x1e.{,2,4,8,16,32}xlarge
 				      x1.{16,32}xlarge
@@ -602,7 +602,7 @@ declare -ar known_aws_instance_types=("X.General Purpose"
 				      z1d.{{,{,2,3,6,12}x}large,metal}
 				      # High Memory are special dedicated-only hosts
 				      # Y.u-t{6,9}tb1.metal
-				      # Y.u-t12tb1.metal
+				      # Y.u-t{12,18,24}tb1.metal
 				      "X.Storage Optimized"
 				      i3.{{,{,2,4,8,16}x}large,metal}
 				      i3en.{{,{,2,3,6,12,24}x}large,metal}
@@ -612,7 +612,7 @@ declare -ar known_aws_instance_types=("X.General Purpose"
 				      p3.{2,8,16}xlarge
 				      p3dn.24xlarge
 				      p2.{,8,16}xlarge
-				      g4dh.{{,2,4,8,12,16}xlarge,metal}
+				      g4dn.{{,2,4,8,12,16}xlarge,metal}
 				      g3s.xlarge g3.{4,8,16}xlarge
 				      # FPGA instances are of no use for
 				      # running OpenShift
@@ -753,9 +753,9 @@ EOF
 	    echo
 	    cat <<EOF
 AWS-specific cluster configuration:
+  aws_create_bastion  Create ssh bastion host (default=1)
   aws_master_type     Type of master instance.
   aws_worker_type     Type of worker instance.
-  aws_create_bastion  Create ssh bastion host (default=1)
     Use "list" with either to get a (known) list of instance types.
 EOF
 	    ;;
