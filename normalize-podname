@@ -8,4 +8,5 @@ podname=$1
 [[ $podname =~ (.*)(-([bcdfghjklmnpqrstvwxz2456789]){5})$ ]] && podname=${BASH_REMATCH[1]}
 [[ $podname =~ (.*)(-[bcdfghjklmnpqrstvwxz2456789]{6,}) ]] && podname=${BASH_REMATCH[1]}
 [[ -n $OPENSHIFT_INSTALL_CLUSTER_NAME ]] && podname=${podname%-${OPENSHIFT_INSTALL_CLUSTER_NAME}*}
+[[ $podname =~ (.*)-[0-9][0-9]*$ ]] && podname=${BASH_REMATCH[1]}
 echo "$podname"
