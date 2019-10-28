@@ -151,7 +151,7 @@ function clean_startup() {
 # since this script sticks around until the user exits the spawned shell.
 # It's fine for the running script to be removed, since the shell still
 # has its open file descriptor.
-if [[ $# == 0 || $1 != "--DoIt=$0" ]] ; then
+if [[ $# = 0 || $1 != "--DoIt=$0" ]] ; then
     tmpsc=$(mktemp)
     [[ -z $tmpsc || ! -f $tmpsc || -L $tmpsc ]] && fatal "Can't create temporary script file"
     trap clean_startup EXIT SIGHUP SIGINT SIGQUIT SIGTERM
@@ -178,7 +178,7 @@ declare -r kubechart=${KUBECHART:-$GOPATH/src/github.com/sjenning/kubechart/kube
 declare -r oschart=${OSCHART:-$GOPATH/src/github.com/sjenning/oschart/oschart}
 declare -r default_repo_base=openshift-release
 
-declare -a global_platforms=(aws libvirt)
+declare -a global_platforms=()
 
 declare -A global_diagnostics=()
 
@@ -243,7 +243,7 @@ declare platformconfdata=
 
 # Running nested installs is liable to be problematic
 if [[ -n ${OPENSHIFT_INSTALL_INTERLOCK:-} ]] ; then
-    if [[ ${1:-} == -h* ]] ; then
+    if [[ ${1:-} = -h* ]] ; then
 	echo "Already in ${___topsc:-oinst} environment!"
 	help
     fi
@@ -272,20 +272,20 @@ function set_diagnostic() {
     global_diagnostics["$diagnostic_id"]="$print_diagnostic_message_func"
 }
 
-function timestamp_line() {
-    do_platforms diagnose "$*"
-    # Make the message look vaguely Go-like.
-    printf 'T0000 %(%H:%M:%S)T.000000   %s\n' -1 "$*"
+function _timestamp() {
+    while read -r REPLY ; do
+	do_platforms diagnose "$REPLY"
+	# Make the message look vaguely Go-like.
+	printf 'T0000 %(%H:%M:%S)T.000000   %s\n' -1 "$REPLY"
+    done
 }
 
 function timestamp() {
     if [[ -n "$*" ]] ; then
-	timestamp_line "$*"
+	_timestamp <<< "$*"
     else
-	while read -r REPLY ; do
-	    timestamp_line "$REPLY"
-	done
-    fi
+	_timestamp
+     fi
 }
 
 function tsec() {
@@ -341,13 +341,25 @@ function do_create_bastion() {
     fi
 }
 
+function add_platform() {
+    local -r platform=$1
+    local plat
+    for plat in "${global_platforms[@]}" ; do
+	if [[ $platform = "$plat" ]] ; then
+	    return
+	fi
+    done
+    global_platforms+=("platform")
+}
+
 ################################################################
 ### libvirt platform code				     ###
 ################################################################
 
-declare -i libvirt_created_proxy=0
+declare -i _libvirt_created_proxy=0
+add_platform libvirt
 
-function find_libvirt_default_domain() {
+function _libvirt_find_default_domain() {
     # shellcheck disable=SC2155
     local files=$(find /etc/NetworkManager/dnsmasq.d/ -type f -name '*.conf' -print)
     [[ -z $files ]] && fatal "No dnsmasq files in /etc/NetworkManager/dnsmasq.d"
@@ -365,9 +377,9 @@ function find_libvirt_default_domain() {
     echo "$dnsmasq_domain"
 }
 
-function libvirt_setup() {
+function _libvirt_setup() {
     export OPENSHIFT_INSTALL_LIBVIRT_URI="qemu+tcp://192.168.122.1/system"
-    if [[ $install_version == latest_default ]] ; then
+    if [[ $install_version = latest_default ]] ; then
 	install_version=
 	force_local_tools=1
 	ext_installer=
@@ -379,15 +391,15 @@ function libvirt_setup() {
     fi
 }
 
-function libvirt_base_domain() {
+function _libvirt_base_domain() {
     echo "${install_domain:-$(find_libvirt_default_domain)}"
 }
 
-function libvirt_replicas() {
+function _libvirt_replicas() {
     cmdline_replicas "$1" 1
 }
 
-function libvirt_platform() {
+function _libvirt_platform() {
     # maipo is channel, not base.
     #local baseURL='https://releases-rhcos.svc.ci.openshift.org/storage/releases/maipo'
     #local install_version=${install_version:-"$(curl --silent "$baseURL/builds.json" | "$JQ" -r '.builds[0]')"}
@@ -399,26 +411,26 @@ libvirt:
 EOF
 }
 
-function libvirt_volume_present() {
+function _libvirt_volume_present() {
     local vol="$1"
     local v
     for v in $(virsh --quiet vol-list --pool default |awk '{print $1}') ; do
-	[[ $v == "$vol" ]] && return 0
+	[[ $v = "$vol" ]] && return 0
     done
     return 1
 }
 
-function libvirt_delete_volume() {
+function _libvirt_delete_volume() {
     local vol
     for vol in "$@" ; do
-	if libvirt_volume_present "$vol" ; then
+	if _libvirt_volume_present "$vol" ; then
 	    echo "Deleting volume $vol"
 	    virsh vol-delete --pool default "$vol"
 	fi
     done
 }
 
-function libvirt_destroy_net() {
+function _libvirt_destroy_net() {
     local net
     for net in "$@" ; do
 	if virsh --quiet net-list --all |awk '{print $1}' |grep -q "$net" ; then
@@ -429,20 +441,20 @@ function libvirt_destroy_net() {
     done
 }
 
-function libvirt_destroy_node() {
+function _libvirt_destroy_node() {
     local node
     for node in "$@" ; do
 	if virsh --quiet list --all |awk '{print $2}' |grep -q "$node" ; then
 	    echo "Destroying $node"
 	    virsh destroy "$node"
 	    virsh undefine "$node"
-	    libvirt_delete_volume "$node"
+	    _libvirt_delete_volume "$node"
 	fi
     done
 }
 
 # See https://github.com/openshift/installer/issues/411#issuecomment-446084083
-function libvirt_run_proxy() {
+function _libvirt_run_proxy() {
     # The proxy has a bad habit of dying every now and then.
     while : ; do
 	# It's simply too noisy.
@@ -452,36 +464,36 @@ function libvirt_run_proxy() {
     done
 }
 
-function libvirt_cleanup() {
+function _libvirt_cleanup() {
     exec 3>&2 2>/dev/null
-    if (( libvirt_created_proxy )) ; then
-	kill -9 %libvirt_run_proxy
-	wait %libvirt_run_proxy
+    if (( _libvirt_created_proxy )) ; then
+	kill -9 %_libvirt_run_proxy
+	wait %_libvirt_run_proxy
     fi
     exec 2>&3 3>&-
     # shellcheck disable=SC2155
-    local cluster_name=$(virsh --quiet net-list | awk '{print $1}' | grep "^$1")
+    local cluster_name=$(virsh --quiet net-list | awk '{print $1}' | grep "^$OPENSHIFT_INSTALL_CLUSTER_NAME")
     [[ -z $cluster_name ]] && return
     local tmp
     echo -n "Destroying workers..."
     while read -r tmp ; do
-	libvirt_destroy_node "$tmp"
+	_libvirt_destroy_node "$tmp"
     done <<< "$(virsh list --name |grep -E "^(${cluster_name}-)?worker-")"
-    libvirt_destroy_net "$cluster_name"
+    _libvirt_destroy_net "$cluster_name"
     while read -r tmp ; do
-	libvirt_destroy_net "$tmp"
+	_libvirt_destroy_net "$tmp"
     done <<< "$(virsh --quiet net-list | awk '{print $1}' | grep "^${cluster_name}")"
-    libvirt_destroy_node "${cluster_name}-bootstrap"
-    libvirt_destroy_node "${cluster_name}-master-0"
+    _libvirt_destroy_node "${cluster_name}-bootstrap"
+    _libvirt_destroy_node "${cluster_name}-master-0"
     for f in base master-0 master.ign worker.ign bootstrap bootstrap.ign ; do
-	libvirt_delete_volume "${cluster_name}-$f"
+	_libvirt_delete_volume "${cluster_name}-$f"
     done
     while read -r tmp ; do
-	libvirt_delete_volume "$tmp"
+	_libvirt_delete_volume "$tmp"
     done <<< "$(virsh --quiet vol-list --pool default | awk '{print $1}' | grep "^${cluster_name}")"
 }
 
-function libvirt_postinstall() {
+function _libvirt_postinstall() {
     (( ! wait_for_complete )) && return
     timestamp "Waiting for DNS to come on line..."
     "${___topdir:-}waitfor-pod" -r 10 dns-default
@@ -493,19 +505,19 @@ function libvirt_postinstall() {
 	timestamp echo "Enabling bind to privileged port for ${OC}, may need sudo password"
 	sudo setcap CAP_NET_BIND_SERVICE=+eip "${OC}"
     fi
-    libvirt_run_proxy 2>&1 |grep -v 'Setting up router connection for 443' &
-    libvirt_created_proxy=1
+    _libvirt_run_proxy 2>&1 |grep -v 'Setting up router connection for 443' &
+    _libvirt_created_proxy=1
 }
 
-function libvirt_machine_cidr() {
+function _libvirt_machine_cidr() {
     echo '192.168.126.0/24'
 }
 
-function libvirt_default_install_type() {
+function _libvirt_default_install_type() {
     echo libvirt
 }
 
-function libvirt_help() {
+function _libvirt_help() {
     case "$1" in
 	install_types)
 	    cat <<\EOF
@@ -522,13 +534,13 @@ EOF
     esac
 }
 
-function libvirt_is_install_type() {
-    [[ $1 == libvirt ]]
+function _libvirt_is_install_type() {
+    [[ $1 = libvirt ]]
 }
 
-function libvirt_print_diagnostics() {
+function _libvirt_print_diagnostics() {
     case "$1" in
-	libvirt_api_plugin_incompatibility_detected)
+	_libvirt_api_plugin_incompatibility_detected)
 	    cat <<'EOF'
 * Error message suggests a stray 'terraform-provider-libvirt' binary.
   Please remove all files of that name from your home directory and
@@ -539,10 +551,10 @@ EOF
     esac
 }
 
-function libvirt_diagnose() {
+function _libvirt_diagnose() {
     case "$*" in
 	'Tried to create resource record set')
-	    set_diagnostic libvirt_api_plugin_incompatibility_detected libvirt_print_diagnostic
+	    set_diagnostic _libvirt_api_plugin_incompatibility_detected _libvirt_print_diagnostic
 	    ;;
     esac
 }
@@ -551,82 +563,85 @@ function libvirt_dispatch() {
     local op="$1"
     shift
     case "$op" in
-	base_domain)          libvirt_base_domain "$@"          ;;
-	cleanup)              libvirt_cleanup "$@"              ;;
-	default_install_type) libvirt_default_install_type "$@" ;;
-	diagnose)	      libvirt_diagnose "$@"		;;
-	help)                 libvirt_help "$@"		        ;;
-	is_install_type)      libvirt_is_install_type "$@"      ;;
-	machine_cidr)         libvirt_machine_cidr "$@"         ;;
-	master)               :                                 ;;
-	platform)             libvirt_platform "$@"             ;;
-	postinstall)          libvirt_postinstall "$@"          ;;
-	replicas)             libvirt_replicas "$@"             ;;
-	setup)                libvirt_setup "$@"                ;;
-	validate)             :                                 ;;
-	worker)               :                                 ;;
-	*)                    dispatch_unknown libvirt "$@"     ;;
+	base_domain)          _libvirt_base_domain "$@"          ;;
+	cleanup)              _libvirt_cleanup "$@"              ;;
+	default_install_type) _libvirt_default_install_type "$@" ;;
+	diagnose)	      _libvirt_diagnose "$@"		 ;;
+	help)                 _libvirt_help "$@"		 ;;
+	is_install_type)      _libvirt_is_install_type "$@"      ;;
+	machine_cidr)         _libvirt_machine_cidr "$@"         ;;
+	master)               :                                  ;;
+	platform)             _libvirt_platform "$@"             ;;
+	postinstall)          _libvirt_postinstall "$@"          ;;
+	replicas)             _libvirt_replicas "$@"             ;;
+	setup)                _libvirt_setup "$@"                ;;
+	validate)             :                                  ;;
+	worker)               :                                  ;;
+	*)                    dispatch_unknown libvirt "$@"      ;;
     esac
 }
 
 ################################################################
 ### AWS platform code					     ###
 ################################################################
+
+add_platform aws
+
 declare aws_worker_type=
 declare aws_master_type=
 declare -i aws_create_bastion=1
 declare -r aws_default_domain=devcluster.openshift.com
 
-declare -ar known_aws_instance_types=("X.General Purpose"
-				      # ARM instances aren't useful
-				      # a1.{medium,{,{,2,4}x}large}
-				      m5{,d}.{{,{,2,4,8,12,16,24}x}large,metal}
-				      m5{a,n,dn}.{,{,2,4,8,12,16,24}x}large
-				      m5ad.{,{,2,4,12,24}x}large
-				      m4.{,{,2,4,10,16}x}large
-				      "X.Burstable"
-				      t{3,3a,2}.{nano,micro,small,medium,{,x,2x}large}
-				      "X.Compute Optimized"
-				      c4.{,{,2,4,8}x}large
-				      c5.{{,{,2,4,9,12,18,24}x}large,metal}
-				      c5d.{,{,2,4,9,18}x}large
-				      c5n.{{,{,2,4,9,18}x}large,metal}
-				      "X.Memory Optimized"
-				      r4.{,{,2,4,8,16}x}large
-				      r5{,d}.{{,{,2,4,8,12,16,24}x}large,metal}
-				      r5{a,n,dn}.{,{,2,4,8,12,16,24}x}large
-				      r5ad.{,{,2,4,12,24}x}large
-				      x1e.{,2,4,8,16,32}xlarge
-				      x1.{16,32}xlarge
-				      "X.Single Thread Optimized"
-				      z1d.{{,{,2,3,6,12}x}large,metal}
-				      # High Memory are special dedicated-only hosts
-				      # Y.u-t{6,9}tb1.metal
-				      # Y.u-t{12,18,24}tb1.metal
-				      "X.Storage Optimized"
-				      i3.{{,{,2,4,8,16}x}large,metal}
-				      i3en.{{,{,2,3,6,12,24}x}large,metal}
-				      d2.{,2,4,8}xlarge
-				      h1.{2,4,8,16}xlarge
-				      "X.GPU"
-				      p3.{2,8,16}xlarge
-				      p3dn.24xlarge
-				      p2.{,8,16}xlarge
-				      g4dn.{{,2,4,8,12,16}xlarge,metal}
-				      g3s.xlarge g3.{4,8,16}xlarge
-				      # FPGA instances are of no use for
-				      # running OpenShift
-				      # f1.{2,4,16}xlarge
+declare -ar _aws_known_instance_types=("X.General Purpose"
+				       # ARM instances aren't useful
+				       # a1.{medium,{,{,2,4}x}large}
+				       m5{,d}.{{,{,2,4,8,12,16,24}x}large,metal}
+				       m5{a,n,dn}.{,{,2,4,8,12,16,24}x}large
+				       m5ad.{,{,2,4,12,24}x}large
+				       m4.{,{,2,4,10,16}x}large
+				       "X.Burstable"
+				       t{3,3a,2}.{nano,micro,small,medium,{,x,2x}large}
+				       "X.Compute Optimized"
+				       c4.{,{,2,4,8}x}large
+				       c5.{{,{,2,4,9,12,18,24}x}large,metal}
+				       c5d.{,{,2,4,9,18}x}large
+				       c5n.{{,{,2,4,9,18}x}large,metal}
+				       "X.Memory Optimized"
+				       r4.{,{,2,4,8,16}x}large
+				       r5{,d}.{{,{,2,4,8,12,16,24}x}large,metal}
+				       r5{a,n,dn}.{,{,2,4,8,12,16,24}x}large
+				       r5ad.{,{,2,4,12,24}x}large
+				       x1e.{,2,4,8,16,32}xlarge
+				       x1.{16,32}xlarge
+				       "X.Single Thread Optimized"
+				       z1d.{{,{,2,3,6,12}x}large,metal}
+				       # High Memory are special dedicated-only hosts
+				       # Y.u-t{6,9}tb1.metal
+				       # Y.u-t{12,18,24}tb1.metal
+				       "X.Storage Optimized"
+				       i3.{{,{,2,4,8,16}x}large,metal}
+				       i3en.{{,{,2,3,6,12,24}x}large,metal}
+				       d2.{,2,4,8}xlarge
+				       h1.{2,4,8,16}xlarge
+				       "X.GPU"
+				       p3.{2,8,16}xlarge
+				       p3dn.24xlarge
+				       p2.{,8,16}xlarge
+				       g4dn.{{,2,4,8,12,16}xlarge,metal}
+				       g3s.xlarge g3.{4,8,16}xlarge
+				       # FPGA instances are of no use for
+				       # running OpenShift
+				       # f1.{2,4,16}xlarge
 				     )
 
-function list_aws_instance_types() {
+function _aws_list_instance_types() {
     local -i list_all=0
     cat <<\EOF
-Currently known AWS instance types.  Note that not all types are
-available in all regions, and AWS may add additional types at
-any time.  See https://aws.amazon.com/ec2/instance-types/
+Currently known _AWS instance types.  Note that not all types are
+available in all regions, and _AWS may add additional types at
+any time.  See https://_aws.amazon.com/ec2/instance-types/
 for current information about what instance types exist, and
-https://aws.amazon.com/ec2/pricing/on-demand/ for information
+https://_aws.amazon.com/ec2/pricing/on-demand/ for information
 about what instance types are available in a particular region.
 EOF
     if [[ ${1:-} = list_all ]] ; then
@@ -641,7 +656,7 @@ EOF
     # shellcheck disable=SC2155
     local -i term_width=$(tput cols 2>/dev/null)
     local i
-    for i in "${known_aws_instance_types[@]}" ; do
+    for i in "${_aws_known_instance_types[@]}" ; do
 	case "$i" in
 	    X.*)
 		(( list_all == 0 && groups_printed++ )) && break
@@ -672,18 +687,18 @@ EOF
     echo
 }
 
-function check_aws_instance_type() {
-    local aws_type="${1:-}"
-    [[ -z $aws_type ]] && return 0
+function _aws_check_instance_type() {
+    local _aws_type="${1:-}"
+    [[ -z $_aws_type ]] && return 0
     local i
-    for i in "${known_aws_instance_types[@]}" ; do
-	[[ $i == "$aws_type" ]] && return 0
+    for i in "${_aws_known_instance_types[@]}" ; do
+	[[ $i = "$_aws_type" ]] && return 0
     done
-    echo "*** WARNING: '$aws_type' is not a currently known AWS instance type!"
-    local aws_prefix=${aws_type%%.*}
+    echo "*** WARNING: '$_aws_type' is not a currently known AWS instance type!"
+    local _aws_prefix=${_aws_type%%.*}
     local j=0
-    for i in "${known_aws_instance_types[@]}" ; do
-	if [[ $aws_prefix = "${i%%.*}" ]] ; then
+    for i in "${_aws_known_instance_types[@]}" ; do
+	if [[ $_aws_prefix = "${i%%.*}" ]] ; then
 	   (( j++ )) || echo "Possible candidates:"
 	   echo -n " $i"
 	fi
@@ -696,26 +711,26 @@ function check_aws_instance_type() {
     fi
 }
 
-function aws_validate() {
-    if [[ $aws_master_type == list-all || $aws_worker_type == list-all ||
-	  $aws_master_type == list_all || $aws_worker_type == list_all ]] ; then
-	list_aws_instance_types list_all
+function _aws_validate() {
+    if [[ $aws_master_type = list-all || $aws_worker_type = list-all ||
+	  $aws_master_type = list_all || $aws_worker_type = list_all ]] ; then
+	_aws_list_instance_types list_all
 	exit
     fi
-    if [[ $aws_master_type == list || $aws_worker_type == list ]] ; then
-	list_aws_instance_types
+    if [[ $aws_master_type = list || $aws_worker_type = list ]] ; then
+	aws_list_instance_types
 	exit
     fi
     local need_to_list_instance_types=0
-    check_aws_instance_type "$aws_master_type"
+    _aws_check_instance_type "$aws_master_type"
     (( $? == 2 )) && need_to_list_instance_types=1
-    check_aws_instance_type "$aws_worker_type"
+    _aws_check_instance_type "$aws_worker_type"
     (( $? == 2 )) && need_to_list_instance_types=1
-    (( need_to_list_instance_types )) && list_aws_instance_types
+    (( need_to_list_instance_types )) && _aws_list_instance_types
     return 0
 }
 
-function aws_setup() {
+function _aws_setup() {
     local region=${1#aws}
     region=${region#[-._]}
     case "$region" in
@@ -727,21 +742,21 @@ function aws_setup() {
     esac
 }
 
-function aws_replicas() {
+function _aws_replicas() {
     cmdline_replicas "$1" 3
 }
 
-function aws_default_install_type() {
-    for a in aws aws2 aws3 aws4; do
+function _aws_default_install_type() {
+    for a in _aws _aws2 _aws3 _aws4; do
 	echo $a
     done | shuf --head-count 1
 }
 
-function aws_help() {
+function _aws_help() {
     case "$1" in
 	install_types)
 	    cat <<\EOF
-Default is random aws zone.
+Default is random _aws zone.
 aws     (aws us-east-1)
 aws2    (aws us-east-2)
 aws3    (aws us-west-1)
@@ -768,7 +783,7 @@ EOF
     esac
 }
 
-function aws_master() {
+function _aws_master() {
     if [[ -n $aws_master_type ]] ; then
 	cat <<EOF
 
@@ -778,7 +793,7 @@ EOF
     fi
 }
 
-function aws_worker() {
+function _aws_worker() {
     if [[ -n $aws_worker_type ]] ; then
 	cat <<EOF
 
@@ -788,32 +803,32 @@ EOF
     fi
 }
 
-function aws_platform() {
+function _aws_platform() {
     cat <<EOF
 aws:
   region: $OPENSHIFT_INSTALL_AWS_REGION
 EOF
 }
 
-function aws_machine_cidr() {
+function _aws_machine_cidr() {
     echo '10.0.0.0/16'
 }
 
-function aws_base_domain() {
+function _aws_base_domain() {
     echo "${install_domain:-$aws_default_domain}"
 }
 
-function aws_is_install_type() {
-    [[ $1 == aws* ]]
+function _aws_is_install_type() {
+    [[ $1 = aws* ]]
 }
 
-function aws_postinstall() {
+function _aws_postinstall() {
     if (( aws_create_bastion )) ; then
 	do_create_bastion
     fi
 }
 
-function aws_print_diagnostic() {
+function _aws_print_diagnostic() {
     case "$1" in
 	'Tried to create resource record set')
 	    cat <<'EOF'
@@ -826,10 +841,10 @@ EOF
     esac
 }
 
-function aws_diagnose() {
+function _aws_diagnose() {
     case "$*" in
 	'Tried to create resource record set')
-	    set_diagnostic aws_existing_resource_detected aws_print_diagnostic
+	    set_diagnostic _aws_existing_resource_detected _aws_print_diagnostic
 	    ;;
     esac
 }
@@ -838,21 +853,21 @@ function aws_dispatch() {
     local op="$1"
     shift
     case "$op" in
-	base_domain)          aws_base_domain "$@"          ;;
-	cleanup)              :                             ;;
-	default_install_type) aws_default_install_type "$@" ;;
-	diagnose)	      aws_diagnose "$@"		    ;;
-	help)                 aws_help "$@"                 ;;
-	is_install_type)      aws_is_install_type "$@"      ;;
-	machine_cidr)         aws_machine_cidr "$@"         ;;
-	master)               aws_master "$@"               ;;
-	platform)             aws_platform "$@"             ;;
-	postinstall)          aws_postinstall "$@"          ;;
-	replicas)             aws_replicas "$@"             ;;
-	setup)                aws_setup "$@"                ;;
-	validate)             aws_validate "$@"             ;;
-	worker)               aws_worker "$@"               ;;
-	*)                    dispatch_unknown aws "$@"     ;;
+	base_domain)          _aws_base_domain "$@"          ;;
+	cleanup)              :                              ;;
+	default_install_type) _aws_default_install_type "$@" ;;
+	diagnose)	      _aws_diagnose "$@"	     ;;
+	help)                 _aws_help "$@"                 ;;
+	is_install_type)      _aws_is_install_type "$@"      ;;
+	machine_cidr)         _aws_machine_cidr "$@"         ;;
+	master)               _aws_master "$@"               ;;
+	platform)             _aws_platform "$@"             ;;
+	postinstall)          _aws_postinstall "$@"          ;;
+	replicas)             _aws_replicas "$@"             ;;
+	setup)                _aws_setup "$@"                ;;
+	validate)             _aws_validate "$@"             ;;
+	worker)               _aws_worker "$@"               ;;
+	*)                    dispatch_unknown aws "$@"      ;;
     esac
 }
 
@@ -861,7 +876,7 @@ function aws_dispatch() {
 ################################################################
 
 function platform_dispatch() {
-    if [[ $1 == -p ]] ; then
+    if [[ $1 = -p ]] ; then
 	shift
 	local platform=$1
 	shift
@@ -1007,7 +1022,7 @@ function wait_and_run() {
     until [[ -f $KUBECONFIG ]] ; do sleep 1; done
     cmd=${1##*/}
     echo "Starting $cmd..." | timestamp
-    if [[ $loglevel == '--log-level=debug' ]] ; then
+    if [[ $loglevel = '--log-level=debug' ]] ; then
 	exec "$@"
     else
 	exec "$@" >/dev/null 2>&1
@@ -1139,7 +1154,7 @@ function installer_setup() {
 	PS3="Select release: "
 	select install_version in "${versions[@]}" ; do break; done
 	PS3=$OPS3
-    elif [[ $install_version == latest ]] ; then
+    elif [[ $install_version = latest ]] ; then
 	not_latest=
 	release_channel=${release_channel:-${release_base_map[$repo]:-}}
 	echo "Retrieving release data from $release_source/$release_channel/latest"
@@ -1160,7 +1175,7 @@ function installer_setup() {
 	echo -e "installer version:\n$("$ext_installer" version |sed 's/^/    /')\n" 1>&2
     fi
     srcdir=.
-    if [[ $do_override == 1 && -n $not_latest ]] ; then
+    if [[ $do_override = 1 && -n $not_latest ]] ; then
 	export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE=$pullspec
 	export _OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE=$pullspec
     fi
@@ -1266,14 +1281,14 @@ function clean_secret() {
     local min_indent_prefix=
     while IFS= read -r line ; do
 	if [[ -n $min_indent_prefix ]] ; then
-	    if [[ $line == "${min_indent_prefix}"* ]] ; then
+	    if [[ $line = "${min_indent_prefix}"* ]] ; then
 		continue
 	    else
 		min_indent_prefix=
 	    fi
 	fi
 	if [[ $line =~ (( *)(sshKey: |pullSecret: ))([|]|.*) ]] ; then
-	    [[ ${BASH_REMATCH[4]} == '|' ]] && min_indent_prefix="${BASH_REMATCH[2]} "
+	    [[ ${BASH_REMATCH[4]} = '|' ]] && min_indent_prefix="${BASH_REMATCH[2]} "
 	    echo "${BASH_REMATCH[1]}..."
 	else
 	    echo "$line"
@@ -1517,7 +1532,7 @@ OPENSHIFT_INSTALL_BASE_DOMAIN=$(platform_dispatch base_domain)
 export OPENSHIFT_INSTALL_BASE_DOMAIN
 
 [[ -n $ext_installer ]] && install="$ext_installer"
-[[ $install_version == latest_default ]] && install_version=latest
+[[ $install_version = latest_default ]] && install_version=latest
 export OPENSHIFT_INSTALL_CLUSTER_NAME=${install_dir:-${LOGNAME:-NOUSER}-${OPENSHIFT_INSTALL_PLATFORM}}
 
 install_dir="${install_dir:-$OPENSHIFT_INSTALL_CLUSTER_NAME}"
