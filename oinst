@@ -252,6 +252,11 @@ fi
 
 [[ -z $OC ]] && fatal "Can't find oc command"
 
+
+################################################################
+### Utilities						     ###
+################################################################
+
 function clear_env() {
     local var
     for var in "${!_OPENSHIFT_INSTALL@}" "${!OPENSHIFT_INSTALL@}" KUBECONFIG ; do unset "$var"; done
@@ -349,7 +354,116 @@ function add_platform() {
 	    return
 	fi
     done
-    global_platforms+=("platform")
+    global_platforms+=("$platform")
+}
+
+function _list_instance_types() {
+    local -i list_all=0
+    local cmd=$1
+    local list_option_name=$2
+    shift 2
+    while read -r REPLY ; do
+	echo "$REPLY"
+    done
+    if [[ $cmd = list_all ]] ; then
+	list_all=1
+    else
+	echo "Use '$___topsc -X $list_option_name=list-all' to list all instance types."
+    fi
+    echo
+    local last_class=
+    local -i tot_cols=0
+    local -i groups_printed=0
+    # shellcheck disable=SC2155
+    local -i term_width=$(tput cols 2>/dev/null)
+    local i
+    for i in "$@" ; do
+	case "$i" in
+	    X.*)
+		(( list_all == 0 && groups_printed++ )) && break
+		echo -en "${last_class:+\n\n}${i#X.}:"
+		;;
+	    Y.*)
+		echo -ne "\n ${i#*.}"
+		;;
+	    Z.*)
+		echo -ne " ${i#*.}"
+		;;
+	    ${last_class}.*)
+		tot_cols+=9
+		if (( term_width > 20 && tot_cols > (term_width - 5) )) ; then
+		    printf "\n        %-8s" "${i#*.}"
+		    tot_cols=16
+		else
+		    printf " %-8s" "${i#*.}"
+		fi
+		;;
+	    *)
+		printf "\n %-6s %-8s" "${i%%.*}:" "${i#*.}"
+		tot_cols=10
+		last_class=${i%%.*}
+		;;
+	esac
+    done
+    echo
+}
+
+function _check_instance_type() {
+    local instance_type=$1
+    local platform=$2
+    local list_option_name=$3
+    shift 3
+    [[ -z ${instance_type:-} ]] && return 0
+    local i
+    for i in "$@" ; do
+	[[ $i = "$instance_type" ]] && return 0
+    done
+    echo "*** WARNING: '$instance_type' is not a currently known $platform instance type!"
+    local prefix=${instance_type%%.*}
+    local -i term_width=$(tput cols 2>/dev/null)
+    local -i tot_cols=0
+    local j=0
+    for i in "$@" ; do
+	if [[ $prefix = "${i%%.*}" ]] ; then
+	   (( j++ )) || echo "Possible candidates:"
+	   if (( term_width > 20 && tot_cols > (term_width - 5) )) ; then
+	       echo
+	       tot_cols=0
+	   fi
+	   echo -n " $i"
+	   tot_cols=$((tot_cols + ${#i} + 1))
+	fi
+    done
+    echo -e '\n'
+    if (( j )) ; then
+	return 1
+    else
+	return 2
+    fi
+}
+
+function validate_instance_type() {
+    local worker_type=$1
+    local master_type=$2
+    local platform=$3
+    local list_option_name=$4
+    shift 4
+    if [[ $master_type = list-all || $worker_type = list-all ||
+	      $master_type = list_all || $worker_type = list_all ]] ; then
+	_list_instance_types list_all "$list_option_name" "$@"
+	exit
+    fi
+    if [[ $master_type = list || $worker_type = list ]] ; then
+	_list_instance_types list "$list_option_name" "$@"
+	exit
+    fi
+    local need_to_list_instance_types=0
+    _check_instance_type "$master_type" "$platform" "$list_option_name" "$@"
+    (( $? == 2 )) && need_to_list_instance_types=1
+    _check_instance_type "$worker_type" "$platform" "$list_option_name" "$@"
+    (( $? == 2 )) && need_to_list_instance_types=1
+    (( need_to_list_instance_types )) && _list_instance_types list "$list_option_name" "$@"
+    return 0
 }
 
 ################################################################
@@ -634,100 +748,15 @@ declare -ar _aws_known_instance_types=("X.General Purpose"
 				       # f1.{2,4,16}xlarge
 				     )
 
-function _aws_list_instance_types() {
-    local -i list_all=0
-    cat <<\EOF
-Currently known _AWS instance types.  Note that not all types are
-available in all regions, and _AWS may add additional types at
-any time.  See https://_aws.amazon.com/ec2/instance-types/
+function _aws_validate() {
+    validate_instance_type "$aws_worker_type" "$aws_master_type" AWS aws_master_type "${_aws_known_instance_types[@]}" <<'EOF'
+Currently known AWS instance types.  Note that not all types are
+available in all regions, and AWS may add additional types at
+any time.  See https://aws.amazon.com/ec2/instance-types/
 for current information about what instance types exist, and
-https://_aws.amazon.com/ec2/pricing/on-demand/ for information
+https://aws.amazon.com/ec2/pricing/on-demand/ for information
 about what instance types are available in a particular region.
 EOF
-    if [[ ${1:-} = list_all ]] ; then
-	list_all=1
-    else
-	echo "Use '$___topsc -X aws_master_type=list-all' to list all instance types."
-    fi
-    echo
-    local last_class=
-    local -i tot_cols=0
-    local -i groups_printed=0
-    # shellcheck disable=SC2155
-    local -i term_width=$(tput cols 2>/dev/null)
-    local i
-    for i in "${_aws_known_instance_types[@]}" ; do
-	case "$i" in
-	    X.*)
-		(( list_all == 0 && groups_printed++ )) && break
-		echo -en "${last_class:+\n\n}${i#X.}:"
-		;;
-	    Y.*)
-		echo -ne "\n ${i#*.}"
-		;;
-	    Z.*)
-		echo -ne " ${i#*.}"
-		;;
-	    ${last_class}.*)
-		tot_cols+=9
-		if (( term_width > 20 && tot_cols > (term_width - 5) )) ; then
-		    printf "\n        %-8s" "${i#*.}"
-		    tot_cols=16
-		else
-		    printf " %-8s" "${i#*.}"
-		fi
-		;;
-	    *)
-		printf "\n %-6s %-8s" "${i%%.*}:" "${i#*.}"
-		tot_cols=10
-		last_class=${i%%.*}
-		;;
-	esac
-    done
-    echo
-}
-
-function _aws_check_instance_type() {
-    local _aws_type="${1:-}"
-    [[ -z $_aws_type ]] && return 0
-    local i
-    for i in "${_aws_known_instance_types[@]}" ; do
-	[[ $i = "$_aws_type" ]] && return 0
-    done
-    echo "*** WARNING: '$_aws_type' is not a currently known AWS instance type!"
-    local _aws_prefix=${_aws_type%%.*}
-    local j=0
-    for i in "${_aws_known_instance_types[@]}" ; do
-	if [[ $_aws_prefix = "${i%%.*}" ]] ; then
-	   (( j++ )) || echo "Possible candidates:"
-	   echo -n " $i"
-	fi
-    done
-    echo -e '\n'
-    if (( j )) ; then
-	return 1
-    else
-	return 2
-    fi
-}
-
-function _aws_validate() {
-    if [[ $aws_master_type = list-all || $aws_worker_type = list-all ||
-	  $aws_master_type = list_all || $aws_worker_type = list_all ]] ; then
-	_aws_list_instance_types list_all
-	exit
-    fi
-    if [[ $aws_master_type = list || $aws_worker_type = list ]] ; then
-	aws_list_instance_types
-	exit
-    fi
-    local need_to_list_instance_types=0
-    _aws_check_instance_type "$aws_master_type"
-    (( $? == 2 )) && need_to_list_instance_types=1
-    _aws_check_instance_type "$aws_worker_type"
-    (( $? == 2 )) && need_to_list_instance_types=1
-    (( need_to_list_instance_types )) && _aws_list_instance_types
-    return 0
 }
 
 function _aws_setup() {
@@ -881,7 +910,7 @@ function platform_dispatch() {
 	local platform=$1
 	shift
 	"${platform}_dispatch" "$@"
-    elif [[ -n ${OPENSHIFT_INSTALL_PLATFORM} ]] ; then
+    elif [[ -n ${OPENSHIFT_INSTALL_PLATFORM:-} ]] ; then
 	"${OPENSHIFT_INSTALL_PLATFORM}_dispatch" "$@"
     else
 	local -i status=0
