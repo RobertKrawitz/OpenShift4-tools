@@ -19,15 +19,15 @@
 ### AWS platform code					     ###
 ################################################################
 
-declare _aws_worker_type=
-declare _aws_master_type=
-declare -i _aws_create_bastion=1
-declare -r _aws_default_domain=devcluster.openshift.com
+declare _____aws_worker_type=
+declare _____aws_master_type=
+declare -i _____aws_create_bastion=1
+declare -r _____aws_default_domain=devcluster.openshift.com
 
-add_platform _aws_dispatch
+add_platform _____aws_dispatch
 register_options aws_worker_type aws_master_type aws_create_bastion
 
-declare -ar _aws_known_instance_types=("X.General Purpose"
+declare -ar _____aws_known_instance_types=("X.General Purpose"
 				       # ARM instances aren't useful
 				       # a1.{medium,{,{,2,4}x}large}
 				       m5{,d}.{{,{,2,4,8,12,16,24}x}large,metal}
@@ -69,8 +69,8 @@ declare -ar _aws_known_instance_types=("X.General Purpose"
 				       # f1.{2,4,16}xlarge
 				     )
 
-function _aws_validate() {
-    validate_instance_type "$_aws_worker_type" "$_aws_master_type" AWS _aws_master_type _aws_split_instance "${_aws_known_instance_types[@]}" <<'EOF'
+function _____aws_validate() {
+    validate_instance_type "$_____aws_worker_type" "$_____aws_master_type" AWS _____aws_master_type _____aws_split_instance "${_____aws_known_instance_types[@]}" <<'EOF'
 Currently known AWS instance types.  Note that not all types are
 available in all regions, and AWS may add additional types at
 any time.  See https://aws.amazon.com/ec2/instance-types/
@@ -80,14 +80,14 @@ about what instance types are available in a particular region.
 EOF
 }
 
-function _aws_split_instance() {
+function _____aws_split_instance() {
     local instance=$1
     local class=${instance%%.*}
     local subinstance=${instance#*.}
     echo "$class" "$subinstance"
 }
 
-function _aws_setup() {
+function _____aws_setup() {
     local region=${1#aws}
     region=${region#[-._]}
     case "$region" in
@@ -99,21 +99,21 @@ function _aws_setup() {
     esac
 }
 
-function _aws_replicas() {
+function _____aws_replicas() {
     cmdline_replicas "$1" 3
 }
 
-function _aws_default_install_type() {
-    for a in _aws _aws2 _aws3 _aws4; do
+function _____aws_default_install_type() {
+    for a in aws aws2 aws3 aws4; do
 	echo $a
     done | shuf --head-count 1
 }
 
-function _aws_help() {
+function _____aws_help() {
     case "$1" in
 	install_types)
 	    cat <<\EOF
-Default is random _aws zone.
+Default is random aws zone.
 aws     (aws us-east-1)
 aws2    (aws us-east-2)
 aws3    (aws us-west-1)
@@ -125,67 +125,67 @@ EOF
 	    echo
 	    cat <<EOF
 AWS-specific cluster configuration:
-  _aws_create_bastion  Create ssh bastion host (default=1)
-  _aws_master_type     Type of master instance.
-  _aws_worker_type     Type of worker instance.
+  aws_create_bastion  Create ssh bastion host (default=1)
+  aws_master_type     Type of master instance.
+  aws_worker_type     Type of worker instance.
     Use "list" with either to get a (known) list of instance types.
 EOF
 	    ;;
 	default_domain)
 	    cat <<\EOF
-For AWS: default is $_aws_default_domain.
+For AWS: default is $_____aws_default_domain.
 EOF
 	    ;;
 	*)  ;;
     esac
 }
 
-function _aws_master() {
-    if [[ -n $_aws_master_type ]] ; then
+function _____aws_master() {
+    if [[ -n $_____aws_master_type ]] ; then
 	cat <<EOF
 
 aws:
-  type: "$_aws_master_type"
+  type: "$_____aws_master_type"
 EOF
     fi
 }
 
-function _aws_worker() {
-    if [[ -n $_aws_worker_type ]] ; then
+function _____aws_worker() {
+    if [[ -n $_____aws_worker_type ]] ; then
 	cat <<EOF
 
 aws:
-  type: "$_aws_worker_type"
+  type: "$_____aws_worker_type"
 EOF
     fi
 }
 
-function _aws_platform() {
+function _____aws_platform() {
     cat <<EOF
 aws:
   region: $OPENSHIFT_INSTALL_AWS_REGION
 EOF
 }
 
-function _aws_machine_cidr() {
+function _____aws_machine_cidr() {
     echo '10.0.0.0/16'
 }
 
-function _aws_base_domain() {
-    echo "${install_domain:-$_aws_default_domain}"
+function _____aws_base_domain() {
+    echo "${install_domain:-$_____aws_default_domain}"
 }
 
-function _aws_is_install_type() {
+function _____aws_is_install_type() {
     [[ $1 = aws* ]]
 }
 
-function _aws_postinstall() {
-    if (( _aws_create_bastion )) ; then
+function _____aws_postinstall() {
+    if (( _____aws_create_bastion )) ; then
 	do_create_bastion
     fi
 }
 
-function _aws_print_diagnostic() {
+function _____aws_print_diagnostic() {
     case "$1" in
 	'Tried to create resource record set')
 	    cat <<'EOF'
@@ -198,44 +198,44 @@ EOF
     esac
 }
 
-function _aws_diagnose() {
+function _____aws_diagnose() {
     case "$*" in
 	'Tried to create resource record set')
-	    set_diagnostic _aws_existing_resource_detected _aws_print_diagnostic
+	    set_diagnostic _____aws_existing_resource_detected _____aws_print_diagnostic
 	    ;;
     esac
 }
 
-function _aws_set_option() {
+function _____aws_set_option() {
     local option=$1
     local value=$2
     case "$option" in
-	aws_worker_type)    _aws_worker_type=$value    ;;
-	aws_master_type)    _aws_master_type=$value    ;;
-	aws_create_bastion) _aws_create_bastion=$value ;;
+	aws_worker_type)    _____aws_worker_type=$value    ;;
+	aws_master_type)    _____aws_master_type=$value    ;;
+	aws_create_bastion) _____aws_create_bastion=$value ;;
 	*)                  fatal "Unknown option $option in aws platform" ;;
     esac
 }
 
-function _aws_dispatch() {
+function _____aws_dispatch() {
     local op="$1"
     shift
     case "$op" in
-	base_domain)          _aws_base_domain "$@"          ;;
-	cleanup)              :                              ;;
-	default_install_type) _aws_default_install_type "$@" ;;
-	diagnose)	      _aws_diagnose "$@"	     ;;
-	help)                 _aws_help "$@"                 ;;
-	is_install_type)      _aws_is_install_type "$@"      ;;
-	machine_cidr)         _aws_machine_cidr "$@"         ;;
-	master)               _aws_master "$@"               ;;
-	platform)             _aws_platform "$@"             ;;
-	postinstall)          _aws_postinstall "$@"          ;;
-	replicas)             _aws_replicas "$@"             ;;
-	set_option)	      _aws_set_option "$@"	     ;;
-	setup)                _aws_setup "$@"                ;;
-	validate)             _aws_validate "$@"             ;;
-	worker)               _aws_worker "$@"               ;;
-	*)                    dispatch_unknown aws "$@"      ;;
+	base_domain)          _____aws_base_domain "$@"         ;;
+	cleanup)              :					;;
+	default_install_type) _____aws_default_install_type "$@";;
+	diagnose)	      _____aws_diagnose "$@"		;;
+	help)                 _____aws_help "$@"                ;;
+	is_install_type)      _____aws_is_install_type "$@"     ;;
+	machine_cidr)         _____aws_machine_cidr "$@"        ;;
+	master)               _____aws_master "$@"              ;;
+	platform)             _____aws_platform "$@"            ;;
+	postinstall)          _____aws_postinstall "$@"         ;;
+	replicas)             _____aws_replicas "$@"            ;;
+	set_option)	      _____aws_set_option "$@"		;;
+	setup)                _____aws_setup "$@"               ;;
+	validate)             _____aws_validate "$@"            ;;
+	worker)               _____aws_worker "$@"              ;;
+	*)                    dispatch_unknown aws "$@"		;;
     esac
 }

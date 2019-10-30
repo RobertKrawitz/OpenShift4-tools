@@ -18,11 +18,11 @@
 ### libvirt platform code				     ###
 ################################################################
 
-add_platform _libvirt_dispatch
+add_platform _____libvirt_dispatch
 
-declare -i _libvirt_created_proxy=0
+declare -i _____libvirt_created_proxy=0
 
-function _libvirt_find_default_domain() {
+function _____libvirt_find_default_domain() {
     # shellcheck disable=SC2155
     local files=$(find /etc/NetworkManager/dnsmasq.d/ -type f -name '*.conf' -print)
     [[ -z $files ]] && fatal "No dnsmasq files in /etc/NetworkManager/dnsmasq.d"
@@ -40,7 +40,7 @@ function _libvirt_find_default_domain() {
     echo "$dnsmasq_domain"
 }
 
-function _libvirt_setup() {
+function _____libvirt_setup() {
     export OPENSHIFT_INSTALL_LIBVIRT_URI="qemu+tcp://192.168.122.1/system"
     if [[ $install_version = latest_default ]] ; then
 	install_version=
@@ -54,15 +54,15 @@ function _libvirt_setup() {
     fi
 }
 
-function _libvirt_base_domain() {
-    echo "${install_domain:-$(find_libvirt_default_domain)}"
+function _____libvirt_base_domain() {
+    echo "${install_domain:-$(_____libvirt_find_default_domain)}"
 }
 
-function _libvirt_replicas() {
+function _____libvirt_replicas() {
     cmdline_replicas "$1" 1
 }
 
-function _libvirt_platform() {
+function _____libvirt_platform() {
     # maipo is channel, not base.
     #local baseURL='https://releases-rhcos.svc.ci.openshift.org/storage/releases/maipo'
     #local install_version=${install_version:-"$(curl --silent "$baseURL/builds.json" | "$JQ" -r '.builds[0]')"}
@@ -74,7 +74,7 @@ libvirt:
 EOF
 }
 
-function _libvirt_volume_present() {
+function _____libvirt_volume_present() {
     local vol="$1"
     local v
     for v in $(virsh --quiet vol-list --pool default |awk '{print $1}') ; do
@@ -83,17 +83,17 @@ function _libvirt_volume_present() {
     return 1
 }
 
-function _libvirt_delete_volume() {
+function _____libvirt_delete_volume() {
     local vol
     for vol in "$@" ; do
-	if _libvirt_volume_present "$vol" ; then
+	if _____libvirt_volume_present "$vol" ; then
 	    echo "Deleting volume $vol"
 	    virsh vol-delete --pool default "$vol"
 	fi
     done
 }
 
-function _libvirt_destroy_net() {
+function _____libvirt_destroy_net() {
     local net
     for net in "$@" ; do
 	if virsh --quiet net-list --all |awk '{print $1}' |grep -q "$net" ; then
@@ -104,20 +104,20 @@ function _libvirt_destroy_net() {
     done
 }
 
-function _libvirt_destroy_node() {
+function _____libvirt_destroy_node() {
     local node
     for node in "$@" ; do
 	if virsh --quiet list --all |awk '{print $2}' |grep -q "$node" ; then
 	    echo "Destroying $node"
 	    virsh destroy "$node"
 	    virsh undefine "$node"
-	    _libvirt_delete_volume "$node"
+	    _____libvirt_delete_volume "$node"
 	fi
     done
 }
 
 # See https://github.com/openshift/installer/issues/411#issuecomment-446084083
-function _libvirt_run_proxy() {
+function _____libvirt_run_proxy() {
     # The proxy has a bad habit of dying every now and then.
     while : ; do
 	# It's simply too noisy.
@@ -127,11 +127,11 @@ function _libvirt_run_proxy() {
     done
 }
 
-function _libvirt_cleanup() {
+function _____libvirt_cleanup() {
     exec 3>&2 2>/dev/null
-    if (( _libvirt_created_proxy )) ; then
-	kill -9 %_libvirt_run_proxy
-	wait %_libvirt_run_proxy
+    if (( _____libvirt_created_proxy )) ; then
+	kill -9 %_____libvirt_run_proxy
+	wait %_____libvirt_run_proxy
     fi
     exec 2>&3 3>&-
     # shellcheck disable=SC2155
@@ -140,23 +140,23 @@ function _libvirt_cleanup() {
     local tmp
     echo -n "Destroying workers..."
     while read -r tmp ; do
-	_libvirt_destroy_node "$tmp"
+	_____libvirt_destroy_node "$tmp"
     done <<< "$(virsh list --name |grep -E "^(${cluster_name}-)?worker-")"
-    _libvirt_destroy_net "$cluster_name"
+    _____libvirt_destroy_net "$cluster_name"
     while read -r tmp ; do
-	_libvirt_destroy_net "$tmp"
+	_____libvirt_destroy_net "$tmp"
     done <<< "$(virsh --quiet net-list | awk '{print $1}' | grep "^${cluster_name}")"
-    _libvirt_destroy_node "${cluster_name}-bootstrap"
-    _libvirt_destroy_node "${cluster_name}-master-0"
+    _____libvirt_destroy_node "${cluster_name}-bootstrap"
+    _____libvirt_destroy_node "${cluster_name}-master-0"
     for f in base master-0 master.ign worker.ign bootstrap bootstrap.ign ; do
-	_libvirt_delete_volume "${cluster_name}-$f"
+	_____libvirt_delete_volume "${cluster_name}-$f"
     done
     while read -r tmp ; do
-	_libvirt_delete_volume "$tmp"
+	_____libvirt_delete_volume "$tmp"
     done <<< "$(virsh --quiet vol-list --pool default | awk '{print $1}' | grep "^${cluster_name}")"
 }
 
-function _libvirt_postinstall() {
+function _____libvirt_postinstall() {
     (( ! wait_for_complete )) && return
     timestamp "Waiting for DNS to come on line..."
     "${___topdir:-}waitfor-pod" -r 10 dns-default
@@ -168,19 +168,19 @@ function _libvirt_postinstall() {
 	timestamp echo "Enabling bind to privileged port for ${OC}, may need sudo password"
 	sudo setcap CAP_NET_BIND_SERVICE=+eip "${OC}"
     fi
-    _libvirt_run_proxy 2>&1 |grep -v 'Setting up router connection for 443' &
-    _libvirt_created_proxy=1
+    _____libvirt_run_proxy 2>&1 |grep -v 'Setting up router connection for 443' &
+    _____libvirt_created_proxy=1
 }
 
-function _libvirt_machine_cidr() {
+function _____libvirt_machine_cidr() {
     echo '192.168.126.0/24'
 }
 
-function _libvirt_default_install_type() {
+function _____libvirt_default_install_type() {
     echo libvirt
 }
 
-function _libvirt_help() {
+function _____libvirt_help() {
     case "$1" in
 	install_types)
 	    cat <<\EOF
@@ -197,13 +197,13 @@ EOF
     esac
 }
 
-function _libvirt_is_install_type() {
+function _____libvirt_is_install_type() {
     [[ $1 = libvirt ]]
 }
 
-function _libvirt_print_diagnostics() {
+function _____libvirt_print_diagnostics() {
     case "$1" in
-	_libvirt_api_plugin_incompatibility_detected)
+	_____libvirt_api_plugin_incompatibility_detected)
 	    cat <<'EOF'
 * Error message suggests a stray 'terraform-provider-libvirt' binary.
   Please remove all files of that name from your home directory and
@@ -214,32 +214,32 @@ EOF
     esac
 }
 
-function _libvirt_diagnose() {
+function _____libvirt_diagnose() {
     case "$*" in
 	'Tried to create resource record set')
-	    set_diagnostic _libvirt_api_plugin_incompatibility_detected _libvirt_print_diagnostic
+	    set_diagnostic _____libvirt_api_plugin_incompatibility_detected _____libvirt_print_diagnostic
 	    ;;
     esac
 }
 
-function _libvirt_dispatch() {
+function _____libvirt_dispatch() {
     local op="$1"
     shift
     case "$op" in
-	base_domain)          _libvirt_base_domain "$@"          ;;
-	cleanup)              _libvirt_cleanup "$@"              ;;
-	default_install_type) _libvirt_default_install_type "$@" ;;
-	diagnose)	      _libvirt_diagnose "$@"		 ;;
-	help)                 _libvirt_help "$@"		 ;;
-	is_install_type)      _libvirt_is_install_type "$@"      ;;
-	machine_cidr)         _libvirt_machine_cidr "$@"         ;;
-	master)               :                                  ;;
-	platform)             _libvirt_platform "$@"             ;;
-	postinstall)          _libvirt_postinstall "$@"          ;;
-	replicas)             _libvirt_replicas "$@"             ;;
-	setup)                _libvirt_setup "$@"                ;;
-	validate)             :                                  ;;
-	worker)               :                                  ;;
-	*)                    dispatch_unknown libvirt "$@"      ;;
+	base_domain)          _____libvirt_base_domain "$@"		;;
+	cleanup)              _____libvirt_cleanup "$@"			;;
+	default_install_type) _____libvirt_default_install_type "$@"	;;
+	diagnose)	      _____libvirt_diagnose "$@"		;;
+	help)                 _____libvirt_help "$@"			;;
+	is_install_type)      _____libvirt_is_install_type "$@"		;;
+	machine_cidr)         _____libvirt_machine_cidr "$@"		;;
+	master)               :						;;
+	platform)             _____libvirt_platform "$@"		;;
+	postinstall)          _____libvirt_postinstall "$@"		;;
+	replicas)             _____libvirt_replicas "$@"		;;
+	setup)                _____libvirt_setup "$@"			;;
+	validate)             :						;;
+	worker)               :						;;
+	*)                    dispatch_unknown libvirt "$@"		;;
     esac
 }
