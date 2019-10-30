@@ -1,0 +1,245 @@
+#!/bin/bash
+
+# Copyright 2019 Robert Krawitz/Red Hat
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+################################################################
+### libvirt platform code				     ###
+################################################################
+
+add_platform _libvirt_dispatch
+
+declare -i _libvirt_created_proxy=0
+
+function _libvirt_find_default_domain() {
+    # shellcheck disable=SC2155
+    local files=$(find /etc/NetworkManager/dnsmasq.d/ -type f -name '*.conf' -print)
+    [[ -z $files ]] && fatal "No dnsmasq files in /etc/NetworkManager/dnsmasq.d"
+    local dnsmasq_domain=
+    for f in $files ; do
+	# shellcheck disable=SC2155
+	local data=$(< "$f")
+	data=${data#*/}
+	data=${data%/*}
+	[[ -n $dnsmasq_domain && $data != "$dnsmasq_domain" ]] &&
+	    fatal "Multiple domains found in /etc/NetworkManager/dnsmasq.d; pick one"
+	[[ -n $data ]] && dnsmasq_domain=$data
+    done
+    [[ -z $dnsmasq_domain ]] && fatal "No dnsmasq files in /etc/NetworkManager/dnsmasq.d"
+    echo "$dnsmasq_domain"
+}
+
+function _libvirt_setup() {
+    export OPENSHIFT_INSTALL_LIBVIRT_URI="qemu+tcp://192.168.122.1/system"
+    if [[ $install_version = latest_default ]] ; then
+	install_version=
+	force_local_tools=1
+	ext_installer=
+	echo "*** Using local installer with libvirt"
+    fi
+    if (( clean_install_cache )) ; then
+	echo "Cleaning install cache in ~/.cache/openshift-install/libvirt"
+	[[ -d $HOME/.cache/openshift-install/libvirt ]] && rm -rf "$HOME/.cache/openshift-install/libvirt"
+    fi
+}
+
+function _libvirt_base_domain() {
+    echo "${install_domain:-$(find_libvirt_default_domain)}"
+}
+
+function _libvirt_replicas() {
+    cmdline_replicas "$1" 1
+}
+
+function _libvirt_platform() {
+    # maipo is channel, not base.
+    #local baseURL='https://releases-rhcos.svc.ci.openshift.org/storage/releases/maipo'
+    #local install_version=${install_version:-"$(curl --silent "$baseURL/builds.json" | "$JQ" -r '.builds[0]')"}
+    cat <<EOF
+libvirt:
+  URI: $OPENSHIFT_INSTALL_LIBVIRT_URI
+  network:
+    if: tt0
+EOF
+}
+
+function _libvirt_volume_present() {
+    local vol="$1"
+    local v
+    for v in $(virsh --quiet vol-list --pool default |awk '{print $1}') ; do
+	[[ $v = "$vol" ]] && return 0
+    done
+    return 1
+}
+
+function _libvirt_delete_volume() {
+    local vol
+    for vol in "$@" ; do
+	if _libvirt_volume_present "$vol" ; then
+	    echo "Deleting volume $vol"
+	    virsh vol-delete --pool default "$vol"
+	fi
+    done
+}
+
+function _libvirt_destroy_net() {
+    local net
+    for net in "$@" ; do
+	if virsh --quiet net-list --all |awk '{print $1}' |grep -q "$net" ; then
+	    echo "Destroying net $net"
+	    virsh net-destroy "$net"
+	    virsh net-undefine "$net"
+	fi
+    done
+}
+
+function _libvirt_destroy_node() {
+    local node
+    for node in "$@" ; do
+	if virsh --quiet list --all |awk '{print $2}' |grep -q "$node" ; then
+	    echo "Destroying $node"
+	    virsh destroy "$node"
+	    virsh undefine "$node"
+	    _libvirt_delete_volume "$node"
+	fi
+    done
+}
+
+# See https://github.com/openshift/installer/issues/411#issuecomment-446084083
+function _libvirt_run_proxy() {
+    # The proxy has a bad habit of dying every now and then.
+    while : ; do
+	# It's simply too noisy.
+	${OC} -n openshift-ingress port-forward svc/router-internal-default 443 >/dev/null 2>&1
+	# If we die by signal, stop.
+	(( $? >= 128 )) && break
+    done
+}
+
+function _libvirt_cleanup() {
+    exec 3>&2 2>/dev/null
+    if (( _libvirt_created_proxy )) ; then
+	kill -9 %_libvirt_run_proxy
+	wait %_libvirt_run_proxy
+    fi
+    exec 2>&3 3>&-
+    # shellcheck disable=SC2155
+    local cluster_name=$(virsh --quiet net-list | awk '{print $1}' | grep "^$OPENSHIFT_INSTALL_CLUSTER_NAME")
+    [[ -z $cluster_name ]] && return
+    local tmp
+    echo -n "Destroying workers..."
+    while read -r tmp ; do
+	_libvirt_destroy_node "$tmp"
+    done <<< "$(virsh list --name |grep -E "^(${cluster_name}-)?worker-")"
+    _libvirt_destroy_net "$cluster_name"
+    while read -r tmp ; do
+	_libvirt_destroy_net "$tmp"
+    done <<< "$(virsh --quiet net-list | awk '{print $1}' | grep "^${cluster_name}")"
+    _libvirt_destroy_node "${cluster_name}-bootstrap"
+    _libvirt_destroy_node "${cluster_name}-master-0"
+    for f in base master-0 master.ign worker.ign bootstrap bootstrap.ign ; do
+	_libvirt_delete_volume "${cluster_name}-$f"
+    done
+    while read -r tmp ; do
+	_libvirt_delete_volume "$tmp"
+    done <<< "$(virsh --quiet vol-list --pool default | awk '{print $1}' | grep "^${cluster_name}")"
+}
+
+function _libvirt_postinstall() {
+    (( ! wait_for_complete )) && return
+    timestamp "Waiting for DNS to come on line..."
+    "${___topdir:-}waitfor-pod" -r 10 dns-default
+    timestamp "Waiting for router to come on line..."
+    "${___topdir:-}waitfor-pod" -r 10 router-default
+    # See https://github.com/openshift/installer/issues/411#issuecomment-445202069
+    timestamp echo "Creating route proxy"
+    if getcap -vr "${OC}" | grep -q "cap_net_bind_service+eip" ; then
+	timestamp echo "Enabling bind to privileged port for ${OC}, may need sudo password"
+	sudo setcap CAP_NET_BIND_SERVICE=+eip "${OC}"
+    fi
+    _libvirt_run_proxy 2>&1 |grep -v 'Setting up router connection for 443' &
+    _libvirt_created_proxy=1
+}
+
+function _libvirt_machine_cidr() {
+    echo '192.168.126.0/24'
+}
+
+function _libvirt_default_install_type() {
+    echo libvirt
+}
+
+function _libvirt_help() {
+    case "$1" in
+	install_types)
+	    cat <<\EOF
+libvirt
+EOF
+	    ;;
+	default_domain)
+	    cat <<\EOF
+For libvirt: default is taken from a unique entry
+    in /etc/NetworkManager/dnsmasq.d, if available.
+EOF
+	    ;;
+	*)  ;;
+    esac
+}
+
+function _libvirt_is_install_type() {
+    [[ $1 = libvirt ]]
+}
+
+function _libvirt_print_diagnostics() {
+    case "$1" in
+	_libvirt_api_plugin_incompatibility_detected)
+	    cat <<'EOF'
+* Error message suggests a stray 'terraform-provider-libvirt' binary.
+  Please remove all files of that name from your home directory and
+  try again.
+
+EOF
+	    ;;
+    esac
+}
+
+function _libvirt_diagnose() {
+    case "$*" in
+	'Tried to create resource record set')
+	    set_diagnostic _libvirt_api_plugin_incompatibility_detected _libvirt_print_diagnostic
+	    ;;
+    esac
+}
+
+function _libvirt_dispatch() {
+    local op="$1"
+    shift
+    case "$op" in
+	base_domain)          _libvirt_base_domain "$@"          ;;
+	cleanup)              _libvirt_cleanup "$@"              ;;
+	default_install_type) _libvirt_default_install_type "$@" ;;
+	diagnose)	      _libvirt_diagnose "$@"		 ;;
+	help)                 _libvirt_help "$@"		 ;;
+	is_install_type)      _libvirt_is_install_type "$@"      ;;
+	machine_cidr)         _libvirt_machine_cidr "$@"         ;;
+	master)               :                                  ;;
+	platform)             _libvirt_platform "$@"             ;;
+	postinstall)          _libvirt_postinstall "$@"          ;;
+	replicas)             _libvirt_replicas "$@"             ;;
+	setup)                _libvirt_setup "$@"                ;;
+	validate)             :                                  ;;
+	worker)               :                                  ;;
+	*)                    dispatch_unknown libvirt "$@"      ;;
+    esac
+}
