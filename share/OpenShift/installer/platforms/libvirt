@@ -20,7 +20,7 @@
 
 add_platform _____libvirt_dispatch
 
-declare -i _____libvirt_created_proxy=0
+declare -ig _____libvirt_created_proxy=0
 
 function _____libvirt_find_default_domain() {
     # shellcheck disable=SC2155

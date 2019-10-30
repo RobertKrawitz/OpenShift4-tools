@@ -19,58 +19,58 @@
 ### AWS platform code					     ###
 ################################################################
 
-declare _____aws_worker_type=
-declare _____aws_master_type=
-declare -i _____aws_create_bastion=1
-declare -r _____aws_default_domain=devcluster.openshift.com
+declare -g _____aws_worker_type=
+declare -g _____aws_master_type=
+declare -ig _____aws_create_bastion=1
+declare -rg _____aws_default_domain=devcluster.openshift.com
 
 add_platform _____aws_dispatch
 register_options aws_worker_type aws_master_type aws_create_bastion
 
-declare -ar _____aws_known_instance_types=("X.General Purpose"
-				       # ARM instances aren't useful
-				       # a1.{medium,{,{,2,4}x}large}
-				       m5{,d}.{{,{,2,4,8,12,16,24}x}large,metal}
-				       m5{a,n,dn}.{,{,2,4,8,12,16,24}x}large
-				       m5ad.{,{,2,4,12,24}x}large
-				       m4.{,{,2,4,10,16}x}large
-				       "X.Burstable"
-				       t{3,3a,2}.{nano,micro,small,medium,{,x,2x}large}
-				       "X.Compute Optimized"
-				       c4.{,{,2,4,8}x}large
-				       c5.{{,{,2,4,9,12,18,24}x}large,metal}
-				       c5d.{,{,2,4,9,18}x}large
-				       c5n.{{,{,2,4,9,18}x}large,metal}
-				       "X.Memory Optimized"
-				       r4.{,{,2,4,8,16}x}large
-				       r5{,d}.{{,{,2,4,8,12,16,24}x}large,metal}
-				       r5{a,n,dn}.{,{,2,4,8,12,16,24}x}large
-				       r5ad.{,{,2,4,12,24}x}large
-				       x1e.{,2,4,8,16,32}xlarge
-				       x1.{16,32}xlarge
-				       "X.Single Thread Optimized"
-				       z1d.{{,{,2,3,6,12}x}large,metal}
-				       # High Memory are special dedicated-only hosts
-				       # Y.u-t{6,9}tb1.metal
-				       # Y.u-t{12,18,24}tb1.metal
-				       "X.Storage Optimized"
-				       i3.{{,{,2,4,8,16}x}large,metal}
-				       i3en.{{,{,2,3,6,12,24}x}large,metal}
-				       d2.{,2,4,8}xlarge
-				       h1.{2,4,8,16}xlarge
-				       "X.GPU"
-				       p3.{2,8,16}xlarge
-				       p3dn.24xlarge
-				       p2.{,8,16}xlarge
-				       g4dn.{{,2,4,8,12,16}xlarge,metal}
-				       g3s.xlarge g3.{4,8,16}xlarge
-				       # FPGA instances are of no use for
-				       # running OpenShift
-				       # f1.{2,4,16}xlarge
-				     )
+declare -arg _____aws_known_instance_types=("X.General Purpose"
+					    # ARM instances aren't useful
+					    # a1.{medium,{,{,2,4}x}large}
+					    m5{,d}.{{,{,2,4,8,12,16,24}x}large,metal}
+					    m5{a,n,dn}.{,{,2,4,8,12,16,24}x}large
+					    m5ad.{,{,2,4,12,24}x}large
+					    m4.{,{,2,4,10,16}x}large
+					    "X.Burstable"
+					    t{3,3a,2}.{nano,micro,small,medium,{,x,2x}large}
+					    "X.Compute Optimized"
+					    c4.{,{,2,4,8}x}large
+					    c5.{{,{,2,4,9,12,18,24}x}large,metal}
+					    c5d.{,{,2,4,9,18}x}large
+					    c5n.{{,{,2,4,9,18}x}large,metal}
+					    "X.Memory Optimized"
+					    r4.{,{,2,4,8,16}x}large
+					    r5{,d}.{{,{,2,4,8,12,16,24}x}large,metal}
+					    r5{a,n,dn}.{,{,2,4,8,12,16,24}x}large
+					    r5ad.{,{,2,4,12,24}x}large
+					    x1e.{,2,4,8,16,32}xlarge
+					    x1.{16,32}xlarge
+					    "X.Single Thread Optimized"
+					    z1d.{{,{,2,3,6,12}x}large,metal}
+					    # High Memory are special dedicated-only hosts
+					    # Y.u-t{6,9}tb1.metal
+					    # Y.u-t{12,18,24}tb1.metal
+					    "X.Storage Optimized"
+					    i3.{{,{,2,4,8,16}x}large,metal}
+					    i3en.{{,{,2,3,6,12,24}x}large,metal}
+					    d2.{,2,4,8}xlarge
+					    h1.{2,4,8,16}xlarge
+					    "X.GPU"
+					    p3.{2,8,16}xlarge
+					    p3dn.24xlarge
+					    p2.{,8,16}xlarge
+					    g4dn.{{,2,4,8,12,16}xlarge,metal}
+					    g3s.xlarge g3.{4,8,16}xlarge
+					    # FPGA instances are of no use for
+					    # running OpenShift
+					    # f1.{2,4,16}xlarge
+					   )
 
 function _____aws_validate() {
-    validate_instance_type "$_____aws_worker_type" "$_____aws_master_type" AWS _____aws_master_type _____aws_split_instance "${_____aws_known_instance_types[@]}" <<'EOF'
+    validate_instance_type "$_____aws_worker_type" "$_____aws_master_type" AWS aws_master_type _____aws_split_instance "${_____aws_known_instance_types[@]}" <<'EOF'
 Currently known AWS instance types.  Note that not all types are
 available in all regions, and AWS may add additional types at
 any time.  See https://aws.amazon.com/ec2/instance-types/

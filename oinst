@@ -95,7 +95,7 @@ declare srcdir=${GOPATH:-$HOME/go}/src/github.com/openshift/installer
 declare install=$srcdir/bin/openshift-install
 declare release_channel=
 declare repo=$default_repo_base
-declare _____current_platform
+declare ____current_platform
 
 # shellcheck disable=SC2155
 declare -r OC=$(type -p oc)
@@ -338,15 +338,15 @@ function do_create_bastion() {
 }
 
 function add_platform() {
-    if [[ -z ${_____current_platform:-} ]] ; then
+    if [[ -z ${____current_platform:-} ]] ; then
 	fatal "Attempt to add a platform outside of its definition"
     fi
     local -r dispatch=$1
     local plat
     for plat in "${!global_platforms[@]}" ; do
-	if [[ $_____current_platform = "$plat" ]] ; then return; fi
+	if [[ $____current_platform = "$plat" ]] ; then return; fi
     done
-    global_platforms[$_____current_platform]=$dispatch
+    global_platforms[$____current_platform]=$dispatch
 }
 
 function __list_instance_types() {
@@ -1104,12 +1104,12 @@ function process_option() {
 }
 
 function register_options() {
-    if [[ -z ${_____current_platform:-} ]] ; then
+    if [[ -z ${____current_platform:-} ]] ; then
 	fatal "Attempt to register options outside of platform definition"
     fi
     local opt
     for opt in "$@" ; do
-	option_registrations[$opt]=$_____current_platform
+	option_registrations[$opt]=$____current_platform
     done
 }
 
@@ -1172,46 +1172,46 @@ function process_extended_options() {
 }
 
 function find_platforms() {
-    local -a _____platform_path
-    local -a _____new_vars
-    local -A _____var_map
-    local _____a
-    local _____f
-    local _____dir
+    declare -a ____platform_path
+    declare -a ____new_vars
+    declare -A ____var_map
+    declare ____a
+    declare ____f
+    declare ____dir
     if [[ -n ${OPENSHIFT_OINST_LIBDIR:-} ]] ; then
-	readarray -t _____platform_path <<< "${OPENSHIFT_OINST_LIBDIR//:/$'\n'}"
+	readarray -t ____platform_path <<< "${OPENSHIFT_OINST_LIBDIR//:/$'\n'}"
     fi
-    _____platform_path+=("$___topdir")
-    for _____dir in "${_____platform_path[@]}" ; do
-	_____dir=${_____dir:-.}
-	if [[ -d "$_____dir/share/OpenShift/installer/platforms" ]] ; then
-	    for _____f in "$_____dir/share/OpenShift/installer/platforms"/* ; do
-		local -i _____warned_platvar=0
-		_____current_platform=${_____f##*/}
-		if [[ -z ${global_platforms[$_____current_platform]:-} && $_____current_platform != "."* && $_____current_platform != *"~" && $_____current_platform != '#'* && -f $_____f ]] ; then
-		    _____new_vars=()
-		    _____var_map=()
-		    while read -r _____a ; do
-			_____var_map[$_____a]=1
+    ____platform_path+=("$___topdir")
+    for ____dir in "${____platform_path[@]}" ; do
+	____dir=${____dir:-.}
+	if [[ -d "$____dir/share/OpenShift/installer/platforms" ]] ; then
+	    for ____f in "$____dir/share/OpenShift/installer/platforms"/* ; do
+		declare -i ____warned_platvar=0
+		____current_platform=${____f##*/}
+		if [[ -z ${global_platforms[$____current_platform]:-} && $____current_platform != "."* && $____current_platform != *"~" && $____current_platform != '#'* && -f $____f ]] ; then
+		    ____new_vars=()
+		    ____var_map=()
+		    while read -r ____a ; do
+			____var_map[$____a]=1
 		    done <<< "$(compgen -v; compgen -c)"
-		    unset _____a
+		    unset ____a
 		    # shellcheck disable=SC1090
-		    . "$_____f"
-		    readarray -t _____new_vars <<< "$(compgen -v; compgen -c)"
-		    for _____a in "${_____new_vars[@]}" ; do
-			if [[ -z ${_____var_map[$_____a]:-} &&
-				  $_____a != "_____$_____current_platform"* ]] ; then
-			    if ! ((_____warned_platvar)) ; then
-				echo "Unexpected variable/function names from $_____current_platform platform defined in"
-				echo "${_____f//\/\//\/}"
-				echo "Names should be prefixed with _____$_____current_platform"
-				_____warned_platvar=1
+		    . "$____f"
+		    readarray -t ____new_vars <<< "$(compgen -v; compgen -c)"
+		    for ____a in "${____new_vars[@]}" ; do
+			if [[ -z ${____var_map[$____a]:-} &&
+				  $____a != "_____$____current_platform"* ]] ; then
+			    if ! ((____warned_platvar)) ; then
+				echo "Unexpected variable/function names from $____current_platform platform defined in"
+				echo "${____f//\/\//\/}"
+				echo "Names should be prefixed with _____$____current_platform"
+				____warned_platvar=1
 			    fi
-			    echo "    $_____a"
+			    echo "    $____a"
 			fi
 		    done
 		fi
-		unset _____current_platform
+		unset ____current_platform
 	    done
 	fi
     done
