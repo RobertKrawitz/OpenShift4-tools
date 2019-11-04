@@ -355,9 +355,7 @@ function __list_instance_types() {
     local list_option_name=$2
     local split_instance_func=$3
     shift 3
-    while read -r REPLY ; do
-	echo "$REPLY"
-    done
+    while read -r REPLY ; do echo "$REPLY" ; done
     if [[ $cmd = list_all ]] ; then
 	list_all=1
     else
@@ -369,59 +367,52 @@ function __list_instance_types() {
     local -i groups_printed=0
     # shellcheck disable=SC2155
     local -i term_width=$(tput cols 2>/dev/null)
-    local i
+    (( term_width > 0 )) || term_width=80
+    local instance
     local -i c=0
     local -i s=0
+    local -a cla
     # Find the widest class name and instance name
-    for i in "$@" ; do
-	case "$i" in
+    for instance in "$@" ; do
+	case "$instance" in
 	    X.*)
 		(( list_all == 0 && groups_printed++ )) && break
 		;;
 	    Y*|Z*)
 		;;
 	    *)
-		read -r class subinstance <<< "$("$split_instance_func" "$i")"
-		if (( ${#class} > c )) ; then
-		    c=${#class}
-		fi
-		if (( ${#subinstance} > s )) ; then
-		    s=${#subinstance}
-		fi
+		readarray -t cla <<< "$("$split_instance_func" "$instance")"
+		(( ${#cla[0]} < c )) || c=$((${#cla[0]}+1))
+		(( ${#cla[1]} <= s )) || s=${#cla[1]}
 		;;
 	esac
     done
-    c=$((c+1))
-    local -i s1=$((s+1))
     groups_printed=0
-    for i in "$@" ; do
-	case "$i" in
+    for instance in "$@" ; do
+	case "$instance" in
 	    X.*)
 		(( list_all == 0 && groups_printed++ )) && break
-		echo -en "${last_class:+\n\n}${i#X.}:"
+		echo -ne "${last_class:+\n\n}${instance#X.}:"
 		;;
 	    Y.*)
-		echo -ne "\n ${i#*.}"
+		echo -ne "\n {instance#*.}"
 		;;
 	    Z.*)
-		echo -ne " ${i#*.}"
+		echo -ne " ${instance#*.}"
 		;;
 	    *)
-		local class=
-		local subinstance=
-		read -r class subinstance <<< "$("$split_instance_func" "$i")"
-		if [[ $class = "$last_class" ]] ; then
-		    tot_cols+=$s1
-		    if (( term_width > $((c+s+6)) && tot_cols > (term_width - s) )) ; then
-			printf "\n %${c}s  %-${s}s" '' "$subinstance"
+		readarray -t cla <<< "$("$split_instance_func" "$instance")"
+		if [[ ${cla[0]} = "$last_class" ]] ; then
+		    tot_cols+=$((s+1))
+		    if (( tot_cols > (term_width - s) )) ; then
+			printf "\n %${c}s " ''
 			tot_cols=$((c+2))
-		    else
-			printf " %-${s}s" "$subinstance"
 		    fi
+		    printf " %-${s}s" "${cla[1]}"
 		else
 		    tot_cols=$((c+2))
-		    printf "\n  %-${c}s %-${s}s" "$class:" "$subinstance"
-		    last_class=$class
+		    printf "\n  %-${c}s %-${s}s" "${cla[0]}:" "${cla[1]}"
+		    last_class=${cla[0]}
 		fi
 		;;
 	esac
@@ -443,39 +434,35 @@ function _check_instance_type() {
     local split_instance_func=$4
     shift 4
     [[ -z ${instance_type:-} ]] && return 0
-    local i
-    for i in "$@" ; do
-	[[ $i = "$instance_type" ]] && return 0
+    local instance
+    for instance in "$@" ; do
+	[[ $instance = "$instance_type" ]] && return 0
     done
     echo "*** WARNING: '$instance_type' is not a currently known $platform instance type!"
-    local class=
-    local subinstance=
-    read -r class subinstance <<< "$("$split_instance_func" "$instance_type")"
+    local -a cla
+    local -a icla
+    readarray -t cla <<< "$("$split_instance_func" "$instance_type")"
     # shellcheck disable=SC2155
     local -i term_width=$(tput cols 2>/dev/null)
+    (( term_width > 0 )) || term_width=80
     local -i tot_cols=0
     local j=0
-    for i in "$@" ; do
-	local iclass=
-	local isubinstance=
+    for instance in "$@" ; do
 	# shellcheck disable=SC2034
-	read -r iclass isubinstance <<< "$("$split_instance_func" "$i")"
-	if [[ $class = "$iclass" ]] ; then
+	readarray -t icla <<< "$("$split_instance_func" "$instance")"
+	if [[ ${cla[0]} = "${icla[0]}" ]] ; then
 	   (( j++ )) || echo "Possible candidates:"
-	   if (( term_width > 20 && tot_cols > (term_width - 5) )) ; then
+	   if (( tot_cols > (term_width - 5) )) ; then
 	       echo
 	       tot_cols=0
 	   fi
-	   echo -n " $i"
-	   tot_cols=$((tot_cols + ${#i} + 1))
+	   echo -n " $instance"
+	   tot_cols=$((tot_cols + ${#instance} + 1))
 	fi
     done
     echo -e '\n'
-    if (( j )) ; then
-	return 1
-    else
-	return 2
-    fi
+    (( j )) || return 2
+    return 1
 }
 
 function validate_instance_type() {
