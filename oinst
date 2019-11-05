@@ -155,7 +155,8 @@ $(do_platforms help install_types | indent 7)
     Options (all are processed in order):
        -p profile           Read the specified profile file.  Profile
                             may be a JSON file or shell code.
-       -X option=value      Set the specified extended option.
+       --option[=value]
+       -X option[=value]    Set the specified extended option.
        -H                   Print list of additional extended command
                             line options.
 
@@ -1101,7 +1102,7 @@ function register_options() {
 }
 
 function process_options() {
-    while getopts ":BbCcd:HhLln:Oop:qUuV:vX:xYy" opt ; do
+    while getopts ":BbCcd:HhLln:Oop:qUuV:vX:xYy-:" opt ; do
 	case "$opt" in
 	    B) run_kubechart=0		    ;;
 	    b) run_kubechart=1		    ;;
@@ -1119,7 +1120,7 @@ function process_options() {
 	    u) query=1                      ;;
 	    V) install_version="$OPTARG"    ;;
 	    v) loglevel='--log-level=debug' ;;
-	    X) process_option "$OPTARG"     ;;
+	    X|-) process_option "$OPTARG"   ;;
 	    x) cleanup_only_dir="$OPTARG"   ;;
 	    Y) noconfirm=0		    ;;
 	    y) noconfirm=1		    ;;
@@ -1142,10 +1143,14 @@ function process_options() {
 function process_extended_options() {
     local option
     local optname
+    local noptname
     local optvalue
     for option in "${options_to_process[@]}" ; do
 	optname=${option%%=*}
 	optvalue=${option#*=}
+	noptname=${optname//-/_}
+	[[ $option = *'='* ]] || optvalue=1
+	# Rule: all options must use _ rather than -
 	if [[ -n "${option_registrations[$optname]:-}" ]] ; then
 	    if [[ ${option_registrations[$optname]} = "$OPENSHIFT_INSTALL_PLATFORM" ]] ; then
 		platform_dispatch set_option "$optname" "$optvalue"
@@ -1153,7 +1158,7 @@ function process_extended_options() {
 		echo "Option $optname does not exist for platform $OPENSHIFT_INSTALL_PLATFORM"
 	    fi
 	else
-	    eval "$option"
+	    eval "${option/$optname/$noptname}"
 	fi
     done
 }
