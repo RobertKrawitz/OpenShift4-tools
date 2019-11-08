@@ -82,6 +82,7 @@ declare -r oschart=${OSCHART:-$GOPATH/src/github.com/sjenning/oschart/oschart}
 declare -r default_repo_base=openshift-release
 
 declare -A global_platforms=()
+declare -a global_platform_list=()
 
 declare -A global_diagnostics=()
 
@@ -354,9 +355,10 @@ function add_platform() {
     fi
     local -r dispatch=$1
     local plat
-    for plat in "${!global_platforms[@]}" ; do
+    for plat in "${global_platform_list[@]}" ; do
 	if [[ $____current_platform = "$plat" ]] ; then return; fi
     done
+    global_platform_list+=("$____current_platform")
     global_platforms[$____current_platform]=$dispatch
 }
 
@@ -515,7 +517,7 @@ function platform_dispatch() {
     else
 	local -i status=0
 	local platform
-	for platform in "${!global_platforms[@]}" ; do
+	for platform in "${global_platform_list[@]}" ; do
 	     "${global_platforms[$platform]}" "$@" || status=1
 	done
 	return $status
@@ -528,7 +530,7 @@ function do_platforms() {
 
 function find_first_platform() {
     local platform
-    for platform in "${!global_platforms[@]}" ; do
+    for platform in "${global_platform_list[@]}" ; do
 	if platform_dispatch -p "$platform" "$@" ; then
 	    echo "$platform"
 	    return 0
@@ -1234,7 +1236,7 @@ find_platforms
 process_options "$@"
 clear_env
 if [[ -z ${install_type:-} ]] ; then
-    for platform in "${!global_platforms[@]}" ; do
+    for platform in "${global_platform_list[@]}" ; do
 	install_type="$(platform_dispatch -p "$platform" default_install_type)"
 	[[ -z $install_type ]] || break
     done
