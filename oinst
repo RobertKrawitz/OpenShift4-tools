@@ -108,6 +108,7 @@ declare -r owd=$(pwd)
 declare -i clean_install_cache=0
 declare -i clean_shutdown=0
 declare -i cleanup_run=0
+declare -i create_bastion=1
 declare -i created_kubechart=0
 declare -i created_oschart=0
 declare -i do_cleanup=1
@@ -138,6 +139,8 @@ declare loglevel=
 declare oschart_port=
 declare release_source=
 declare run_command=
+declare master_type=
+declare worker_type=
 declare masterconffile=
 declare masterconfdata=
 declare workerconffile=
@@ -202,23 +205,29 @@ function help_extended() {
                             must be between 8 and 24)
         master_count        Use the specified number of master nodes.
                             Default by platform.
+        master_type         Instance type to use for master.
+                            Default by platform.
         masterconfdata      Specify the data for master configuration.
         masterconffile      Take master platform config from specified file.
         platformconfdata    Specify the data for platform configuration.
         platformconffile    Take platform configuration from specified file.
+        worker_type         Instance type to use for workers.
+                            Default by platform.
         worker_count        Use the specified number of worker nodes.
                             Default by platform.
         workerconfdata      Specify the data for worker configuration.
         workerconffile      Take master platform config from specified file.
-$(do_platforms help options |indent -6)
+$(do_platforms platform_help options |indent -6)
 
       Installation options:
         config_file         Use the specified file as the install config file.
+        create_bastion      Create a bastion ssh host if supported 
+                            by platform (default 1).
         do_login            Login to the console (default=1)
         ext_installer       Use the specified command to install OpenShift.
         force_postinstall   Always run the postinstall even if setup fails.
         install_domain      Use the specified domain name.
-$(do_platforms help default_domain | indent -28)
+$(do_platforms platform_help default_domain | indent -28)
         install_version     Install the specified image version.  Default
                             is to use the latest version.
                             Use empty value to install from local workspace
@@ -322,9 +331,10 @@ function dispatch_unknown() {
     die "Unexpected command ($platform): $*"
 }
 
-# The exact operation of the ssh-bastion varies between platforms, and
-# isn't supported by everything (e. g. libvirt).
-function do_create_bastion() {
+# Not all platforms support the standard bastion host.
+function do_create_bastion_if_needed() {
+    (( create_bastion )) || return
+    platform_dispatch supports_bastion || return
     echo "Creating bastion host"
     curl -s -S https://raw.githubusercontent.com/eparis/ssh-bastion/master/deploy/deploy.sh | bash
     # shellcheck disable=SC2181
@@ -333,7 +343,7 @@ function do_create_bastion() {
     else
 	echo "Alternatively, you may prefer to use ${___topdir:-}bastion-ssh"
 	# shellcheck disable=SC2155
-	export OPENSHIFT_BASTION_ADDRESS="$(oc get service -n openshift-ssh-bastion ssh-bastion -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')"
+	export OPENSHIFT_BASTION_ADDRESS="$(oc get service -n openshift-ssh-bastion ssh-bastion -o json | jq -r 'if .status.loadBalancer.ingress[0].hostname == null then .status.loadBalancer.ingress[0].ip else .status.loadBalancer.ingress[0].hostname end')"
 	[[ -z $OPENSHIFT_BASTION_ADDRESS ]] && echo "Unable to find bastion address!"
     fi
 }
@@ -620,7 +630,7 @@ networking:
   networkType: OpenShiftSDN
   serviceNetwork:
   - 172.30.0.0/16
-platform: $(platform_data platform "${platformconfdata:-}" "${platformconfdata:-}" 4)
+platform: $(platform_data platform "${platformconfdata:-}" "${platformconfdata:-}" 2)
 pullSecret: '$(jq -scM '.[0]' < "$pull_secret")'
 sshKey: |
   $(< "$pubkey_file")
@@ -971,6 +981,7 @@ function run_postinstall() {
     fi
 
     platform_dispatch postinstall
+    do_create_bastion_if_needed
 
     if (( wait_for_complete && login_succeeded )) ; then
 	echo -n "Waiting for console to come on line..."
@@ -1192,7 +1203,8 @@ function find_platforms() {
 		    readarray -t ____new_vars <<< "$(compgen -v; compgen -c)"
 		    for ____a in "${____new_vars[@]}" ; do
 			if [[ -z ${____var_map[$____a]:-} &&
-				  $____a != "_____$____current_platform"* ]] ; then
+				  $____a != "_____$____current_platform"* &&
+				  $____a != "______$____current_platform"* ]] ; then
 			    if ! ((____warned_platvar)) ; then
 				echo "Unexpected variable/function names from $____current_platform platform defined in"
 				echo "${____f//\/\//\/}"

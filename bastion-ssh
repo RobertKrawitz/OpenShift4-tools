@@ -1,3 +1,5 @@
 #!/bin/bash
 
-exec ssh -o StrictHostKeyChecking=no ${OPENSHIFT_INSTALL_SSH_KEY:+-i $OPENSHIFT_INSTALL_SSH_KEY} -o User=core -o ProxyCommand='ssh -A ${OPENSHIFT_INSTALL_SSH_KEY:+-i $OPENSHIFT_INSTALL_SSH_KEY} -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -W %h:%p core@$(oc get service -n openshift-ssh-bastion ssh-bastion -o jsonpath="{.status.loadBalancer.ingress[0].hostname}")' "$@"
+
+
+exec ssh -o StrictHostKeyChecking=no ${OPENSHIFT_INSTALL_SSH_KEY:+-i $OPENSHIFT_INSTALL_SSH_KEY} -o User=core -o ProxyCommand='ssh -A ${OPENSHIFT_INSTALL_SSH_KEY:+-i $OPENSHIFT_INSTALL_SSH_KEY} -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -W %h:%p core@$(oc get service -n openshift-ssh-bastion ssh-bastion -o json | jq -r "if .status.loadBalancer.ingress[0].hostname == null then .status.loadBalancer.ingress[0].ip else .status.loadBalancer.ingress[0].hostname end")' "$@"

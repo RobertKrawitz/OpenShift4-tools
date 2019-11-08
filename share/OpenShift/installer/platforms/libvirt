@@ -193,12 +193,9 @@ For libvirt: default is taken from a unique entry
     in /etc/NetworkManager/dnsmasq.d, if available.
 EOF
 	    ;;
+	options) ;;
 	*)  ;;
     esac
-}
-
-function _____libvirt_is_install_type() {
-    [[ $1 = libvirt ]]
 }
 
 function _____libvirt_print_diagnostics() {
@@ -230,14 +227,16 @@ function _____libvirt_dispatch() {
 	cleanup)              _____libvirt_cleanup "$@"			;;
 	default_install_type) _____libvirt_default_install_type "$@"	;;
 	diagnose)	      _____libvirt_diagnose "$@"		;;
-	help)                 _____libvirt_help "$@"			;;
-	is_install_type)      _____libvirt_is_install_type "$@"		;;
+	platform_help)        _____libvirt_help "$@"			;;
+	is_install_type)      [[ $1 = libvirt ]]			;;
 	machine_cidr)         _____libvirt_machine_cidr "$@"		;;
 	master)               :						;;
 	platform)             _____libvirt_platform "$@"		;;
 	postinstall)          _____libvirt_postinstall "$@"		;;
 	replicas)             _____libvirt_replicas "$@"		;;
+	set_option)	      :						;;
 	setup)                _____libvirt_setup "$@"			;;
+	supports_bastion)     false					;;
 	validate)             :						;;
 	worker)               :						;;
 	*)                    dispatch_unknown libvirt "$@"		;;

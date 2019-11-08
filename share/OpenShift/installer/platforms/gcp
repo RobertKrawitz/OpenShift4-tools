@@ -1,0 +1,210 @@
+#!/bin/bash
+
+# Copyright 2019 Robert Krawitz/Red Hat
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+
+################################################################
+### GCP platform code					     ###
+################################################################
+
+declare -rg _____gcp_default_domain=${GCP_DEFAULT_DOMAIN:-gcp.devcluster.openshift.com}
+declare -rg _____gcp_default_project=${GCP_DEFAULT_PROJECT:-openshift-gce-devel}
+declare -rga _____gcp_default_regions=(gcp gcp2 gcp3 gcp4 gcp5)
+
+declare -g _____gcp_project_id=${_____gcp_default_project}
+
+add_platform _____gcp_dispatch
+register_options gcp_project_id
+
+declare -arg _____gcp_known_instance_types=("X.General Purpose (Current Generation)"
+					    n1-standard-{1,2,4,8,16,32,64,96}
+					    n1-high{mem,cpu}-{2,4,8,16,32,64,96}
+					    "X.General Purpose (Next Generation)"
+					    n2-{standard,high{mem,cpu}}-{2,4,8,16,32,48,64,80}
+					    "X.Compute Optimized"
+					    c2-standard-{4,8,16,30,60}
+					    "X.Memory Optimized"
+					    m2-ultramem-{208,416}
+					    m1-ultramem-{40,80,160}
+					    m1-megamem-96
+					    # Shared core instances are too small
+					    #"X.Shared Core"
+					   )
+
+function _____gcp_validate() {
+    validate_instance_type "$worker_type" "$master_type" GCP master_type _____gcp_split_instance "${_____gcp_known_instance_types[@]}" <<'EOF'
+Currently known GCP instance types.  Note that not all types are
+available in all regions, and GCP may add additional types at
+any time.  See https://gcp.amazon.com/ec2/instance-types/
+for current information about what instance types exist, and
+https://gcp.amazon.com/ec2/pricing/on-demand/ for information
+about what instance types are available in a particular region.
+EOF
+}
+
+function _____gcp_split_instance() {
+    local instance=$1
+    local class=${instance%-*}
+    local subinstance=${instance##*-}
+    echo "$class"
+    echo "$subinstance"
+}
+
+function _____gcp_setup() {
+    local region=${1#gcp}
+    region=${region#[-._]}
+    case "$region" in
+	1|'') export OPENSHIFT_INSTALL_GCP_REGION=us-central1		  ;;
+	2)    export OPENSHIFT_INSTALL_GCP_REGION=us-east1		  ;;
+	3)    export OPENSHIFT_INSTALL_GCP_REGION=us-east4		  ;;
+	4)    export OPENSHIFT_INSTALL_GCP_REGION=us-west1		  ;;
+	5)    export OPENSHIFT_INSTALL_GCP_REGION=us-west2		  ;;
+	6)    export OPENSHIFT_INSTALL_GCP_REGION=europe-west6            ;;
+	7)    export OPENSHIFT_INSTALL_GCP_REGION=northamerica-northeast1 ;;
+	8)    export OPENSHIFT_INSTALL_GCP_REGION=southamerica-east1      ;;
+	?*)   export OPENSHIFT_INSTALL_GCP_REGION=$region		  ;;
+    esac
+}
+
+function _____gcp_replicas() {
+    cmdline_replicas "$1" 3
+}
+
+function _____gcp_default_install_type() {
+    echo ${_____gcp_default_regions[((RANDOM % ${#_____gcp_default_regions[@]}))]}
+}
+
+function _____gcp_help() {
+    case "$1" in
+	install_types)
+	    cat <<\EOF
+gcp     (us-central1)
+gcp2    (us-east1)
+gcp3    (us-east4)
+gcp4    (us-west1)
+gcp5    (us-west1)
+gcp6    (europe-west6)
+gcp7    (northamerica-northeast1)
+gcp8    (southamerica-east1)
+gcp-*   (specified GCP region)
+EOF
+	    ;;
+	default_domain)
+	    cat <<\EOF
+For GCP: default is $_____gcp_default_domain.
+EOF
+	    ;;
+	options) ;;
+	*)  ;;
+    esac
+}
+
+function _____gcp_instance() {
+    if [[ -n "${1:-}" ]] ; then
+	cat <<EOF
+
+gcp:
+  type: "$1"
+EOF
+    fi
+}
+
+function _____gcp_platform() {
+    cat <<EOF
+gcp:
+  projectID: ${_____gcp_project_id}
+  region: $OPENSHIFT_INSTALL_GCP_REGION
+EOF
+}
+
+function _____gcp_machine_cidr() {
+    echo '10.0.0.0/16'
+}
+
+function _____gcp_base_domain() {
+    echo "${install_domain:-$_____gcp_default_domain}"
+}
+
+function _____gcp_print_diagnostic() {
+    case "$1" in
+	'Tried to create resource record set')
+	    cat <<'EOF'
+* Error message suggests that the installer tried to create a resource
+  that already exists.  This resource needs to be tracked down and
+  cleaned up.
+
+EOF
+	    ;;
+	'does not have enough resources available to fulfill the request')
+	    cat <<'EOF'
+* Error message suggests that the GCP region you selected does not have
+  enough instances or other resources of the specified type.
+EOF
+	    ;;
+	'Error loading machine type:')
+	    cat <<'EOF'
+* Error message suggests that the machine instance type you selected is
+  not valid/unavailable in the GCP region you selected.
+EOF
+
+    esac
+}
+
+function _____gcp_diagnose() {
+    case "$*" in
+	'Tried to create resource record set')
+	    set_diagnostic _____gcp_existing_resource_detected _____gcp_print_diagnostic
+	    ;;
+	'does not have enough resources available to fulfill the request')
+	    set_diagnostic _____gcp_insufficient_resources _____gcp_print_diagnostic
+	    ;;
+	'Error loading machine type:')
+	    set_diagnostic _____bad_machine_type _____gcp_print_diagnostic
+	    ;;
+    esac
+}
+
+function _____gcp_set_option() {
+    local option=$1
+    local value=$2
+    case "$option" in
+	gcp_project_id) _____gcp_project_id=$value ;;
+	*)              fatal "Unknown option $option in gcp platform" ;;
+    esac
+}
+
+function _____gcp_dispatch() {
+    local op="$1"
+    shift
+    case "$op" in
+	base_domain)          _____gcp_base_domain "$@"         ;;
+	cleanup)              :					;;
+	default_install_type) _____gcp_default_install_type "$@";;
+	diagnose)	      _____gcp_diagnose "$@"		;;
+	platform_help)        _____gcp_help "$@"                ;;
+	is_install_type)      [[ $1 = 'gcp'* ]]			;;
+	machine_cidr)         _____gcp_machine_cidr "$@"        ;;
+	master)               _____gcp_instance "$master_type"  ;;
+	platform)             _____gcp_platform "$@"            ;;
+	postinstall)          :					;;
+	replicas)             _____gcp_replicas "$@"            ;;
+	set_option)	      _____gcp_set_option "$@"		;;
+	setup)                _____gcp_setup "$@"               ;;
+	supports_bastion)     true				;;
+	validate)             _____gcp_validate "$@"            ;;
+	worker)               _____gcp_instance "$worker_type"  ;;
+	*)                    dispatch_unknown gcp "$@"		;;
+    esac
+}
