@@ -24,18 +24,23 @@ declare -r nl='
 
 declare accumulateddata=
 
+declare OC
+OC=$(type -p oc)
+OC=${OC:-$(type -p kubectl)}	# kubectl might not work, though...
 
-function help() {
-    cat <<EOF
+declare _helpmsg
+read -r -d '' _helpmsg <<'EOF'
 Usage: $0 [options] [name]
        Default 1 namespace
     Options:
+       -H              Print extended help
        -n              Print what would be done without doing it
        -P podtype      Pod type (classic, pause, server)
-       -B basename     Base name of pods (default clusterbuster)
+       -B basename     Base name of pods (default clusterbuster).
+                       All objects are labeled with this name.
        -b blocksize    Number of objects to create in one oc call (default 1)
        -c containers   Number of containers per pod
-       -D data rate    Data rate for client/server (MB/sec) (default 1)
+       -D data rate    Data rate for client/server (MB/sec) (default 0)
        -d deployments  Number of deployments per namespace (default 1)
        -N namespaces   Number of namespaces to create (default 1)
        -p parallel     Number of operations to perform in parallel (default 1)
@@ -49,12 +54,104 @@ Usage: $0 [options] [name]
                        as an argument to sleep(1) and need not be a numeric
                        constant.
 EOF
+
+function help() {
+    echo "$_helpmsg"
+    exit 1
+}
+
+function _helpExtended() {
+    echo "$_helpmsg"
+    cat <<'EOF'
+
+Clusterbuster is a tool to permit you to load a configurable workload
+onto an OpenShift cluster.  This is not a full-featured workload
+generator like clusterloader; it generates very specific types of load
+that for the most part focus on API objects.
+
+Clusterbuster allows you to create three kinds of pods (via
+deployments).  The type of pod is selected by the -P option.
+
+- A simple pause-type implementation written in perl that emits a log
+  heartbeat once a minute.
+
+- Pause pod (uses the least resources)
+
+- A client-server workload, with optional bidirectional data transfer
+  at a specified data rate.
+
+
+All three types allow you to configure the following load parameters:
+
+- Number of namespaces created (-N)
+
+- Number of deployments per namespace (-d)
+
+- Number of replicas per deployment (-r)
+
+- Number of containers per replica (-c)
+
+- Number of secrets per deployment (-s)
+
+The total number of pods created is (N * d * r) and the total number
+of containers is (N * d * r * c).  The number of secrets is (N * d).
+This is useful for testing of scaling of both nodes and apiserver/etcd
+combination on the control plane.
+
+The client-server workload consists of one server pod, with one
+container, per deployment.  The clients and server can optionally
+engage in ping-pong data transfer.  The number of client pods is
+controlled by the number of replicas.  Therefore, each server will
+service (r * c) connections.  Each container will attempt to transmit
+up to the specified data rate (-D) megabytes/second, and then receive
+the amount of data.  Via -x and -X it is possible to specify whether
+clients will be colocated with their server (-x) or forced onto
+different nodes (-X).  If neither option is specified, clusterbuster
+allows OpenShift to place pods as it sees fit.  You can use `oc logs`
+on a client pod (or use Prometheus metrics) to get data transfer
+information.
+
+
+You can run multiple concurrent clusterbusters by choosing different
+basenames for each instance (-B).  All objects created by that run
+will be tagged with the basename, in addition to 'clusterbusterbase'
+(to allow you to easily find or delete all objects created by
+clusterbuster).
+
+
+Examples:
+
+- You have a 30 node cluster and wish to test 500 pods per node, all
+  in one namespace:
+
+  clusterbuster -d 15000
+
+- You wish to use 1000 namespaces for the same test:
+
+  clusterbuster -N 1000 -d 15
+
+- You wish to add 150,000 secrets to further stress the apiserver and
+  etcd:
+
+  clusterbuster -N 1000 -d 15 -s 10
+
+- You wish to exchange data at 10 MB/sec, with 5 deployments in 2
+  namespaces each of which uses 4 replica clients and 3 containers.
+  You wish to place the clients on nodes other than the servers:
+
+  clusterbuster -P server -N 2 -d 5 -r 4 -c 3 -X
+
+EOF
+}
+
+function helpExtended() {
+    _helpExtended | "${PAGER:-more}"
     exit 1
 }
 
 trap exit INT
 
-while getopts ":B:b:c:ns:D:d:p:r:w:z:hN:P:xX" opt ; do
+while getopts ":B:b:c:ns:D:d:p:r:w:z:hHN:P:xX" opt ; do
     case "$opt" in
 	n) doit=0			;;
 	P) podType="$OPTARG"		;;
@@ -72,11 +169,17 @@ while getopts ":B:b:c:ns:D:d:p:r:w:z:hN:P:xX" opt ; do
 	x) affinity=1			;;
 	X) affinity=2			;;
 	h) help				;;
+	H) helpExtended			;;
 	*) help "$OPTARG"               ;;
     esac
 done
 
 shift $((OPTIND - 1))
+
+if [[ -z $OC && $doit -gt 0 ]] ; then
+    echo "Cannot find oc or kubectl command, exiting!"
+    exit 1
+fi
 
 case "$podType" in
     classic|ClusterBuster) podType=ClusterBuster ;;
@@ -93,8 +196,9 @@ fi
 
 function indent_1() {
     local -i column="$1"
+    local -r indent="$(printf "%${column}s")"
     while IFS= read -r 'line' ; do
-	 [[ -z "$line" ]] || printf "%${column}s%s\n" "" "$line"
+	 [[ -z "$line" ]] || echo "${indent}${line}"
     done
 }
 
@@ -110,7 +214,7 @@ function indent() {
 
 function finishCreation() {
     if [[ $doit -ne 0 && -n $accumulateddata ]] ; then
-	oc apply -f - <<< "$accumulateddata"
+	"${OC}" apply -f - <<< "$accumulateddata"
 	accumulateddata=
     fi
 }
@@ -127,7 +231,7 @@ function createObject() {
     if (( doit )) ; then
 	accumulateddata+="$data"
 	if (( ++blockitemcount >= blocksize )) ; then
-	    oc apply -f - <<< "$accumulateddata"
+	    "${OC}" apply -f - <<< "$accumulateddata"
 	    accumulateddata=
 	    blockitemcount=0
 	    (( !sleeptime )) || sleep "$sleeptime"
@@ -146,25 +250,7 @@ metadata:
   name: "${namespace}"
   labels:
     ${basename}: "true"
-EOF
-}
-
-function createSecretYAML() {
-    local namespace=$1
-    local deployment=$2
-    local i=$3
-    cat <<EOF
-apiVersion: v1
-kind: Secret
-metadata:
-  name: "secret-${namespace}-${deployment}-${i}"
-  namespace: "$namespace"
-  labels:
-    ${basename}: "true"
-data:
-  key1: "$(base64 <<< "${namespace}X${deployment}Y${i}Z1")"
-  key2: "$(base64 <<< "${namespace}X${deployment}Y${i}Z2")"
-type: Opaque
+    clusterbusterbase: "true"
 EOF
 }
 
@@ -177,7 +263,20 @@ function createSecrets() {
     (( secrets )) || return;
     for i in $(seq 0 $((depsPerNamespace - 1))) ; do
 	for j in $(seq 0 $((secrets - 1))) ; do
-	    createObject <<< "$(createSecretYAML "$namespace" "$i" "$j")"
+	    createObject <<EOF
+apiVersion: v1
+kind: Secret
+metadata:
+  name: "secret-${namespace}-${i}-${j}"
+  namespace: "$namespace"
+  labels:
+    ${basename}: "true"
+    clusterbusterbase: "true"
+data:
+  key1: "$(base64 <<< "${namespace}X${i}Y${j}Z1")"
+  key2: "$(base64 <<< "${namespace}X${i}Y${j}Z2")"
+type: Opaque
+EOF
 	done
     done
 }    
@@ -186,9 +285,9 @@ function createVolumeMountsYAML() {
     local namespace=$1
     local deployment=${2:-1}
     local secrets=${3:-1}
-    local -i i
     (( secrets )) || return;
     echo "volumeMounts:"
+    local -i i
     for i in $(seq 0 $((secrets - 1))) ; do
 	local name="secret-${namespace}-${deployment}-$i"
 	cat <<EOF
@@ -203,8 +302,8 @@ function createVolumesYAML() {
     local namespace=$1
     local deployment=${2:-1}
     local secrets=${3:-1}
-    local -i i
     (( secrets )) || return;
+    local -i i
     echo "volumes:"
     for i in $(seq 0 $((secrets - 1))) ; do
 	local name="secret-${namespace}-${deployment}-$i"
@@ -251,7 +350,6 @@ function createContainersPausePodYAML() {
     local -i j
     for j in $(seq 0 $((containers - 1))) ; do
 	cat <<EOF
-containers:
 - name: ${namespace}-$i-$j
   image: "gcr.io/google_containers/pause-amd64:3.0"
 $(indent 2 createVolumeMountsYAML "$namespace" "$i" "$secretCount")
@@ -273,6 +371,7 @@ metadata:
   namespace: $namespace
   labels:
     ${basename}: "true"
+    clusterbusterbase: "true"
 spec:
   replicas: $pods
   selector:
@@ -284,11 +383,13 @@ spec:
     metadata:
       labels:
         ${basename}: "true"
+        clusterbusterbase: "true"
         name: ${namespace}-$i
         app: ${namespace}-$i
     spec:
       terminationGracePeriodSeconds: 1
       restartPolicy: Always
+      containers:
 $(indent 6 createContainers${podType}YAML "$@")
 $(indent 6 createVolumesYAML "$namespace" "$i" "$secretCount")
 EOF
@@ -305,6 +406,7 @@ metadata:
   namespace: "$namespace"
   labels:
     ${basename}: "true"
+    clusterbusterbase: "true"
 spec:
   ports:
   - port: $port
@@ -325,6 +427,7 @@ metadata:
   namespace: "$namespace"
   labels:
     ${basename}: "true"
+    clusterbusterbase: "true"
 spec:
   host: "service-${deployment}"
   to:
@@ -335,8 +438,8 @@ spec:
 EOF
 }
 
-function createServerContainerPerl() {
-    cat <<'EOF'
+declare serverContainerPerl
+read -r -d '' serverContainerPerl <<'EOF'
 #!/usr/bin/perl
 use Socket;
 use strict;
@@ -361,7 +464,7 @@ die "can't get port $port: $!\n" if ($port ne $listen_port);
 print STDERR timestamp("Listening on port $listen_port\n");
 
 for (;;) {
-    accept(CLIENT, SOCK) or next;
+    accept(CLIENT, SOCK) || next;
     if ((my $child = fork()) == 0) {
         close(SOCK);
         my $peeraddr = getpeername(CLIENT);
@@ -396,35 +499,32 @@ for (;;) {
     }
 }
 EOF
-}
 
 function createServerContainerYAML() {
     local namespace=$1
     local i=$2
     local secretCount=$3
     cat <<EOF
-containers:
 - name: ${namespace}-${i}-server
   image: perl
   ports:
-  - containerPort:
-      $port
+  - containerPort: $port
   command:
   - perl
   args:
   - -e
   - |
-$(indent 4 createServerContainerPerl)
+$(indent 4 <<< "$serverContainerPerl")
   - "$port"
 $(indent 2 createVolumeMountsYAML "$namespace" "$i" "$secretCount")
 EOF
 }
 
-function createServerDeploymentYAML() {
+function createServerDeployment() {
     local namespace=$1
     local i=$2
     local secretCount=$3
-    cat <<EOF
+    createObject <<EOF
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -444,15 +544,17 @@ spec:
         app: ${namespace}-$i
         k8s-app: ${namespace}-${i}-server
         ${basename}: "true"
+        clusterbusterbase: "true"
     spec:
       terminationGracePeriodSeconds: 1
+      containers:
 $(indent 6 createServerContainerYAML "$namespace" "$i" "$secretCount")
 $(indent 6 createVolumesYAML "$namespace" "$i" "$secretCount")
 EOF
 }
 
-function createClientContainerPerl() {
-    cat << 'EOF'
+declare clientContainerPerl
+read -r -d '' clientContainerPerl <<'EOF'
 #!/usr/bin/perl
 
 use Socket;
@@ -526,28 +628,30 @@ while (1) {
     }
 }
 EOF
-}
 
 function createClientContainerYAML() {
     local namespace=$1
     local i=$2
     local secretCount=$3
     local dataRate=$4
-    cat <<EOF
-containers:
-- name: ${namespace}-${i}-client
+    local containers=$5
+    local -i j
+    for j in $(seq 0 $((containers - 1))) ; do
+	cat <<EOF
+- name: ${namespace}-${i}-${j}-client
   image: "perl"
   command:
   - perl
   args:
   - -e
   - |
-$(indent 4 createClientContainerPerl)
+$(indent 4 <<< "$clientContainerPerl")
   - "$port"
   - "service-${namespace}-$i"
   - "$dataRate"
 $(indent 2 createVolumeMountsYAML "$namespace" "$i" "$secretCount")
 EOF
+    done
 }
 
 function createClientAffinityYAML() {
@@ -572,13 +676,14 @@ affinity:
 EOF
 }
 
-function createClientDeploymentYAML() {
+function createClientDeployment() {
     local namespace=$1
     local i=$2
     local secretCount=$3
     local replicas=$4
     local dataRate=$5
-    cat <<EOF
+    local containers=$6
+    createObject <<EOF
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -597,10 +702,12 @@ spec:
         name: ${namespace}-${i}-client
         app: ${namespace}-${i}-client
         ${basename}: "true"
+        clusterbusterbase: "true"
     spec:
       terminationGracePeriodSeconds: 1
 $(indent 6 createClientAffinityYAML "${namespace}-${i}-server")
-$(indent 6 createClientContainerYAML "$namespace" "$i" "$secretCount" "$dataRate")
+      containers:
+$(indent 6 createClientContainerYAML "$namespace" "$i" "$secretCount" "$dataRate" "$containers")
 $(indent 6 createVolumesYAML "$namespace" "$i" "$secretCount")
 EOF
 }
@@ -626,12 +733,13 @@ function createDeploymentServer() {
     local count=${2:-1}
     local secretCount=${3:-1}
     local pods=${4:-1}
+    local containers=${5:-1}
     local -i i
     for i in $(seq 0 $((count - 1))) ; do
 	createService "$namespace" "$namespace-$i"
 	createRoute "$namespace" "$namespace-$i"
-	createObject <<< "$(createServerDeploymentYAML "$namespace" "$i" "$secretCount")"
-	createObject <<< "$(createClientDeploymentYAML "$namespace" "$i" "$secretCount" "$replicas" "$dataRate")"
+	createServerDeployment "$namespace" "$i" "$secretCount"
+	createClientDeployment "$namespace" "$i" "$secretCount" "$replicas" "$dataRate" "$containers"
     done
 }
 
