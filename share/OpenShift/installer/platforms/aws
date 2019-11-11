@@ -20,7 +20,7 @@
 ################################################################
 
 declare -rg _____aws_default_domain=${AWS_DEFAULT_DOMAIN:-devcluster.openshift.com}
-declare -rga _____aws_default_regions=(aws aws2 aws3 aws4)
+declare -rga _____aws_default_regions=(us-{east,west}-{1,2})
 
 add_platform _____aws_dispatch
 
@@ -85,11 +85,16 @@ function _____aws_split_instance() {
     echo "$subinstance"
 }
 
+function _____aws_default_install_type() {
+    echo ${_____aws_default_regions[((RANDOM % ${#_____aws_default_regions[@]}))]}
+}
+
 function _____aws_setup() {
     local region=${1#aws}
     region=${region#[-._]}
     case "$region" in
-	1|'') export OPENSHIFT_INSTALL_AWS_REGION=us-east-1 ;;
+	'')   export OPENSHIFT_INSTALL_AWS_REGION=$(_____aws_default_install_type) ;;
+	1)    export OPENSHIFT_INSTALL_AWS_REGION=us-east-1 ;;
 	2)    export OPENSHIFT_INSTALL_AWS_REGION=us-east-2 ;;
 	3)    export OPENSHIFT_INSTALL_AWS_REGION=us-west-1 ;;
 	4)    export OPENSHIFT_INSTALL_AWS_REGION=us-west-2 ;;
@@ -104,23 +109,19 @@ function _____aws_replicas() {
     cmdline_replicas "$1" 3
 }
 
-function _____aws_default_install_type() {
-    echo ${_____aws_default_regions[((RANDOM % ${#_____aws_default_regions[@]}))]}
-}
-
 function _____aws_help() {
     case "$1" in
 	install_types)
 	    cat <<\EOF
-Default is random aws US zone.
-aws     (aws us-east-1)
-aws2    (aws us-east-2)
-aws3    (aws us-west-1)
-aws4    (aws us-west-2)
-aws5    (aws eu-west-2)
-aws6    (aws eu-west-3)
-aws7    (aws sa-east-1)
-aws-*   (specified AWS region)
+aws     (random US AWS zone)
+  aws1  (aws us-east-1)
+  aws2  (aws us-east-2)
+  aws3  (aws us-west-1)
+  aws4  (aws us-west-2)
+  aws5  (aws eu-west-2)
+  aws6  (aws eu-west-3)
+  aws7  (aws sa-east-1)
+  aws-* (specified AWS region by name)
 EOF
 	    ;;
 	default_domain)

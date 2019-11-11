@@ -5,7 +5,8 @@ etc. OpenShift 4 clusters.
 
 ## Cluster utilities
 
-- *oinst*: OpenShift 4.x installer wrapper, currently for AWS and libvirt.
+- *oinst*: OpenShift 4.x installer wrapper, currently for AWS, GCE,
+  and libvirt.
 
   You may want to install kubechart
   (github.com/sjenning/kubechart/kubechart) and oschart

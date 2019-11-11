@@ -21,7 +21,7 @@
 
 declare -rg _____gcp_default_domain=${GCP_DEFAULT_DOMAIN:-gcp.devcluster.openshift.com}
 declare -rg _____gcp_default_project=${GCP_DEFAULT_PROJECT:-openshift-gce-devel}
-declare -rga _____gcp_default_regions=(gcp gcp2 gcp3 gcp4 gcp5)
+declare -rga _____gcp_default_regions=(us-{central1,east{1,4},west{1,2}})
 
 declare -g _____gcp_project_id=${_____gcp_default_project}
 
@@ -66,7 +66,8 @@ function _____gcp_setup() {
     local region=${1#gcp}
     region=${region#[-._]}
     case "$region" in
-	1|'') export OPENSHIFT_INSTALL_GCP_REGION=us-central1		  ;;
+	'')   export OPENSHIFT_INSTALL_GCP_REGION=$(_____gcp_default_install_type) ;;
+	1)    export OPENSHIFT_INSTALL_GCP_REGION=us-central1		  ;;
 	2)    export OPENSHIFT_INSTALL_GCP_REGION=us-east1		  ;;
 	3)    export OPENSHIFT_INSTALL_GCP_REGION=us-east4		  ;;
 	4)    export OPENSHIFT_INSTALL_GCP_REGION=us-west1		  ;;
@@ -90,15 +91,16 @@ function _____gcp_help() {
     case "$1" in
 	install_types)
 	    cat <<\EOF
-gcp     (us-central1)
-gcp2    (us-east1)
-gcp3    (us-east4)
-gcp4    (us-west1)
-gcp5    (us-west1)
-gcp6    (europe-west6)
-gcp7    (northamerica-northeast1)
-gcp8    (southamerica-east1)
-gcp-*   (specified GCP region)
+gcp     (random US GCP zone)
+  gcp1  (us-central1)
+  gcp2  (us-east1)
+  gcp3  (us-east4)
+  gcp4  (us-west1)
+  gcp5  (us-west1)
+  gcp6  (europe-west6)
+  gcp7  (northamerica-northeast1)
+  gcp8  (southamerica-east1)
+  gcp-* (specified GCE region by name)
 EOF
 	    ;;
 	default_domain)

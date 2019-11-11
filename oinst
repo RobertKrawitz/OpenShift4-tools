@@ -85,6 +85,7 @@ declare -A global_platforms=()
 declare -a global_platform_list=()
 
 declare -A global_diagnostics=()
+declare -a platform_path=()
 
 declare install_type=
 declare install_domain=${OPENSHIFT_INSTALL_DOMAIN:-}
@@ -155,7 +156,7 @@ function print_help() {
     cat <<EOF
 Usage: $___topsc [options] [install_type]
     install_type: one of
-$(do_platforms help install_types | indent 7)
+$(do_platforms platform_help install_types | indent 7)
     Options (all are processed in order):
        -p profile           Read the specified profile file.  Profile
                             may be a JSON file or shell code.
@@ -222,7 +223,7 @@ $(do_platforms platform_help options |indent -6)
 
       Installation options:
         config_file         Use the specified file as the install config file.
-        create_bastion      Create a bastion ssh host if supported 
+        create_bastion      Create a bastion ssh host if supported
                             by platform (default 1).
         do_login            Login to the console (default=1)
         ext_installer       Use the specified command to install OpenShift.
@@ -329,7 +330,7 @@ function cmdline_replicas() {
 function dispatch_unknown() {
     local platform=$1
     shift
-    die "Unexpected command ($platform): $*"
+    fatal "Unexpected command ($platform): $*"
 }
 
 # Not all platforms support the standard bastion host.
@@ -1176,6 +1177,14 @@ function process_extended_options() {
     done
 }
 
+function get_platform_path() {
+    platform_path=()
+    if [[ -n ${OPENSHIFT_OINST_LIBDIR:-} ]] ; then
+	readarray -t platform_path <<< "${OPENSHIFT_OINST_LIBDIR//:/$'\n'}"
+    fi
+    platform_path+=("$___topdir")
+}
+
 function find_platforms() {
     declare -a ____platform_path
     declare -a ____new_vars
@@ -1183,11 +1192,10 @@ function find_platforms() {
     declare ____a
     declare ____f
     declare ____dir
-    if [[ -n ${OPENSHIFT_OINST_LIBDIR:-} ]] ; then
-	readarray -t ____platform_path <<< "${OPENSHIFT_OINST_LIBDIR//:/$'\n'}"
+    if [[ -z "${platform_path[*]}" ]] ; then
+	get_platform_path
     fi
-    ____platform_path+=("$___topdir")
-    for ____dir in "${____platform_path[@]}" ; do
+    for ____dir in "${platform_path[@]}" ; do
 	____dir=${____dir:-.}
 	if [[ -d "$____dir/share/OpenShift/installer/platforms" ]] ; then
 	    for ____f in "$____dir/share/OpenShift/installer/platforms"/* ; do
@@ -1235,6 +1243,19 @@ fi
 find_platforms
 process_options "$@"
 clear_env
+if [[ -z ${install_type:-} ]] ; then
+    if [[ -z "${platform_path[*]}" ]] ; then
+	get_platform_path
+    fi
+    for ____dir in "${platform_path[@]}" ; do
+	____dir=${____dir:-.}
+	if [[ -f "$____dir/share/OpenShift/installer/default-platform" ]] ; then
+	    read -r install_type < "$____dir/share/OpenShift/installer/default-platform"
+	    [[ -z $install_type ]] || break
+	fi
+    done
+fi
+
 if [[ -z ${install_type:-} ]] ; then
     for platform in "${global_platform_list[@]}" ; do
 	install_type="$(platform_dispatch -p "$platform" default_install_type)"
