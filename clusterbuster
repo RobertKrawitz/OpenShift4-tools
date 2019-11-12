@@ -279,7 +279,7 @@ type: Opaque
 EOF
 	done
     done
-}    
+}
 
 function createVolumeMountsYAML() {
     local namespace=$1
@@ -450,7 +450,7 @@ sub timestamp($) {
     my ($str) = @_;
     my (@now) = gettimeofday();
     sprintf "%s.%06d %s", localtime($now[0])->strftime("%Y-%m-%d.%T"), $now[1], $str;
-}    
+}
 my $listen_port = $ARGV[0];
 my $sockaddr = "S n a4 x8";
 socket(SOCK, PF_INET, SOCK_STREAM, getprotobyname('tcp')) || die "socket: $!";
@@ -567,7 +567,7 @@ sub timestamp($) {
     my ($str) = @_;
     my (@now) = gettimeofday();
     sprintf "%s.%06d %s", localtime($now[0])->strftime("%Y-%m-%d.%T"), $now[1], $str;
-}    
+}
 my $connect_port = $ARGV[0];
 my $sockaddr = "S n a4 x8";
 my ($fname,$faliases,$ftype,$flen,$faddr)= gethostbyname($ARGV[1]);

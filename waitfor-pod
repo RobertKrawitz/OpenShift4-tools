@@ -41,7 +41,7 @@ if [[ -n $namespace ]] ; then
 else
     namespace="--all-namespaces"
 fi
-    
+
 declare -i try=0
 
 cmd='foreach .items[] as $item ([[],[]];0; if $item.kind == "Pod" then (foreach $item.status.containerStatuses[]? as $status ([[],[]];0;$item.metadata.namespace + " " + $item.metadata.name + " " + $status.name + " " + ($status.state | keys)[0] + (if $status.ready == false then "	" + ([(if $status.state[(($status.state | keys)[0])]|has("reason") then $status.state[(($status.state | keys)[0])]|.reason else "Unhealthy" end)] | join("")) else "" end ))) else null end) | select(. != null)'
