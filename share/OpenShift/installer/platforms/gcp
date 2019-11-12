@@ -133,7 +133,7 @@ function _____gcp_base_domain() {
 
 function _____gcp_print_diagnostic() {
     case "$1" in
-	'Tried to create resource record set')
+	_____gcp_existing_resource_detected)
 	    cat <<'EOF'
 * Error message suggests that the installer tried to create a resource
   that already exists.  This resource needs to be tracked down and
@@ -141,13 +141,13 @@ function _____gcp_print_diagnostic() {
 
 EOF
 	    ;;
-	'does not have enough resources available to fulfill the request')
+	_____gcp_insufficient_resources)
 	    cat <<'EOF'
 * Error message suggests that the GCP region you selected does not have
   enough instances or other resources of the specified type.
 EOF
 	    ;;
-	'Error loading machine type:')
+	_____gcp_bad_machine_type)
 	    cat <<'EOF'
 * Error message suggests that the machine instance type you selected is
   not valid/unavailable in the GCP region you selected.
@@ -158,14 +158,14 @@ EOF
 
 function _____gcp_diagnose() {
     case "$*" in
-	'Tried to create resource record set')
+	*'Tried to create resource record set'*)
 	    set_diagnostic _____gcp_existing_resource_detected _____gcp_print_diagnostic
 	    ;;
-	'does not have enough resources available to fulfill the request')
+	*'does not have enough resources available to fulfill the request'*)
 	    set_diagnostic _____gcp_insufficient_resources _____gcp_print_diagnostic
 	    ;;
-	'Error loading machine type:')
-	    set_diagnostic _____bad_machine_type _____gcp_print_diagnostic
+	*'Error loading machine type:'*)
+	    set_diagnostic _____gcp_bad_machine_type _____gcp_print_diagnostic
 	    ;;
     esac
 }

@@ -462,7 +462,6 @@ function _check_instance_type() {
     local -i tot_cols=0
     local j=0
     for instance in "$@" ; do
-	# shellcheck disable=SC2034
 	readarray -t icla <<< "$("$split_instance_func" "$instance")"
 	if [[ ${cla[0]} = "${icla[0]}" ]] ; then
 	   (( j++ )) || echo "Possible candidates:"
@@ -562,7 +561,6 @@ function cleanup() {
 		    wait %run_oschart
 		fi
 		exec 2>&3 3>&-
-		# shellcheck disable=SC2086
 		"${install}" $loglevel "--dir=$srcdir/$install_dir" destroy cluster 2>&1 |timestamp
 		if (( PIPESTATUS[0] == 0 || clean_install_cache)) ; then
 		    [[ -n $srcdir && -n $install_dir && -d "$srcdir/$install_dir" ]] && rm -rf "${srcdir:?}/${install_dir:?}"
@@ -963,10 +961,18 @@ function waitfor_console() {
 
 function report_install_failure() {
     local diagnostic_id
+    local -i print_auth_message=1
+    cat <<'EOF'
+
+*** Installation failed ***
+
+EOF
     for diagnostic_id in "${!global_diagnostics[@]}" ; do
-	"${global_diagnostics[$diagnostic_id]}" "$diagnostic_id"
+	"${global_diagnostics[$diagnostic_id]}" "$diagnostic_id" || print_auth_message=0
     done
-    warn_authentication_failure
+    if (( print_auth_message )) ; then
+	warn_authentication_failure
+    fi
 }
 
 function run_postinstall() {
@@ -1053,10 +1059,15 @@ function run_install() {
     start_kubechart_if_requested
 
     echo
-    # shellcheck disable=SC2086
+    # shellcheck disable=SC2155
+    local restorepipe="$(shopt -p lastpipe)"
+    # Diagnostic processing must occur within the top level shell
+    # so we can record any diagnostics that fire
+    shopt -s lastpipe
     "${install}" $loglevel "--dir=$srcdir/$install_dir" create cluster </dev/null 2>&1 | timestamp
 
     local install_status=${PIPESTATUS[0]}
+    eval "$restorepipe"
     # shellcheck disable=SC2155
     local -i end1=$(tsec)
     local -i end2=0
@@ -1163,7 +1174,16 @@ function process_extended_options() {
 	optname=${option%%=*}
 	optvalue=${option#*=}
 	noptname=${optname//-/_}
-	[[ $option = *'='* ]] || optvalue=1
+	# Simply testing for empty optvalue is wrong; that would not
+	# allow for an empty value
+	if [[ $option != *'='* ]] ; then
+	    if [[ $optname = "no_"* ]] ; then
+		optvalue=0
+	    else
+		optvalue=1
+	    fi
+	    option="${optname}=${optvalue}"
+	fi
 	# Rule: all options must use _ rather than -
 	if [[ -n "${option_registrations[$optname]:-}" ]] ; then
 	    if [[ ${option_registrations[$optname]} = "$OPENSHIFT_INSTALL_PLATFORM" ]] ; then

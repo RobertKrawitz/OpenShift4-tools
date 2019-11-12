@@ -153,7 +153,7 @@ function _____aws_base_domain() {
 
 function _____aws_print_diagnostic() {
     case "$1" in
-	'Tried to create resource record set')
+	_____aws_existing_resource_detected)
 	    cat <<'EOF'
 * Error message suggests that the installer tried to create a resource
   that already exists.  This resource needs to be tracked down and
@@ -166,7 +166,7 @@ EOF
 
 function _____aws_diagnose() {
     case "$*" in
-	'Tried to create resource record set')
+	*'Tried to create resource record set'*)
 	    set_diagnostic _____aws_existing_resource_detected _____aws_print_diagnostic
 	    ;;
     esac
