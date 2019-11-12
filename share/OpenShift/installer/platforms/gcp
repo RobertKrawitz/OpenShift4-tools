@@ -47,9 +47,9 @@ function _____gcp_validate() {
     validate_instance_type "$worker_type" "$master_type" GCP master_type _____gcp_split_instance "${_____gcp_known_instance_types[@]}" <<'EOF'
 Currently known GCP instance types.  Note that not all types are
 available in all regions, and GCP may add additional types at
-any time.  See https://gcp.amazon.com/ec2/instance-types/
+any time.  See https://cloud.google.com/compute/docs/machine-types
 for current information about what instance types exist, and
-https://gcp.amazon.com/ec2/pricing/on-demand/ for information
+https://cloud.google.com/compute/vm-instance-pricing for information
 about what instance types are available in a particular region.
 EOF
 }
@@ -79,12 +79,8 @@ function _____gcp_setup() {
     esac
 }
 
-function _____gcp_replicas() {
-    cmdline_replicas "$1" 3
-}
-
 function _____gcp_default_install_type() {
-    echo ${_____gcp_default_regions[((RANDOM % ${#_____gcp_default_regions[@]}))]}
+    echo "${_____gcp_default_regions[((RANDOM % ${#_____gcp_default_regions[@]}))]}"
 }
 
 function _____gcp_help() {
@@ -129,10 +125,6 @@ gcp:
   projectID: ${_____gcp_project_id}
   region: $OPENSHIFT_INSTALL_GCP_REGION
 EOF
-}
-
-function _____gcp_machine_cidr() {
-    echo '10.0.0.0/16'
 }
 
 function _____gcp_base_domain() {
@@ -197,11 +189,11 @@ function _____gcp_dispatch() {
 	diagnose)	      _____gcp_diagnose "$@"		;;
 	platform_help)        _____gcp_help "$@"                ;;
 	is_install_type)      [[ $1 = 'gcp'* ]]			;;
-	machine_cidr)         _____gcp_machine_cidr "$@"        ;;
+	machine_cidr)         echo '10.0.0.0/16'		;;
 	master)               _____gcp_instance "$master_type"  ;;
 	platform)             _____gcp_platform "$@"            ;;
 	postinstall)          :					;;
-	replicas)             _____gcp_replicas "$@"            ;;
+	replicas)             cmdline_replicas "$1" 3           ;;
 	set_option)	      _____gcp_set_option "$@"		;;
 	setup)                _____gcp_setup "$@"               ;;
 	supports_bastion)     true				;;

@@ -1186,7 +1186,6 @@ function get_platform_path() {
 }
 
 function find_platforms() {
-    declare -a ____platform_path
     declare -a ____new_vars
     declare -A ____var_map
     declare ____a
@@ -1231,16 +1230,17 @@ function find_platforms() {
     done
 }
 
+# Do this first so that if we request help we'll get a useful list of platforms
+find_platforms
 # Running nested installs is liable to be problematic
 if [[ -n ${OPENSHIFT_INSTALL_INTERLOCK:-} ]] ; then
-    if [[ ${1:-} = -h* ]] ; then
+    if [[ ${1:-} = -h* || ${1:-} = -H*  ]] ; then
 	echo "Already in ${___topsc:-oinst} environment!"
 	help
     fi
     fatal "Already in ${___topsc:-oinst} environment"
 fi
 
-find_platforms
 process_options "$@"
 clear_env
 if [[ -z ${install_type:-} ]] ; then

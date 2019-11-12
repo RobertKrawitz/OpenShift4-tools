@@ -58,10 +58,6 @@ function _____libvirt_base_domain() {
     echo "${install_domain:-$(_____libvirt_find_default_domain)}"
 }
 
-function _____libvirt_replicas() {
-    cmdline_replicas "$1" 1
-}
-
 function _____libvirt_platform() {
     # maipo is channel, not base.
     #local baseURL='https://releases-rhcos.svc.ci.openshift.org/storage/releases/maipo'
@@ -172,14 +168,6 @@ function _____libvirt_postinstall() {
     _____libvirt_created_proxy=1
 }
 
-function _____libvirt_machine_cidr() {
-    echo '192.168.126.0/24'
-}
-
-function _____libvirt_default_install_type() {
-    echo libvirt
-}
-
 function _____libvirt_help() {
     case "$1" in
 	install_types)
@@ -225,15 +213,15 @@ function _____libvirt_dispatch() {
     case "$op" in
 	base_domain)          _____libvirt_base_domain "$@"		;;
 	cleanup)              _____libvirt_cleanup "$@"			;;
-	default_install_type) _____libvirt_default_install_type "$@"	;;
+	default_install_type) echo libvirt				;;
 	diagnose)	      _____libvirt_diagnose "$@"		;;
 	platform_help)        _____libvirt_help "$@"			;;
 	is_install_type)      [[ $1 = libvirt ]]			;;
-	machine_cidr)         _____libvirt_machine_cidr "$@"		;;
+	machine_cidr)         echo '192.168.126.0/24'			;;
 	master)               :						;;
 	platform)             _____libvirt_platform "$@"		;;
 	postinstall)          _____libvirt_postinstall "$@"		;;
-	replicas)             _____libvirt_replicas "$@"		;;
+	replicas)             cmdline_replicas "$1" 1			;;
 	set_option)	      :						;;
 	setup)                _____libvirt_setup "$@"			;;
 	supports_bastion)     false					;;

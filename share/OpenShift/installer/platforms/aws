@@ -86,7 +86,7 @@ function _____aws_split_instance() {
 }
 
 function _____aws_default_install_type() {
-    echo ${_____aws_default_regions[((RANDOM % ${#_____aws_default_regions[@]}))]}
+    echo "${_____aws_default_regions[((RANDOM % ${#_____aws_default_regions[@]}))]}"
 }
 
 function _____aws_setup() {
@@ -103,10 +103,6 @@ function _____aws_setup() {
 	7)    export OPENSHIFT_INSTALL_AWS_REGION=sa-east-1 ;;
 	?*)   export OPENSHIFT_INSTALL_AWS_REGION=$region   ;;
     esac
-}
-
-function _____aws_replicas() {
-    cmdline_replicas "$1" 3
 }
 
 function _____aws_help() {
@@ -151,10 +147,6 @@ aws:
 EOF
 }
 
-function _____aws_machine_cidr() {
-    echo '10.0.0.0/16'
-}
-
 function _____aws_base_domain() {
     echo "${install_domain:-$_____aws_default_domain}"
 }
@@ -190,11 +182,11 @@ function _____aws_dispatch() {
 	diagnose)	      _____aws_diagnose "$@"		;;
 	platform_help)        _____aws_help "$@"                ;;
 	is_install_type)      [[ $1 = 'aws'* ]]			;;
-	machine_cidr)         _____aws_machine_cidr "$@"        ;;
+	machine_cidr)         echo '10.0.0.0/16'		;;
 	master)               _____aws_instance "$master_type"  ;;
 	platform)             _____aws_platform "$@"            ;;
 	postinstall)          :					;;
-	replicas)             _____aws_replicas "$@"            ;;
+	replicas)             cmdline_replicas "$1" 3           ;;
 	set_option)	      :					;;
 	setup)                _____aws_setup "$@"               ;;
 	supports_bastion)     true				;;
