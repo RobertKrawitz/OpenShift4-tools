@@ -1021,7 +1021,7 @@ function run_install() {
     if [[ -z $cleanup_only_dir ]] ; then
 	[[ -n $install_version && ${force_local_tools:-0} -eq 0 ]] && srcdir=.
 	mkdir -p "$srcdir/$install_dir"
-	[[ -n $install_version ]] && installer_setup
+	[[ -n $install_version || $query -ne 0 ]] && installer_setup
 	if [[ -n $config_file ]] ; then
 	    [[ ! -r $config_file ]] && fatal "Cannot read config file $config_file"
 	    cp "$config_file" "$srcdir/$install_dir/install-config.yaml"
