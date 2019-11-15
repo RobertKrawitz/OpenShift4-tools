@@ -21,6 +21,8 @@
 add_platform _____libvirt_dispatch
 
 declare -ig _____libvirt_created_proxy=0
+declare -ig _____libvirt_force_standard_installer=0
+register_options libvirt_std_install
 
 function _____libvirt_find_pool() {
     while read -r pool ignore ; do
@@ -28,7 +30,7 @@ function _____libvirt_find_pool() {
 	    echo "$pool"
 	    return 0
 	fi
-    done
+    done <<< "$(virsh --quiet pool-list)"
     echo default
 }
 
@@ -52,7 +54,8 @@ function _____libvirt_find_default_domain() {
 
 function _____libvirt_setup() {
     export OPENSHIFT_INSTALL_LIBVIRT_URI="qemu+tcp://192.168.122.1/system"
-    if [[ $query -eq 0 && $install_version = latest_default ]] ; then
+    if [[ $_____libvirt_force_standard_installer = 0 ||
+	      ($query -eq 0 && $install_version = latest_default) ]] ; then
 	install_version=
 	force_local_tools=1
 	ext_installer=
@@ -145,35 +148,33 @@ function _____libvirt_cleanup() {
 	wait %_____libvirt_run_proxy
     fi
     exec 2>&3 3>&-
-    # Cleanup is robust now
 
     # shellcheck disable=SC2155
-    # local pool=$(_____libvirt_find_pool)
-    # local cluster_name=$(virsh --quiet net-list | awk '{print $1}' | grep "^$OPENSHIFT_INSTALL_CLUSTER_NAME")
-    # [[ -z $cluster_name ]] && return
-    # local ignore
-    # local volume
-    # local net
-    # local node
-    # echo -n "Destroying workers..."
-    # while read -r node ; do
-    # 	if [[ $node = "${cluster_name}-worker-"* ]] ; then
-    # 	    _____libvirt_destroy_node "$pool" "$node"
-    # 	fi
-    # done <<< "$(virsh list --name)"
-    # _____libvirt_destroy_net "$cluster_name"
-    # while read -r net ignore ; do
-    # 	if [[ $net = "$cluster_name"* ]] ; then
-    # 	    _____libvirt_destroy_net "$net"
-    # 	fi
-    # done <<< "$(virsh --quiet net-list)"
-    # _____libvirt_destroy_node "$pool" "${cluster_name}-bootstrap"
-    # _____libvirt_destroy_node "$pool" "${cluster_name}-master-0"
-    # while read -r volume ignore ; do
-    # 	if [[ $volume = "$cluster_name"* ]] ; then
-    # 	    _____libvirt_delete_volume "$pool" "$volume"
-    # 	fi
-    # done <<< "$(virsh --quiet vol-list --pool "$pool")"
+    local pool=$(_____libvirt_find_pool)
+    local cluster_name=$(virsh --quiet net-list | awk '{print $1}' | grep "^$OPENSHIFT_INSTALL_CLUSTER_NAME")
+    [[ -z $cluster_name ]] && return
+    local ignore
+    local volume
+    local net
+    local node
+    echo -n "Destroying workers..."
+    while read -r node ; do
+     	if [[ $node = "${cluster_name}-worker-"* ]] ; then
+     	    _____libvirt_destroy_node "$pool" "$node"
+     	fi
+    done <<< "$(virsh list --name)"
+    _____libvirt_destroy_net "$cluster_name"
+    while read -r net ignore ; do
+     	if [[ $net = "$cluster_name"* ]] ; then
+     	    _____libvirt_destroy_net "$net"
+     	fi
+    done <<< "$(virsh --quiet net-list)"
+    _____libvirt_destroy_node "$pool" "${cluster_name}-bootstrap" "${cluster_name}-master-0"
+    while read -r volume ignore ; do
+     	if [[ $volume = "$cluster_name"* ]] ; then
+     	    _____libvirt_delete_volume "$pool" "$volume"
+     	fi
+    done <<< "$(virsh --quiet vol-list --pool "$pool")"
 }
 
 function _____libvirt_postinstall() {
@@ -205,7 +206,13 @@ For libvirt: default is taken from a unique entry
     in /etc/NetworkManager/dnsmasq.d, if available.
 EOF
 	    ;;
-	options) ;;
+	options)
+	    cat <<EOF
+
+For libvirt:
+  libvirt_std_install Use the standard installer rather than local
+EOF
+	    ;;
 	*)  ;;
     esac
 }
@@ -245,6 +252,15 @@ function _____libvirt_diagnose() {
     esac
 }
 
+function _____libvirt_set_option() {
+    local option=$1
+    local value=$2
+    case "$option" in
+	libvirt_std_install) _____libvirt_force_standard_installer=1 ;;
+	*)              fatal "Unknown option $option in libvirt platform" ;;
+    esac
+}
+
 function _____libvirt_dispatch() {
     local op="$1"
     shift
@@ -260,7 +276,7 @@ function _____libvirt_dispatch() {
 	platform)             _____libvirt_platform "$@"		;;
 	postinstall)          _____libvirt_postinstall "$@"		;;
 	replicas)             cmdline_replicas "$1" 1			;;
-	set_option)	      :						;;
+	set_option)	      libvirt_set_option "$@"			;;
 	setup)                _____libvirt_setup "$@"			;;
 	supports_bastion)     false					;;
 	validate)             :						;;

@@ -249,9 +249,10 @@ $(do_platforms platform_help default_domain | indent -28)
         wait_for_complete   Wait for console to come online (default=1)
 
     The following extended options are normally not recommended:
-       api_version          Use the specified API version (default $api_version).
-       do_override          Override install image.
-       force_local_tools    Use the local toolchain to install with.
+        api_version         Use the specified API version (default $api_version).
+        do_override         Override install image.
+        force_local_tools   Use the local toolchain to install with.
+                            Turns on do_override if a version is specified.
 EOF
     exit 1
 }
@@ -541,7 +542,7 @@ function find_first_platform() {
 
 function cleanup() {
     (( cleanup_run )) && exit
-    (( !clean_shutdown  && install_stage >= 2 )) && echo -en '\n*** '
+    (( !clean_shutdown && install_stage >= 2 )) && echo -en '\n*** '
     case "$install_stage" in
 	0) ;;
 	1)
@@ -632,6 +633,7 @@ networking:
   serviceNetwork:
   - 172.30.0.0/16
 platform: $(platform_data platform "${platformconfdata:-}" "${platformconfdata:-}" 2)
+publish: External
 pullSecret: '$(jq -scM '.[0]' < "$pull_secret")'
 sshKey: |
   $(< "$pubkey_file")
@@ -763,7 +765,7 @@ function do_installer_setup() {
 }
 
 function installer_setup() {
-    local not_latest=1
+    local -i not_latest=1
     local release_data
     local image
     local release_source=${OPENSHIFT_RELEASE_SOURCE:-https://${repo}.svc.ci.openshift.org/api/v1/releasestream}
@@ -785,7 +787,7 @@ function installer_setup() {
 	select install_version in "${versions[@]}" ; do break; done
 	PS3=$OPS3
     elif [[ $install_version = latest ]] ; then
-	not_latest=
+	not_latest=0
 	release_channel=${release_channel:-${release_base_map[$repo]:-}}
 	echo "Retrieving release data from $release_source/$release_channel/latest"
 	release_data="$(curl --silent "$release_source/$release_channel/latest")"
@@ -799,13 +801,15 @@ function installer_setup() {
     [[ -z $image ]] && fail_find_image "$install_version"
     if (( ! force_local_tools )) ; then
 	echo "Using installer from image ${image} ($ext_installer)" 1>&2
+	srcdir=.
 	(do_installer_setup "$install_dir" "$image" "$install_version") || exit 1
 	ext_installer="${install_dir}/openshift-install"
 	install="$ext_installer"
 	echo -e "installer version:\n$("$ext_installer" version |sed 's/^/    /')\n" 1>&2
+    elif (( not_latest )) ; then
+	 do_override=1
     fi
-    srcdir=.
-    if [[ $do_override = 1 && -n $not_latest ]] ; then
+    if (( do_override && not_latest )) ; then
 	export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE=$pullspec
 	export _OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE=$pullspec
     fi
@@ -1015,7 +1019,7 @@ function run_postinstall() {
 function run_install() {
     validate_environment
     if [[ -z $cleanup_only_dir ]] ; then
-	[[ -n $install_version ]] && srcdir=.
+	[[ -n $install_version && ${force_local_tools:-0} -eq 0 ]] && srcdir=.
 	mkdir -p "$srcdir/$install_dir"
 	[[ -n $install_version ]] && installer_setup
 	if [[ -n $config_file ]] ; then
@@ -1024,9 +1028,12 @@ function run_install() {
 	else
 	    template > "$srcdir/$install_dir/install-config.yaml"
 	fi
+    else
+	do_cleanup=1
+	clean_shutdown=1
+	install_stage=1
+	install_dir=$cleanup_only_dir
     fi
-    # shellcheck disable=SC2155
-    export KUBECONFIG="$(cd $srcdir && echo "$(pwd)/$install_dir/auth/kubeconfig")"
 
     # We will need the installer even in cleanup-only mode,
     # in order to clean up the cluster.
@@ -1039,20 +1046,25 @@ function run_install() {
 	srcdir=.
     fi
 
-    # shellcheck disable=SC2155
-    local start=$(tsec)
-    trap cleanup EXIT SIGHUP SIGINT SIGQUIT SIGTERM
-
-    install_stage=1
-    OPENSHIFT_INSTALL_CONFIG="$(clean_secret < "$srcdir/$install_dir/install-config.yaml")"
-    export OPENSHIFT_INSTALL_CONFIG
-    confirm_install || exit 1
-
     # Not platform-independent
     if (( rebuild_installer )) ; then
 	echo "Rebuilding installer"
 	TAGS=libvirt hack/build.sh || fatal "Can't rebuild installer"
     fi
+
+    trap cleanup EXIT SIGHUP SIGINT SIGQUIT SIGTERM
+    [[ -z $cleanup_only_dir ]] || return
+
+    # shellcheck disable=SC2155
+    export KUBECONFIG="$(cd $srcdir && echo "$(pwd)/$install_dir/auth/kubeconfig")"
+
+    # shellcheck disable=SC2155
+    local start=$(tsec)
+
+    install_stage=1
+    OPENSHIFT_INSTALL_CONFIG="$(clean_secret < "$srcdir/$install_dir/install-config.yaml")"
+    export OPENSHIFT_INSTALL_CONFIG
+    confirm_install || exit 1
 
     install_stage=2
     # Start kubechart/oschart (if needed) prior to running the installer
@@ -1127,7 +1139,7 @@ function register_options() {
 }
 
 function process_options() {
-    while getopts ":BbCcd:HhLln:Oop:qUuV:vX:xYy-:" opt ; do
+    while getopts ":BbCcd:HhLln:Oop:qUuV:vX:x:Yy-:" opt ; do
 	case "$opt" in
 	    B) run_kubechart=0		    ;;
 	    b) run_kubechart=1		    ;;
@@ -1302,8 +1314,8 @@ export OPENSHIFT_INSTALL_CLUSTER_NAME=${install_dir:-${LOGNAME:-NOUSER}-${OPENSH
 install_dir="${install_dir:-$OPENSHIFT_INSTALL_CLUSTER_NAME}"
 
 if [[ -n $cleanup_only_dir ]] ; then
-    if [[ ! -d $install_dir ]] ; then
-	echo "No install directory $install_dir to clean up"
+    if [[ ! -d $cleanup_only_dir ]] ; then
+	echo "No install directory $cleanup_only_dir to clean up"
 	exit 0
     fi
 elif [[ -d $install_dir && $install_dir != . && $install_dir != .. &&

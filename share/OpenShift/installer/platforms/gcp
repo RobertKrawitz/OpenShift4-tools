@@ -100,11 +100,17 @@ gcp     (random US GCP zone)
 EOF
 	    ;;
 	default_domain)
-	    cat <<\EOF
+	    cat <<EOF
 For GCP: default is $_____gcp_default_domain.
 EOF
 	    ;;
-	options) ;;
+	options)
+	    cat <<EOF
+
+For GCP:
+  gcp_project_id proj Use the specified project id (default $_____gcp_default_project)
+EOF
+;;
 	*)  ;;
     esac
 }
