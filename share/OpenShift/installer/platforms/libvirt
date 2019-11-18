@@ -150,31 +150,37 @@ function _____libvirt_cleanup() {
     exec 2>&3 3>&-
 
     # shellcheck disable=SC2155
-    local pool=$(_____libvirt_find_pool)
     local cluster_name=$(virsh --quiet net-list | awk '{print $1}' | grep "^$OPENSHIFT_INSTALL_CLUSTER_NAME")
     [[ -z $cluster_name ]] && return
-    local ignore
-    local volume
-    local net
-    local node
-    echo -n "Destroying workers..."
-    while read -r node ; do
-     	if [[ $node = "${cluster_name}-worker-"* ]] ; then
-     	    _____libvirt_destroy_node "$pool" "$node"
-     	fi
-    done <<< "$(virsh list --name)"
-    _____libvirt_destroy_net "$cluster_name"
-    while read -r net ignore ; do
-     	if [[ $net = "$cluster_name"* ]] ; then
-     	    _____libvirt_destroy_net "$net"
-     	fi
-    done <<< "$(virsh --quiet net-list)"
-    _____libvirt_destroy_node "$pool" "${cluster_name}-bootstrap" "${cluster_name}-master-0"
-    while read -r volume ignore ; do
-     	if [[ $volume = "$cluster_name"* ]] ; then
-     	    _____libvirt_delete_volume "$pool" "$volume"
-     	fi
-    done <<< "$(virsh --quiet vol-list --pool "$pool")"
+    # shellcheck disable=SC2155
+    local pool=$(_____libvirt_find_pool)
+    if virsh pool-info  "$pool" >/dev/null 2>&1 ; then
+	local ignore
+	local volume
+	local net
+	local node
+	echo -n "Destroying workers..."
+	while read -r node ; do
+	    if [[ $node = "${cluster_name}-worker-"* ]] ; then
+		_____libvirt_destroy_node "$pool" "$node"
+	    fi
+	done <<< "$(virsh list --name)"
+	_____libvirt_destroy_net "$cluster_name"
+	while read -r net ignore ; do
+	    if [[ $net = "$cluster_name"* ]] ; then
+		_____libvirt_destroy_net "$net"
+	    fi
+	done <<< "$(virsh --quiet net-list)"
+	_____libvirt_destroy_node "$pool" "${cluster_name}-bootstrap" "${cluster_name}-master-0"
+	while read -r volume ignore ; do
+	    if [[ $volume = "$cluster_name"* ]] ; then
+		_____libvirt_delete_volume "$pool" "$volume"
+	    fi
+	done <<< "$(virsh --quiet vol-list --pool "$pool")"
+	if [[ $pool = "$OPENSHIFT_INSTALL_CLUSTER_NAME"* ]] ; then
+	    virsh pool-delete "$pool"
+	fi
+    fi
 }
 
 function _____libvirt_postinstall() {
