@@ -69,10 +69,6 @@ function _____libvirt_setup() {
 	ext_installer=
 	echo "*** Using local installer with libvirt"
     fi
-    if (( clean_install_cache )) ; then
-	echo "Cleaning install cache in ~/.cache/openshift-install/libvirt"
-	[[ -d $HOME/.cache/openshift-install/libvirt ]] && rm -rf "$HOME/.cache/openshift-install/libvirt"
-    fi
 }
 
 function _____libvirt_base_domain() {
