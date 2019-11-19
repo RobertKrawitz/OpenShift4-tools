@@ -112,7 +112,7 @@ If a platform plugin wishes to make options available to the user via
 `-X option=value` (or `--option=value`), it must call
 
 ```
-register_options *options...*
+register_options [options...]
 ```
 
 All options must start with the platform name.  These options are
