@@ -3,6 +3,19 @@
 [Robert Krawitz's](mailto:rlk@redhat.com) tools for installing
 etc. OpenShift 4 clusters.
 
+<!-- markdown-toc start - Don't edit this section. Run M-x markdown-toc-generate-toc again -->
+**Table of Contents**
+
+- [OpenShift4-tools](#openshift4-tools)
+    - [Cluster utilities](#cluster-utilities)
+    - [Testing tools](#testing-tools)
+    - [General information tools](#general-information-tools)
+    - [oinst API](#oinst-api)
+        - [Introduction](#introduction)
+        - [API calls](#api-calls)
+
+<!-- markdown-toc end -->
+
 ## Cluster utilities
 
 - *oinst*: OpenShift 4.x installer wrapper, currently for AWS, GCE,
@@ -13,7 +26,8 @@ etc. OpenShift 4 clusters.
   (github.com/sjenning/oschart/oschart) to monitor the cluster as it
   boots and runs.
 
-  I welcome PRs to extend this to other platforms.
+  I welcome PRs to extend this to other platforms.  See [the `oinst`
+  API](#oinst-api) below for more information.
 
 - *waitfor-pod*: wait for a specified pod to make its appearance (used
   as a helper by *oinst*).
@@ -56,3 +70,140 @@ etc. OpenShift 4 clusters.
 
 - *get-images*: retrieve the image and version of each image used by
   the cluster.
+
+## oinst API
+
+### Introduction
+
+The API for `oinst` consists of a platform plugin handling API calls
+through a dispatch function.  Platform plugins are bash scripts source
+by `oinst`.
+
+Each supported platform must provide a plugin residing in
+`installer/platforms/` (or
+`$OPENSHIFT_OINST_LIBDIR/share/OpenShift/installer/platforms/`).
+`OPENSHIFT_OINST_LIBDIR` may be a path, in which case each directory on
+the path is searched.  The name of the file is taken to be the name of
+the platform.  Autosave/backup files are not searched.
+
+The platform plugin must provide a dispatch function, typically named
+`_____<platform>_dispatch`, that handles the API calls, which will be
+presented below.  Responses to API calls are provided by text on
+stdout and the status (return) code; errors may be logged to stderr.
+
+Note that all names visible at global scope (i. e. not defined with
+`local` within a shell function) must start with `_____<platform>` or
+`______<platform>`.  Any other names result in an error.  Any state
+you want to save must be in variables declared via `declare -g`, as
+described in the bash man page.
+
+All plugins must call, from top level
+
+```
+add_platform _____<platform>_dispatch
+```
+
+to register the plugin.  As noted, the dispatch function is typically
+named `dispatch`, but need not be as long as the global scope rule is
+followed.  If `add_platform` is not called, or the platform name does
+not match the filename, the plugin is ignored.
+
+If a platform plugin wishes to make options available to the user via
+`-X option=value` (or `--option=value`), it must call
+
+```
+register_options *options...*
+```
+
+All options must start with the platform name.  These options are
+dispatched as described below.
+
+### API calls
+
+All routines here may make use of any variables and functions in the
+`oinst` script that do not start with an underscore.  They are all of
+the form
+
+**operation** [_args_]
+
+- **base_domain** *domainname* -- specify the DNS domain name of the
+  cluster to be created.
+  
+- **cleanup** -- perform any platform-specific cleanup functions.
+  Generally `openshift-installer` will perform cleanup; this may be
+  used for backup or if anything else needs to be done.
+  
+- **default_install_type** -- returns the default installation type.
+  This may be used if e. g. a plugin supports installation to multiple
+  zones, and the plugin wishes to specify one of them as the default
+  (perhaps picked at random).
+  
+- **diagnose** *text* -- attempt to recognize any errors in the
+  installer's output stream, to generate later diagnostics if the
+  installer fails.  If the line is recognized, the diagnostic routine
+  should call
+  
+  ```set_diagnostic <diagnostic-name> <diagnostic-routine>```
+  
+  The `diagnostic-name` is the name that the diagnostic routine will
+  use to recognize that the particular diagnostic was set.  The
+  `diagnostic-name` and `diagnostic-routine`'s name must follow the
+  naming requirements above.
+  
+  If installation fails, the `diagnostic-routine` will be invoked with
+  the `diagnostic-name`.  It should print an appropriate error message
+  to stdout, with an additional newline at the end.  If the return
+  status is `1`, the diagnostic is taken as authoritative; default
+  diagnostics related to credentials are not printed in that case.  If
+  the diagnosis is less certain, the `diagnostic-routine` should
+  return `0`.
+  
+- **is_install_type** *install_type* -- return a status of 0 if the
+  name of the install type is recognized by this plugin, in which case
+  this plugin will handle all future API calls.  If it does not
+  recognize the name of this installation type, it should return 1.
+  
+- **machine_cidr** -- print the desired machine CIDR value.
+
+- **master** -- print any additional YAML that should be supplied in
+  the `controlPlane` definition.  The YAML code will be indented
+  appropriately.
+  
+- **platform** -- print any additional YAML that should be supplied in
+  the `platform` definition.
+  
+- **worker** -- print any additional YAML that should be supplied in
+  the `compute` definition.
+  
+- **postinstall** -- perform any additional steps that are needed
+  after installation successfully completes.  This may include
+  installation of e. g. extra DNS or routing beyond the normal `oc login`.
+  It does not need to include creation of an ssh bastion.
+  
+- **replicas** *node-type* -- echo the number of replicas desired.
+  *node-type* will be either `master` or `worker`.  This routine may
+  call `cmdline_replicas *node-type* *default* to use the number of
+  replicas requested on the command line, along with the desired
+  platform-specific default.
+  
+- **set_option** *option* *value* -- set the specified option to the
+  desired value.
+  
+- **setup** -- perform any necessary setup rasks prior to installation
+  (e. g. cleaning additional caches beyond the standard, setting any
+  top level variables to non-default values).
+
+- **supports_bastion** -- return a status of 0 (normal return) if the
+  platform supports a bastion ssh host, or 1 (failure return) if it
+  does not.
+  
+- **validate** -- perform any platform-specific validation.  This
+  routine may exit (by calling `fatal`) or warn (by calling `warn`)
+  with an appropriate error message.
+  
+If the dispatch function is called with an operation that it does not
+know about, it may call `dispatch_unknown <platform> <args>` to notify
+that it was called invalidly (and that probably the platform needs to
+be fixed).  This should only be done if it is called with an argument
+outside of the list above; operations that it knows about but simply
+doesn't so anything with should simply be ignored.
