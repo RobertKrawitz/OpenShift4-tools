@@ -94,9 +94,9 @@ stdout and the status (return) code; errors may be logged to stderr.
 
 Note that all names visible at global scope (i. e. not defined with
 `local` within a shell function) must start with `_____<platform>` or
-`______<platform>`.  Any other names result in an error.  Any state
-you want to save must be in variables declared via `declare -g`, as
-described in the bash man page.
+`______<platform>` (five or six underscores).  Any other names result
+in an error.  Any state you want to save must be in variables declared
+via `declare -g`, as described in the bash man page.
 
 All plugins must call, from top level
 
