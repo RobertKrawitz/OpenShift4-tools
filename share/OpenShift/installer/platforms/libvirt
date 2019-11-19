@@ -25,13 +25,21 @@ declare -ig _____libvirt_force_standard_installer=0
 register_options libvirt_std_install
 
 function _____libvirt_find_pool() {
+    local found_pool=
     while read -r pool ignore ; do
 	if [[ -n "${OPENSHIFT_INSTALL_CLUSTER_NAME}" && $pool = "${OPENSHIFT_INSTALL_CLUSTER_NAME}"* ]] ; then
-	    echo "$pool"
+	    if [[ -z $found_pool ]] ; then
+		found_pool=$pool
+	    else
+		echo "Non-unique matching pool names detected: $found_pool and $pool"
+		return 1
+	    fi
 	    return 0
 	fi
     done <<< "$(virsh --quiet pool-list)"
-    echo default
+    # Too dangerous to return default if we don't find the right pool.
+    # We could wipe everything out.
+    echo "$found_pool"
 }
 
 function _____libvirt_find_default_domain() {
@@ -154,6 +162,7 @@ function _____libvirt_cleanup() {
     [[ -z $cluster_name ]] && return
     # shellcheck disable=SC2155
     local pool=$(_____libvirt_find_pool)
+    [[ -z $pool ]] && return
     if virsh pool-info  "$pool" >/dev/null 2>&1 ; then
 	local ignore
 	local volume
@@ -243,6 +252,37 @@ EOF
 EOF
 	    return 1
 	    ;;
+	_____libvirt_socket_fail)
+	    cat <<'EOF'
+* The installer is unable to talk to the libvirt daemon, so it
+  cannot create infrastructure:
+
+  + Ensure that the lines
+
+        listen_tls = 0
+        listen_tls = 1
+
+    are present in /etc/libvirt/libvirtd.conf.
+
+  + Ensure that the line
+
+        LIBVIRTD_ARGS="--listen"
+
+    are present in /etc/sysconfig/libvirtd (or equivalent).
+
+  + In newer versions of libvirtd and systemd (such as on Fedora 31),
+    socket creation is handled via systemd rather than libvirtd listening
+    directly.  If installation started failing across an OS upgrade,
+    this is a likely cause.  To remedy:
+
+        % sudo systemctl stop libvirtd.service
+        % sudo systemctl enable libvirtd-tcp.socket
+        % sudo systemctl start libvirtd-tcp.socket
+        % sudo systemctl start libvirtd.service
+
+EOF
+	    return 1
+	    ;;
     esac
 
 }
@@ -255,6 +295,8 @@ function _____libvirt_diagnose() {
 	*"must specify one of the platforms"*)
 	    set_diagnostic _____libvirt_no_platform _____libvirt_print_diagnostic
 	    ;;
+	*"unable to connect to server at '192.168.122.1:16509"*)
+	    set_diagnostic _____libvirt_socket_fail _____libvirt_print_diagnostic
     esac
 }
 
