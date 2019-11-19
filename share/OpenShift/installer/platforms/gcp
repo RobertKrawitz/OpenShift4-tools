@@ -28,19 +28,19 @@ declare -g _____gcp_project_id=${_____gcp_default_project}
 add_platform _____gcp_dispatch
 register_options gcp_project_id
 
-declare -arg _____gcp_known_instance_types=("X.General Purpose (Current Generation)"
+declare -arg _____gcp_known_instance_types=(" X.General Purpose (Current Generation)"
 					    n1-standard-{1,2,4,8,16,32,64,96}
 					    n1-high{mem,cpu}-{2,4,8,16,32,64,96}
-					    "X.General Purpose (Next Generation)"
+					    " X.General Purpose (Next Generation)"
 					    n2-{standard,high{mem,cpu}}-{2,4,8,16,32,48,64,80}
-					    "X.Compute Optimized"
+					    " X.Compute Optimized"
 					    c2-standard-{4,8,16,30,60}
-					    "X.Memory Optimized"
+					    " X.Memory Optimized"
 					    m2-ultramem-{208,416}
 					    m1-ultramem-{40,80,160}
 					    m1-megamem-96
 					    # Shared core instances are too small
-					    #"X.Shared Core"
+					    #" X.Shared Core"
 					   )
 
 function _____gcp_validate() {

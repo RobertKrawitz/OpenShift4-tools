@@ -390,10 +390,10 @@ function __list_instance_types() {
     # Find the widest class name and instance name
     for instance in "$@" ; do
 	case "$instance" in
-	    X.*)
+	    " X."*)
 		(( list_all == 0 && groups_printed++ )) && break
 		;;
-	    Y*|Z*)
+	    " Y"*)
 		;;
 	    *)
 		readarray -t cla <<< "$("$split_instance_func" "$instance")"
@@ -405,15 +405,12 @@ function __list_instance_types() {
     groups_printed=0
     for instance in "$@" ; do
 	case "$instance" in
-	    X.*)
+	    " X."*)
 		(( list_all == 0 && groups_printed++ )) && break
-		echo -ne "${last_class:+\n\n}${instance#X.}:"
+		echo -ne "${last_class:+\n\n}${instance# X.}:"
 		;;
-	    Y.*)
-		echo -ne "\n {instance#*.}"
-		;;
-	    Z.*)
-		echo -ne " ${instance#*.}"
+	    " Y."*)
+		echo -ne "\n  ${instance#*.}"
 		;;
 	    *)
 		readarray -t cla <<< "$("$split_instance_func" "$instance")"
@@ -426,7 +423,11 @@ function __list_instance_types() {
 		    printf " %-${s}s" "${cla[1]}"
 		else
 		    tot_cols=$((c+2))
-		    printf "\n  %-${c}s %-${s}s" "${cla[0]}:" "${cla[1]}"
+		    local sep=:
+		    if [[ ${cla[0]} = ' ' ]] ; then
+			sep=
+		    fi
+		    printf "\n  %-${c}s %-${s}s" "${cla[0]}$sep" "${cla[1]}"
 		    last_class=${cla[0]}
 		fi
 		;;

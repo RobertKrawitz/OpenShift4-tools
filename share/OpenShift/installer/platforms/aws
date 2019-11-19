@@ -24,38 +24,39 @@ declare -rga _____aws_default_regions=(us-{east,west}-{1,2})
 
 add_platform _____aws_dispatch
 
-declare -arg _____aws_known_instance_types=("X.General Purpose"
+declare -arg _____aws_known_instance_types=(" X.General Purpose"
 					    # ARM instances aren't useful
 					    # a1.{medium,{,{,2,4}x}large}
 					    m5{,d}.{{,{,2,4,8,12,16,24}x}large,metal}
 					    m5{a,n,dn}.{,{,2,4,8,12,16,24}x}large
 					    m5ad.{,{,2,4,12,24}x}large
 					    m4.{,{,2,4,10,16}x}large
-					    "X.Burstable"
+					    " X.Burstable"
 					    t{3,3a,2}.{nano,micro,small,medium,{,x,2x}large}
-					    "X.Compute Optimized"
+					    " X.Compute Optimized"
 					    c4.{,{,2,4,8}x}large
 					    c5.{{,{,2,4,9,12,18,24}x}large,metal}
 					    c5d.{,{,2,4,9,18}x}large
 					    c5n.{{,{,2,4,9,18}x}large,metal}
-					    "X.Memory Optimized"
+					    " X.Memory Optimized"
 					    r4.{,{,2,4,8,16}x}large
 					    r5{,d}.{{,{,2,4,8,12,16,24}x}large,metal}
 					    r5{a,n,dn}.{,{,2,4,8,12,16,24}x}large
 					    r5ad.{,{,2,4,12,24}x}large
 					    x1e.{,2,4,8,16,32}xlarge
 					    x1.{16,32}xlarge
-					    "X.Single Thread Optimized"
+					    " X.Single Thread Optimized"
 					    z1d.{{,{,2,3,6,12}x}large,metal}
 					    # High Memory are special dedicated-only hosts
-					    # Y.u-t{6,9}tb1.metal
-					    # Y.u-t{12,18,24}tb1.metal
-					    "X.Storage Optimized"
+					    " X.High Memory (special dedicated-only hosts)"
+					    u-t{6,9}tb1.metal
+					    u-t{12,18,24}tb1.metal
+					    " X.Storage Optimized"
 					    i3.{{,{,2,4,8,16}x}large,metal}
 					    i3en.{{,{,2,3,6,12,24}x}large,metal}
 					    d2.{,2,4,8}xlarge
 					    h1.{2,4,8,16}xlarge
-					    "X.GPU"
+					    " X.GPU"
 					    p3.{2,8,16}xlarge
 					    p3dn.24xlarge
 					    p2.{,8,16}xlarge
@@ -79,6 +80,10 @@ EOF
 
 function _____aws_split_instance() {
     local instance=$1
+    if [[ $instance = "u-t"* ]] ; then
+	echo " "
+	echo "$instance"
+    fi
     local class=${instance%%.*}
     local subinstance=${instance#*.}
     echo "$class"

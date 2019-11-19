@@ -13,6 +13,7 @@ etc. OpenShift 4 clusters.
     - [oinst API](#oinst-api)
         - [Introduction](#introduction)
         - [API calls](#api-calls)
+        - [Validating Instance Types](#validating-instance-types)
 
 <!-- markdown-toc end -->
 
@@ -128,28 +129,30 @@ the form
 
 - **base_domain** *domainname* -- specify the DNS domain name of the
   cluster to be created.
-  
+
 - **cleanup** -- perform any platform-specific cleanup functions.
   Generally `openshift-installer` will perform cleanup; this may be
   used for backup or if anything else needs to be done.
-  
+
 - **default_install_type** -- returns the default installation type.
   This may be used if e. g. a plugin supports installation to multiple
   zones, and the plugin wishes to specify one of them as the default
   (perhaps picked at random).
-  
+
 - **diagnose** *text* -- attempt to recognize any errors in the
   installer's output stream, to generate later diagnostics if the
   installer fails.  If the line is recognized, the diagnostic routine
   should call
-  
-  ```set_diagnostic <diagnostic-name> <diagnostic-routine>```
-  
+
+  ```
+  set_diagnostic <diagnostic-name> <diagnostic-routine>
+  ```
+
   The `diagnostic-name` is the name that the diagnostic routine will
   use to recognize that the particular diagnostic was set.  The
   `diagnostic-name` and `diagnostic-routine`'s name must follow the
   naming requirements above.
-  
+
   If installation fails, the `diagnostic-routine` will be invoked with
   the `diagnostic-name`.  It should print an appropriate error message
   to stdout, with an additional newline at the end.  If the return
@@ -157,38 +160,38 @@ the form
   diagnostics related to credentials are not printed in that case.  If
   the diagnosis is less certain, the `diagnostic-routine` should
   return `0`.
-  
+
 - **is_install_type** *install_type* -- return a status of 0 if the
   name of the install type is recognized by this plugin, in which case
   this plugin will handle all future API calls.  If it does not
   recognize the name of this installation type, it should return 1.
-  
+
 - **machine_cidr** -- print the desired machine CIDR value.
 
 - **master** -- print any additional YAML that should be supplied in
   the `controlPlane` definition.  The YAML code will be indented
   appropriately.
-  
+
 - **platform** -- print any additional YAML that should be supplied in
   the `platform` definition.
-  
+
 - **worker** -- print any additional YAML that should be supplied in
   the `compute` definition.
-  
+
 - **postinstall** -- perform any additional steps that are needed
   after installation successfully completes.  This may include
   installation of e. g. extra DNS or routing beyond the normal `oc login`.
   It does not need to include creation of an ssh bastion.
-  
+
 - **replicas** *node-type* -- echo the number of replicas desired.
   *node-type* will be either `master` or `worker`.  This routine may
   call `cmdline_replicas *node-type* *default* to use the number of
   replicas requested on the command line, along with the desired
   platform-specific default.
-  
+
 - **set_option** *option* *value* -- set the specified option to the
   desired value.
-  
+
 - **setup** -- perform any necessary setup rasks prior to installation
   (e. g. cleaning additional caches beyond the standard, setting any
   top level variables to non-default values).
@@ -196,14 +199,106 @@ the form
 - **supports_bastion** -- return a status of 0 (normal return) if the
   platform supports a bastion ssh host, or 1 (failure return) if it
   does not.
-  
+
 - **validate** -- perform any platform-specific validation.  This
   routine may exit (by calling `fatal`) or warn (by calling `warn`)
   with an appropriate error message.
-  
+
+  A typical validation may involve validating the instance type used
+  in the installation.  See [Validating Instance
+  Types](#validating-instance-types) below.
+
+- **platform_help** *type* -- provide platform-specific help
+  information that will be appended to the help message.  Copy one of
+  the other help routines for starters.  An unknown *type* should be
+  ignored.
+
+  - **install_types** -- provide a list of install types supported by
+    the platform (e. g. cloud provider zones).  Conventionally, the
+    first line is flush to the left and indicates the default; other
+    supported installation types are indented two spaces.
+
+  - **default_domain** -- provide the default installation domain to
+    be used.
+
+  - **options** -- provide text with a help message for
+    platform-specific options registered via `register-options`.
+
 If the dispatch function is called with an operation that it does not
 know about, it may call `dispatch_unknown <platform> <args>` to notify
 that it was called invalidly (and that probably the platform needs to
 be fixed).  This should only be done if it is called with an argument
 outside of the list above; operations that it knows about but simply
 doesn't so anything with should simply be ignored.
+
+### Validating Instance Types
+
+Cloud providers typically offer a variety of machine instance types
+with differing amounts of memory, CPU, storage, network bandwidth,
+etc.  Validating these instance types up front saves considerable
+time.  Validation failure is considered to be a soft error; the user
+may continue, but is warned that the chosen instance type is not known
+to be valid.  This allows the user to specify e. g. a new instance
+type that hasn't been added to the validation list yet.
+
+If the platform validation function wishes to validate the instance
+type, it should call
+
+```
+validate_instance_type "$worker_type" $master_type" <platform> <option_to_use> <instance_splitter> [instance names...]
+```
+
+The arguments to this function are:
+
+- **$worker_type** is the worker type specified on the command line;
+  normally it should be passed literally as `"$worker_type"`
+
+- **$master_type** is the master type specified on the command line;
+  normally it should be passed literally as `"$master_type"`
+
+- **platform** is the name of the platform that should be presented in
+  a help message (which may be different, or capitalized differently,
+  from the defined platform name)
+
+- **option_to_use** is the name of the option to use if the user wants
+  to get a list of known valid instance types.  Assuming that
+  `option_to_use` is `master_type`, the help will suggest specifying
+  `--master_type=list` for a short list of instance types, or
+  `--master_type=list-all` for the full list.  `master_type` is
+  usually fine to use here.
+
+- **instance_splitter** is the name of a shell function that splits
+  each instance name into a type name and instance size or similar
+  (subtype).  It should print two lines, the first being the name of
+  the type and the second being the instance size/subtype.  The
+  function should do the splitting appropriately for the cloud
+  provider's nomenclature.  For example, for AWS `m5.xlarge` would be
+  split into
+
+  ```
+  m5
+  xlarge
+  ```
+- **instance names** (all other arguements on the command line) is a
+  list of known instance names.  Instance type names are used to
+  determine where to split lines, so all instances of a given type
+  should be grouped together.  There are some special names that may
+  be provided for grouping; all of these should be prefixed with a
+  space:
+
+  - **" X.Family" is the name of a broader family of instance types,
+    e. g. general purpose, compute optimized, etc.  If the user
+    specifies `list`, only the first family in the lists's members are
+    printed; if the user specifes `list-all`, all instance types are
+    printed.
+
+  - **" Y.Instance Type" is the name of a particular instance that
+    should be treated as its own family (not split) and always printed
+    at the left on its own line.
+
+  If the type name is a single space, the family name is treated as
+  being empty and is not printed.
+
+If the validator function recognizes the type name but not the
+instance size name, it will list the known instance sizes as
+suggestions.
