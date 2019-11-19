@@ -1035,6 +1035,13 @@ function run_install() {
 	install_dir=$cleanup_only_dir
     fi
 
+    if (( clean_install_cache )) ; then
+	echo "Cleaning installer cache"
+	[[ -d $HOME/.cache/openshift-installer ]] && rm -rf "$HOME/.cache/openshift-installer"
+	# Old-style name
+	[[ -d $HOME/.cache/openshift-install ]] && rm -rf "$HOME/.cache/openshift-install"
+    fi
+
     # We will need the installer even in cleanup-only mode,
     # in order to clean up the cluster.
     local -i rebuild_installer=0
