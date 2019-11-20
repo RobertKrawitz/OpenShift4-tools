@@ -22,7 +22,61 @@ add_platform _____libvirt_dispatch
 
 declare -ig _____libvirt_created_proxy=0
 declare -ig _____libvirt_force_standard_installer=0
+declare -ig _____libvirt_found_api_up=0
 register_options libvirt_std_install
+
+function _____libvirt_host_disk_space() {
+    df /var/lib/libvirt/openshift-images/ | tail -1 |awk '{print $4}'
+}
+
+function _____libvirt_domainname() {
+    echo "$OPENSHIFT_INSTALL_CLUSTER_NAME.$OPENSHIFT_INSTALL_BASE_DOMAIN"
+}
+
+function _____libvirt_apiserver_on_localhost() {
+    local host
+    local has
+    local address
+    local ipaddr
+    while read -r host has address ipaddr ; do
+	if [[ $ipaddr = 127.0.0.1 ]] ; then
+	    return 0
+	fi
+    done <<< "$(host "api.$(_____libvirt_domainname)")"
+    return 1
+}
+
+function _____libvirt_apiserver_in_etc_hosts() {
+    grep -q "^127.0.0.1[ 	]*api.$(_____libvirt_domainname)" /etc/hosts
+}
+
+function _____libvirt_validate() {
+    local -i space=$(_____libvirt_host_disk_space)
+    space=$((space / 1024 / 1024))
+    if (( space < 20 )) ; then
+	cat <<EOF
+*** WARNING: your host image storage (/var/lib/libvirt/openshift-images)
+*** has only $space GiB available.  Recommend a bare minimum of 20 GiB
+*** and preferably 65 GiB.
+
+EOF
+    elif (( space < 65 )) ; then
+	cat <<EOF
+*** Note: your host image storage (/var/lib/libvirt/openshift-images)
+*** has only $space GiB available.  Recommend at least 65 GiB available.
+
+EOF
+    fi
+    if _____libvirt_apiserver_in_etc_hosts ; then
+	cat <<EOF
+*** WARNING: the apiserver is on localhost (127.0.0.1).
+*** This is assigned in /etc/hosts, probably because older versions of
+*** the installer did not set up DNS correctly.  This will cause your
+*** installation to fail.  Please remove this entry.
+
+EOF
+    fi
+}
 
 function _____libvirt_find_pool() {
     local found_pool=
@@ -232,25 +286,25 @@ function _____libvirt_print_diagnostic() {
     case "$1" in
 	_____libvirt_api_plugin_incompatibility_detected)
 	    cat <<'EOF'
-* Error message suggests a stray 'terraform-provider-libvirt' binary.
-  Please remove all files of that name from your home directory and
+* [libvirt] Error message suggests a stray 'terraform-provider-libvirt'
+  binary. Please remove all files of that name from your home directory and
   try again.
 
 EOF
 	    ;;
 	_____libvirt_no_platform)
 	    cat <<'EOF'
-* The installer version you are using does not support libvirt.
-  Please ensure that you are using the local installer; also
-  use --rebuild if necessary to ensure that your local version
-  is built correctly.
+* [libvirt] The installer version you are using does not support libvirt.
+  Please ensure that you are using the local installer; also use
+  --rebuild if necessary to ensure that your local version is built
+  correctly.
 
 EOF
 	    return 1
 	    ;;
 	_____libvirt_socket_fail)
 	    cat <<'EOF'
-* The installer is unable to talk to the libvirt daemon, so it
+* [libvirt] The installer is unable to talk to the libvirt daemon, so it
   cannot create infrastructure:
 
   + Ensure that the lines
@@ -279,6 +333,43 @@ EOF
 EOF
 	    return 1
 	    ;;
+	_____libvirt_bootstrap_fail)
+	    local -i space=$(_____libvirt_host_disk_space)
+	    # Arbitrary, but this probably indicates that we're at least very
+	    # low on disk apce"
+	    if (( space < 131072 )) ; then
+		cat <<EOF
+* [libvirt] Your libvirt storage on /var/lib/libvirt/openshift-images/
+  is low on disk space ($space MiB) or full.
+
+  Please ensure that you have at least 65 GB of free disk space.
+
+EOF
+	    fi
+	    if ((! _____libvirt_found_api_up )) ; then
+		cat <<EOF
+* [libvirt] The apiserver did not come up.
+
+EOF
+	    fi
+	    if _____libvirt_api_on_localhost ; then
+		cat <<EOF
+* [libvirt] The apiserver host (api.$(_____libvirt_domainname))
+  has address 127.0.0.1 assigned to it.
+
+EOF
+
+		if _____libvirt_apiserver_in_etc_hosts ; then
+		    cat <<EOF
+  This is assigned in /etc/hosts, probably because older versions of the
+  installer did not set up DNS correctly.  Please remove this entry.
+
+EOF
+		fi
+	    # There could be other problems also.
+	    return 0
+	    fi
+	    ;;
     esac
 
 }
@@ -293,12 +384,19 @@ function _____libvirt_diagnose() {
 	    ;;
 	*"unable to connect to server at '192.168.122.1:16509"*)
 	    set_diagnostic _____libvirt_socket_fail _____libvirt_print_diagnostic
+	    ;;
+	*"context deadline exceeded"*)
+	    set_diagnostic _____libvirt_bootstrap_fail _____libvirt_print_diagnostic
+	    ;;
+	*"API v*up")
+	    _____libvirt_found_api_up=1
+	    ;;
     esac
 }
 
 function _____libvirt_set_option() {
     local option=$1
-    local value=$2
+    # local value=$2
     case "$option" in
 	libvirt_std_install) _____libvirt_force_standard_installer=1 ;;
 	*)              fatal "Unknown option $option in libvirt platform" ;;
@@ -323,7 +421,7 @@ function _____libvirt_dispatch() {
 	set_option)	      libvirt_set_option "$@"			;;
 	setup)                _____libvirt_setup "$@"			;;
 	supports_bastion)     false					;;
-	validate)             :						;;
+	validate)             _____libvirt_validate "$@"		;;
 	worker)               :						;;
 	*)                    dispatch_unknown libvirt "$@"		;;
     esac

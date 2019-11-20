@@ -201,8 +201,8 @@ the form
   does not.
 
 - **validate** -- perform any platform-specific validation.  This
-  routine may exit (by calling `fatal`) or warn (by calling `warn`)
-  with an appropriate error message.
+  routine may exit (by calling `fatal`) with an appropriate error
+  message.
 
   A typical validation may involve validating the instance type used
   in the installation.  See [Validating Instance

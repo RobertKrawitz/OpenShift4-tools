@@ -688,7 +688,7 @@ function run_shell() {
 
 function warn_authentication_failure() {
 cat <<\EOF
-* You need to download your pull secrets.
+* [auth] You need to download your pull secrets.
 
   Visit https://try.openshift.com and log in.  Click on Create
   Cluster/Self-Installed Cluster
@@ -696,13 +696,13 @@ cat <<\EOF
   appropriate cloud platform.  From there, select User-Provisioned
   Infrastructure.  Download your pull secret and place it in ~/Downloads.
 
-* You need an appropriate quay.io credential.
+* [auth] You need an appropriate quay.io credential.
 
   Get the required key from
   https://access.redhat.com/solutions/3533201.  Add the auth for
   quay.io to your ~/.docker/config.json and ~/Downloads/pull-secret.
 
-* You need to oc login (or periodically refresh your login).  All
+* [auth] You need to oc login (or periodically refresh your login).  All
   three steps must be performed.  Not doing this can lead to very
   strange errors; see https://bugzilla.redhat.com/show_bug.cgi?id=1647479.
 
@@ -717,7 +717,7 @@ cat <<\EOF
     ~/Downloads/pull-secret.  In particular, the secret for
     registry.svc.ci.openshift.org will change.
 
-* Ensure that you have correct credentials for your cloud platform,
+* [auth] Ensure that you have correct credentials for your cloud platform,
   as appropriate.
 EOF
 }

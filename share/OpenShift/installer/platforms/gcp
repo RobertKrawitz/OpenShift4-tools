@@ -141,22 +141,22 @@ function _____gcp_print_diagnostic() {
     case "$1" in
 	_____gcp_existing_resource_detected)
 	    cat <<'EOF'
-* Error message suggests that the installer tried to create a resource
-  that already exists.  This resource needs to be tracked down and
-  cleaned up.
+* [gcp] Error message suggests that the installer tried to create a
+  resource that already exists.  This resource needs to be tracked down
+  and cleaned up.
 
 EOF
 	    ;;
 	_____gcp_insufficient_resources)
 	    cat <<'EOF'
-* Error message suggests that the GCP region you selected does not have
-  enough instances or other resources of the specified type.
+* [gcp] Error message suggests that the GCP region you selected does not
+  have enough instances or other resources of the specified type.
 EOF
 	    ;;
 	_____gcp_bad_machine_type)
 	    cat <<'EOF'
-* Error message suggests that the machine instance type you selected is
-  not valid/unavailable in the GCP region you selected.
+* [gcp] Error message suggests that the machine instance type you selected
+  is not valid/unavailable in the GCP region you selected.
 EOF
 
     esac
