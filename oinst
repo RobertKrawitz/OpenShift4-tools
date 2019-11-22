@@ -329,9 +329,11 @@ function cmdline_replicas() {
 }
 
 function dispatch_unknown() {
-    local platform=$1
-    shift
-    fatal "Unexpected command ($platform): $*"
+    # Don't force platforms to implement every new item
+    :
+#    local platform=$1
+#    shift
+#    fatal "Unexpected command ($platform): $*"
 }
 
 # Not all platforms support the standard bastion host.
@@ -1084,6 +1086,7 @@ function run_install() {
     # Diagnostic processing must occur within the top level shell
     # so we can record any diagnostics that fire
     shopt -s lastpipe
+    platform_dispatch preinstall
     "${install}" $loglevel "--dir=$srcdir/$install_dir" create cluster </dev/null 2>&1 | timestamp
 
     local install_status=${PIPESTATUS[0]}
