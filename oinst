@@ -1133,7 +1133,12 @@ function read_profile() {
 }
 
 function process_option() {
-    options_to_process+=("$1")
+    case "$1" in
+	help-all*) help_extended	        ;;
+	help*)     help			        ;;
+	verbose)   loglevel='--log-level=debug' ;;
+	*)         options_to_process+=("$1")   ;;
+    esac
 }
 
 function register_options() {
@@ -1197,7 +1202,9 @@ function process_extended_options() {
 	# Simply testing for empty optvalue is wrong; that would not
 	# allow for an empty value
 	if [[ $option != *'='* ]] ; then
-	    if [[ $optname = "no_"* ]] ; then
+	    if [[ $optname = "no_"* || $optname = "dont_"* ]] ; then
+		optname=${optname#dont_}
+		optname=${optname#no_}
 		optvalue=0
 	    else
 		optvalue=1
