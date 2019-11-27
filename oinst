@@ -118,6 +118,7 @@ declare -i do_login=1
 declare -i do_override=0
 declare -i force_local_tools=0
 declare -i force_postinstall=0
+declare -i generate_manifest=0
 declare -i install_stage=0
 declare -i login_succeeded=0
 declare -i master_count=0
@@ -134,6 +135,7 @@ declare api_version=v1
 declare cleanup_only_dir=
 declare config_file=
 declare console_route=
+declare edit_manifest=
 declare ext_installer=
 declare -r -i default_kubechart_port=3000
 declare kubechart_port=
@@ -226,8 +228,14 @@ $(do_platforms platform_help options |indent -6)
         create_bastion      Create a bastion ssh host if supported
                             by platform (default 1).
         do_login            Login to the console (default=1)
+        edit_manifest=func  Edit manifest files using supplied function.
+                            Only relevant if --generate-manifest is in use.
+                            If this is supplied but empty, spawn an
+                            interactive shell.
         ext_installer       Use the specified command to install OpenShift.
         force_postinstall   Always run the postinstall even if setup fails.
+        generate_manifest   Generate the manifest files explicitly (default 0,
+                            unless overridden by platform)
         install_domain      Use the specified domain name.
 $(do_platforms platform_help default_domain | indent -28)
         install_version     Install the specified image version.  Default
@@ -326,6 +334,10 @@ function cmdline_replicas() {
     esac
     (( actual == 0 )) && actual=$default
     echo "$actual"
+}
+
+function run_installer() {
+    "${install}" $loglevel "--dir=$srcdir/$install_dir" "$@"
 }
 
 function dispatch_unknown() {
@@ -565,7 +577,7 @@ function cleanup() {
 		    wait %run_oschart
 		fi
 		exec 2>&3 3>&-
-		"${install}" $loglevel "--dir=$srcdir/$install_dir" destroy cluster 2>&1 |timestamp
+		run_installer destroy cluster 2>&1 |timestamp
 		if (( PIPESTATUS[0] == 0 || clean_install_cache)) ; then
 		    [[ -n $srcdir && -n $install_dir && -d "$srcdir/$install_dir" ]] && rm -rf "${srcdir:?}/${install_dir:?}"
 		else
@@ -726,6 +738,7 @@ EOF
 
 function warn_installer_fail() {
     cat <<\EOF
+
 Could not extract installer from image.  Common reasons:
 
 * You've specified an installer version that does not exist (even if
@@ -866,7 +879,7 @@ EOF
 		;;
 	    '!')
 		echo "Spawning shell..."
-		"$SHELL" -i
+		(cd "$srcdir/$install_dir" && "$SHELL" -i)
 		;;
 	    e|E|edit|EDIT|Edit)
 		echo "Editing config..."
@@ -1051,7 +1064,7 @@ function run_install() {
     if [[ -z $ext_installer ]] ; then
 	cd $srcdir || fatal "Can't cd to $srcdir"
 	local -r cur_rev=$(git rev-parse @)
-	[[ ! -x $install || $rebuild -gt 0 || $(${install} version) =~ $cur_rev ]] && rebuild_installer=1
+	[[ ! -x $install || $rebuild -gt 0 || $("${install}" version| grep 'built from commit' |awk '{print $NF}') != $cur_rev ]] && rebuild_installer=1
     else
 	srcdir=.
     fi
@@ -1075,6 +1088,20 @@ function run_install() {
     OPENSHIFT_INSTALL_CONFIG="$(clean_secret < "$srcdir/$install_dir/install-config.yaml")"
     export OPENSHIFT_INSTALL_CONFIG
     confirm_install || exit 1
+    (cd "$srcdir/$install_dir"; tar cf - --exclude=saved_artifacts * |(mkdir -p saved_artifacts; cd saved_artifacts; tar xf -))
+    # Running create manifests blows away the install config.
+    if (( generate_manifest )) ; then
+	run_installer create manifests </dev/null 2>&1 | timestamp
+	if [[ $edit_manifest = "1" ]] ; then
+	    echo
+	    echo "*** Spawning shell to edit manifests"
+	    (cd "$srcdir/$install_dir" && "$SHELL" -i) || fatal "Edit manifest not confirmed"
+	elif [[ -n "$edit_manifest" && $edit_manifest != "0" ]] ; then
+	    (cd "$srcdir/$install_dir" && "$edit_manifest") || fatal "Edit manifest not confirmed"
+	fi
+    fi
+    platform_dispatch preinstall
+    (cd "$srcdir/$install_dir"; tar cf - --exclude=saved_artifacts * |(cd saved_artifacts; tar xf -))
 
     install_stage=2
     # Start kubechart/oschart (if needed) prior to running the installer
@@ -1086,8 +1113,7 @@ function run_install() {
     # Diagnostic processing must occur within the top level shell
     # so we can record any diagnostics that fire
     shopt -s lastpipe
-    platform_dispatch preinstall
-    "${install}" $loglevel "--dir=$srcdir/$install_dir" create cluster </dev/null 2>&1 | timestamp
+    run_installer create cluster </dev/null 2>&1 | timestamp
 
     local install_status=${PIPESTATUS[0]}
     eval "$restorepipe"
@@ -1337,8 +1363,14 @@ if [[ -n $cleanup_only_dir ]] ; then
 	exit 0
     fi
 elif [[ -d $install_dir && $install_dir != . && $install_dir != .. &&
-	    -n $(ls "$install_dir") && $overwrite -eq 0 ]] ; then
-    fatal "Install directory $install_dir already present; will not overwrite without -O"
+	    -n $(ls "$install_dir") ]] ; then
+    if (( overwrite )) ; then
+	echo "Removing $install_dir" 1>&2
+	sleep 2
+	rm -rf "$install_dir"
+    else
+	fatal "Install directory $install_dir already present; will not overwrite without -O"
+    fi
 fi
 
 run_install

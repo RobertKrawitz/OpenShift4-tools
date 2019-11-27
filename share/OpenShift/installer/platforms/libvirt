@@ -199,6 +199,7 @@ function _____libvirt_setup() {
 	ext_installer=
 	echo "*** Using local installer with libvirt"
     fi
+    generate_manifest=1
 }
 
 function _____libvirt_base_domain() {
@@ -320,14 +321,12 @@ function _____libvirt_cleanup() {
 }
 
 function _____libvirt_preinstall() {
-    echo "Creating manifest..."
-    "${install}" $loglevel "--dir=$srcdir/$install_dir" create manifests </dev/null 2>&1 | timestamp
-    echo "Removing cluster name from cluster-ingress-02-config.yml"
-    echo ">>>"
-    cat "$srcdir/$install_dir/manifests/cluster-ingress-02-config.yml"
-    sed -i "s/${OPENSHIFT_INSTALL_CLUSTER_NAME}\.//" "$srcdir/$install_dir/manifests/cluster-ingress-02-config.yml"
-    echo "<<<"
-    cat "$srcdir/$install_dir/manifests/cluster-ingress-02-config.yml"
+    # Don't use edit_manifest here to allow user another shot at it.
+    if [[ -f "$srcdir/$install_dir/manifests/cluster-ingress-02-config.yml" ]] ; then
+	sed -i "s/${OPENSHIFT_INSTALL_CLUSTER_NAME}\.//" "$srcdir/$install_dir/manifests/cluster-ingress-02-config.yml"
+    else
+	echo "*** Warning: can't find cluster ingress manifest file $srcdir/$install_dir/manifests/cluster-ingress-02-config.yml"
+    fi
 }
 
 function _____libvirt_postinstall() {
