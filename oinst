@@ -128,6 +128,7 @@ declare -i query=0
 declare -i rebuild=0
 declare -i run_kubechart=0
 declare -i run_oschart=0
+declare -i save_artifacts=0
 declare -i wait_for_complete=1
 declare -i worker_count=0
 declare -i host_prefix_bits=23
@@ -254,6 +255,7 @@ $(do_platforms platform_help default_domain | indent -28)
         repo                Use the specified repo (default $default_repo_base).
         run_command         Run the specified command rather than an
                             interactive shell on completion of installation.
+        save_artifacts      Preserve install config, manifests, etc.
         wait_for_complete   Wait for console to come online (default=1)
 
     The following extended options are normally not recommended:
@@ -1064,7 +1066,7 @@ function run_install() {
     if [[ -z $ext_installer ]] ; then
 	cd $srcdir || fatal "Can't cd to $srcdir"
 	local -r cur_rev=$(git rev-parse @)
-	[[ ! -x $install || $rebuild -gt 0 || $("${install}" version| grep 'built from commit' |awk '{print $NF}') != $cur_rev ]] && rebuild_installer=1
+	[[ ! -x $install || $rebuild -gt 0 || $("${install}" version| grep 'built from commit' |awk '{print $NF}') != "$cur_rev" ]] && rebuild_installer=1
     else
 	srcdir=.
     fi
@@ -1088,7 +1090,9 @@ function run_install() {
     OPENSHIFT_INSTALL_CONFIG="$(clean_secret < "$srcdir/$install_dir/install-config.yaml")"
     export OPENSHIFT_INSTALL_CONFIG
     confirm_install || exit 1
-    (cd "$srcdir/$install_dir"; tar cf - --exclude=saved_artifacts * |(mkdir -p saved_artifacts; cd saved_artifacts; tar xf -))
+    if (( save_artifacts )) ; then
+	(cd "$srcdir/$install_dir" || exit; tar cf - --exclude=saved_artifacts -- * |(umask 77; mkdir -p saved_artifacts; cd saved_artifacts || exit; tar xf -))
+    fi
     # Running create manifests blows away the install config.
     if (( generate_manifest )) ; then
 	run_installer create manifests </dev/null 2>&1 | timestamp
@@ -1101,7 +1105,9 @@ function run_install() {
 	fi
     fi
     platform_dispatch preinstall
-    (cd "$srcdir/$install_dir"; tar cf - --exclude=saved_artifacts * |(cd saved_artifacts; tar xf -))
+    if (( save_artifacts )) ; then
+	(cd "$srcdir/$install_dir" || exit; tar cf - --exclude=saved_artifacts -- * |(umask 77; cd saved_artifacts || exit; tar xf -))
+    fi
 
     install_stage=2
     # Start kubechart/oschart (if needed) prior to running the installer
