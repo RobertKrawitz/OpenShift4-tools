@@ -116,6 +116,7 @@ declare -i created_oschart=0
 declare -i do_cleanup=1
 declare -i do_login=1
 declare -i do_override=0
+declare -i download_oc=0
 declare -i force_local_tools=0
 declare -i force_postinstall=0
 declare -i generate_manifest=0
@@ -229,6 +230,7 @@ $(do_platforms platform_help options |indent -6)
         create_bastion      Create a bastion ssh host if supported
                             by platform (default 1).
         do_login            Login to the console (default=1)
+        download_oc         Download the matching oc binary (default=0)
         edit_manifest=func  Edit manifest files using supplied function.
                             Only relevant if --generate-manifest is in use.
                             If this is supplied but empty, spawn an
@@ -1026,6 +1028,15 @@ function run_postinstall() {
 	fi
 	echo "login: kubeadmin / $OPENSHIFT_INSTALL_PASSWORD"
     fi
+    if (( download_oc )) ; then
+	local download_route
+	download_route="$(${OC} get route -n openshift-console -o "custom-columns=HOST:.status.ingress[0].host" --no-headers=true |grep ^downloads)"
+	[[ -n "$download_route" ]] &&
+	    mkdir "$srcdir/$install_dir/bin" &&
+	    curl --compressed -k "https://${download_route}/amd64/linux/oc" -o "$srcdir/$install_dir/bin/oc" &&
+	    chmod +x "$srcdir/$install_dir/bin/oc" &&
+	    PATH="$srcdir/$install_dir/bin:$PATH"
+    fi
     # shellcheck disable=SC2155
     export OPENSHIFT_INSTALL_NODE_IPS=$("${___topdir:-}"get-nodes)
     # shellcheck disable=SC2155
@@ -1091,10 +1102,10 @@ function run_install() {
     export OPENSHIFT_INSTALL_CONFIG
     confirm_install || exit 1
     if (( save_artifacts )) ; then
-	(cd "$srcdir/$install_dir" || exit; tar cf - --exclude=saved_artifacts -- * |(umask 77; mkdir -p saved_artifacts; cd saved_artifacts || exit; tar xf -))
+	(cd "$srcdir/$install_dir" || exit; tar cf - --exclude=saved-artifacts --exclude='openshift-*' --exclude=oc --exclude=kubectl -- * |(umask 77; mkdir -p saved_artifacts; cd saved_artifacts || exit; tar xf -))
     fi
     # Running create manifests blows away the install config.
-    if (( generate_manifest )) ; then
+    if (( edit_manifest || generate_manifest )) ; then
 	run_installer create manifests </dev/null 2>&1 | timestamp
 	if [[ $edit_manifest = "1" ]] ; then
 	    echo
@@ -1106,7 +1117,7 @@ function run_install() {
     fi
     platform_dispatch preinstall
     if (( save_artifacts )) ; then
-	(cd "$srcdir/$install_dir" || exit; tar cf - --exclude=saved_artifacts -- * |(umask 77; cd saved_artifacts || exit; tar xf -))
+	(cd "$srcdir/$install_dir" || exit; tar cf - --exclude=saved_artifacts --exclude='openshift-*' --exclude=oc --exclude=kubectl -- * |(umask 77; cd saved_artifacts || exit; tar xf -))
     fi
 
     install_stage=2
