@@ -491,7 +491,7 @@ EOF
 		    ;;
 	    esac
 
-	    if _____libvirt_api_on_localhost ; then
+	    if _____libvirt_apiserver_on_localhost ; then
 		cat <<EOF
 * [libvirt] The apiserver host (api.$(_____libvirt_domainname))
   has address 127.0.0.1 assigned to it.
