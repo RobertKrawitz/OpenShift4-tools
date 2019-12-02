@@ -506,7 +506,13 @@ EOF
 EOF
 		fi
 	    # There could be other problems also in some cases.
-	    return $retval
+		cat <<EOF
+
+* [libvirt] Ensure that you have all of the required libvirt packages
+  installed, including 'libvirt-daemon-qemu' and 'libvirt-devel'.
+
+EOF
+		return $retval
 	    fi
 	    ;;
     esac
