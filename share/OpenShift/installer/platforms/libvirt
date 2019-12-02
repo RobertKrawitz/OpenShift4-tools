@@ -28,7 +28,11 @@ declare -rg _____libvirt_apps_ipaddr=192.168.126.51
 register_options libvirt_std_install
 
 function _____libvirt_host_disk_space() {
-    df /var/lib/libvirt/openshift-images/ | tail -1 |awk '{print $4}'
+    if [[ -d /var/lib/libvirt/openshift-images ]] ; then
+	df /var/lib/libvirt/openshift-images/ | tail -1 |awk '{print $4}'
+    else
+	df /var/lib/libvirt/ | tail -1 |awk '{print $4}'
+    fi
 }
 
 function _____libvirt_domainname() {
