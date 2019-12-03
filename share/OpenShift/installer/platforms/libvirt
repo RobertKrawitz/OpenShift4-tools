@@ -57,6 +57,11 @@ function _____libvirt_apiserver_in_etc_hosts() {
     grep -q "^127.0.0.1[ 	]*api.$(_____libvirt_domainname)" /etc/hosts
 }
 
+function _____libvirt_dnsmasq_not_in_nm_config() {
+    grep -q '^dns=dnsmasq' /etc/NetworkManager/NetworkManager.conf && return 1
+    return 0
+}
+
 function _____libvirt_find_dnsmasq() {
     local -a files=(/etc/NetworkManager/dnsmasq.d/*.conf)
     if [[ -z "${files[*]}" ]] ; then
@@ -108,7 +113,7 @@ EOF
 	    ;;
 	2|4)
 	    cat <<EOF
-*** WARNING: Please create a dnsmasq entry in 
+*** WARNING: Please create a dnsmasq entry in
 *** /etc/NetworkManager/dnsmasq.d/$OPENSHIFT_INSTALL_BASE_DOMAIN.conf
 *** containing the following:
 
@@ -152,6 +157,15 @@ EOF
 *** the installer did not set up DNS correctly.  This will cause your
 *** installation to fail.  Please remove this entry.
 
+EOF
+    fi
+    if _____libvirt_dnsmasq_not_in_nm_config ; then
+	cat <<EOF
+*** WARNING: /etc/NetworkManager/NetworkManager.conf needs to contain
+
+dns=dnsmasq
+
+*** Please edit this file and restart NetworkManager.
 EOF
     fi
 }
@@ -471,7 +485,7 @@ EOF
 		    ;;
 		2|4)
 		    cat <<EOF
-* [libvirt] Please create a dnsmasq entry in 
+* [libvirt] Please create a dnsmasq entry in
   /etc/NetworkManager/dnsmasq.d/$OPENSHIFT_INSTALL_BASE_DOMAIN.conf
   containing the following:
 
@@ -517,6 +531,15 @@ EOF
 
 EOF
 		return $retval
+	    fi
+	    if _____libvirt_dnsmasq_not_in_nm_config ; then
+		cat <<EOF
+* [libvirt] /etc/NetworkManager/NetworkManager.conf needs to contain
+
+dns=dnsmasq
+
+  Please update this file and restart NetworkManager.
+EOF
 	    fi
 	    ;;
 	_____libvirt_needgolang1_12_1)
