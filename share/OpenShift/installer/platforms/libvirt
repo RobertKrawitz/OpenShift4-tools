@@ -397,14 +397,18 @@ EOF
 	_____libvirt_socket_fail)
 	    cat <<'EOF'
 * [libvirt] The installer is unable to talk to the libvirt daemon, so it
-  cannot create infrastructure:
+  cannot create infrastructure.
 
   + Ensure that the lines
 
         listen_tls = 0
-        listen_tls = 1
+        listen_tcp = 1
+        auth_tcp = "none"
+        tcp_port = "16509"
 
     are present in /etc/libvirt/libvirtd.conf.
+
+    *** NOT TO BE CONFUSED WITH /etc/libvirt/libvirt.conf
 
   + Ensure that the line
 
@@ -515,6 +519,14 @@ EOF
 		return $retval
 	    fi
 	    ;;
+	_____libvirt_needgolang1_12_1)
+	    cat <<EOF
+
+* [libvirt] Ensure that you are using Go 1.12.1 or above.
+  See https://github.com/golang/go/issues/30586
+
+EOF
+	    ;;
     esac
 
 }
@@ -533,7 +545,10 @@ function _____libvirt_diagnose() {
 	*"context deadline exceeded"*)
 	    set_diagnostic _____libvirt_bootstrap_fail _____libvirt_print_diagnostic
 	    ;;
-	*"API v*up")
+	*"Unable to evaluate directory symlink"*)
+	    set_diagnostic _____libvirt_needgolang1_12_1 _____libvirt_print_diagnostic
+	    ;;
+	*"API v"*"up")
 	    _____libvirt_found_api_up=1
 	    ;;
     esac
