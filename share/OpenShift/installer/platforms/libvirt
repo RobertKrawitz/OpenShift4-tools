@@ -326,10 +326,10 @@ function _____libvirt_cleanup() {
 
 function _____libvirt_preinstall() {
     # Don't use edit_manifest here to allow user another shot at it.
-    if [[ -f "$srcdir/$install_dir/manifests/cluster-ingress-02-config.yml" ]] ; then
-	sed -i "s/${OPENSHIFT_INSTALL_CLUSTER_NAME}\.//" "$srcdir/$install_dir/manifests/cluster-ingress-02-config.yml"
+    if [[ -f "$install_dir/manifests/cluster-ingress-02-config.yml" ]] ; then
+	sed -i "s/${OPENSHIFT_INSTALL_CLUSTER_NAME}\.//" "$install_dir/manifests/cluster-ingress-02-config.yml"
     else
-	echo "*** Warning: can't find cluster ingress manifest file $srcdir/$install_dir/manifests/cluster-ingress-02-config.yml"
+	echo "*** Warning: can't find cluster ingress manifest file $install_dir/manifests/cluster-ingress-02-config.yml"
     fi
 }
 
