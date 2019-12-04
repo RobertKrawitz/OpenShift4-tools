@@ -955,52 +955,54 @@ function clean_secret() {
     return 0
 }
 
-function oc_login() {
-    local retry_limit=20
+function _try_oc_login() {
+    ${OC} login -u kubeadmin -p "${OPENSHIFT_INSTALL_PASSWORD:-}"
+}
+
+function _try_console() {
+    ${OC} get route -n openshift-console -o name |grep -q '/console$'
+}
+
+function waitfor() {
+    local tryfunc=$1
+    local message=$2
+    local fail_msg=${3:-$message failed.}
+    local -i retry_limit=${4:-20}
+    local -i sleep_interval=${5:-30}
     local try=0
     while (( try++ < retry_limit )) ; do
-	echo -n "Login (try $try/$retry_limit)..."
-	if ${OC} login -u kubeadmin -p "${OPENSHIFT_INSTALL_PASSWORD:-}" ; then
+	echo -n "$message (try $try/$retry_limit)..."
+	if $tryfunc ; then
 	    echo "success!"
 	    return 0
 	fi
 	echo "failed."
-	(( try < retry_limit )) && sleep 30
+	(( try < retry_limit )) && sleep "$sleep_interval"
     done
-    echo "Login failed."
+    echo "$fail_msg"
     return 1
 }
 
+function oc_login() {
+    waitfor _try_oc_login "Login"
+}
+
 function waitfor_console() {
-    local retry_limit=20
-    local try=0
-    while (( try++ <= retry_limit )) ; do
-	echo -n "Get console route (try $try/$retry_limit)..."
-	if ${OC} get route -n openshift-console -o name |grep -q '/console$' ; then
-	    echo "success!"
-	    return 0
-	fi
-	echo "failed."
-	(( try < retry_limit )) && sleep 30
-    done
-    echo "Unable to get console route."
-    return 1
+    waitfor _try_console "Get console route" "Unable to get console route."
 }
 
 function report_install_failure() {
     local diagnostic_id
-    local -i print_auth_message=1
+    local -i skip_auth_message=0
     cat <<'EOF'
 
 *** Installation failed ***
 
 EOF
     for diagnostic_id in "${!global_diagnostics[@]}" ; do
-	"${global_diagnostics[$diagnostic_id]}" "$diagnostic_id" || print_auth_message=0
+	"${global_diagnostics[$diagnostic_id]}" "$diagnostic_id" || skip_auth_message=1
     done
-    if (( print_auth_message )) ; then
-	warn_authentication_failure
-    fi
+    (( skip_auth_message )) || warn_authentication_failure
 }
 
 function run_postinstall() {
