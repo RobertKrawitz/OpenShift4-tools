@@ -93,8 +93,8 @@ declare install_dir=${OPENSHIFT_INSTALL_DIR:-$install_domain}
 declare install_version=latest_default
 declare pull_secret=${OPENSHIFT_INSTALL_PULL_SECRET_PATH:-$HOME/Downloads/pull-secret}
 declare pubkey_file=${OPENSHIFT_INSTALL_SSH_PUB_KEY_PATH:-$HOME/.ssh/id_rsa.pub}
-declare srcdir=${GOPATH:-$HOME/go}/src/github.com/openshift/installer
-declare install=$srcdir/bin/openshift-install
+declare installer_src=${GOPATH:-$HOME/go}/src/github.com/openshift/installer
+declare install=$installer_src/bin/openshift-install
 declare release_channel=
 declare repo=$default_repo_base
 declare ____current_platform
@@ -166,6 +166,8 @@ $(do_platforms platform_help install_types | indent 7)
                             may be a JSON file or shell code.
        --option[=value]
        -X option[=value]    Set the specified extended option.
+                            Short options listed with a KEY can be
+                            invoked as --KEY[=value].
        -H                   Print list of additional extended command
                             line options.
 
@@ -244,8 +246,10 @@ $(do_platforms platform_help default_domain | indent -28)
         install_version     Install the specified image version.  Default
                             is to use the latest version.
                             Use empty value to install from local workspace
-                            (\$GOPATH/src/github.com/openshift/installer)
+                            (installer_src, default ${installer_src}).
         install_type        Specify the install type, as described above.
+        installer_src       Specify the source directory for the installer.
+                            Default is ${installer_src}.
         kubechart_port      Use the specified port for kubechart.  oschart
                             runs at port+1.  Implies -b.  Default is ${default_kubechart_port}.
         pubkey_file         Specify the path to the desired public key
@@ -341,7 +345,7 @@ function cmdline_replicas() {
 }
 
 function run_installer() {
-    "${install}" $loglevel "--dir=$srcdir/$install_dir" "$@"
+    "${install}" $loglevel "--dir=$installer_src/$install_dir" "$@"
 }
 
 function dispatch_unknown() {
@@ -565,7 +569,7 @@ function cleanup() {
     case "$install_stage" in
 	0) ;;
 	1)
-	    [[ -n $srcdir && -n $install_dir && -d "$srcdir/$install_dir" ]] && rm -rf "${srcdir:?}/${install_dir:?}"
+	    [[ -n $installer_src && -n $install_dir && -d "$installer_src/$install_dir" ]] && rm -rf "${installer_src:?}/${install_dir:?}"
 	    ;;
 	*)
 	    echo "Cleaning up, please do not interrupt"
@@ -583,9 +587,9 @@ function cleanup() {
 		exec 2>&3 3>&-
 		run_installer destroy cluster 2>&1 |timestamp
 		if (( PIPESTATUS[0] == 0 || clean_install_cache)) ; then
-		    [[ -n $srcdir && -n $install_dir && -d "$srcdir/$install_dir" ]] && rm -rf "${srcdir:?}/${install_dir:?}"
+		    [[ -n $installer_src && -n $install_dir && -d "$installer_src/$install_dir" ]] && rm -rf "${installer_src:?}/${install_dir:?}"
 		else
-		    echo "$install --dir=$srcdir/$install_dir destroy cluster failed, not removing install dir!"
+		    echo "$install --dir=$installer_src/$install_dir destroy cluster failed, not removing install dir!"
 		fi
 		platform_dispatch cleanup
 	    else
@@ -593,7 +597,7 @@ function cleanup() {
 *** Not cleaning up!
 *** When you are finished, run:
 
-"${install}" $loglevel "--dir=$srcdir/$install_dir" destroy cluster
+"${install}" $loglevel "--dir=$installer_src/$install_dir" destroy cluster
 EOF
 	    fi
 	    ;;
@@ -821,7 +825,7 @@ function installer_setup() {
     [[ -z $image ]] && fail_find_image "$install_version"
     if (( ! force_local_tools )) ; then
 	echo "Using installer from image ${image} ($ext_installer)" 1>&2
-	srcdir=.
+	installer_src=.
 	(do_installer_setup "$install_dir" "$image" "$install_version") || exit 1
 	ext_installer="${install_dir}/openshift-install"
 	install="$ext_installer"
@@ -858,12 +862,12 @@ function confirm_install() {
 About to run installer:
 
 Installer:         $install
-Sourcedir:         $srcdir$([[ $srcdir != /* ]] && echo " ($(cd "$srcdir" && pwd))")
-Install dir:       $srcdir/$install_dir
+Sourcedir:         $installer_src$([[ $installer_src != /* ]] && echo " ($(cd "$installer_src" && pwd))")
+Install dir:       $installer_src/$install_dir
 Current dir:       $(pwd)
 Install version:   $install_version
 Override:          ${OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE:-}
-Install command:   ${install} $loglevel --dir="$srcdir/$install_dir" create cluster
+Install command:   ${install} $loglevel --dir="$installer_src/$install_dir" create cluster
 Configuration:
 
 $OPENSHIFT_INSTALL_CONFIG
@@ -883,11 +887,11 @@ EOF
 		;;
 	    '!')
 		echo "Spawning shell..."
-		(cd "$srcdir/$install_dir" && "$SHELL" -i)
+		(cd "$installer_src/$install_dir" && "$SHELL" -i)
 		;;
 	    e|E|edit|EDIT|Edit)
 		echo "Editing config..."
-		${EDITOR:-vi} "$srcdir/$install_dir/install-config.yaml"
+		${EDITOR:-vi} "$installer_src/$install_dir/install-config.yaml"
 		;;
 	    V)
 		env
@@ -1000,9 +1004,9 @@ EOF
 }
 
 function run_postinstall() {
-    if [[ -f "${srcdir}/${install_dir}/auth/kubeadmin-password" ]] ; then
+    if [[ -f "${installer_src}/${install_dir}/auth/kubeadmin-password" ]] ; then
 	# shellcheck disable=SC2155
-	export OPENSHIFT_INSTALL_PASSWORD=$(< "${srcdir}/${install_dir}/auth/kubeadmin-password")
+	export OPENSHIFT_INSTALL_PASSWORD=$(< "${installer_src}/${install_dir}/auth/kubeadmin-password")
 	if (( ! do_login )) ; then
 	    echo "oc login skipped"
 	elif oc_login ; then
@@ -1032,10 +1036,10 @@ function run_postinstall() {
 	local download_route
 	download_route="$(${OC} get route -n openshift-console -o "custom-columns=HOST:.status.ingress[0].host" --no-headers=true |grep ^downloads)"
 	[[ -n "$download_route" ]] &&
-	    mkdir "$srcdir/$install_dir/bin" &&
-	    curl --compressed -k "https://${download_route}/amd64/linux/oc" -o "$srcdir/$install_dir/bin/oc" &&
-	    chmod +x "$srcdir/$install_dir/bin/oc" &&
-	    PATH="$srcdir/$install_dir/bin:$PATH"
+	    mkdir "$installer_src/$install_dir/bin" &&
+	    curl --compressed -k "https://${download_route}/amd64/linux/oc" -o "$installer_src/$install_dir/bin/oc" &&
+	    chmod +x "$installer_src/$install_dir/bin/oc" &&
+	    PATH="$installer_src/$install_dir/bin:$PATH"
     fi
     # shellcheck disable=SC2155
     export OPENSHIFT_INSTALL_NODE_IPS=$("${___topdir:-}"get-nodes)
@@ -1048,14 +1052,14 @@ function run_postinstall() {
 function run_install() {
     validate_environment
     if [[ -z $cleanup_only_dir ]] ; then
-	[[ -n $install_version && ${force_local_tools:-0} -eq 0 ]] && srcdir=.
-	mkdir -p "$srcdir/$install_dir"
+	[[ -n $install_version && ${force_local_tools:-0} -eq 0 ]] && installer_src=.
+	mkdir -p "$installer_src/$install_dir"
 	[[ -n $install_version || $query -ne 0 ]] && installer_setup
 	if [[ -n $config_file ]] ; then
 	    [[ ! -r $config_file ]] && fatal "Cannot read config file $config_file"
-	    cp "$config_file" "$srcdir/$install_dir/install-config.yaml"
+	    cp "$config_file" "$installer_src/$install_dir/install-config.yaml"
 	else
-	    template > "$srcdir/$install_dir/install-config.yaml"
+	    template > "$installer_src/$install_dir/install-config.yaml"
 	fi
     else
 	do_cleanup=1
@@ -1075,11 +1079,11 @@ function run_install() {
     # in order to clean up the cluster.
     local -i rebuild_installer=0
     if [[ -z $ext_installer ]] ; then
-	cd $srcdir || fatal "Can't cd to $srcdir"
+	cd $installer_src || fatal "Can't cd to $installer_src"
 	local -r cur_rev=$(git rev-parse @)
 	[[ ! -x $install || $rebuild -gt 0 || $("${install}" version| grep 'built from commit' |awk '{print $NF}') != "$cur_rev" ]] && rebuild_installer=1
     else
-	srcdir=.
+	installer_src=.
     fi
 
     # Not platform-independent
@@ -1092,17 +1096,17 @@ function run_install() {
     [[ -z $cleanup_only_dir ]] || return
 
     # shellcheck disable=SC2155
-    export KUBECONFIG="$(cd $srcdir && echo "$(pwd)/$install_dir/auth/kubeconfig")"
+    export KUBECONFIG="$(cd $installer_src && echo "$(pwd)/$install_dir/auth/kubeconfig")"
 
     # shellcheck disable=SC2155
     local start=$(tsec)
 
     install_stage=1
-    OPENSHIFT_INSTALL_CONFIG="$(clean_secret < "$srcdir/$install_dir/install-config.yaml")"
+    OPENSHIFT_INSTALL_CONFIG="$(clean_secret < "$installer_src/$install_dir/install-config.yaml")"
     export OPENSHIFT_INSTALL_CONFIG
     confirm_install || exit 1
     if (( save_artifacts )) ; then
-	(cd "$srcdir/$install_dir" || exit; tar cf - --exclude=saved-artifacts --exclude='openshift-*' --exclude=oc --exclude=kubectl -- * |(umask 77; mkdir -p saved_artifacts; cd saved_artifacts || exit; tar xf -))
+	(cd "$installer_src/$install_dir" || exit; tar cf - --exclude=saved-artifacts --exclude='openshift-*' --exclude=oc --exclude=kubectl -- * |(umask 77; mkdir -p saved_artifacts; cd saved_artifacts || exit; tar xf -))
     fi
     # Running create manifests blows away the install config.
     if (( edit_manifest || generate_manifest )) ; then
@@ -1110,14 +1114,14 @@ function run_install() {
 	if [[ $edit_manifest = "1" ]] ; then
 	    echo
 	    echo "*** Spawning shell to edit manifests"
-	    (cd "$srcdir/$install_dir" && "$SHELL" -i) || fatal "Edit manifest not confirmed"
+	    (cd "$installer_src/$install_dir" && "$SHELL" -i) || fatal "Edit manifest not confirmed"
 	elif [[ -n "$edit_manifest" && $edit_manifest != "0" ]] ; then
-	    (cd "$srcdir/$install_dir" && "$edit_manifest") || fatal "Edit manifest not confirmed"
+	    (cd "$installer_src/$install_dir" && "$edit_manifest") || fatal "Edit manifest not confirmed"
 	fi
     fi
     platform_dispatch preinstall
     if (( save_artifacts )) ; then
-	(cd "$srcdir/$install_dir" || exit; tar cf - --exclude=saved_artifacts --exclude='openshift-*' --exclude=oc --exclude=kubectl -- * |(umask 77; cd saved_artifacts || exit; tar xf -))
+	(cd "$installer_src/$install_dir" || exit; tar cf - --exclude=saved_artifacts --exclude='openshift-*' --exclude=oc --exclude=kubectl -- * |(umask 77; cd saved_artifacts || exit; tar xf -))
     fi
 
     install_stage=2
@@ -1150,7 +1154,7 @@ function run_install() {
     (( end2 )) && printerval "Total setup to console online" $((end2 - start))
     export OPENSHIFT_INSTALL_INTERLOCK=1
     export OPENSHIFT_INSTALL_VERSION=$install_version
-    for f in "${!OPENSHIFT@}" "${!_OPENSHIFT@}" KUBECONFIG ; do eval "echo export $f=\${$f@Q}"; done > "${srcdir}/${install_dir}/environment"
+    for f in "${!OPENSHIFT@}" "${!_OPENSHIFT@}" KUBECONFIG ; do eval "echo export $f=\${$f@Q}"; done > "${installer_src}/${install_dir}/environment"
     # Run a shell even if setup failed, so it's possible to poke around
     (run_shell)
     case $? in
