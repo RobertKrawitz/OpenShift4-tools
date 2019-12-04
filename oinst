@@ -1098,7 +1098,7 @@ function run_install() {
     [[ -z $cleanup_only_dir ]] || return
 
     # shellcheck disable=SC2155
-    export KUBECONFIG="$install_dir/auth/kubeconfig"
+    export KUBECONFIG="$(cd $install_dir && pwd)/auth/kubeconfig"
 
     # shellcheck disable=SC2155
     local start=$(tsec)
