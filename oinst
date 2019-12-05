@@ -842,6 +842,9 @@ function installer_setup() {
 	PS3="Select release: "
 	select install_version in "${versions[@]}" ; do break; done
 	PS3=$OPS3
+    elif [[ -n ${release_channel:-} ]] ; then
+	local -a versions=()
+	read -r install_version <<< "$(openshift-release-info -B "$repo" ${release_channel:+-c "$release_channel"} releases < /dev/null | sort -r | head -1)"
     elif [[ $install_version = latest ]] ; then
 	not_latest=0
 	release_channel=${release_channel:-${release_base_map[$repo]:-}}
@@ -1075,11 +1078,18 @@ function run_postinstall() {
     if (( download_oc )) ; then
 	local download_route
 	download_route="$(${OC} get route -n openshift-console -o "custom-columns=HOST:.status.ingress[0].host" --no-headers=true |grep ^downloads)"
-	[[ -n "$download_route" ]] &&
-	    mkdir "$install_dir/bin" &&
-	    curl --compressed -k "https://${download_route}/amd64/linux/oc" -o "$install_dir/bin/oc" &&
-	    chmod +x "$install_dir/bin/oc" &&
-	    PATH="$install_dir/bin:$PATH"
+	if [[ -n "$download_route" ]] ; then
+	    if [[ ! -d "$install_dir/bin" ]] ; then
+		mkdir "$install_dir/bin" || fatal "Can't create $install_dir/bin"
+	    fi
+	    echo "Downloading oc binary..."
+	    if curl --silent --compressed -k "https://${download_route}/amd64/linux/oc" -o "$install_dir/bin/oc" ; then
+		chmod +x "$install_dir/bin/oc"
+		PATH="$install_dir/bin:$PATH"
+	    else
+		echo "Download failed!"
+	    fi
+	fi
     fi
     # shellcheck disable=SC2155
     export OPENSHIFT_INSTALL_NODE_IPS=$("${___topdir:-}"get-nodes)
@@ -1094,7 +1104,7 @@ function run_install() {
     if [[ -z $cleanup_only_dir ]] ; then
 	[[ -n $install_version && ${force_local_tools:-0} -eq 0 ]] && installer_src=
 	mkdir -p "$install_dir"
-	[[ -n $install_version || $query -ne 0 ]] && installer_setup
+	[[ -n $install_version || -n $release_channel || $query -ne 0 ]] && installer_setup
 	if [[ -n $config_file ]] ; then
 	    [[ ! -r $config_file ]] && fatal "Cannot read config file $config_file"
 	    cp "$config_file" "$install_dir/install-config.yaml"
