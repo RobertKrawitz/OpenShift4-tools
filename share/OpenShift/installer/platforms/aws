@@ -83,11 +83,12 @@ function _____aws_split_instance() {
     if [[ $instance = "u-t"* ]] ; then
 	echo " "
 	echo "$instance"
+    else
+	local class=${instance%%.*}
+	local subinstance=${instance#*.}
+	echo "$class"
+	echo "$subinstance"
     fi
-    local class=${instance%%.*}
-    local subinstance=${instance#*.}
-    echo "$class"
-    echo "$subinstance"
 }
 
 function _____aws_default_install_type() {

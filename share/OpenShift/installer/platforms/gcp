@@ -108,7 +108,8 @@ EOF
 	    cat <<EOF
 
 For GCP:
-  gcp_project_id proj Use the specified project id (default $_____gcp_default_project)
+  gcp_project_id proj Use the specified project id
+    (default $_____gcp_default_project)
 EOF
 ;;
 	*)  ;;

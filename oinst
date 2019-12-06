@@ -220,8 +220,8 @@ function help_extended() {
       Node type/count, all default by platform:
         master_count        Use the specified number of master nodes.
         master_type         Instance type to use for master.
-        worker_type         Instance type to use for workers.
         worker_count        Use the specified number of worker nodes.
+        worker_type         Instance type to use for workers.
 $(do_platforms platform_help options |indent -6)
 
       Installation options:
@@ -383,11 +383,16 @@ function add_platform() {
     global_platforms[$____current_platform]=$dispatch
 }
 
-function __list_instance_types() {
+function _default_split_instance_func() {
+    echo ' '
+    echo "$1"
+}
+
+function _list_instance_types() {
     local -i list_all=0
     local cmd=$1
     local list_option_name=$2
-    local split_instance_func=$3
+    local split_instance_func=${3:-_default_split_instance_func}
     shift 3
     while read -r REPLY ; do echo "$REPLY" ; done
     if [[ $cmd = list_all ]] ; then
@@ -427,6 +432,7 @@ function __list_instance_types() {
 	    " X."*)
 		(( list_all == 0 && groups_printed++ )) && break
 		echo -ne "${last_class:+\n\n}${instance# X.}:"
+		last_class=
 		;;
 	    " Y."*)
 		echo -ne "\n  ${instance#*.}"
@@ -455,11 +461,11 @@ function __list_instance_types() {
     echo
 }
 
-function _list_instance_types() {
+function list_instance_types() {
     while IFS= read -r line ; do
 	line=${line## }
 	echo "$line"
-    done <<< "$(__list_instance_types "$@")"
+    done <<< "$(_list_instance_types "$@")"
 }
 
 function _check_instance_type() {
@@ -508,11 +514,11 @@ function validate_instance_type() {
     shift 5
     if [[ $master_type = list-all || $worker_type = list-all ||
 	      $master_type = list_all || $worker_type = list_all ]] ; then
-	_list_instance_types list_all "$list_option_name" "$split_instance_func" "$@"
+	list_instance_types list_all "$list_option_name" "$split_instance_func" "$@"
 	exit
     fi
     if [[ $master_type = list || $worker_type = list ]] ; then
-	_list_instance_types list "$list_option_name" "$split_instance_func" "$@"
+	list_instance_types list "$list_option_name" "$split_instance_func" "$@"
 	exit
     fi
     local need_to_list_instance_types=0
@@ -520,7 +526,7 @@ function validate_instance_type() {
     (( $? == 2 )) && need_to_list_instance_types=1
     _check_instance_type "$worker_type" "$platform" "$list_option_name" "$split_instance_func" "$@"
     (( $? == 2 )) && need_to_list_instance_types=1
-    (( need_to_list_instance_types )) && _list_instance_types list "$list_option_name" "$split_instance_func" "$@"
+    (( need_to_list_instance_types )) && list_instance_types list "$list_option_name" "$split_instance_func" "$@"
     return 0
 }
 
@@ -785,6 +791,32 @@ function do_installer_setup() {
     echo "${install_version}" > version.txt
 }
 
+function list_release_channels() {
+    local -a channels=(" X.Available release channels:")
+    readarray -t -O 1 channels <<< "$(openshift-release-info -B "$repo" channels < /dev/null | sort -r)"
+    list_instance_types list_all "release_channel" '' "${channels[@]}" < /dev/null
+}
+
+function list_install_versions() {
+    local channel=$1
+    local -a releases=()
+    if [[ -n $channel ]] ; then
+	channels=("$channel")
+    else
+	local -a channels=()
+	readarray -t channels <<< "$(openshift-release-info -B "$repo" channels < /dev/null | sort -r)"
+    fi
+    for channel in "${channels[@]}" ; do
+	local -a versions=()
+	readarray -t versions <<< "$(openshift-release-info -B "$repo" ${channel:+-c "$channel"} releases < /dev/null | sort -r)"
+	if [[ -n "${versions[*]}" ]] ; then
+	    releases+=(" X.$channel")
+	    releases+=("${versions[@]}")
+	fi
+    done
+    list_instance_types list_all "install_version" '' "${releases[@]}" </dev/null
+}
+
 function installer_setup() {
     local -i not_latest=1
     local release_data
@@ -795,11 +827,14 @@ function installer_setup() {
     if (( query )) ; then
 	if [[ -z ${release_channel:-} ]] ; then
 	    local -a channels=()
-	    readarray -t channels <<< "$(openshift-release-info -B "$repo" channels < /dev/null | sort -r)"
+	    readarray -t channels <<< "$(echo 'all'; openshift-release-info -B "$repo" channels < /dev/null | sort -r)"
 	    OPS3=${PS3:-}
 	    PS3="Select channel: "
 	    select release_channel in "${channels[@]}" ; do break; done
 	    PS3=$OPS3
+	fi
+	if [[ $release_channel = 'all' ]] ; then
+	    release_channel=
 	fi
 	local -a versions=()
 	readarray -t versions <<< "$(openshift-release-info -B "$repo" ${release_channel:+-c "$release_channel"} releases < /dev/null | sort -r)"
@@ -1238,6 +1273,15 @@ function process_options() {
     if [[ -n ${1:-} ]] ; then
 	install_type="$1"
 	shift
+    fi
+
+    if [[ $install_version = list || $release_channel = list ]] ; then
+	if [[ $release_channel = list ]] ; then 
+	    list_release_channels
+	else
+	    list_install_versions "$release_channel"
+	fi
+	exit 0
     fi
 
     [[ -z "$*" ]] || echo "Warning: extraneous arguments $# after $install_type will be ignored!" 1>&2
