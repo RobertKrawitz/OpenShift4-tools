@@ -15,6 +15,7 @@ declare -i blockitemcount=0
 declare -i port=7777
 declare -i affinity=0
 declare dataRate=0
+declare megaBytes=1024
 declare podType=ClusterBuster
 declare podsleeptime=infinity
 declare basename=clusterbuster
@@ -41,6 +42,7 @@ Usage: $0 [options] [name]
        -b blocksize    Number of objects to create in one oc call (default 1)
        -c containers   Number of containers per pod
        -D data rate    Data rate for client/server (MB/sec) (default 0)
+       -M megabytes    Amount of data to transfer
        -d deployments  Number of deployments per namespace (default 1)
        -N namespaces   Number of namespaces to create (default 1)
        -p parallel     Number of operations to perform in parallel (default 1)
@@ -104,7 +106,10 @@ engage in ping-pong data transfer.  The number of client pods is
 controlled by the number of replicas.  Therefore, each server will
 service (r * c) connections.  Each container will attempt to transmit
 up to the specified data rate (-D) megabytes/second, and then receive
-the amount of data.  Via -x and -X it is possible to specify whether
+the amount of data.  The amount of data to be sent can be specified
+via -M, in megabytes.  By default, no data is sent.
+
+Via -x and -X it is possible to specify whether
 clients will be colocated with their server (-x) or forced onto
 different nodes (-X).  If neither option is specified, clusterbuster
 allows OpenShift to place pods as it sees fit.  You can use `oc logs`
@@ -135,9 +140,10 @@ Examples:
 
   clusterbuster -N 1000 -d 15 -s 10
 
-- You wish to exchange data at 10 MB/sec, with 5 deployments in 2
-  namespaces each of which uses 4 replica clients and 3 containers.
-  You wish to place the clients on nodes other than the servers:
+- You wish to exchange data at 10 MB/sec with a total of 2 GB per client,
+  with 5 deployments in 2 namespaces each of which uses 4 replica clients
+  and 3 containers.  You wish to place the clients on nodes other than the
+  servers:
 
   clusterbuster -P server -N 2 -d 5 -r 4 -c 3 -X
 
@@ -149,9 +155,23 @@ function helpExtended() {
     exit 1
 }
 
+function ts() {
+    local dt
+    dt=$(date '+%s.%N')
+    local sec=${dt%.*}
+    local ns=${dt#*.}
+    echo "${sec}.${ns:0:6}"
+}
+
+function timestamp() {
+    while read -r LINE ; do
+	printf "%s %s\n" "$(TZ=GMT-0 date '+%Y-%m-%dT%T.%N' | cut -c1-26)" "$LINE"
+    done
+}
+
 trap exit INT
 
-while getopts ":B:b:c:ns:D:d:p:r:w:z:hHN:P:xX" opt ; do
+while getopts ":B:b:c:ns:D:M:d:p:r:w:z:hHN:P:xX" opt ; do
     case "$opt" in
 	n) doit=0			;;
 	P) podType="$OPTARG"		;;
@@ -160,6 +180,7 @@ while getopts ":B:b:c:ns:D:d:p:r:w:z:hHN:P:xX" opt ; do
 	c) containers="$OPTARG"         ;;
 	N) namespaces="$OPTARG"         ;;
 	D) dataRate="$OPTARG"           ;;
+	M) megaBytes="$OPTARG"		;;
 	d) depsPerNamespace="$OPTARG"   ;;
 	s) secrets="$OPTARG"            ;;
 	r) replicas="$OPTARG"           ;;
@@ -214,7 +235,7 @@ function indent() {
 
 function finishCreation() {
     if [[ $doit -ne 0 && -n $accumulateddata ]] ; then
-	"${OC}" apply -f - <<< "$accumulateddata"
+	"${OC}" apply -f - <<< "$accumulateddata" | timestamp
 	accumulateddata=
     fi
 }
@@ -231,7 +252,7 @@ function createObject() {
     if (( doit )) ; then
 	accumulateddata+="$data"
 	if (( ++blockitemcount >= blocksize )) ; then
-	    "${OC}" apply -f - <<< "$accumulateddata"
+	    "${OC}" apply -f - <<< "$accumulateddata" | timestamp
 	    accumulateddata=
 	    blockitemcount=0
 	    (( !sleeptime )) || sleep "$sleeptime"
@@ -351,6 +372,7 @@ function createContainersPausePodYAML() {
     for j in $(seq 0 $((containers - 1))) ; do
 	cat <<EOF
 - name: ${namespace}-$i-$j
+  imagePullPolicy: IfNotPresent
   image: "gcr.io/google_containers/pause-amd64:3.0"
 $(indent 2 createVolumeMountsYAML "$namespace" "$i" "$secretCount")
 EOF
@@ -446,11 +468,13 @@ use strict;
 use Time::Piece;
 use Time::HiRes qw(gettimeofday);
 $SIG{TERM} = sub { exit 0; };
+my $container = $ARGV[1];
 sub timestamp($) {
     my ($str) = @_;
     my (@now) = gettimeofday();
-    sprintf "%s.%06d %s", localtime($now[0])->strftime("%Y-%m-%d.%T"), $now[1], $str;
+    printf STDERR  "$container %s.%06d %s\n", gmtime($now[0])->strftime("%Y-%m-%dT%T"), $now[1], $str;
 }
+timestamp("Clusterbuster server starting");
 my $listen_port = $ARGV[0];
 my $sockaddr = "S n a4 x8";
 socket(SOCK, PF_INET, SOCK_STREAM, getprotobyname('tcp')) || die "socket: $!";
@@ -461,7 +485,7 @@ listen(SOCK, 1) || die "listen: $!";
 my $mysockaddr = getsockname(SOCK);
 my ($junk, $port, $addr) = unpack($sockaddr, $mysockaddr);
 die "can't get port $port: $!\n" if ($port ne $listen_port);
-print STDERR timestamp("Listening on port $listen_port\n");
+timestamp("Listening on port $listen_port");
 
 for (;;) {
     accept(CLIENT, SOCK) || next;
@@ -471,7 +495,7 @@ for (;;) {
         my ($port, $addr) = sockaddr_in($peeraddr);
         my $peerhost = gethostbyaddr($addr, AF_INET);
         my $peeraddr = inet_ntoa($addr);
-        print STDERR timestamp("Accepted connection from $peerhost ($peeraddr) on $port!\n");
+        timestamp("Accepted connection from $peerhost ($peeraddr) on $port!");
         while (1) {
             my $buffer;
             my $nread;
@@ -483,7 +507,7 @@ for (;;) {
                 die "Write failed: $!\n";
             }
             if ($ntotal == 0) {
-                print STDERR timestamp("Exiting $port\n");
+                timestamp("Exiting $port");
                 exit(0);
             }
             my $nwrite;
@@ -491,12 +515,14 @@ for (;;) {
                 $ntotal -= $nwrite;
             }
             if ($nwrite < 0) {
-                die timestamp("Write failed: $!\n");
+                die timestamp("Write failed: $!");
             }
         }
     } else {
         close(CLIENT);
     }
+}
+while (wait() >= 0) {
 }
 EOF
 
@@ -505,8 +531,9 @@ function createServerContainerYAML() {
     local i=$2
     local secretCount=$3
     cat <<EOF
-- name: ${namespace}-${i}-server
+- name: server
   image: perl
+  imagePullPolicy: IfNotPresent
   ports:
   - containerPort: $port
   command:
@@ -516,6 +543,8 @@ function createServerContainerYAML() {
   - |
 $(indent 4 <<< "$serverContainerPerl")
   - "$port"
+  - "${namespace}-${i}-server"
+  - "$(ts)"
 $(indent 2 createVolumeMountsYAML "$namespace" "$i" "$secretCount")
 EOF
 }
@@ -544,6 +573,7 @@ spec:
         app: ${namespace}-$i
         k8s-app: ${namespace}-${i}-server
         ${basename}: "true"
+        ${basename}-server: "true"
         clusterbusterbase: "true"
     spec:
       terminationGracePeriodSeconds: 1
@@ -563,25 +593,45 @@ use strict;
 use Time::HiRes qw(gettimeofday usleep);
 use Time::Piece;
 $SIG{TERM} = sub { exit 0; };
+my ($connect_port, $container, $srvhost, $data_rate, $megabytes, $crtime) = @ARGV;
+my $start_time;
+my $ghbn_time;
+sub ts() {
+    my (@now) = gettimeofday();
+    return sprintf("%s.%06d", gmtime($now[0])->strftime("%Y-%m-%dT%T"), $now[1]);
+}
 sub timestamp($) {
     my ($str) = @_;
-    my (@now) = gettimeofday();
-    sprintf "%s.%06d %s", localtime($now[0])->strftime("%Y-%m-%d.%T"), $now[1], $str;
+    printf STDERR "%s %s %s\n", $container, ts(), $str;
 }
-my $connect_port = $ARGV[0];
+sub xtime() {
+    my (@now) = gettimeofday();
+    return $now[0] + ($now[1] / 1000000.0);
+}
+sub print_stats() {
+    printf STDERR "-c %s STATS %.6f %.6f %.6f %.6f %.6f %d %.3f %.3f\n", 
+    	   $container, $crtime, $start_time, $ghbn_time, $etime, $etime - $stime,
+	   $data_sent, $detime, $data_sent / $detime / 1048576;
+}
+timestamp("Clusterbuster client starting");
+$start_time = xtime();
 my $sockaddr = "S n a4 x8";
-my ($fname,$faliases,$ftype,$flen,$faddr)= gethostbyname($ARGV[1]);
+my ($fname,$faliases,$ftype,$flen,$faddr)= gethostbyname($srvhost);
+$ghbn_time = xtime();
 my $sockmeta = pack($sockaddr, PF_INET, $connect_port, $faddr);
 socket(CONN, PF_INET, SOCK_STREAM, getprotobyname('tcp')) || die "can't make socket: $!";
+my ($stime) = xtime();
 while (! connect(CONN, $sockmeta)) {
-    print STDERR timestamp(" Could not connect to $ARGV[1] on port $connect_port: $!\n");
-    sleep(5);
+    timestamp(" Could not connect to $srvhost on port $connect_port: $!");
+    sleep(1);
 }
+my ($etime) = xtime();
+my ($elapsed) = sprintf("%.6f", $etime - $stime);
 my $peeraddr = getpeername(CONN);
 my ($port, $addr) = sockaddr_in($peeraddr);
 my $peerhost = gethostbyaddr($addr, AF_INET);
 $peeraddr = inet_ntoa($addr);
-print STDERR timestamp("Connected to $peerhost ($peeraddr) on $port!\n");
+timestamp("Connected to $peerhost ($peeraddr) on $port!");
 my $buffer = "0";
 my $tbuf;
 my $nread;
@@ -589,44 +639,53 @@ for (my $i = 0; $i < 15; $i++) {
     $buffer = "$buffer$buffer"
 }
 my $bufsize = length($buffer);
-my $starttime = gettimeofday();
-my $MBSec = $ARGV[2] * 1;
-if ($MBSec <= 0) {
-    print STDERR "Not sending data (use -D to actually send data)\n";
-    pause();
-    exit 0;
-}
-while (1) {
-    print STDERR timestamp("Read/Write $MBSec MiB  ");
-    for (my $i = 0; $i < $MBSec * 32; $i++) {
-        my $nwrite;
-        my $nleft = $bufsize;
-        while ($nleft > 0 && ($nwrite = syswrite(CONN, $buffer, $nleft)) > 0) {
-            $nleft -= $nwrite;
-        }
-        if ($nwrite == 0) {
-            exit 0;
-        } elsif ($nwrite < 0) {
-            die "Write failed: $!\n";
-        }
-        $nleft = $bufsize;
-        my $tbuf;
-        while (($nread = sysread(CONN, $tbuf, $nleft)) > 0) {
-            $nleft -= $nread;
-        }
-        if ($nread < 0) {
-            die "Read failed: $!\n";
-        }
+my $starttime = xtime();
+my $MBSec = $data_rate * 1;
+my ($dstime) = xtime();
+
+my $data_sent = 0;
+my $bytes = $megabytes * 1048576;
+if ($MBSec > 0) {
+    while ($data_sent < $bytes) {
+	timestamp("Read/Write $MBSec MiB  ");
+	for (my $i = 0; $i < $MBSec * 32; $i++) {
+	    my $nwrite;
+	    my $nleft = $bufsize;
+	    while ($nleft > 0 && ($nwrite = syswrite(CONN, $buffer, $nleft)) > 0) {
+		$nleft -= $nwrite;
+		$data_sent += $nwrite;
+	    }
+	    if ($nwrite == 0) {
+		exit 0;
+	    } elsif ($nwrite < 0) {
+		die "Write failed: $!\n";
+	    }
+	    $nleft = $bufsize;
+	    my $tbuf;
+	    while (($nread = sysread(CONN, $tbuf, $nleft)) > 0) {
+		$nleft -= $nread;
+	    }
+	    if ($nread < 0) {
+		die "Read failed: $!\n";
+	    }
+	}
+	my $curtime = xtime();
+	$starttime += 1;
+	if ($curtime < $starttime) {
+	    timestamp(sprintf("Sleeping %8.6f", ($starttime - $curtime));
+	    usleep(($starttime - $curtime) * 1000000);
+	} else {
+	    timestamp("Not sleeping");
+	}
     }
-    my $curtime = gettimeofday();
-    $starttime += 1;
-    if ($curtime < $starttime) {
-        printf STDERR "Sleeping %8.6f\n", ($starttime - $curtime);
-        usleep(($starttime - $curtime) * 1000000);
-    } else {
-        print STDERR "Not sleeping\n";
-    }
 }
+my ($detime) = xtime() - $dstime;
+if ($detime <= 0 {
+    $detime = 0.00000001;
+}
+print_stas();
+pause();
+exit 0;
 EOF
 
 function createClientContainerYAML() {
@@ -634,12 +693,16 @@ function createClientContainerYAML() {
     local i=$2
     local secretCount=$3
     local dataRate=$4
-    local containers=$5
+    local megaBytes=$5
+    local containers=$6
     local -i j
     for j in $(seq 0 $((containers - 1))) ; do
 	cat <<EOF
-- name: ${namespace}-${i}-${j}-client
+- name: client-${j}
   image: "perl"
+  imagePullPolicy: IfNotPresent
+  env:
+  - name: CONTAINER
   command:
   - perl
   args:
@@ -647,8 +710,11 @@ function createClientContainerYAML() {
   - |
 $(indent 4 <<< "$clientContainerPerl")
   - "$port"
+  - "client-${j}"
   - "service-${namespace}-$i"
   - "$dataRate"
+  - "$megaBytes"
+  - "$(ts)"
 $(indent 2 createVolumeMountsYAML "$namespace" "$i" "$secretCount")
 EOF
     done
@@ -682,7 +748,8 @@ function createClientDeployment() {
     local secretCount=$3
     local replicas=$4
     local dataRate=$5
-    local containers=$6
+    local megaBytes=$6
+    local containers=$7
     createObject <<EOF
 apiVersion: apps/v1
 kind: Deployment
@@ -691,6 +758,7 @@ metadata:
   namespace: $namespace
 spec:
   replicas: $replicas
+  restartPolicy: Never
   selector:
     matchLabels:
       app: ${namespace}-${i}-client
@@ -702,12 +770,13 @@ spec:
         name: ${namespace}-${i}-client
         app: ${namespace}-${i}-client
         ${basename}: "true"
+        ${basename}-client: "true"
         clusterbusterbase: "true"
     spec:
       terminationGracePeriodSeconds: 1
 $(indent 6 createClientAffinityYAML "${namespace}-${i}-server")
       containers:
-$(indent 6 createClientContainerYAML "$namespace" "$i" "$secretCount" "$dataRate" "$containers")
+$(indent 6 createClientContainerYAML "$namespace" "$i" "$secretCount" "$dataRate" "$megaBytes" "$containers")
 $(indent 6 createVolumesYAML "$namespace" "$i" "$secretCount")
 EOF
 }
@@ -739,7 +808,7 @@ function createDeploymentServer() {
 	createService "$namespace" "$namespace-$i"
 	createRoute "$namespace" "$namespace-$i"
 	createServerDeployment "$namespace" "$i" "$secretCount"
-	createClientDeployment "$namespace" "$i" "$secretCount" "$replicas" "$dataRate" "$containers"
+	createClientDeployment "$namespace" "$i" "$secretCount" "$replicas" "$dataRate" "$megaBytes" "$containers"
     done
 }
 
@@ -798,6 +867,6 @@ function run_clusterbuster_1() {
     wait
 }
 
-trap stop_heartbeat INT EXIT
-heartbeat&
+#trap stop_heartbeat INT EXIT
+#heartbeat&
 (run_clusterbuster_1)

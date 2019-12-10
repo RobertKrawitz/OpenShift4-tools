@@ -1,0 +1,41 @@
+#!/bin/sh
+
+declare jq_cmd
+read -r -d '' jq_cmd <<\EOF
+[foreach .items[] as $item
+ ([[],[]];0;
+ (if ($item.kind == "Pod") then
+   ([foreach $item.spec.containers[] as $container ([[],[]];0; [$item.metadata.namespace, $item.metadata.name, $container.name, [foreach $item.status.containerStatuses[] as $status ([[],[]]; 0; if ($container.name == $status.name) then $status.state | keys[0] else null end)]] | flatten | map (select (. != null)) | join(" "))])
+ else null end))] | flatten | map (select (. != null))[]
+EOF
+
+declare -i parallel=1
+declare -i curjobs=0
+
+declare OC
+OC=$(type -p oc)
+OC=${OC:-$(type -p kubectl)}	# kubectl might not work, though...
+
+while getopts ':p:' opt ; do
+    case "$opt" in
+	p) parallel=$OPTARG ;;
+	*) ;;
+    esac
+done
+
+(( parallel <= 0 )) && parallel=1
+
+trap 'wait; exit' INT EXIT
+
+while read -r ns pod container status ; do
+    while (( curjobs >= parallel )) ; do
+	wait -n
+	curjobs=$((curjobs - 1))
+    done
+    if (( parallel > 1 )) ; then
+	echo "-n $ns $pod $(oc logs -n "$ns" -c "$container" "$pod" |grep 'STATS')" &
+	curjobs=$((curjobs + 1))
+    else
+	echo "-n $ns $pod $(oc logs -n "$ns" -c "$container" "$pod" |grep 'STATS')"
+    fi
+done <<< "$(oc get pods -ojson -l clusterbuster-client -A | jq -r "$jq_cmd")"
