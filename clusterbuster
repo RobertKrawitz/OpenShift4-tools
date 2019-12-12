@@ -51,7 +51,8 @@ Usage: $0 [options] [name]
        -p parallel     Number of operations to perform in parallel (default 1)
        -r replicas     Number of replicas per deployment (default 1)
        -s secrets      Number of secrets per deployment (default 0)
-       -v              Print verbose log messages
+       -v              Print verbose log messages.  Useful with
+                       clusterbuster-connstat.
        -w wait         Number of seconds to wait between ops (default 0)
        -x              Use pod affinity between client and server (default no)
        -X              Use pod anti-affinity between client/server (default no)
@@ -81,10 +82,11 @@ deployments).  The type of pod is selected by the -P option.
 - A simple pause-type implementation written in perl that emits a log
   heartbeat once a minute.
 
-- Pause pod (uses the least resources)
+- Pause pod (uses the least resources).  Useful for testing the control
+  plane, but not the data plane.
 
 - A client-server workload, with optional bidirectional data transfer
-  at a specified data rate.
+  at a specified data rate.  Allows load testing of the data plane.
 
 
 All three types allow you to configure the following load parameters:
@@ -103,6 +105,7 @@ The total number of pods created is (N * d * r) and the total number
 of containers is (N * d * r * c).  The number of secrets is (N * d).
 This is useful for testing of scaling of both nodes and apiserver/etcd
 combination on the control plane.
+
 
 The client-server workload consists of one server pod, with one
 container, per deployment.  The clients and server can optionally
@@ -123,11 +126,10 @@ verbose information about each transfer is printed.
 
 The client logs the following at the end of any data transfer:
 
--c <client> STATS <atime> <stime> <gtime> <etime> <interval> <data> <detime> <rate> <mean> <stdev>
+STATS <atime> <stime> <gtime> <etime> <interval> <data> <detime> <rate> <mean> <stdev>
 
 defined as:
 
-client          Name of client (without namespace prefix)
 atime           Time (seconds from Jan. 1, 1970) of "oc apply" to
                 create the client
 stime           Time when the client started running
@@ -140,6 +142,11 @@ rate            Rate (MB/sec) of data transfer, if any
 mean            Mean time sleeping between messages to attempt to
                 achieve the desired transmission rate
 stdev           Standard deviation of sleep interval between messages
+
+You can use `clusterbuster-connstat` to extract client information about a
+running or completed test run, including the above data.  Running
+`clusterbuster -v` allows `clusterbuster-connstat` to extract data about
+transfers completed thus far.
 
 
 You can run multiple concurrent clusterbusters by choosing different
@@ -170,7 +177,7 @@ Examples:
   and 3 containers.  You wish to place the clients on nodes other than the
   servers:
 
-  clusterbuster -P server -N 2 -d 5 -r 4 -c 3 -X
+  clusterbuster -P server -N 2 -d 5 -r 4 -c 3 -X -v
 
 EOF
 }
@@ -643,8 +650,8 @@ sub xtime() {
     return $now[0] + ($now[1] / 1000000.0);
 }
 sub print_stats() {
-    printf STDERR "-c %s STATS %.6f %.6f %.6f %.6f %.6f %d %.3f %.3f %.6f %.6f\n", 
-    	   $container, $crtime, $start_time, $ghbn_time, $etime, $etime - $stime,
+    printf STDERR "STATS %.6f %.6f %.6f %.6f %.6f %d %.3f %.3f %.6f %.6f\n",
+	   $crtime, $start_time, $ghbn_time, $etime, $etime - $stime,
 	   $data_sent, $detime, $data_sent / $detime / 1000000.0, $mean, $stdev;
 }
 timestamp("Clusterbuster client starting");
@@ -878,23 +885,6 @@ function createDeployment() {
     "createDeployment${podType}" "$@"
 }
 
-function heartbeat() {
-    trap exit INT
-    while : ; do
-	printf '%(%Y-%m-%dT%H:%M:%S%z)T\n' -1
-	sleep 10
-    done
-}
-
-function stop_heartbeat() {
-    exec 3>&2 2>/dev/null
-    jobs -p | while read -r job ; do
-	kill "$job"
-    done
-    wait
-    exec 2>&3 3>&-
-}
-
 function createObjects_n() {
     trap exit INT
     local objtype=$1; shift
@@ -929,6 +919,4 @@ function run_clusterbuster_1() {
     wait
 }
 
-#trap stop_heartbeat INT EXIT
-#heartbeat&
 (run_clusterbuster_1)

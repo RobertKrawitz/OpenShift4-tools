@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 
 declare jq_cmd
 read -r -d '' jq_cmd <<\EOF
@@ -11,13 +11,15 @@ EOF
 
 declare -i parallel=1
 declare -i curjobs=0
+declare basename=clusterbuster
 
 declare OC
 OC=$(type -p oc)
 OC=${OC:-$(type -p kubectl)}	# kubectl might not work, though...
 
-while getopts ':p:' opt ; do
+while getopts ':p:B:' opt ; do
     case "$opt" in
+	B) basename=$OPTARG ;;
 	p) parallel=$OPTARG ;;
 	*) ;;
     esac
@@ -27,15 +29,49 @@ done
 
 trap 'wait; exit' INT EXIT
 
+function retrieve_pod_stats() {
+    local ns=$1
+    local pod=$2
+    local container=$3
+    local status=$4
+    local -i connection_failures=0
+    local -i connection_refused=0
+    local -i blocks=0
+    local statline=''
+    case "$status" in
+	running|completed)
+	    while read -r text ; do
+		case "$text" in
+		    *"Connection refused")
+			connection_refused=$((connection_refused+1))
+			connection_failures=$((connection_failures+1))
+			;;
+		    *"Could not connect")
+			connection_failures=$((connection_failures+1))
+			;;
+		    *"Read/Write"*)
+			blocks=$((blocks+1))
+			;;
+		    *STATS*)
+			statline=$text
+			;;
+		esac
+	    done <<< "$(oc logs -n "$ns" "$pod" -c "$container")"
+	    ;;
+	*) ;;
+    esac
+    echo "-n $ns -c $container $pod $status $connection_failures $connection_refused $blocks $statline"
+}
+
 while read -r ns pod container status ; do
     while (( curjobs >= parallel )) ; do
 	wait -n
 	curjobs=$((curjobs - 1))
     done
     if (( parallel > 1 )) ; then
-	echo "-n $ns $pod $(oc logs -n "$ns" -c "$container" "$pod" |grep 'STATS')" &
+	retrieve_pod_stats "$ns" "$pod" "$container" "$status"&
 	curjobs=$((curjobs + 1))
     else
-	echo "-n $ns $pod $(oc logs -n "$ns" -c "$container" "$pod" |grep 'STATS')"
+	retrieve_pod_stats "$ns" "$pod" "$container" "$status"
     fi
-done <<< "$(oc get pods -ojson -l clusterbuster-client -A | jq -r "$jq_cmd")"
+done <<< "$(oc get pods -ojson -l "${basename}-client" -A | jq -r "$jq_cmd")"
