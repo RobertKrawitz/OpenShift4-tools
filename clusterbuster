@@ -16,12 +16,12 @@ declare -i port=7777
 declare -i affinity=0
 declare -i verbose=0
 declare dataRate=0
-declare megaBytes=1024
+declare -i bytes=1000000000
 declare -i msgSize=32768
 declare podType=ClusterBuster
 declare podsleeptime=infinity
 declare basename=clusterbuster
-declare -i basetime=$(printf '%(%s)T' -1)
+declare -i basetime
 declare opt
 declare -r nl='
 '
@@ -208,7 +208,65 @@ function timestamp() {
 
 trap exit INT
 
-while getopts ":B:b:c:ns:D:M:m:d:p:r:w:z:hHN:P:xXqv" opt ; do
+function process_option() {
+    local option=$1
+    local optname
+    local optvalue
+    optname=${option%%=*}
+    optname=${optname,,}
+    optvalue=${option#*=}
+    noptname=${optname//-/_}
+    if [[ $option != *'='* ]] ; then
+	if [[ $optname = "no_"* || $optname = "dont_"* ]] ; then
+	    optname=${optname#dont_}
+	    optname=${optname#no_}
+	    optvalue=0
+	else
+	    optvalue=1
+	fi
+    fi
+    case "$noptname" in
+	help_all*)     help-extended			;;
+	help*)         help				;;
+	pod_type)      podType=$optvalue		;;
+	basename)      basename=$optvalue		;;
+	blocksize)     blocksize=$optvalue		;;
+	containers)    containers=$optvalue		;;
+	namespaces)    namespaces=$optvalue		;;
+	datarate)      dataRate=$optvalue		;;
+	bytes)         bytes=$((optvalue))		;;
+	kb|kilobytes)  bytes=$((optvalue*1000))		;;
+	kib|kibibytes) bytes=$((optvalue*1024))		;;
+	mb|megabytes)  bytes=$((optvalue*1000000))	;;
+	mib|mebibytes) bytes=$((optvalue*1048576))	;;
+	gb|gigabytes)  bytes=$((optvalue*1000000000))	;;
+	gib|gibibytes) bytes=$((optvalue*1073741824))	;;
+	msgsize)       msgSize=$optvalue		;;
+	secrets)       secrets=$optvalue		;;
+	verbose)       verbose=$optvalue		;;
+	quiet)         verbose=$((!optvalue))		;;
+	replicas)      replicas=$optvalue		;;
+	parallel)      parallel=$optvalue		;;
+	sleep)         sleeptime=$optvalue		;;
+	podsleep)      podsleeptime=$optvalue		;;
+	affinity)
+	    case "$optvalue" in
+		1|'') affinity=1   ;;
+		2|anti) affinity=2 ;;
+		*) affinity=0      ;;
+	    esac
+	    ;;
+	antiaffinity|anti_affinity)
+	    case "$optvalue" in
+		1|'') affinity=2   ;;
+		*) affinity=0      ;;
+	    esac
+	    ;;
+	*) help "$optname" ;;
+    esac
+}
+
+while getopts ":B:b:c:ns:D:M:m:d:p:r:w:z:hHN:P:xXqv-:" opt ; do
     case "$opt" in
 	n) doit=0			;;
 	P) podType="$OPTARG"		;;
@@ -217,7 +275,7 @@ while getopts ":B:b:c:ns:D:M:m:d:p:r:w:z:hHN:P:xXqv" opt ; do
 	c) containers="$OPTARG"         ;;
 	N) namespaces="$OPTARG"         ;;
 	D) dataRate="$OPTARG"           ;;
-	M) megaBytes="$OPTARG"		;;
+	M) bytes=$((OPTARG * 1000000))	;;
 	m) msgSize="$OPTARG"		;;
 	d) depsPerNamespace="$OPTARG"   ;;
 	s) secrets="$OPTARG"            ;;
@@ -231,6 +289,7 @@ while getopts ":B:b:c:ns:D:M:m:d:p:r:w:z:hHN:P:xXqv" opt ; do
 	X) affinity=2			;;
 	h) help				;;
 	H) helpExtended			;;
+	-) process_option "$OPTARG"	;;
 	*) help "$OPTARG"               ;;
     esac
 done
@@ -639,8 +698,8 @@ use strict;
 use Time::HiRes qw(gettimeofday usleep);
 use Time::Piece;
 $SIG{TERM} = sub { exit 0; };
-my ($basetime, $connect_port, $container, $srvhost, $data_rate, $megabytes, $msgSize, $crtime) = @ARGV;
-my ($etime, $data_sent, $detime, $stime, $end_time, $mean, $stdev, $user, $sys, $cuser, $csys);
+my ($basetime, $connect_port, $container, $srvhost, $data_rate, $bytes, $msgSize, $crtime) = @ARGV;
+my ($etime, $data_sent, $detime, $stime, $end_time, $mean, $stdev, $user, $sys, $cuser, $csys, $elapsed);
 my $start_time;
 my $ghbn_time;
 sub ts() {
@@ -657,7 +716,7 @@ sub xtime() {
 }
 sub print_stats() {
     printf STDERR "STATS %.3f %.3f %.3f %.3f %.3f %.6f %.3f %.3f %d %.3f %.3f %.6f %.6f\n",
-	   $crtime - $basetime, $start_time - $basetime, $ghbn_time - $basetime, $etime - $basetime, $end_time - $basetime, $etime - $stime, $user, $sys,
+	   $crtime - $basetime, $start_time - $basetime, $ghbn_time - $basetime, $etime - $basetime, $end_time - $basetime, $elapsed, $user, $sys,
 	   $data_sent, $detime, $data_sent / $detime / 1000000.0, $mean, $stdev;
 }
 timestamp("Clusterbuster client starting");
@@ -673,7 +732,7 @@ while (! connect(CONN, $sockmeta)) {
     sleep(1);
 }
 $etime = xtime();
-my ($elapsed) = sprintf("%.6f", $etime - $stime);
+$elapsed = $etime - $stime;
 my $peeraddr = getpeername(CONN);
 my ($port, $addr) = sockaddr_in($peeraddr);
 my $peerhost = gethostbyaddr($addr, AF_INET);
@@ -689,7 +748,6 @@ my $MBSec = $data_rate * 1;
 my ($dstime) = xtime();
 
 $data_sent = 0;
-my $bytes = $megabytes * 1000000;
 $mean = 0;
 $stdev = 0;
 if ($MBSec > 0) {
@@ -766,7 +824,7 @@ function createClientContainerYAML() {
     local i=$2
     local secretCount=$3
     local dataRate=$4
-    local megaBytes=$5
+    local bytes=$5
     local msgSize=$6
     local containers=$7
     local -i j
@@ -789,7 +847,7 @@ $(indent 4 <<< "$clientContainerPerl")
   - "client-${j}"
   - "service-${namespace}-$i"
   - "$dataRate"
-  - "$megaBytes"
+  - "$bytes"
   - "$msgSize"
   - "$(ts)"
 $(indent 2 createVolumeMountsYAML "$namespace" "$i" "$secretCount")
@@ -825,7 +883,7 @@ function createClientDeployment() {
     local secretCount=$3
     local replicas=$4
     local dataRate=$5
-    local megaBytes=$6
+    local bytes=$6
     local msgSize=$7
     local containers=$8
     createObject <<EOF
@@ -854,7 +912,7 @@ spec:
       terminationGracePeriodSeconds: 1
 $(indent 6 createClientAffinityYAML "${namespace}-${i}-server")
       containers:
-$(indent 6 createClientContainerYAML "$namespace" "$i" "$secretCount" "$dataRate" "$megaBytes" "$msgSize" "$containers")
+$(indent 6 createClientContainerYAML "$namespace" "$i" "$secretCount" "$dataRate" "$bytes" "$msgSize" "$containers")
 $(indent 6 createVolumesYAML "$namespace" "$i" "$secretCount")
 EOF
 }
@@ -886,7 +944,7 @@ function createDeploymentServer() {
 	createService "$namespace" "$namespace-$i"
 	createRoute "$namespace" "$namespace-$i"
 	createServerDeployment "$namespace" "$i" "$secretCount" "$msgSize"
-	createClientDeployment "$namespace" "$i" "$secretCount" "$replicas" "$dataRate" "$megaBytes" "$msgSize" "$containers"
+	createClientDeployment "$namespace" "$i" "$secretCount" "$replicas" "$dataRate" "$bytes" "$msgSize" "$containers"
     done
 }
 
@@ -911,6 +969,7 @@ function createObjects_n() {
 }
 
 function run_clusterbuster_1() {
+    basetime=$(printf '%(%s)T' -1)
     trap 'kill -9 $(jobs -p); exit' INT
     for i in $(seq 0 "$((parallel - 1))") ; do
 	createObjects_n Namespace "$parallel" "$((i * blocksize))" &
