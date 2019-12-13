@@ -40,27 +40,21 @@ function retrieve_pod_stats() {
     local statline=''
     case "$status" in
 	running|completed)
-	    while read -r text ; do
-		case "$text" in
-		    *"Connection refused")
-			connection_refused=$((connection_refused+1))
-			connection_failures=$((connection_failures+1))
-			;;
-		    *"Could not connect")
-			connection_failures=$((connection_failures+1))
-			;;
-		    *"Read/Write"*)
-			blocks=$((blocks+1))
-			;;
-		    *STATS*)
-			statline=$text
-			;;
-		esac
-	    done <<< "$(oc logs -n "$ns" "$pod" -c "$container")"
+	    # This is actually faster than reading lines if there's a lot of data.
+	    local data="$(oc logs -n "$ns" "$pod" -c "$container")"
+	    connection_refused=$(grep 'Connection refused' <<< "$data" | wc -l)
+	    connection_failures=$(grep 'Could not connect' <<< "$data" | wc -l)
+	    blocks=$(grep 'Read/Write' <<< "$data" | wc -l)
+	    statline=$(grep 'STATS' <<< "$data")
+	    connection_failures=$((connection_failures+connection_refused))
 	    ;;
-	*) ;;
+	'')
+	    return
+	    ;;
+	*)
+	    ;;
     esac
-    echo "-n $ns -c $container $pod $status $connection_failures $connection_refused $blocks $statline"
+    echo "-n $ns $pod -c $container $status $connection_failures $connection_refused $blocks $statline"
 }
 
 while read -r ns pod container status ; do

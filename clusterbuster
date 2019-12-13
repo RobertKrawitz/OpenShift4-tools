@@ -21,6 +21,7 @@ declare -i msgSize=32768
 declare podType=ClusterBuster
 declare podsleeptime=infinity
 declare basename=clusterbuster
+declare -i basetime=$(printf '%(%s)T' -1)
 declare opt
 declare -r nl='
 '
@@ -126,18 +127,22 @@ verbose information about each transfer is printed.
 
 The client logs the following at the end of any data transfer:
 
-STATS <atime> <stime> <gtime> <etime> <interval> <data> <detime> <rate> <mean> <stdev>
+STATS <atime> <stime> <gtime> <etime> <endtime> <user> <sys> <interval> <data> <detime> <rate> <mean> <stdev>
 
 defined as:
 
-atime           Time (seconds from Jan. 1, 1970) of "oc apply" to
+atime           Time (seconds from start of run) of "oc apply" to
                 create the client
 stime           Time when the client started running
 gtime           Time when "gethostbyname" completed
 etime           Time when connection to server succeeded
+endtime         Time when client completed
+user            User CPU time
+user            System CPU time
 interval        Duration between first attempt to connect and
                 successful connection
-detime          Time when data transmission completed
+data            Number of data bytes sent and received
+detime          Elapsed time for data transmission/reception
 rate            Rate (MB/sec) of data transfer, if any
 mean            Mean time sleeping between messages to attempt to
                 achieve the desired transmission rate
@@ -508,7 +513,7 @@ use strict;
 use Time::Piece;
 use Time::HiRes qw(gettimeofday);
 $SIG{TERM} = sub { exit 0; };
-my ($listen_port, $container, $msgSize, $ts) = @ARGV;
+my ($basetime, $listen_port, $container, $msgSize, $ts) = @ARGV;
 sub timestamp($) {
     my ($str) = @_;
     my (@now) = gettimeofday();
@@ -581,6 +586,7 @@ function createServerContainerYAML() {
   - -e
   - |
 $(indent 4 <<< "$serverContainerPerl")
+  - "$basetime"
   - "$port"
   - "${namespace}-${i}-server"
   - "$msgSize"
@@ -633,8 +639,8 @@ use strict;
 use Time::HiRes qw(gettimeofday usleep);
 use Time::Piece;
 $SIG{TERM} = sub { exit 0; };
-my ($connect_port, $container, $srvhost, $data_rate, $megabytes, $msgSize, $crtime) = @ARGV;
-my ($etime, $data_sent, $detime, $stime, $mean, $stdev);
+my ($basetime, $connect_port, $container, $srvhost, $data_rate, $megabytes, $msgSize, $crtime) = @ARGV;
+my ($etime, $data_sent, $detime, $stime, $end_time, $mean, $stdev, $user, $sys, $cuser, $csys);
 my $start_time;
 my $ghbn_time;
 sub ts() {
@@ -650,8 +656,8 @@ sub xtime() {
     return $now[0] + ($now[1] / 1000000.0);
 }
 sub print_stats() {
-    printf STDERR "STATS %.6f %.6f %.6f %.6f %.6f %d %.3f %.3f %.6f %.6f\n",
-	   $crtime, $start_time, $ghbn_time, $etime, $etime - $stime,
+    printf STDERR "STATS %.3f %.3f %.3f %.3f %.3f %.6f %.3f %.3f %d %.3f %.3f %.6f %.6f\n",
+	   $crtime - $basetime, $start_time - $basetime, $ghbn_time - $basetime, $etime - $basetime, $end_time - $basetime, $etime - $stime, $user, $sys,
 	   $data_sent, $detime, $data_sent / $detime / 1000000.0, $mean, $stdev;
 }
 timestamp("Clusterbuster client starting");
@@ -742,7 +748,9 @@ if ($MBSec > 0) {
         $stdev = sqrt(($ex2 - ($ex * $ex / $pass)) / ($pass - 1));
     }
 }
-$detime = xtime() - $dstime;
+($user, $sys, $cuser, $csys) = times;
+$end_time = xtime();
+$detime = $end_time - $dstime;
 if ($detime <= 0) {
     $detime = 0.00000001;
 }
@@ -776,6 +784,7 @@ function createClientContainerYAML() {
   - -e
   - |
 $(indent 4 <<< "$clientContainerPerl")
+  - "$basetime"
   - "$port"
   - "client-${j}"
   - "service-${namespace}-$i"
