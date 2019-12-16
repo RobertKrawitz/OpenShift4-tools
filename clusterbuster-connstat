@@ -36,8 +36,8 @@ function prettyprint() {
     local -i i
     local f
 
-    local -a rowzero=(+ NAMESPACE POD + CONTAINER STATE REF FAIL BLOCKS + CREATED START + CONNECTED FINISH TRANSFERTIME USER SYSTEM DATA XFERTIME RATE SLEEPMEAN SLEEPSTDEV)
-    local -a formats=(.0s s s .0s s s d d d .0s .3f .3f .0s .3f .3f .6f .3f .3f d .3f .3f .6f .6f)
+    local -a rowzero=(+ NAMESPACE POD + CONTAINER STATE REF FAIL BLOCKS + CREATED START + CONNECTED DSTART FINISH TRANSFERTIME USER SYSTEM DATA XFERTIME RATE SLEEPMEAN SLEEPSTDEV)
+    local -a formats=(.0s s s .0s s s d d d .0s .3f .3f .0s .3f .3f .3f .6f .3f .3f d .3f .3f .6f .6f)
     local -ri nfields=$((${#rowzero[@]} - 1))
 
     for i in $(seq 0 "$nfields") ; do
@@ -109,7 +109,6 @@ function retrieve_pod_stats() {
 	    connection_failures=$(grep -c 'Could not connect' <<< "$data")
 	    blocks=$(grep -c 'Read/Write' <<< "$data")
 	    statline=$(grep 'STATS' <<< "$data")
-	    connection_failures=$((connection_failures+connection_refused))
 	    ;;
 	'')
 	    return

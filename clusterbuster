@@ -18,6 +18,7 @@ declare -i verbose=0
 declare dataRate=0
 declare -i bytes=1000000000
 declare -i msgSize=32768
+declare -i poddelay=0
 declare podType=ClusterBuster
 declare podsleeptime=infinity
 declare basename=clusterbuster
@@ -249,6 +250,7 @@ function process_option() {
 	parallel)      parallel=$optvalue		;;
 	sleep)         sleeptime=$optvalue		;;
 	podsleep)      podsleeptime=$optvalue		;;
+	poddelay)      poddelay=$optvalue		;;
 	affinity)
 	    case "$optvalue" in
 		1|'') affinity=1   ;;
@@ -568,10 +570,11 @@ declare serverContainerPerl
 read -r -d '' serverContainerPerl <<'EOF'
 #!/usr/bin/perl
 use Socket;
+use POSIX;
 use strict;
 use Time::Piece;
 use Time::HiRes qw(gettimeofday);
-$SIG{TERM} = sub { exit 0; };
+$SIG{TERM} = sub { POSIX::_exit(0); };
 my ($basetime, $listen_port, $container, $msgSize, $ts) = @ARGV;
 sub timestamp($) {
     my ($str) = @_;
@@ -580,11 +583,12 @@ sub timestamp($) {
 }
 timestamp("Clusterbuster server starting");
 my $sockaddr = "S n a4 x8";
-socket(SOCK, PF_INET, SOCK_STREAM, getprotobyname('tcp')) || die "socket: $!";
+socket(SOCK, AF_INET, SOCK_STREAM, getprotobyname('tcp')) || die "socket: $!";
+$SIG{TERM} = sub { close SOCK; POSIX::_exit(0); };
 setsockopt(SOCK,SOL_SOCKET, SO_REUSEADDR, pack("l",1)) || die "setsockopt reuseaddr: $!\n";
 setsockopt(SOCK,SOL_SOCKET, SO_KEEPALIVE, pack("l",1)) || die "setsockopt keepalive: $!\n";
-bind(SOCK, pack($sockaddr, PF_INET, $listen_port, "\0\0\0\0")) || die "bind: $!\n";
-listen(SOCK, 1) || die "listen: $!";
+bind(SOCK, pack($sockaddr, AF_INET, $listen_port, "\0\0\0\0")) || die "bind: $!\n";
+listen(SOCK, 5) || die "listen: $!";
 my $mysockaddr = getsockname(SOCK);
 my ($junk, $port, $addr) = unpack($sockaddr, $mysockaddr);
 die "can't get port $port: $!\n" if ($port ne $listen_port);
@@ -593,36 +597,37 @@ timestamp("Listening on port $listen_port");
 for (;;) {
     accept(CLIENT, SOCK) || next;
     if ((my $child = fork()) == 0) {
-        close(SOCK);
-        my $peeraddr = getpeername(CLIENT);
-        my ($port, $addr) = sockaddr_in($peeraddr);
-        my $peerhost = gethostbyaddr($addr, AF_INET);
-        my $peeraddr = inet_ntoa($addr);
-        timestamp("Accepted connection from $peerhost ($peeraddr) on $port!");
-        while (1) {
-            my $buffer;
-            my $nread;
-            my $ntotal = 0;
-            while ($ntotal < $msgSize && ($nread = sysread(CLIENT, $buffer, $msgSize, $ntotal)) > 0) {
-                $ntotal += $nread;
-            }
-            if ($nread < 0) {
-                die "Write failed: $!\n";
-            }
-            if ($ntotal == 0) {
-                timestamp("Exiting $port");
-                exit(0);
-            }
-            my $nwrite;
-            while ($ntotal > 0 && ($nwrite = syswrite(CLIENT, $buffer, $ntotal)) > 0) {
-                $ntotal -= $nwrite;
-            }
-            if ($nwrite < 0) {
-                die timestamp("Write failed: $!");
-            }
-        }
+	close(SOCK);
+	$SIG{TERM} = sub { close CLIENT; POSIX::_exit(0); };
+	my $peeraddr = getpeername(CLIENT);
+	my ($port, $addr) = sockaddr_in($peeraddr);
+	my $peerhost = gethostbyaddr($addr, AF_INET);
+	my $peeraddr = inet_ntoa($addr);
+	timestamp("Accepted connection from $peerhost ($peeraddr) on $port!");
+	while (1) {
+	    my $buffer;
+	    my $nread;
+	    my $ntotal = 0;
+	    while ($ntotal < $msgSize && ($nread = sysread(CLIENT, $buffer, $msgSize, $ntotal)) > 0) {
+		$ntotal += $nread;
+	    }
+	    if ($nread < 0) {
+		die "Write failed: $!\n";
+	    }
+	    if ($ntotal == 0) {
+		timestamp("Exiting $port");
+		exit(0);
+	    }
+	    my $nwrite;
+	    while ($ntotal > 0 && ($nwrite = syswrite(CLIENT, $buffer, $ntotal)) > 0) {
+		$ntotal -= $nwrite;
+	    }
+	    if ($nwrite < 0) {
+		die timestamp("Write failed: $!");
+	    }
+	}
     } else {
-        close(CLIENT);
+	close(CLIENT);
     }
 }
 while (wait() >= 0) {
@@ -697,9 +702,9 @@ use POSIX;
 use strict;
 use Time::HiRes qw(gettimeofday usleep);
 use Time::Piece;
-$SIG{TERM} = sub { exit 0; };
-my ($basetime, $connect_port, $container, $srvhost, $data_rate, $bytes, $msgSize, $crtime) = @ARGV;
-my ($etime, $data_sent, $detime, $stime, $end_time, $mean, $stdev, $user, $sys, $cuser, $csys, $elapsed);
+$SIG{TERM} = sub { POSIX::_exit(0); };
+my ($basetime, $poddelay, $connect_port, $container, $srvhost, $data_rate, $bytes, $msgSize, $crtime) = @ARGV;
+my ($etime, $data_sent, $detime, $stime, $end_time, $dstime, $mean, $stdev, $user, $sys, $cuser, $csys, $elapsed);
 my $start_time;
 my $ghbn_time;
 sub ts() {
@@ -715,8 +720,8 @@ sub xtime() {
     return $now[0] + ($now[1] / 1000000.0);
 }
 sub print_stats() {
-    printf STDERR "STATS %.3f %.3f %.3f %.3f %.3f %.6f %.3f %.3f %d %.3f %.3f %.6f %.6f\n",
-	   $crtime - $basetime, $start_time - $basetime, $ghbn_time - $basetime, $etime - $basetime, $end_time - $basetime, $elapsed, $user, $sys,
+    printf STDERR "STATS %.3f %.3f %.3f %.3f %.3f %.3f %.6f %.3f %.3f %d %.3f %.3f %.6f %.6f\n",
+	   $crtime - $basetime, $start_time - $basetime, $ghbn_time - $basetime, $etime - $basetime, $dstime - $basetime, $end_time - $basetime, $elapsed, $user, $sys,
 	   $data_sent, $detime, $data_sent / $detime / 1000000.0, $mean, $stdev;
 }
 timestamp("Clusterbuster client starting");
@@ -724,13 +729,20 @@ $start_time = xtime();
 my $sockaddr = "S n a4 x8";
 my ($fname,$faliases,$ftype,$flen,$faddr)= gethostbyname($srvhost);
 $ghbn_time = xtime();
-my $sockmeta = pack($sockaddr, PF_INET, $connect_port, $faddr);
-socket(CONN, PF_INET, SOCK_STREAM, getprotobyname('tcp')) || die "can't make socket: $!";
-$stime = xtime();
-while (! connect(CONN, $sockmeta)) {
-    timestamp(" Could not connect to $srvhost on port $connect_port: $!");
-    sleep(1);
-}
+my $sockmeta = pack($sockaddr, AF_INET, $connect_port, $faddr);
+my ($connected) = 0;
+do {
+    socket(CONN, AF_INET, SOCK_STREAM, getprotobyname('tcp')) || die "can't make socket: $!";
+    $stime = xtime();
+    if (connect(CONN, $sockmeta)) {
+	$connected = 1;
+    } else {
+	timestamp(" Could not connect to $srvhost on port $connect_port: $!");
+	close CONN;
+	sleep(1);
+    }
+} while (! $connected);
+$SIG{TERM} = sub { close CONN; POSIX::_exit(0); };
 $etime = xtime();
 $elapsed = $etime - $stime;
 my $peeraddr = getpeername(CONN);
@@ -745,21 +757,24 @@ my $nread;
 my $bufsize = length($buffer);
 my $starttime = xtime();
 my $MBSec = $data_rate * 1;
-my ($dstime) = xtime();
+($dstime) = xtime();
 
 $data_sent = 0;
 $mean = 0;
 $stdev = 0;
 if ($MBSec > 0) {
+    my $delaytime = $basetime + $poddelay - $dstime;
     my $pass = 0;
     my $e0 = 0;
     my $ex = 0;
     my $ex2 = 0;
-    timestamp("Using $bufsize byte buffer\n");
+    timestamp("Using $bufsize byte buffer");
+    if ($delaytime > 0) {
+	timestamp("Sleeping $delaytime seconds to synchronize");
+	usleep($delaytime * 1000000);
+    }
+    $dstime = xtime();
     while ($data_sent < $bytes) {
-    	if ($ENV{"VERBOSE"} > 0) {
-	    timestamp("Read/Write $bufsize  ");
-	}
 	my $nwrite;
 	my $nleft = $bufsize;
 	while ($nleft > 0 && ($nwrite = syswrite(CONN, $buffer, $nleft)) > 0) {
@@ -779,22 +794,25 @@ if ($MBSec > 0) {
 	if ($nread < 0) {
 	    die "Read failed: $!\n";
 	}
+	if ($ENV{"VERBOSE"} > 0) {
+	    timestamp("Write/Read $bufsize");
+	}
 	my $curtime = xtime();
 	$starttime += $bufsize / ($MBSec * 1000000);
 	if ($curtime < $starttime) {
 	    if ($ENV{"VERBOSE"} > 0) {
-	        timestamp(sprintf("Sleeping %8.6f", $starttime - $curtime));
+		timestamp(sprintf("Sleeping %8.6f", $starttime - $curtime));
 	    }
 	    usleep(($starttime - $curtime) * 1000000);
 	    if ($pass == 0) {
-                $e0 = $starttime - $curtime;
-            }
+		$e0 = $starttime - $curtime;
+	    }
 	    my $en = ($starttime - $curtime) - $e0;
 	    $ex += $en;
 	    $ex2 += $en * $en;
 	} else {
 	    if ($ENV{"VERBOSE"} > 0) {
-	        timestamp("Not sleeping");
+		timestamp("Not sleeping");
 	    }
 	    $ex -= $e0;
 	    $ex2 += $e0 * $e0;
@@ -803,7 +821,7 @@ if ($MBSec > 0) {
     }
     $mean = ($ex / $pass) + $e0;
     if ($pass > 1) {
-        $stdev = sqrt(($ex2 - ($ex * $ex / $pass)) / ($pass - 1));
+	$stdev = sqrt(($ex2 - ($ex * $ex / $pass)) / ($pass - 1));
     }
 }
 ($user, $sys, $cuser, $csys) = times;
@@ -843,6 +861,7 @@ function createClientContainerYAML() {
   - |
 $(indent 4 <<< "$clientContainerPerl")
   - "$basetime"
+  - "$poddelay"
   - "$port"
   - "client-${j}"
   - "service-${namespace}-$i"
