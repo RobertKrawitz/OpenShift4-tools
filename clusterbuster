@@ -604,19 +604,24 @@ for (;;) {
 	my $peerhost = gethostbyaddr($addr, AF_INET);
 	my $peeraddr = inet_ntoa($addr);
 	timestamp("Accepted connection from $peerhost ($peeraddr) on $port!");
+	my ($consec_empty) = 0;
 	while (1) {
 	    my $buffer;
 	    my $nread;
 	    my $ntotal = 0;
 	    while ($ntotal < $msgSize && ($nread = sysread(CLIENT, $buffer, $msgSize, $ntotal)) > 0) {
 		$ntotal += $nread;
+		$consec_empty=0;
 	    }
 	    if ($nread < 0) {
 		die "Write failed: $!\n";
 	    }
 	    if ($ntotal == 0) {
-		timestamp("Exiting $port");
-		exit(0);
+	        if ($consec_empty > 1) {
+		    timestamp("Exiting $port");
+		    exit(0);
+		}
+	        $consec_empty++;
 	    }
 	    my $nwrite;
 	    while ($ntotal > 0 && ($nwrite = syswrite(CLIENT, $buffer, $ntotal)) > 0) {
@@ -726,18 +731,21 @@ sub print_stats() {
 }
 timestamp("Clusterbuster client starting");
 $start_time = xtime();
-my $sockaddr = "S n a4 x8";
-my ($fname,$faliases,$ftype,$flen,$faddr)= gethostbyname($srvhost);
-$ghbn_time = xtime();
-my $sockmeta = pack($sockaddr, AF_INET, $connect_port, $faddr);
 my ($connected) = 0;
+my ($fname,$faliases,$ftype,$flen,$faddr);
 do {
+    ($fname,$faliases,$ftype,$flen,$faddr) = gethostbyname($srvhost);
+    my $sockaddr = "S n a4 x8";
+    my $straddr = inet_ntoa($faddr);
+    timestamp("Connecting to $srvhost ($fname, $ftype, $straddr)");
+    $ghbn_time = xtime();
+    my $sockmeta = pack($sockaddr, AF_INET, $connect_port, $faddr);
     socket(CONN, AF_INET, SOCK_STREAM, getprotobyname('tcp')) || die "can't make socket: $!";
     $stime = xtime();
     if (connect(CONN, $sockmeta)) {
 	$connected = 1;
     } else {
-	timestamp(" Could not connect to $srvhost on port $connect_port: $!");
+	timestamp("Could not connect to $srvhost on port $connect_port: $!");
 	close CONN;
 	sleep(1);
     }

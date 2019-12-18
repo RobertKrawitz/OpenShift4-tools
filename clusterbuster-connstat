@@ -107,7 +107,7 @@ function retrieve_pod_stats() {
 	    data="$(oc logs -n "$ns" "$pod" -c "$container")"
 	    connection_refused=$(grep -c 'Connection refused' <<< "$data")
 	    connection_failures=$(grep -c 'Could not connect' <<< "$data")
-	    blocks=$(grep -c 'Read/Write' <<< "$data")
+	    blocks=$(grep -c 'Write/Read' <<< "$data")
 	    statline=$(grep 'STATS' <<< "$data")
 	    ;;
 	'')
