@@ -298,7 +298,7 @@ function _timestamp() {
     while read -r REPLY ; do
 	do_platforms diagnose "$REPLY"
 	# Make the message look vaguely Go-like.
-	printf 'T0000 %(%H:%M:%S)T.000000   %s\n' -1 "$REPLY"
+	printf "T0000 %s   %s\n" "$(TZ=GMT-0 date '+%Y-%m-%dT%T.%N' | cut -c1-26)" "$REPLY"
     done
 }
 
