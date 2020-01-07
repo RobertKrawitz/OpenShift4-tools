@@ -2,26 +2,28 @@
 
 declare -a workers
 
-readarray -t workers <<< "$(oc get nodes -l node-role.kubernetes.io/worker --no-headers=true -o name)"
-workers=("${workers[@]#node/}")
-declare -i totalnodes=${#workers[@]}
-
 declare -A args
 declare argsSet=0
+declare oconfig
+declare -r configName='set-max-pods'
+declare -i force=0
 
 function help() {
     cat <<EOF
 Usage: $0 [options]
-       -p maxPods
-       -b KubeAPIBurst
-       -q KubeAPIQPS
-       -X option=value
+       -f              Attempt to force changes even if the config
+                       appears unchanged
+       -p maxPods      Maximum pods/node
+       -b KubeAPIBurst Kubelet-apiserver burst queries/sec
+       -q KubeAPIQPS   Kubelet-apiserver sustained queries/sec
+       -X option=value Any other option and value
 EOF
     exit 1
 }
 
-while getopts "hp:b:q:X:" opt ; do
+while getopts "fhp:b:q:X:" opt ; do
     case "$opt" in
+	f) force=0				   ;;
 	p) args[maxPods]="$OPTARG"; argsSet=1      ;;
 	b) args[KubaAPIBurst]="$OPTARG"; argsSet=1 ;;
 	q) args[KubeAPIQPS]="$OPTARG"; argsSet=1   ;;
@@ -43,6 +45,41 @@ if ((! argsSet )) ; then
     echo "No options set"
     help
 fi
+
+function get_var() {
+    jq -r "[.$1?] | map (select (. != null)) |join(\"\")" <<< "$2"
+}
+
+function test_unchanged() {
+    local k
+    local v
+    local -i changed=0
+    for k in "${!args[@]}" ; do
+	v="$(get_var "$k" "$1")"
+	if [[ ${args[$k]} != "$v" ]] ; then
+	    echo "$k ${v:-(null)} => ${args[$k]:-(null)}"
+	    changed=1
+	else
+	    echo "$k $v (unchanged)"
+	fi
+    done
+    if (( !changed && !force )) ; then
+	echo "*** Kubeconfig is unchanged, not updating"
+	exit 0
+    fi
+}
+
+
+oconfig="$(oc get kubeletconfig.machineconfiguration.openshift.io/$configName -ojson 2>/dev/null | jq '.spec.kubeletConfig')"
+test_unchanged "$oconfig"
+
+readarray -t workers <<< "$(oc get nodes -l node-role.kubernetes.io/worker --no-headers=true -o name)"
+workers=("${workers[@]#node/}")
+declare -i totalnodes=${#workers[@]}
+
+function get_machine_status() {
+    oc get machineconfigpool worker -ojson | jq -r '[.metadata.name, .metadata.generation, ([foreach .status.conditions[] as $cond ([[],[]];0; if ($cond.status == "True") then $cond.type else null end)] | flatten | map (select (. != null)) | join(" ")), .status.machineCount, .status.degradedMachineCount, .status.readyMachineCount, .status.unavailableMachineCount, .status.updatedMachineCount] | join("|")'
+}
 
 function tsec() {
     printf "%(%s)T" -1
@@ -66,7 +103,7 @@ oc apply -f - <<EOF
 apiVersion: machineconfiguration.openshift.io/v1
 kind: KubeletConfig
 metadata:
-  name: set-max-pods
+  name: "$configName"
 spec:
   machineConfigPoolSelector:
     matchLabels:
@@ -79,15 +116,17 @@ EOF
 
 declare -i start
 declare -i phase=0
+declare -i readycount=0
 
 start=$(tsec)
 
 while : ; do 
-    read -r name config updated updating degraded count readycount updatedcount degradedcount <<< "$(oc get machineconfigpool worker --no-headers)"
-    if [[ $degraded = True ]] ; then
+    # shellcheck disable=SC2034
+    IFS='|' read -r name generation status count degradedcount readycount unavailable updatedcount <<< "$(get_machine_status)"
+    if [[ $status = *'Degraded' ]] ; then
 	echo "Machine config is degraded!"
 	exit 1
-    elif [[ $updating = True ]] ; then
+    elif [[ $status = Updating ]] ; then
 	phase=$((phase + 1))
     fi
     if (( phase == 0 )) ; then
