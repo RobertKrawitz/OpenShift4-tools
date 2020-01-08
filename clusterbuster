@@ -7,10 +7,16 @@ declare -i depsPerNamespace=1
 declare -i secrets=0
 declare -i replicas=1
 declare -i parallel=1
+declare -i parallelSecrets=0
+declare -i parallelNamespaces=0
+declare -i parallelDeployments=0
+declare -i blocksize=1
+declare -i blocksizeSecrets=0
+declare -i blocksizeNamespaces=0
+declare -i blocksizeDeployments=0
 declare -i containers=1
 declare -i sleeptime=0
 declare -i doit=1
-declare -i blocksize=1
 declare -i blockitemcount=0
 declare -i port=7777
 declare -i affinity=0
@@ -233,31 +239,37 @@ function process_option() {
 	fi
     fi
     case "$noptname" in
-	help_all*)     help-extended			;;
-	help*)         help				;;
-	pod_type)      podType=$optvalue		;;
-	basename)      basename=$optvalue		;;
-	blocksize)     blocksize=$optvalue		;;
-	containers)    containers=$optvalue		;;
-	namespaces)    namespaces=$optvalue		;;
-	datarate)      dataRate=$optvalue		;;
-	bytes)         bytes=$((optvalue))		;;
-	kb|kilobytes)  bytes=$((optvalue*1000))		;;
-	kib|kibibytes) bytes=$((optvalue*1024))		;;
-	mb|megabytes)  bytes=$((optvalue*1000000))	;;
-	mib|mebibytes) bytes=$((optvalue*1048576))	;;
-	gb|gigabytes)  bytes=$((optvalue*1000000000))	;;
-	gib|gibibytes) bytes=$((optvalue*1073741824))	;;
-	msgsize)       msgSize=$optvalue		;;
-	secrets)       secrets=$optvalue		;;
-	verbose)       verbose=$optvalue		;;
-	quiet)         verbose=$((!optvalue))		;;
-	replicas)      replicas=$optvalue		;;
-	parallel)      parallel=$optvalue		;;
-	sleep)         sleeptime=$optvalue		;;
-	podsleep)      podsleeptime=$optvalue		;;
-	poddelay)      poddelay=$optvalue		;;
-	transfertime)  xferTime=$optvalue		;;
+	help_all*)     	       help-extended			;;
+	help*)         	       help				;;
+	pod_type)      	       podType=$optvalue		;;
+	basename)      	       basename=$optvalue		;;
+	blocksize)     	       blocksize=$optvalue		;;
+	containers)    	       containers=$optvalue		;;
+	namespaces)    	       namespaces=$optvalue		;;
+	datarate)      	       dataRate=$optvalue		;;
+	bytes)         	       bytes=$((optvalue))		;;
+	kb|kilobytes)  	       bytes=$((optvalue*1000))		;;
+	kib|kibibytes) 	       bytes=$((optvalue*1024))		;;
+	mb|megabytes)  	       bytes=$((optvalue*1000000))	;;
+	mib|mebibytes) 	       bytes=$((optvalue*1048576))	;;
+	gb|gigabytes)  	       bytes=$((optvalue*1000000000))	;;
+	gib|gibibytes) 	       bytes=$((optvalue*1073741824))	;;
+	msgsize)       	       msgSize=$optvalue		;;
+	secrets)       	       secrets=$optvalue		;;
+	verbose)       	       verbose=$optvalue		;;
+	quiet)         	       verbose=$((!optvalue))		;;
+	replicas)      	       replicas=$optvalue		;;
+	parallel)      	       parallel=$optvalue		;;
+	sleep)         	       sleeptime=$optvalue		;;
+	podsleep)      	       podsleeptime=$optvalue		;;
+	poddelay)      	       poddelay=$optvalue		;;
+	transfertime)  	       xferTime=$optvalue		;;
+	parallel_secrets)      parallelSecrets=$optvalue	;;
+	parallel_namespaces)   parallelNamespaces=$optvalue	;;
+	parallel_deployments)  parallelDeployments=$optvalue	;;
+	blocksize_secrets)     blocksizeSecrets=$optvalue	;;
+	blocksize_namespaces)  blocksizeNamespaces=$optvalue	;;
+	blocksize_deployments) blocksizeDeployments=$optvalue	;;
 	affinity)
 	    case "$optvalue" in
 		1|'') affinity=1   ;;
@@ -303,6 +315,14 @@ while getopts ":B:b:c:D:d:HhM:m:N:nP:p:qr:s:t:vw:Xxz:-:" opt ; do
 	*) help "$OPTARG"               ;;
     esac
 done
+
+(( !parallelSecrets )) && parallelSecrets=$parallel
+(( !parallelNamespaces )) && parallelNamespaces=$parallel
+(( !parallelDeployments )) && parallelDeployments=$parallel
+
+(( !blocksizeSecrets )) && blocksizeSecrets=$blocksize
+(( !blocksizeNamespaces )) && blocksizeNamespaces=$blocksize
+(( !blocksizeDeployments )) && blocksizeDeployments=$blocksize
 
 shift $((OPTIND - 1))
 
@@ -1000,6 +1020,7 @@ function createObjects_n() {
     trap exit INT
     local objtype=$1; shift
     local parallel=$1; shift
+    local blocksize=$1; shift
     local rotor=$1; shift
     while (( rotor < namespaces )) ; do
 	local j=0
@@ -1015,18 +1036,18 @@ function createObjects_n() {
 function run_clusterbuster_1() {
     basetime=$(printf '%(%s)T' -1)
     trap 'kill -9 $(jobs -p); exit' INT
-    for i in $(seq 0 "$((parallel - 1))") ; do
-	createObjects_n Namespace "$parallel" "$((i * blocksize))" &
+    for i in $(seq 0 "$((parallelNamespaces - 1))") ; do
+	createObjects_n Namespace "$parallelNamespaces" "$blocksizeNamespaces" "$((i * blocksizeNamespaces))" &
     done
     wait
 
-    for i in $(seq 0 "$((parallel - 1))") ; do
-	createObjects_n Secrets "$parallel" "$((i * blocksize))" "$depsPerNamespace" "$secrets" &
+    for i in $(seq 0 "$((parallelSecrets - 1))") ; do
+	createObjects_n Secrets "$parallelSecrets" "$blocksizeSecrets" "$((i * blocksizeSecrets))" "$depsPerNamespace" "$secrets" &
     done
     wait
 
-    for i in $(seq 0 "$((parallel - 1))") ; do
-	createObjects_n Deployment "$parallel" "$((i * blocksize))" "$depsPerNamespace" "$secrets" "$replicas" "$containers" &
+    for i in $(seq 0 "$((parallelDeployments - 1))") ; do
+	createObjects_n Deployment "$parallelDeployments" "$blocksizeDeployments" "$((i * blocksizeDeployments))" "$depsPerNamespace" "$secrets" "$replicas" "$containers" &
     done
     wait
 }
