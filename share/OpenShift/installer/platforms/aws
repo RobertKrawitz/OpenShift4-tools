@@ -27,6 +27,7 @@ add_platform _____aws_dispatch
 declare -arg _____aws_known_instance_types=(" X.General Purpose"
 					    # ARM instances aren't useful
 					    # a1.{medium,{,{,2,4}x}large}
+					    # m6g.{medium,{,{,2,4,8,16,32,48,64}x}large}
 					    m5{,d}.{{,{,2,4,8,12,16,24}x}large,metal}
 					    m5{a,n,dn}.{,{,2,4,8,12,16,24}x}large
 					    m5ad.{,{,2,4,12,24}x}large
@@ -60,6 +61,7 @@ declare -arg _____aws_known_instance_types=(" X.General Purpose"
 					    p3.{2,8,16}xlarge
 					    p3dn.24xlarge
 					    p2.{,8,16}xlarge
+					    inf1.{,2,6,24}xlarge
 					    g4dn.{{,2,4,8,12,16}xlarge,metal}
 					    g3s.xlarge g3.{4,8,16}xlarge
 					    # FPGA instances are of no use for
