@@ -132,6 +132,7 @@ declare -i run_oschart=0
 declare -i save_artifacts=0
 declare -i wait_for_complete=1
 declare -i worker_count=0
+declare -i cvo=1
 declare -i host_prefix_bits=23
 declare api_version=v1
 declare cleanup_only_dir=
@@ -228,6 +229,9 @@ $(do_platforms platform_help options |indent -6)
         config_file         Use the specified file as the install config file.
         create_bastion      Create a bastion ssh host if supported
                             by platform (default 1).
+        disable_cvo         Turn off the cluster version operator so that
+                            the resulting cluster is not overwritten.
+                            Option variable is 'cvo' (default 1, not disabled).
         do_login            Login to the console (default=1)
         download_oc         Download the matching oc binary (default=0)
         edit_manifest=func  Edit manifest files using supplied function.
@@ -856,7 +860,7 @@ function installer_setup() {
     fi
     echo "Using version $install_version${not_latest:- (latest)}" 1>&2
     local -r pullspec="$installer_registry:$install_version"
-    image=$(${OC} adm release info --pullspecs "$pullspec" | awk '{if ($1 == "Pull") {print $3}}')
+    image=$("${OC}" adm release info --pullspecs "$pullspec" | awk '{if ($1 == "Pull") {print $3}}')
     [[ -z $image ]] && fail_find_image "$install_version"
     if (( ! force_local_tools )) ; then
 	echo "Using installer from image ${image} ($ext_installer)" 1>&2
@@ -997,11 +1001,11 @@ function clean_secret() {
 }
 
 function _try_oc_login() {
-    ${OC} login -u kubeadmin -p "${OPENSHIFT_INSTALL_PASSWORD:-}"
+    "${OC}" login -u kubeadmin -p "${OPENSHIFT_INSTALL_PASSWORD:-}"
 }
 
 function _try_console() {
-    ${OC} get route -n openshift-console -o name |grep -q '/console$'
+    "${OC}" get route -n openshift-console -o name |grep -q '/console$'
 }
 
 function waitfor() {
@@ -1066,7 +1070,7 @@ function run_postinstall() {
     if (( wait_for_complete && login_succeeded )) ; then
 	echo -n "Waiting for console to come on line..."
 	if "${___topdir:-}waitfor-pod" -r 10 console && waitfor_console ; then
-	    console_route="$(${OC} get route -n openshift-console -o "custom-columns=HOST:.status.ingress[0].host" --no-headers=true |grep ^console)"
+	    console_route="$("${OC}" get route -n openshift-console -o "custom-columns=HOST:.status.ingress[0].host" --no-headers=true |grep ^console)"
 	    if [[ -n $console_route && $console_route != '<none>' ]] ; then
 		export OPENSHIFT_INSTALL_CONSOLE_ROUTE="https://$console_route"
 		echo "Console route: $OPENSHIFT_INSTALL_CONSOLE_ROUTE"
@@ -1077,7 +1081,7 @@ function run_postinstall() {
     fi
     if (( download_oc )) ; then
 	local download_route
-	download_route="$(${OC} get route -n openshift-console -o "custom-columns=HOST:.status.ingress[0].host" --no-headers=true |grep ^downloads)"
+	download_route="$("${OC}" get route -n openshift-console -o "custom-columns=HOST:.status.ingress[0].host" --no-headers=true |grep ^downloads)"
 	if [[ -n "$download_route" ]] ; then
 	    if [[ ! -d "$install_dir/bin" ]] ; then
 		mkdir "$install_dir/bin" || fatal "Can't create $install_dir/bin"
@@ -1090,6 +1094,10 @@ function run_postinstall() {
 		echo "Download failed!"
 	    fi
 	fi
+    fi
+    if (( ! cvo )) ; then
+	echo "Disabling CVO..."
+	"${OC}" patch deployment/cluster-version-operator -n openshift-cluster-version -p='{"spec":{"replicas":0}}'
     fi
     # shellcheck disable=SC2155
     export OPENSHIFT_INSTALL_NODE_IPS=$("${___topdir:-}"get-nodes)
@@ -1309,14 +1317,24 @@ function process_extended_options() {
 	# Simply testing for empty optvalue is wrong; that would not
 	# allow for an empty value
 	if [[ $option != *'='* ]] ; then
-	    if [[ $optname = "no_"* || $optname = "dont_"* ]] ; then
-		optname=${optname#dont_}
-		optname=${optname#no_}
-		optvalue=0
-	    else
-		optvalue=1
-	    fi
-	    option="${optname}=${optvalue}"
+	    case "$noptname" in
+		"no_"*|"dont_"*|"disable_"*|"without_"*)
+		    noptname=${noptname#dont_}
+		    noptname=${noptname#no_}
+		    noptname=${noptname#disable_}
+		    noptname=${noptname#without_}
+		    optvalue=0
+		    ;;
+		"enable_"*|"with_"*)
+		    noptname=${noptname#enable_}
+		    noptname=${noptname#with_}
+		    optvalue=1
+		    ;;
+		*)
+		    optvalue=1
+		    ;;
+	    esac
+	    option="${noptname}=${optvalue}"
 	fi
 	# Rule: all options must use _ rather than -
 	if [[ -n "${option_registrations[$optname]:-}" ]] ; then
