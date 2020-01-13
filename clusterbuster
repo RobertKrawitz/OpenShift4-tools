@@ -41,8 +41,8 @@ declare OC
 OC=$(type -p oc)
 OC=${OC:-$(type -p kubectl)}	# kubectl might not work, though...
 
-declare _helpmsg
-IFS= read -r -d '' '_helpmsg' <<'EOF'
+function _helpmsg() {
+cat <<EOF
 Usage: $0 [options] [name]
     Options:
        -h              Print this help message
@@ -74,14 +74,15 @@ Usage: $0 [options] [name]
                        constant.
        --opt[=val]     Set the specified option.
 EOF
+}
 
 function help() {
-    echo "$_helpmsg"
+    _helpmsg
     exit 1
 }
 
 function _helpExtended() {
-    echo "$_helpmsg"
+    _helpmsg
     cat <<'EOF'
 
 Clusterbuster is a tool to permit you to load a configurable workload
@@ -598,8 +599,8 @@ spec:
 EOF
 }
 
-declare serverContainerPerl
-IFS= read -r -d '' 'serverContainerPerl' <<'EOF'
+function serverContainerPerl() {
+    cat <<'EOF'
 #!/usr/bin/perl
 use Socket;
 use POSIX;
@@ -670,6 +671,7 @@ for (;;) {
 while (wait() >= 0) {
 }
 EOF
+}
 
 function createServerContainerYAML() {
     local namespace=$1
@@ -686,7 +688,7 @@ function createServerContainerYAML() {
   args:
   - -e
   - |
-$(indent 4 <<< "$serverContainerPerl")
+$(indent 4 <<< "$(serverContainerPerl)")
   - "$basetime"
   - "$port"
   - "${namespace}-${i}-server"
@@ -730,8 +732,8 @@ $(indent 6 createVolumesYAML "$namespace" "$i" "$secretCount")
 EOF
 }
 
-declare clientContainerPerl
-IFS= read -r -d '' 'clientContainerPerl' <<'EOF'
+function clientContainerPerl() {
+    cat <<'EOF'
 #!/usr/bin/perl
 
 use Socket;
@@ -880,6 +882,7 @@ print_stats();
 pause();
 exit 0;
 EOF
+}
 
 function createClientContainerYAML() {
     local namespace=$1
@@ -903,7 +906,7 @@ function createClientContainerYAML() {
   args:
   - -e
   - |
-$(indent 4 <<< "$clientContainerPerl")
+$(indent 4 <<< "$(clientContainerPerl)")
   - "$basetime"
   - "$poddelay"
   - "$port"
