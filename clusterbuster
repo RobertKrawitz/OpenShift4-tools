@@ -42,7 +42,7 @@ OC=$(type -p oc)
 OC=${OC:-$(type -p kubectl)}	# kubectl might not work, though...
 
 declare _helpmsg
-read -r -d '' _helpmsg <<'EOF'
+IFS= read -r -d '' '_helpmsg' <<'EOF'
 Usage: $0 [options] [name]
     Options:
        -h              Print this help message
@@ -214,7 +214,7 @@ function ts() {
 }
 
 function timestamp() {
-    while read -r LINE ; do
+    while read -r 'LINE' ; do
 	printf "%s %s\n" "$(TZ=GMT-0 date '+%Y-%m-%dT%T.%N' | cut -c1-26)" "$LINE"
     done
 }
@@ -380,7 +380,7 @@ function finishCreation() {
 
 function createObject() {
     local data=
-    while IFS='' read -r line ; do
+    while IFS='' read -r 'line' ; do
 	if [[ -n $line ]] ; then
 	    [[ -n $data ]] || data="---$nl"
 	    data+="$line$nl"
@@ -599,7 +599,7 @@ EOF
 }
 
 declare serverContainerPerl
-read -r -d '' serverContainerPerl <<'EOF'
+IFS= read -r -d '' 'serverContainerPerl' <<'EOF'
 #!/usr/bin/perl
 use Socket;
 use POSIX;
@@ -731,7 +731,7 @@ EOF
 }
 
 declare clientContainerPerl
-read -r -d '' clientContainerPerl <<'EOF'
+IFS= read -r -d '' 'clientContainerPerl' <<'EOF'
 #!/usr/bin/perl
 
 use Socket;
