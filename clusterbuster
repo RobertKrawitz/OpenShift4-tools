@@ -356,9 +356,9 @@ fi
 
 function indent_1() {
     local -i column="$1"
-    local -r indent="$(printf "%${column}s")"
-    while IFS= read -r 'line' ; do
-	 [[ -z "$line" ]] || echo "${indent}${line}"
+    local line
+    while IFS='' read -r 'line' ; do
+	[[ -z "$line" ]] || printf "%${column}s%s\n" ' ' "$line"
     done
 }
 
@@ -366,7 +366,8 @@ function indent() {
     local -i column="$1"
     shift
     if [[ -n "$*" ]] ; then
-	"$@" | indent_1 "$column"
+	# "$@" | indent_1 "$column" strips whitespace with bash 4.2
+	indent_1 "$column" <<< "$("$@")"
     else
 	indent_1 "$column"
     fi
@@ -381,6 +382,7 @@ function finishCreation() {
 
 function createObject() {
     local data=
+    local line=
     while IFS='' read -r 'line' ; do
 	if [[ -n $line ]] ; then
 	    [[ -n $data ]] || data="---$nl"
@@ -688,7 +690,7 @@ function createServerContainerYAML() {
   args:
   - -e
   - |
-$(indent 4 <<< "$(serverContainerPerl)")
+$(indent 4 serverContainerPerl)
   - "$basetime"
   - "$port"
   - "${namespace}-${i}-server"
@@ -906,7 +908,7 @@ function createClientContainerYAML() {
   args:
   - -e
   - |
-$(indent 4 <<< "$(clientContainerPerl)")
+$(indent 4 clientContainerPerl)
   - "$basetime"
   - "$poddelay"
   - "$port"
