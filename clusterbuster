@@ -555,6 +555,8 @@ spec:
         name: ${namespace}-$i
         app: ${namespace}-$i
     spec:
+      nodeSelector:
+        node-role.kubernetes.io/worker: ''
       terminationGracePeriodSeconds: 1
       restartPolicy: Always
       containers:
@@ -732,6 +734,8 @@ spec:
         ${basename}-server: "true"
         clusterbusterbase: "true"
     spec:
+      nodeSelector:
+        node-role.kubernetes.io/worker: ''
       terminationGracePeriodSeconds: 1
       containers:
 $(indent 6 createServerContainerYAML "$namespace" "$i" "$secretCount")
@@ -983,6 +987,8 @@ spec:
         ${basename}-client: "true"
         clusterbusterbase: "true"
     spec:
+      nodeSelector:
+        node-role.kubernetes.io/worker: ''
       terminationGracePeriodSeconds: 1
 $(indent 6 createClientAffinityYAML "${namespace}-${i}-server")
       containers:
