@@ -7,6 +7,9 @@ declare -i depsPerNamespace=1
 declare -i secrets=0
 declare -i replicas=1
 declare -i parallel=1
+declare -i sleepSecrets=0
+declare -i sleepNamespaces=0
+declare -i sleepDeployments=0
 declare -i parallelSecrets=0
 declare -i parallelNamespaces=0
 declare -i parallelDeployments=0
@@ -32,8 +35,7 @@ declare podsleeptime=infinity
 declare basename=clusterbuster
 declare -i basetime
 declare opt
-declare -r nl='
-'
+declare -r nl=$'\n'
 
 declare accumulateddata=
 
@@ -271,6 +273,9 @@ function process_option() {
 	blocksize_secrets)     blocksizeSecrets=$optvalue	;;
 	blocksize_namespaces)  blocksizeNamespaces=$optvalue	;;
 	blocksize_deployments) blocksizeDeployments=$optvalue	;;
+	sleep_secrets)         sleepSecrets=$optvalue		;;
+	sleep_namespaces)      sleepNamespaces=$optvalue	;;
+	sleep_deployments)     sleepDeployments=$optvalue	;;
 	affinity)
 	    case "$optvalue" in
 		1|'') affinity=1   ;;
@@ -1027,10 +1032,12 @@ function createObjects_n() {
     local parallel=$1; shift
     local blocksize=$1; shift
     local rotor=$1; shift
+    local sleeptime=$1; shift
     while (( rotor < namespaces )) ; do
 	local j=0
 	while (( j < blocksize && j + rotor < namespaces )) ; do
 	    "create${objtype}" "${basename}-$((rotor + j))" "$@"
+	    if (( sleeptime )) ; then sleep "$sleeptime"; fi
 	    j=$((j+1))
 	done
 	rotor=$((rotor + (parallel * blocksize)))
@@ -1042,17 +1049,17 @@ function run_clusterbuster_1() {
     basetime=$(printf '%(%s)T' -1)
     trap 'kill -9 $(jobs -p); exit' INT
     for i in $(seq 0 "$((parallelNamespaces - 1))") ; do
-	createObjects_n Namespace "$parallelNamespaces" "$blocksizeNamespaces" "$((i * blocksizeNamespaces))" &
+	createObjects_n Namespace "$parallelNamespaces" "$blocksizeNamespaces" "$((i * blocksizeNamespaces))" "$sleepNamespaces" &
     done
     wait
 
     for i in $(seq 0 "$((parallelSecrets - 1))") ; do
-	createObjects_n Secrets "$parallelSecrets" "$blocksizeSecrets" "$((i * blocksizeSecrets))" "$depsPerNamespace" "$secrets" &
+	createObjects_n Secrets "$parallelSecrets" "$blocksizeSecrets" "$((i * blocksizeSecrets))" "$sleepSecrets" "$depsPerNamespace" "$secrets" &
     done
     wait
 
     for i in $(seq 0 "$((parallelDeployments - 1))") ; do
-	createObjects_n Deployment "$parallelDeployments" "$blocksizeDeployments" "$((i * blocksizeDeployments))" "$depsPerNamespace" "$secrets" "$replicas" "$containers" &
+	createObjects_n Deployment "$parallelDeployments" "$blocksizeDeployments" "$((i * blocksizeDeployments))" "$sleepDeployments" "$depsPerNamespace" "$secrets" "$replicas" "$containers" &
     done
     wait
 }
