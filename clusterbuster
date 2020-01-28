@@ -640,6 +640,7 @@ my $mysockaddr = getsockname(SOCK);
 my ($junk, $port, $addr) = unpack($sockaddr, $mysockaddr);
 die "can't get port $port: $!\n" if ($port ne $listen_port);
 timestamp("Listening on port $listen_port");
+$SIG{CHLD} = 'IGNORE';
 
 for (;;) {
     accept(CLIENT, SOCK) || next;
