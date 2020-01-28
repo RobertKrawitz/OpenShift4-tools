@@ -29,6 +29,7 @@ declare -i bytes=0
 declare -i msgSize=32768
 declare -i poddelay=0
 declare -i xferTime=0
+declare -i exitAtEnd=0
 declare -i defaultBytes=1000000000
 declare podType=ClusterBuster
 declare podsleeptime=infinity
@@ -56,6 +57,7 @@ Usage: $0 [options] [name]
        -b blocksize    Number of objects to create in one oc call (default 1)
        -c containers   Number of containers per pod
        -D data rate    Data rate for client/server (MB/sec) (default 0)
+       -e              Exit after all data transmitted.
        -M megabytes    Amount of data to transfer
        -m msgsize      Message size in data transfer
        -d deployments  Number of deployments per namespace (default 1)
@@ -276,6 +278,7 @@ function process_option() {
 	sleep_secrets)         sleepSecrets=$optvalue		;;
 	sleep_namespaces)      sleepNamespaces=$optvalue	;;
 	sleep_deployments)     sleepDeployments=$optvalue	;;
+	exit_at_end)	       exitAtEnd=$optvalue		;;
 	affinity)
 	    case "$optvalue" in
 		1|'') affinity=1   ;;
@@ -293,10 +296,12 @@ function process_option() {
     esac
 }
 
-while getopts ":B:b:c:D:d:HhM:m:N:nP:p:qr:s:t:vw:Xxz:-:" opt ; do
+while getopts ":B:b:c:D:d:EeHhM:m:N:nP:p:qr:s:t:vw:Xxz:-:" opt ; do
     case "$opt" in
 	B) basename="$OPTARG"		;;
 	D) dataRate="$OPTARG"           ;;
+	E) exitAtEnd=0			;;
+	e) exitAtEnd=1			;;
 	H) helpExtended			;;
 	M) bytes=$((OPTARG * 1000000))	;;
 	N) namespaces="$OPTARG"         ;;
@@ -753,7 +758,7 @@ use strict;
 use Time::HiRes qw(gettimeofday usleep);
 use Time::Piece;
 $SIG{TERM} = sub { POSIX::_exit(0); };
-my ($basetime, $poddelay, $connect_port, $container, $srvhost, $data_rate, $bytes, $msgSize, $xfertime, $crtime) = @ARGV;
+my ($basetime, $poddelay, $connect_port, $container, $srvhost, $data_rate, $bytes, $msgSize, $xfertime, $crtime, $exit_at_end) = @ARGV;
 my ($etime, $data_sent, $detime, $stime, $end_time, $dstime, $mean, $stdev, $user, $sys, $cuser, $csys, $elapsed);
 my $start_time;
 my $ghbn_time;
@@ -890,7 +895,9 @@ if ($detime <= 0) {
 
 timestamp("Done");
 print_stats();
-pause();
+if (! $exit_at_end) {
+    pause();
+}
 exit 0;
 EOF
 }
@@ -928,6 +935,7 @@ $(indent 4 clientContainerPerl)
   - "$msgSize"
   - "$xferTime"
   - "$(ts)"
+  - "$exitAtEnd"
 $(indent 2 createVolumeMountsYAML "$namespace" "$i" "$secretCount")
 EOF
     done
