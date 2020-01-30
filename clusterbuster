@@ -37,6 +37,10 @@ declare basename=clusterbuster
 declare -i basetime
 declare opt
 declare -r nl=$'\n'
+declare -a pod_resource_requests=()
+declare -a pod_resource_limits=()
+declare -a container_resource_requests=()
+declare -a container_resource_limits=()
 
 declare accumulateddata=
 
@@ -48,27 +52,20 @@ function _helpmsg() {
 cat <<EOF
 Usage: $0 [options] [name]
     Options:
-       -h              Print this help message
-       -H              Print extended help
-       -n              Print what would be done without doing it
-       -P podtype      Pod type (classic, pause, server)
        -B basename     Base name of pods (default clusterbuster).
                        All objects are labeled with this name.
        -b blocksize    Number of objects to create in one oc call (default 1)
        -c containers   Number of containers per pod
-       -D data rate    Data rate for client/server (MB/sec) (default 0)
-       -e              Exit after all data transmitted.
-       -M megabytes    Amount of data to transfer
-       -m msgsize      Message size in data transfer
        -d deployments  Number of deployments per namespace (default 1)
+       -h              Print this help message
+       -H              Print extended help
+       -n              Print what would be done without doing it
        -N namespaces   Number of namespaces to create (default 1)
+       -P podtype      Pod type (classic, pause, server)
        -p parallel     Number of operations to perform in parallel (default 1)
        -r replicas     Number of replicas per deployment (default 1)
+       	  	       For client/server, this refers to client pods.
        -s secrets      Number of secrets per deployment (default 0)
-       -t xfertime     Time (in seconds) to transfer data (default 0
-                       means no time limit)
-       -v              Print verbose log messages.  Useful with
-                       clusterbuster-connstat.
        -w wait         Number of seconds to wait between ops (default 0)
        -x              Use pod affinity between client and server (default no)
        -X              Use pod anti-affinity between client/server (default no)
@@ -76,7 +73,20 @@ Usage: $0 [options] [name]
                        (default infinity).  This may be an expression evaluated
                        as an argument to sleep(1) and need not be a numeric
                        constant.
-       --opt[=val]     Set the specified option.
+       --opt[=val]     Set the specified option.  Use -H to get a list.
+                       Use --help-everything to get extended documentation.
+
+    Client/server options:
+       -D data rate    Data rate for client/server (MB/sec) (default 0)
+		       May be a decimal number.
+       -E              Don't exit after all data transmitted (default)
+       -e              Exit after all data transmitted.
+       -M megabytes    Amount of data to transfer
+       -m msgsize      Message size in data transfer
+       -t xfertime     Time (in seconds) to transfer data (default 0
+                       means no time limit)
+       -v              Print verbose log messages.  Useful with
+                       clusterbuster-connstat.
 EOF
 }
 
@@ -88,6 +98,60 @@ function help() {
 function _helpExtended() {
     _helpmsg
     cat <<'EOF'
+
+Extended Options:
+    General Extended Options (short equivalents):
+       --pod_type=type  Specify the type of pod (-P)
+       --basename=name  Specify the base name (-B)
+       --containers=N   Number of containers per pod (-c)
+       --namespaces=N   Number of namespaces (-N)
+       --secrets=N      Number of secrets (-s)
+       --replicas=N     Number of replicas per deployment (-r)
+       --podsleep=N     Time for pod to sleep before exit (-z)
+
+    Tuning object creation (short equivalents):
+       --blocksize=N    Number of objects per oc call (-b)
+                        Below options default to blocksize
+       --blocksize_secrets=N
+       --blocksize_namespaces=N
+       --blocksize_deployments=N
+       --sleep=N        Number of seconds between object creations (-w)
+                        Below options default to sleeptime
+       --sleep_secrets=N
+       --sleep_namespaces=N
+       --sleep_deployments=N
+       --parallel=N     Number of operations in parallel (-p)
+                        Below options default to parallel
+       --parallel_secrets=N
+       --parallel_namespaces=N
+       --parallel_deployments=N
+
+    Resources and Limits:
+       --<type>=<resource=value>
+                        <type> is pod_resource_request, pod_resource_limit,
+                        container_resource_request, or container_resource_limit
+
+    Client/server options:
+       --affinity       Force affinity between client and server pods
+                        in a deployment.
+       --anti-affinity  Force anti-affinity between client and server pods
+                        in a deployment.
+       --bytes=N        Number of bytes to transfer
+                        Also --kb, --kib, --mb, --mib, --gb, --gib
+                        (-M is equivalent to --mb)
+       --datarate=N     Data transfer rate (-D)
+       --exit_at_end    Exit upon completion of transfer (-e)
+       --msgsize=N      Message size for data transfer (-m)
+       --poddelay=N     Time in seconds to wait for pods to start data xfer
+       --transfertime=N Time to transfer data (-t)
+       --verbose        Print verbose log messages (-v)
+EOF
+}
+
+function _helpEverything() {
+    _helpExtended
+    cat <<'EOF'
+
 
 Clusterbuster is a tool to permit you to load a configurable workload
 onto an OpenShift cluster.  This is not a full-featured workload
@@ -205,8 +269,13 @@ Examples:
 EOF
 }
 
-function helpExtended() {
+function help_extended() {
     _helpExtended | "${PAGER:-more}"
+    exit 1
+}
+
+function help_everything() {
+    _helpEverything | "${PAGER:-more}"
     exit 1
 }
 
@@ -244,41 +313,46 @@ function process_option() {
 	fi
     fi
     case "$noptname" in
-	help_all*)     	       help-extended			;;
-	help*)         	       help				;;
-	pod_type)      	       podType=$optvalue		;;
-	basename)      	       basename=$optvalue		;;
-	blocksize)     	       blocksize=$optvalue		;;
-	containers)    	       containers=$optvalue		;;
-	namespaces)    	       namespaces=$optvalue		;;
-	datarate)      	       dataRate=$optvalue		;;
-	bytes)         	       bytes=$((optvalue))		;;
-	kb|kilobytes)  	       bytes=$((optvalue*1000))		;;
-	kib|kibibytes) 	       bytes=$((optvalue*1024))		;;
-	mb|megabytes)  	       bytes=$((optvalue*1000000))	;;
-	mib|mebibytes) 	       bytes=$((optvalue*1048576))	;;
-	gb|gigabytes)  	       bytes=$((optvalue*1000000000))	;;
-	gib|gibibytes) 	       bytes=$((optvalue*1073741824))	;;
-	msgsize)       	       msgSize=$optvalue		;;
-	secrets)       	       secrets=$optvalue		;;
-	verbose)       	       verbose=$optvalue		;;
-	quiet)         	       verbose=$((!optvalue))		;;
-	replicas)      	       replicas=$optvalue		;;
-	parallel)      	       parallel=$optvalue		;;
-	sleep)         	       sleeptime=$optvalue		;;
-	podsleep)      	       podsleeptime=$optvalue		;;
-	poddelay)      	       poddelay=$optvalue		;;
-	transfertime)  	       xferTime=$optvalue		;;
-	parallel_secrets)      parallelSecrets=$optvalue	;;
-	parallel_namespaces)   parallelNamespaces=$optvalue	;;
-	parallel_deployments)  parallelDeployments=$optvalue	;;
-	blocksize_secrets)     blocksizeSecrets=$optvalue	;;
-	blocksize_namespaces)  blocksizeNamespaces=$optvalue	;;
-	blocksize_deployments) blocksizeDeployments=$optvalue	;;
-	sleep_secrets)         sleepSecrets=$optvalue		;;
-	sleep_namespaces)      sleepNamespaces=$optvalue	;;
-	sleep_deployments)     sleepDeployments=$optvalue	;;
-	exit_at_end)	       exitAtEnd=$optvalue		;;
+	help_all*)		    help_extended				;;
+	help_everything*)	    help_everything				;;
+	help*)			    help					;;
+	pod_type)		    podType=$optvalue				;;
+	basename)		    basename=$optvalue				;;
+	blocksize)		    blocksize=$optvalue				;;
+	containers)		    containers=$optvalue			;;
+	namespaces)		    namespaces=$optvalue			;;
+	datarate)		    dataRate=$optvalue				;;
+	bytes)			    bytes=$((optvalue))				;;
+	kb|kilobytes)		    bytes=$((optvalue*1000))			;;
+	kib|kibibytes)		    bytes=$((optvalue*1024))			;;
+	mb|megabytes)		    bytes=$((optvalue*1000000))			;;
+	mib|mebibytes)		    bytes=$((optvalue*1048576))			;;
+	gb|gigabytes)		    bytes=$((optvalue*1000000000))		;;
+	gib|gibibytes)		    bytes=$((optvalue*1073741824))		;;
+	msgsize)		    msgSize=$optvalue				;;
+	secrets)		    secrets=$optvalue				;;
+	verbose)		    verbose=$optvalue				;;
+	quiet)			    verbose=$((!optvalue))			;;
+	replicas)		    replicas=$optvalue				;;
+	parallel)		    parallel=$optvalue				;;
+	sleep)			    sleeptime=$optvalue				;;
+	podsleep)		    podsleeptime=$optvalue			;;
+	poddelay)		    poddelay=$optvalue				;;
+	transfertime)		    xferTime=$optvalue				;;
+	parallel_secrets)	    parallelSecrets=$optvalue			;;
+	parallel_namespaces)	    parallelNamespaces=$optvalue		;;
+	parallel_deployments)	    parallelDeployments=$optvalue		;;
+	blocksize_secrets)	    blocksizeSecrets=$optvalue			;;
+	blocksize_namespaces)	    blocksizeNamespaces=$optvalue		;;
+	blocksize_deployments)	    blocksizeDeployments=$optvalue		;;
+	sleep_secrets)		    sleepSecrets=$optvalue			;;
+	sleep_namespaces)	    sleepNamespaces=$optvalue			;;
+	sleep_deployments)	    sleepDeployments=$optvalue			;;
+	exit_at_end)		    exitAtEnd=$optvalue				;;
+	pod_resource_request)	    pod_resource_requests+=("$optvalue")	;;
+	pod_resource_limit)	    pod_resource_limits+=("$optvalue")		;;
+	container_resource_request) container_resource_requests+=("$optvalue")	;;
+	container_resource_limit)   container_resource_limits+=("$optvalue")	;;
 	affinity)
 	    case "$optvalue" in
 		1|'') affinity=1   ;;
@@ -302,7 +376,8 @@ while getopts ":B:b:c:D:d:EeHhM:m:N:nP:p:qr:s:t:vw:Xxz:-:" opt ; do
 	D) dataRate="$OPTARG"           ;;
 	E) exitAtEnd=0			;;
 	e) exitAtEnd=1			;;
-	H) helpExtended			;;
+	h) help				;;
+	H) help_extended		;;
 	M) bytes=$((OPTARG * 1000000))	;;
 	N) namespaces="$OPTARG"         ;;
 	P) podType="$OPTARG"		;;
@@ -310,7 +385,6 @@ while getopts ":B:b:c:D:d:EeHhM:m:N:nP:p:qr:s:t:vw:Xxz:-:" opt ; do
 	b) blocksize="$OPTARG"          ;;
 	c) containers="$OPTARG"         ;;
 	d) depsPerNamespace="$OPTARG"   ;;
-	h) help				;;
 	m) msgSize="$OPTARG"		;;
 	n) doit=0			;;
 	p) parallel="$OPTARG"           ;;
@@ -387,6 +461,43 @@ function finishCreation() {
     if [[ $doit -ne 0 && -n $accumulateddata ]] ; then
 	"${OC}" apply -f - <<< "$accumulateddata" | timestamp
 	accumulateddata=
+    fi
+}
+
+function createResources() {
+    local token
+    for token in "$@" ; do
+	local resource=${token%%=*}
+	local value=${token#*=}
+	echo "$resource: \"$value\""
+    done
+}
+
+function createPodResources() {
+    if (( ${#pod_resource_limits[@]} + ${#pod_resource_requests[@]} )) ; then
+	echo "resources:"
+	if (( ${#pod_resource_limits[@]} )) ; then
+	    echo "  limits:"
+	    indent 4 createResources "${pod_resource_limits[@]}"
+	fi
+	if (( ${#pod_resource_requests[@]} )) ; then
+	    echo "  requests:"
+	    indent 4 createResources "${pod_resource_requests[@]}"
+	fi
+    fi
+}
+
+function createContainerResources() {
+    if (( ${#container_resource_limits[@]} + ${#container_resource_requests[@]} )) ; then
+	echo "resources:"
+	if (( ${#container_resource_limits[@]} )) ; then
+	    echo "  limits:"
+	    indent 4 createResources "${container_resource_limits[@]}"
+	fi
+	if (( ${#container_resource_requests[@]} )) ; then
+	    echo "  requests:"
+	    indent 4 createResources "${container_resource_requests[@]}"
+	fi
     fi
 }
 
@@ -499,6 +610,7 @@ function createContainersClusterBusterYAML() {
 - name: ${namespace}-$i-$j
   imagePullPolicy: IfNotPresent
   image: "busybox"
+$(indent 2 createContainerResources)
   command:
   - /bin/sh
   args:
@@ -525,6 +637,7 @@ function createContainersPausePodYAML() {
 - name: ${namespace}-$i-$j
   imagePullPolicy: IfNotPresent
   image: "gcr.io/google_containers/pause-amd64:3.0"
+$(indent 2 createContainerResources)
 $(indent 2 createVolumeMountsYAML "$namespace" "$i" "$secretCount")
 EOF
     done
@@ -564,6 +677,7 @@ spec:
         node-role.kubernetes.io/worker: ''
       terminationGracePeriodSeconds: 1
       restartPolicy: Always
+$(indent 6 createPodResources)
       containers:
 $(indent 6 createContainers${podType}YAML "$@")
 $(indent 6 createVolumesYAML "$namespace" "$i" "$secretCount")
@@ -696,6 +810,7 @@ function createServerContainerYAML() {
 - name: server
   image: perl
   imagePullPolicy: IfNotPresent
+$(indent 2 createContainerResources)
   ports:
   - containerPort: $port
   command:
@@ -743,6 +858,7 @@ spec:
       nodeSelector:
         node-role.kubernetes.io/worker: ''
       terminationGracePeriodSeconds: 1
+$(indent 6 createPodResources)
       containers:
 $(indent 6 createServerContainerYAML "$namespace" "$i" "$secretCount")
 $(indent 6 createVolumesYAML "$namespace" "$i" "$secretCount")
@@ -917,6 +1033,7 @@ function createClientContainerYAML() {
 - name: client-${j}
   image: "perl"
   imagePullPolicy: IfNotPresent
+$(indent 2 createContainerResources)
   env:
   - name: VERBOSE
     value: "$verbose"
@@ -999,6 +1116,7 @@ spec:
       nodeSelector:
         node-role.kubernetes.io/worker: ''
       terminationGracePeriodSeconds: 1
+$(indent 6 createPodResources)
 $(indent 6 createClientAffinityYAML "${namespace}-${i}-server")
       containers:
 $(indent 6 createClientContainerYAML "$namespace" "$i" "$secretCount" "$dataRate" "$bytes" "$msgSize" "$containers")
