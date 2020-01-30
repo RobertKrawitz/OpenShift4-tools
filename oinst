@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Copyright 2019 Robert Krawitz/Red Hat
+# Copyright 2019-2020 Robert Krawitz/Red Hat
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -119,6 +119,7 @@ declare -i do_override=0
 declare -i download_oc=0
 declare -i force_local_tools=0
 declare -i force_postinstall=0
+declare -i generate_cluster_key=1
 declare -i generate_manifest=0
 declare -i install_stage=0
 declare -i login_succeeded=0
@@ -143,6 +144,7 @@ declare ext_installer=
 declare -r -i default_kubechart_port=3000
 declare kubechart_port=
 declare loglevel=
+declare network_type=OpenShiftSDN
 declare oschart_port=
 declare release_source=
 declare run_command=
@@ -180,6 +182,9 @@ $(do_platforms platform_help install_types | indent 7)
                             KEY: clean_install_cache (default=0)
        -d install_dir       Use the specified dir as working directory and
                             cluster name.  Default is ${LOGNAME:-}-<platform>.
+       -k/-K                Generate ssh key for the cluster.  If not set,
+                            use user's standard ssh key.
+			    KEY: generate_cluster_key (default=1)
        -l/-L                Don't clean up on exit.  You can exit with status
                             77 for no cleanup or 88 to force cleanup.
                             KEY: do_cleanup (default=1)
@@ -212,6 +217,8 @@ function help_extended() {
       Generic cluster configuration:
         host_prefix_bits    Use the specified host prefix size (default $host_prefix_bits,
                             must be between 8 and 24)
+        network_type	    Use the specified network type.  Default is
+			    $network_type; alternative is OVNKubernetes.
         masterconfdata      Specify the data for master configuration.
         masterconffile      Take master platform config from specified file.
         platformconfdata    Specify the data for platform configuration.
@@ -659,7 +666,7 @@ networking:
   - cidr: 10.128.0.0/14
     hostPrefix: $host_prefix_bits
   machineCIDR: $(platform_dispatch machine_cidr)
-  networkType: OpenShiftSDN
+  networkType: $network_type
   serviceNetwork:
   - 172.30.0.0/16
 platform: $(platform_data platform "${platformconfdata:-}" "${platformconfdata:-}" 2)
@@ -1258,13 +1265,15 @@ function register_options() {
 }
 
 function process_options() {
-    while getopts ":BbCcd:HhLln:Oop:qUuV:vX:x:Yy-:" opt ; do
+    while getopts ":BbCcd:HhKkLln:Oop:qUuV:vX:x:Yy-:" opt ; do
 	case "$opt" in
 	    B) run_kubechart=0		    ;;
 	    b) run_kubechart=1		    ;;
 	    C) clean_install_cache=0	    ;;
 	    c) clean_install_cache=1	    ;;
 	    d) install_dir="$OPTARG"        ;;
+	    K) generate_cluster_key=0	    ;;
+	    k) generate_cluster_key=1	    ;;
 	    L) do_cleanup=1		    ;;
 	    l) do_cleanup=0		    ;;
 	    n) release_channel="$OPTARG"    ;;
@@ -1350,11 +1359,13 @@ function process_extended_options() {
 }
 
 function get_platform_path() {
-    platform_path=()
-    if [[ -n ${OPENSHIFT_OINST_LIBDIR:-} ]] ; then
-	readarray -t platform_path <<< "${OPENSHIFT_OINST_LIBDIR//:/$'\n'}"
+    if [[ -z "${platform_path[*]}" ]] ; then
+	platform_path=()
+	if [[ -n ${OPENSHIFT_OINST_LIBDIR:-} ]] ; then
+	    readarray -t platform_path <<< "${OPENSHIFT_OINST_LIBDIR//:/$'\n'}"
+	fi
+	platform_path+=("$___topdir")
     fi
-    platform_path+=("$___topdir")
 }
 
 function find_platforms() {
@@ -1363,9 +1374,6 @@ function find_platforms() {
     declare ____a
     declare ____f
     declare ____dir
-    if [[ -z "${platform_path[*]}" ]] ; then
-	get_platform_path
-    fi
     for ____dir in "${platform_path[@]}" ; do
 	____dir=${____dir:-.}
 	if [[ -d "$____dir/share/OpenShift/installer/platforms" ]] ; then
@@ -1402,11 +1410,16 @@ function find_platforms() {
     done
 }
 
+################################################################
+### Execution starts here                                    ###
+################################################################
+
+get_platform_path
 # Do this first so that if we request help we'll get a useful list of platforms
 find_platforms
 # Running nested installs is liable to be problematic
 if [[ -n ${OPENSHIFT_INSTALL_INTERLOCK:-} ]] ; then
-    if [[ ${1:-} = -h* || ${1:-} = -H*  ]] ; then
+    if [[ ${1:-} = -h* || ${1:-} = -H* || ${1:-} = --help* ]] ; then
 	echo "Already in ${___topsc:-oinst} environment!"
 	help
     fi
@@ -1416,9 +1429,6 @@ fi
 process_options "$@"
 clear_env
 if [[ -z ${install_type:-} ]] ; then
-    if [[ -z "${platform_path[*]}" ]] ; then
-	get_platform_path
-    fi
     for ____dir in "${platform_path[@]}" ; do
 	____dir=${____dir:-.}
 	if [[ -f "$____dir/share/OpenShift/installer/default-platform" ]] ; then
@@ -1467,6 +1477,20 @@ elif [[ -d $install_dir && $install_dir != . && $install_dir != .. &&
     else
 	fatal "Install directory $install_dir already present; will not overwrite without -O"
     fi
+fi
+
+mkdir -p "$install_dir" || fatal "Can't create installation directory $install_dir"
+
+if (( generate_cluster_key )) ; then
+    OPENSHIFT_INSTALL_SSH_KEY=$(realpath "$install_dir/cluster")
+    echo "Generating cluster key..."
+    ssh-keygen -f "$OPENSHIFT_INSTALL_SSH_KEY" -N '' || {
+	echo "Can't create cluster key"
+	rm -rf "$install_dir"
+	exit 1
+    }
+    pubkey_file="${OPENSHIFT_INSTALL_SSH_KEY}.pub"
+    export OPENSHIFT_INSTALL_SSH_KEY
 fi
 
 run_install
