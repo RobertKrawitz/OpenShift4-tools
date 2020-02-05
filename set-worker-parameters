@@ -47,7 +47,7 @@ if ((! argsSet )) ; then
 fi
 
 function get_var() {
-    jq -r "[.$1?] | map (select (. != null)) |join(\"\")" <<< "$2"
+    jq -r "[.$1?] | map (select (. != null) | tostring) |join(\"\")" <<< "$2"
 }
 
 function test_unchanged() {
