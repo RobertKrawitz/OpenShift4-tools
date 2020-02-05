@@ -78,7 +78,7 @@ workers=("${workers[@]#node/}")
 declare -i totalnodes=${#workers[@]}
 
 function get_machine_status() {
-    oc get machineconfigpool worker -ojson | jq -r '[.metadata.name, .metadata.generation, ([foreach .status.conditions[] as $cond ([[],[]];0; if ($cond.status == "True") then $cond.type else null end)] | flatten | map (select (. != null)) | join(" ")), .status.machineCount, .status.degradedMachineCount, .status.readyMachineCount, .status.unavailableMachineCount, .status.updatedMachineCount] | join("|")'
+    oc get machineconfigpool worker -ojson | jq -r '[.metadata.name, (.metadata.generation | tostring), ([foreach .status.conditions[] as $cond ([[],[]];0; if ($cond.status == "True") then $cond.type else null end)] | flatten | map (select (. != null)) | join(" ")), (.status.machineCount | tostring), (.status.degradedMachineCount | tostring), (.status.readyMachineCount | tostring), (.status.unavailableMachineCount | tostring), (.status.updatedMachineCount | tostring)] | join("|")'
 }
 
 function tsec() {
