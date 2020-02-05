@@ -148,6 +148,7 @@ declare network_type=OpenShiftSDN
 declare oschart_port=
 declare release_source=
 declare run_command=
+declare platform_type=
 declare master_type=
 declare worker_type=
 declare masterconffile=
@@ -230,6 +231,7 @@ function help_extended() {
         master_type         Instance type to use for master.
         worker_count        Use the specified number of worker nodes.
         worker_type         Instance type to use for workers.
+        platform_type       Instance type to use for both workers and masters.
 $(do_platforms platform_help options |indent -6)
 
       Installation options:
@@ -307,7 +309,7 @@ function set_diagnostic() {
 
 function _timestamp() {
     while read -r REPLY ; do
-	do_platforms diagnose "$REPLY"
+	platform_dispatch diagnose "$REPLY"
 	# Make the message look vaguely Go-like.
 	printf "T0000 %s   %s\n" "$(TZ=GMT-0 date '+%Y-%m-%dT%T.%N' | cut -c1-26)" "$REPLY"
     done
@@ -1448,6 +1450,8 @@ fi
 OPENSHIFT_INSTALL_PLATFORM="$(find_first_platform is_install_type "$install_type")"
 
 process_extended_options "${options_to_process[@]}"
+master_type=${master_type:-$platform_type}
+worker_type=${worker_type:-$platform_type}
 
 [[ -n $OPENSHIFT_INSTALL_PLATFORM ]] || help
 

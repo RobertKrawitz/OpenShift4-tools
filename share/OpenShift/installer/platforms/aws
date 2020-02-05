@@ -123,7 +123,7 @@ aws     (random US AWS zone)
   aws3  (aws us-west-1)
   aws4  (aws us-west-2)
   aws5  (aws eu-west-2)
-  aws6  (aws eu-west-3)
+   aws6  (aws eu-west-3)
   aws7  (aws sa-east-1)
   aws-* (specified AWS region by name)
 EOF
@@ -168,6 +168,16 @@ function _____aws_print_diagnostic() {
   and cleaned up.
 
 EOF
+	    return 1
+	    ;;
+	_____aws_bootstrap_failed)
+	    cat <<'EOF'
+* [aws] Bootstrap timed out.  This may indicate a network problem,
+  an incompatibility between the machine instance type and RHCOS,
+  a bug in the installer image, or similar.
+
+EOF
+	    return 1
 	    ;;
     esac
 }
@@ -176,6 +186,9 @@ function _____aws_diagnose() {
     case "$*" in
 	*'Tried to create resource record set'*)
 	    set_diagnostic _____aws_existing_resource_detected _____aws_print_diagnostic
+	    ;;
+	*'Bootstrap failed to complete'*'context deadline exceeded'*)
+	    set_diagnostic _____aws_bootstrap_failed _____aws_print_diagnostic
 	    ;;
     esac
 }
