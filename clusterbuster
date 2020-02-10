@@ -41,6 +41,9 @@ declare -a pod_resource_requests=()
 declare -a pod_resource_limits=()
 declare -a container_resource_requests=()
 declare -a container_resource_limits=()
+declare -A namespaces_in_use=()
+declare -a namespaces_to_create=()
+declare -i scale_ns=0
 
 declare accumulateddata=
 
@@ -64,7 +67,8 @@ Usage: $0 [options] [name]
        -P podtype      Pod type (classic, pause, server)
        -p parallel     Number of operations to perform in parallel (default 1)
        -r replicas     Number of replicas per deployment (default 1)
-       	  	       For client/server, this refers to client pods.
+                       For client/server, this refers to client pods.
+       -S              Scale up (add namespaces to existing load) (default no)
        -s secrets      Number of secrets per deployment (default 0)
        -w wait         Number of seconds to wait between ops (default 0)
        -x              Use pod affinity between client and server (default no)
@@ -78,7 +82,7 @@ Usage: $0 [options] [name]
 
     Client/server options:
        -D data rate    Data rate for client/server (MB/sec) (default 0)
-		       May be a decimal number.
+                       May be a decimal number.
        -E              Don't exit after all data transmitted (default)
        -e              Exit after all data transmitted.
        -M megabytes    Amount of data to transfer
@@ -88,11 +92,6 @@ Usage: $0 [options] [name]
        -v              Print verbose log messages.  Useful with
                        clusterbuster-connstat.
 EOF
-}
-
-function help() {
-    _helpmsg
-    exit 1
 }
 
 function _helpExtended() {
@@ -269,6 +268,11 @@ Examples:
 EOF
 }
 
+function help() {
+    _helpmsg | "${PAGER:-more}"
+    exit 1
+}
+
 function help_extended() {
     _helpExtended | "${PAGER:-more}"
     exit 1
@@ -353,6 +357,7 @@ function process_option() {
 	pod_resource_limit)	    pod_resource_limits+=("$optvalue")		;;
 	container_resource_request) container_resource_requests+=("$optvalue")	;;
 	container_resource_limit)   container_resource_limits+=("$optvalue")	;;
+	scale_ns)	   	    scale_ns=$optvalue				;;
 	affinity)
 	    case "$optvalue" in
 		1|'') affinity=1   ;;
@@ -370,7 +375,7 @@ function process_option() {
     esac
 }
 
-while getopts ":B:b:c:D:d:EeHhM:m:N:nP:p:qr:s:t:vw:Xxz:-:" opt ; do
+while getopts ":B:b:c:D:d:EeHhM:m:N:nP:p:qr:Ss:t:vw:Xxz:-:" opt ; do
     case "$opt" in
 	B) basename="$OPTARG"		;;
 	D) dataRate="$OPTARG"           ;;
@@ -390,6 +395,7 @@ while getopts ":B:b:c:D:d:EeHhM:m:N:nP:p:qr:s:t:vw:Xxz:-:" opt ; do
 	p) parallel="$OPTARG"           ;;
 	q) verbose=0			;;
 	r) replicas="$OPTARG"           ;;
+	S) scale_ns=1		;;
 	s) secrets="$OPTARG"            ;;
 	t) xferTime="$OPTARG"		;;
 	v) verbose=1			;;
@@ -660,6 +666,8 @@ metadata:
     clusterbusterbase: "true"
 spec:
   replicas: $pods
+  nodeSelector:
+    node-role.kubernetes.io/worker: ""
   selector:
     matchLabels:
       app: ${namespace}-$i
@@ -674,7 +682,7 @@ spec:
         app: ${namespace}-$i
     spec:
       nodeSelector:
-        node-role.kubernetes.io/worker: ''
+        node-role.kubernetes.io/worker: ""
       terminationGracePeriodSeconds: 1
       restartPolicy: Always
 $(indent 6 createPodResources)
@@ -840,6 +848,8 @@ metadata:
   namespace: $namespace
 spec:
   replicas: 1
+  nodeSelector:
+    node-role.kubernetes.io/worker: ""
   selector:
     matchLabels:
       app: ${namespace}-$i
@@ -856,7 +866,7 @@ spec:
         clusterbusterbase: "true"
     spec:
       nodeSelector:
-        node-role.kubernetes.io/worker: ''
+        node-role.kubernetes.io/worker: ""
       terminationGracePeriodSeconds: 1
 $(indent 6 createPodResources)
       containers:
@@ -1098,6 +1108,8 @@ metadata:
   namespace: $namespace
 spec:
   replicas: $replicas
+  nodeSelector:
+    node-role.kubernetes.io/worker: ""
   restartPolicy: Never
   selector:
     matchLabels:
@@ -1114,7 +1126,7 @@ spec:
         clusterbusterbase: "true"
     spec:
       nodeSelector:
-        node-role.kubernetes.io/worker: ''
+        node-role.kubernetes.io/worker: ""
       terminationGracePeriodSeconds: 1
 $(indent 6 createPodResources)
 $(indent 6 createClientAffinityYAML "${namespace}-${i}-server")
@@ -1169,7 +1181,7 @@ function createObjects_n() {
     while (( rotor < namespaces )) ; do
 	local j=0
 	while (( j < blocksize && j + rotor < namespaces )) ; do
-	    "create${objtype}" "${basename}-$((rotor + j))" "$@"
+	    "create${objtype}" "${namespaces_to_create[$((rotor + j))]}" "$@"
 	    if (( sleeptime )) ; then sleep "$sleeptime"; fi
 	    j=$((j+1))
 	done
@@ -1178,7 +1190,26 @@ function createObjects_n() {
     finishCreation
 }
 
+function allocate_namespaces() {
+    local -i ns_count=0
+    local -i ns_idx=0
+    if (( scale_ns )) ; then
+        while read -r ns ; do
+	    if [[ -n "$ns" ]] ; then
+		namespaces_in_use[${ns#namespace/}]=1
+	    fi
+        done <<< "$("$OC" get ns -l "$basename" --no-headers -o name)"
+    fi
+    while (( ns_count++ < namespaces )) ; do
+        while [[ -n "${namespaces_in_use[${basename}-$ns_idx]:-}" ]] ; do
+            ns_idx=$((ns_idx+1))
+        done
+        namespaces_to_create+=("${basename}-$((ns_idx++))")
+    done
+}
+
 function run_clusterbuster_1() {
+    allocate_namespaces
     basetime=$(printf '%(%s)T' -1)
     trap 'kill -9 $(jobs -p); exit' INT
     for i in $(seq 0 "$((parallelNamespaces - 1))") ; do
