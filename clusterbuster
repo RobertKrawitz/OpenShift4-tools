@@ -1210,7 +1210,6 @@ function allocate_namespaces() {
 
 function run_clusterbuster_1() {
     allocate_namespaces
-    basetime=$(printf '%(%s)T' -1)
     trap 'kill -9 $(jobs -p); exit' INT
     for i in $(seq 0 "$((parallelNamespaces - 1))") ; do
 	createObjects_n Namespace "$parallelNamespaces" "$blocksizeNamespaces" "$((i * blocksizeNamespaces))" "$sleepNamespaces" &
@@ -1222,6 +1221,7 @@ function run_clusterbuster_1() {
     done
     wait
 
+    basetime=$(printf '%(%s)T' -1)
     for i in $(seq 0 "$((parallelDeployments - 1))") ; do
 	createObjects_n Deployment "$parallelDeployments" "$blocksizeDeployments" "$((i * blocksizeDeployments))" "$sleepDeployments" "$depsPerNamespace" "$secrets" "$replicas" "$containers" &
     done
