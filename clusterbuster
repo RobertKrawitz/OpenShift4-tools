@@ -1,5 +1,19 @@
 #!/bin/bash
 
+# Copyright 2019-2020 Robert Krawitz/Red Hat
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 set -u
 
 declare -i namespaces=1
@@ -28,9 +42,11 @@ declare -i verbose=0
 declare -i wait_for_secrets=1
 declare dataRate=0
 declare -i bytes=0
+declare -i bytesMax=0
 declare -i msgSize=32768
 declare -i poddelay=0
 declare -i xferTime=0
+declare -i xferTimeMax=0
 declare -i exitAtEnd=0
 declare -i defaultBytes=1000000000
 declare podType=ClusterBuster
@@ -73,7 +89,7 @@ Usage: $0 [options] [name]
        -S              Scale up (add namespaces to existing load) (default no)
        -s secrets      Number of secrets per deployment (default 0)
        -w wait         Number of seconds to wait between ops (default 0)
-       -W 	       Wait for secrets to be created (default 1)
+       -W              Wait for secrets to be created (default 1)
        -x              Use pod affinity between client and server (default no)
        -X              Use pod anti-affinity between client/server (default no)
        -z podsleep     Amount of time in seconds for pod to sleep before exit
@@ -88,10 +104,13 @@ Usage: $0 [options] [name]
                        May be a decimal number.
        -E              Don't exit after all data transmitted (default)
        -e              Exit after all data transmitted.
-       -M megabytes    Amount of data to transfer
+       -M MB[,max]     Amount of data to transfer.  If two values are
+                       specified, the amount will be randomly chosen
+                       per container.
        -m msgsize      Message size in data transfer
-       -t xfertime     Time (in seconds) to transfer data (default 0
-                       means no time limit)
+       -t time[,max]   Time (in seconds) to transfer data (default 0
+                       means no time limit).  If two values are specified,
+                       the amount will be randomly chosen per container.
        -v              Print verbose log messages.  Useful with
                        clusterbuster-connstat.
 EOF
@@ -138,7 +157,7 @@ Extended Options:
                         in a deployment.
        --anti-affinity  Force anti-affinity between client and server pods
                         in a deployment.
-       --bytes=N        Number of bytes to transfer
+       --bytes=N[,M]    Number of bytes to transfer
                         Also --kb, --kib, --mb, --mib, --gb, --gib
                         (-M is equivalent to --mb)
        --create_routes  Create routes for services (default 0)
@@ -146,7 +165,8 @@ Extended Options:
        --exit_at_end    Exit upon completion of transfer (-e)
        --msgsize=N      Message size for data transfer (-m)
        --poddelay=N     Time in seconds to wait for pods to start data xfer
-       --transfertime=N Time to transfer data (-t)
+       --transfertime=N Time to transfer data (-t).  Two comma-separated
+                        numbers may be used to specify maximum time.
        --verbose        Print verbose log messages (-v)
        --wait_secrets   Wait for secrets to be created (-W) (default 1)
 EOF
@@ -304,6 +324,39 @@ function timestamp() {
 
 trap exit INT
 
+function set_xfer() {
+    local sizespec=$1
+    local -i scale=${2:-1}
+    if [[ $sizespec = *','* ]] ; then
+	bytes=$((${sizespec#*,} * scale))
+	bytesMax=$((${sizespec%%,*} * scale))
+	if (( bytes > bytesMax )) ; then
+	    local -i tmp=$bytes
+	    bytes=$bytesMax
+	    bytesMax=$tmp
+	fi
+    else
+	bytes=$((sizespec * scale))
+	bytesMax=$((sizespec * scale))
+    fi
+}
+
+function set_xfer_time() {
+    local timespec=$1
+    if [[ $timespec = *','* ]] ; then
+	xferTime=${timespec#*,}
+	xferTimeMax=${timespec%%,*}
+	if (( xferTime > xferTimeMax )) ; then
+	    local -i tmp=$xferTime
+	    xferTime=$xferTimeMax
+	    xferTimeMax=$tmp
+	fi
+    else
+	xferTime=$timespec
+	xferTimeMax=$timespec
+    fi
+}
+
 function process_option() {
     local option=$1
     local optname
@@ -331,13 +384,13 @@ function process_option() {
 	containers)		    containers=$optvalue			;;
 	namespaces)		    namespaces=$optvalue			;;
 	datarate)		    dataRate=$optvalue				;;
-	bytes)			    bytes=$((optvalue))				;;
-	kb|kilobytes)		    bytes=$((optvalue*1000))			;;
-	kib|kibibytes)		    bytes=$((optvalue*1024))			;;
-	mb|megabytes)		    bytes=$((optvalue*1000000))			;;
-	mib|mebibytes)		    bytes=$((optvalue*1048576))			;;
-	gb|gigabytes)		    bytes=$((optvalue*1000000000))		;;
-	gib|gibibytes)		    bytes=$((optvalue*1073741824))		;;
+	bytes)			    set_xfer "$optvalue"			;;
+	kb|kilobytes)		    set_xfer "$optvalue" 1000			;;
+	kib|kibibytes)		    set_xfer "$optvalue" 1024			;;
+	mb|megabytes)		    set_xfer "$optvalue" 1000000		;;
+	mib|mebibytes)		    set_xfer "$optvalue" 1048576		;;
+	gb|gigabytes)		    set_xfer "$optvalue" 1000000000		;;
+	gib|gibibytes)		    set_xfer "$optvalue" 1073741824		;;
 	msgsize)		    msgSize=$optvalue				;;
 	secrets)		    secrets=$optvalue				;;
 	verbose)		    verbose=$optvalue				;;
@@ -347,7 +400,7 @@ function process_option() {
 	sleep)			    sleeptime=$optvalue				;;
 	podsleep)		    podsleeptime=$optvalue			;;
 	poddelay)		    poddelay=$optvalue				;;
-	transfertime)		    xferTime=$optvalue				;;
+	transfertime)		    set_xfer_time "$optvalue"			;;
 	parallel_secrets)	    parallelSecrets=$optvalue			;;
 	parallel_namespaces)	    parallelNamespaces=$optvalue		;;
 	parallel_deployments)	    parallelDeployments=$optvalue		;;
@@ -390,7 +443,7 @@ while getopts ":B:b:c:D:d:EeHhM:m:N:nP:p:qr:Ss:t:vWw:Xxz:-:" opt ; do
 	e) exitAtEnd=1			;;
 	h) help				;;
 	H) help_extended		;;
-	M) bytes=$((OPTARG * 1000000))	;;
+	M) set_xfer "$OPTARG" 1000000	;;
 	N) namespaces="$OPTARG"         ;;
 	P) podType="$OPTARG"		;;
 	X) affinity=2			;;
@@ -404,7 +457,7 @@ while getopts ":B:b:c:D:d:EeHhM:m:N:nP:p:qr:Ss:t:vWw:Xxz:-:" opt ; do
 	r) replicas="$OPTARG"           ;;
 	S) scale_ns=1			;;
 	s) secrets="$OPTARG"            ;;
-	t) xferTime="$OPTARG"		;;
+	t) set_xfer_time "$OPTARG"	;;
 	v) verbose=1			;;
 	W) wait_for_secrets=0		;;
 	w) sleeptime="$OPTARG"          ;;
@@ -435,8 +488,9 @@ if (( msgSize <= 0 )) ; then
     exit 1
 fi
 
-if [[ $dataRate != 0 && $dataRate != '' && $xferTime -eq 0 && bytes -eq 0 ]] ; then
+if [[ $dataRate != 0 && $dataRate != '' && $xferTimeMax -eq 0 && bytesMax -eq 0 ]] ; then
     bytes=$defaultBytes
+    bytesMax=$defaultBytes
 fi
 
 case "$podType" in
@@ -893,7 +947,7 @@ use strict;
 use Time::HiRes qw(gettimeofday usleep);
 use Time::Piece;
 $SIG{TERM} = sub { POSIX::_exit(0); };
-my ($basetime, $poddelay, $connect_port, $container, $srvhost, $data_rate, $bytes, $msgSize, $xfertime, $crtime, $exit_at_end) = @ARGV;
+my ($basetime, $poddelay, $connect_port, $container, $srvhost, $data_rate, $bytes, $bytesMax, $msgSize, $xfertime, $xfertimeMax, $crtime, $exit_at_end) = @ARGV;
 my ($etime, $data_sent, $detime, $stime, $end_time, $dstime, $mean, $stdev, $user, $sys, $cuser, $csys, $elapsed);
 my $start_time;
 my $ghbn_time;
@@ -956,6 +1010,12 @@ my $MBSec = $data_rate * 1;
 $data_sent = 0;
 $mean = 0;
 $stdev = 0;
+if ($bytes != $bytesMax) {
+    $bytes += int(rand($bytesMax - $bytes + 1));
+}
+if ($xfertime != $xfertimeMax) {
+    $xfertime += int(rand($xfertimeMax - $xfertime + 1));
+}
 if ($MBSec > 0) {
     my $delaytime = $basetime + $poddelay - $dstime;
     my $pass = 0;
@@ -1068,8 +1128,10 @@ $(indent 4 clientContainerPerl)
   - "service-${namespace}-$i"
   - "$dataRate"
   - "$bytes"
+  - "$bytesMax"
   - "$msgSize"
   - "$xferTime"
+  - "$xferTimeMax"
   - "$(ts)"
   - "$exitAtEnd"
 $(indent 2 createVolumeMountsYAML "$namespace" "$i" "$secretCount")
@@ -1250,20 +1312,18 @@ function run_clusterbuster_1() {
     done
     wait
 
-    if (( wait_for_secrets )) ; then
-	local secname=""
-	while (( ${#expected_secrets[@]} )) ; do
-	    while read -r secname ; do
-		[[ -n "${secname:-}" ]] && unset "expected_secrets[$secname]"
-	    done <<< "$("$OC" get secret -oname --no-headers -l "$basename" -A)"
-	    if (( ${#expected_secrets[@]} )) ; then
-		echo "Still waiting for ${!expected_secrets[*]}"
-		sleep 10
-	    else
-		break
-	    fi
-	done
-    fi
+    local secname=""
+    while (( ${#expected_secrets[@]} )) ; do
+	while read -r secname ; do
+	    [[ -n "${secname:-}" ]] && unset "expected_secrets[$secname]"
+	done <<< "$("$OC" get secret -oname --no-headers -l "$basename" -A)"
+	if (( ${#expected_secrets[@]} )) ; then
+	    echo "Still waiting for ${#expected_secrets[@]} to be created."
+	    sleep 10
+	else
+	    break
+	fi
+    done
 
     basetime=$(printf '%(%s)T' -1)
     for i in $(seq 0 "$((parallelDeployments - 1))") ; do
