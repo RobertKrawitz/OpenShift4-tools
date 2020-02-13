@@ -15,6 +15,7 @@ my @release_channels;
 my @release_labels;
 my @release_urls;
 my @release_payloads;
+my @release_colors;
 my %upgrades_from;
 my %upgrades_to;
 my %release_idx;
@@ -27,6 +28,8 @@ my $opt_url;
 my $opt_channel;
 my $opt_all_upgrades;
 my $opt_os;
+my $opt_print_color;
+my $opt_print_only_validated;
 my $help;
 
 sub read_releases() {
@@ -59,6 +62,7 @@ sub read_releases() {
 	    $release_labels[$idx] = $attrs{'label'};
 	    $release_channels[$idx] = $current_channel;
 	    $release_urls[$idx] = $attrs{'href'};
+	    $release_colors[$idx] = $attrs{'color'};
 	    $release_idx{$attrs{'label'}} = $idx;
 	}
     }
@@ -168,7 +172,12 @@ sub print_releases($) {
     read_graph();
     foreach my $idx (0..$#release_labels) {
 	if ($channel eq '' || $release_channels[$idx] eq $channel) {
-	    print "$release_labels[$idx]\n";
+	    next if ($opt_print_only_validated && $release_colors[$idx]);
+	    if ($opt_print_color && $release_colors[$idx]) {
+		print "$release_labels[$idx] $release_colors[$idx]\n";
+	    } else {
+		print "$release_labels[$idx]\n";
+	    }
 	}
     }
 }
@@ -242,12 +251,16 @@ sub print_help_and_exit() {
       -B base                 Use the specified base.  At present, this should
                               be openshift-release or origin-release.
       -c channel              Restrict releases to the specified channel.
+      -C		      Print release status with each release in CSV.
+      -G		      Print only validated releases.
 EOF
     exit 1;
 }
 
 GetOptions("B=s" => \$base_repo,
 	   "c=s" => \$opt_channel,
+	   "C!"  => \$opt_print_color,
+	   "G!"  => \$opt_print_only_validated,
 	   "h"   => \$help);
 
 if ($help) {

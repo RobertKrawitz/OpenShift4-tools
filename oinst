@@ -107,6 +107,7 @@ declare -r JQ=$(type -p jq)
 [[ -z $JQ ]] && fatal "Can't find jq command"
 # shellcheck disable=SC2155
 declare -r owd=$(pwd)
+declare -i all_releases=0
 declare -i clean_install_cache=0
 declare -i clean_shutdown=0
 declare -i cleanup_run=0
@@ -135,6 +136,7 @@ declare -i wait_for_complete=1
 declare -i worker_count=0
 declare -i cvo=1
 declare -i host_prefix_bits=23
+declare valid_channels=-G
 declare api_version=v1
 declare cleanup_only_dir=
 declare config_file=
@@ -176,6 +178,9 @@ $(do_platforms platform_help install_types | indent 7)
                             line options.
 
     Options listed as -a/-A are inverted by the second listed option.
+       -a/-A                List all releases with query (not just validated
+                            ones).
+                            KEY: all_releases (default=0)
        -b/-B                Launch kubechart and oschart (if available).
                             See https://github.com/sjenning/kubechart
                             KEY: run_kubechart (default=0)
@@ -185,7 +190,7 @@ $(do_platforms platform_help install_types | indent 7)
                             cluster name.  Default is ${LOGNAME:-}-<platform>.
        -k/-K                Generate ssh key for the cluster.  If not set,
                             use user's standard ssh key.
-			    KEY: generate_cluster_key (default=1)
+                            KEY: generate_cluster_key (default=1)
        -l/-L                Don't clean up on exit.  You can exit with status
                             77 for no cleanup or 88 to force cleanup.
                             KEY: do_cleanup (default=1)
@@ -193,6 +198,7 @@ $(do_platforms platform_help install_types | indent 7)
        -O/-o                Allow overwrite an existing install directory.
                             KEY: overwrite (default=0)
        -u/-U                Query for release (and optionally channel) to use.
+                            Also see -a/-A.
                             KEY: query (default=0)
        -V install_version   Install the specified image version (default
                             latest).  Use '$___topsc -H' for more details.
@@ -821,7 +827,7 @@ function list_install_versions() {
     fi
     for channel in "${channels[@]}" ; do
 	local -a versions=()
-	readarray -t versions <<< "$(openshift-release-info -B "$repo" ${channel:+-c "$channel"} releases < /dev/null | sort -r)"
+	readarray -t versions <<< "$(openshift-release-info ${valid_channels} -B "$repo" ${channel:+-c "$channel"} releases < /dev/null | sort -r)"
 	if [[ -n "${versions[*]}" ]] ; then
 	    releases+=(" X.$channel")
 	    releases+=("${versions[@]}")
@@ -850,14 +856,14 @@ function installer_setup() {
 	    release_channel=
 	fi
 	local -a versions=()
-	readarray -t versions <<< "$(openshift-release-info -B "$repo" ${release_channel:+-c "$release_channel"} releases < /dev/null | sort -r)"
+	readarray -t versions <<< "$(openshift-release-info ${valid_channels} -B "$repo" ${release_channel:+-c "$release_channel"} releases < /dev/null | sort -r)"
 	OPS3=${PS3:-}
 	PS3="Select release: "
 	select install_version in "${versions[@]}" ; do break; done
 	PS3=$OPS3
     elif [[ -n ${release_channel:-} ]] ; then
 	local -a versions=()
-	read -r install_version <<< "$(openshift-release-info -B "$repo" ${release_channel:+-c "$release_channel"} releases < /dev/null | sort -r | head -1)"
+	read -r install_version <<< "$(openshift-release-info ${valid_channels} -B "$repo" ${release_channel:+-c "$release_channel"} releases < /dev/null | sort -r | head -1)"
     elif [[ $install_version = latest ]] ; then
 	not_latest=0
 	release_channel=${release_channel:-${release_base_map[$repo]:-}}
@@ -1267,8 +1273,10 @@ function register_options() {
 }
 
 function process_options() {
-    while getopts ":BbCcd:HhKkLln:Oop:qUuV:vX:x:Yy-:" opt ; do
+    while getopts ":AaBbCcd:HhKkLln:Oop:qUuV:vX:x:Yy-:" opt ; do
 	case "$opt" in
+	    A) all_releases=0		    ;;
+	    a) all_releases=1		    ;;
 	    B) run_kubechart=0		    ;;
 	    b) run_kubechart=1		    ;;
 	    C) clean_install_cache=0	    ;;
@@ -1305,12 +1313,18 @@ function process_options() {
     fi
 
     if [[ $install_version = list || $release_channel = list ]] ; then
-	if [[ $release_channel = list ]] ; then 
+	if [[ $release_channel = list ]] ; then
 	    list_release_channels
 	else
 	    list_install_versions "$release_channel"
 	fi
 	exit 0
+    fi
+
+    if (( all_releases )) ; then
+	valid_channels=
+    else
+	valid_channels=-G
     fi
 
     [[ -z "$*" ]] || echo "Warning: extraneous arguments $# after $install_type will be ignored!" 1>&2
