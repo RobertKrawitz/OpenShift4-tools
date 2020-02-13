@@ -174,10 +174,10 @@ EOF
 	    cat <<'EOF'
 * [aws] Bootstrap timed out.  This may indicate a network problem,
   an incompatibility between the machine instance type and RHCOS,
-  a bug in the installer image, or similar.
+  a bug in the installer image, or similar; it also suggests the
+  possibility of authentication problems.
 
 EOF
-	    return 1
 	    ;;
     esac
 }
