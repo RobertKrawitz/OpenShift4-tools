@@ -21,6 +21,7 @@ declare -i depsPerNamespace=1
 declare -i secrets=0
 declare -i replicas=1
 declare -i parallel=1
+declare -i firstDeployment=0
 declare -i sleepSecrets=0
 declare -i sleepNamespaces=0
 declare -i sleepDeployments=0
@@ -62,6 +63,7 @@ declare -a container_resource_limits=()
 declare -A namespaces_in_use=()
 declare -a namespaces_to_create=()
 declare -i scale_ns=0
+declare -i scale_deployments=1
 
 declare accumulateddata=
 
@@ -131,6 +133,17 @@ Extended Options:
        --podsleep=N     Time for pod to sleep before exit (-z)
 
     Tuning object creation (short equivalents):
+       --scale-ns=[0,1] Scale up the number of namespaces.
+                        (default 0)
+       --scale-deployments=[0,1]
+                        Scale up the number of deployments.
+                        (default 1)
+       --first_deployment=N
+                        Specify the index of the first deployment.
+                        Default is 0 (but see --scale_deployments)
+       --first_secret=N
+       --first_namespace=N
+       --first_deployment=N
        --blocksize=N    Number of objects per oc call (-b)
                         Below options default to blocksize
        --blocksize_secrets=N
@@ -401,6 +414,7 @@ function process_option() {
 	podsleep)		    podsleeptime=$optvalue			;;
 	poddelay)		    poddelay=$optvalue				;;
 	transfertime)		    set_xfer_time "$optvalue"			;;
+	first_deployment)	    firstDeployment=$optvalue			;;
 	parallel_secrets)	    parallelSecrets=$optvalue			;;
 	parallel_namespaces)	    parallelNamespaces=$optvalue		;;
 	parallel_deployments)	    parallelDeployments=$optvalue		;;
@@ -418,6 +432,7 @@ function process_option() {
 	create_routes)		    createRoutes=$optvalue			;;
 	wait_secrets)		    wait_for_secrets=$optvalue			;;
 	scale_ns)	   	    scale_ns=$optvalue				;;
+	scale_deployments)   	    scale_deployments=$optvalue			;;
 	affinity)
 	    case "$optvalue" in
 		1|'') affinity=1   ;;
@@ -612,7 +627,7 @@ function createSecrets() {
     local -i i
     local -i j
     (( secrets )) || return;
-    for i in $(seq 0 $((depsPerNamespace - 1))) ; do
+    for i in $(seq $firstDeployment $((depsPerNamespace + firstDeployment - 1))) ; do
 	for j in $(seq 0 $((secrets - 1))) ; do
 	    createObject <<EOF
 apiVersion: v1
@@ -908,6 +923,9 @@ kind: Deployment
 metadata:
   name: ${namespace}-${i}-server
   namespace: $namespace
+  labels:
+    ${basename}: "true"
+    clusterbusterbase: "true"
 spec:
   replicas: 1
   nodeSelector:
@@ -1176,6 +1194,9 @@ kind: Deployment
 metadata:
   name: ${namespace}-${i}-client
   namespace: $namespace
+  labels:
+    ${basename}: "true"
+    clusterbusterbase: "true"
 spec:
   replicas: $replicas
   nodeSelector:
@@ -1213,7 +1234,7 @@ function createDeploymentPausePod() {
     local pods=${4:-1}
     local containers=${5:-1}
     local -i i
-    for i in $(seq 0 $((count - 1))) ; do
+    for i in $(seq $firstDeployment $((count + firstDeployment - 1))) ; do
 	createObject <<< "$(createDeploymentClassicYAML "$namespace" "$i" "$secretCount"  "$replicas" "$containers")"
     done
 }
@@ -1229,7 +1250,7 @@ function createDeploymentServer() {
     local pods=${4:-1}
     local containers=${5:-1}
     local -i i
-    for i in $(seq 0 $((count - 1))) ; do
+    for i in $(seq $firstDeployment $((count + firstDeployment - 1))) ; do
 	createService "$namespace" "$namespace-$i"
 	(( createRoutes )) && createRoute "$namespace" "$namespace-$i"
 	createServerDeployment "$namespace" "$i" "$secretCount" "$msgSize"
@@ -1268,7 +1289,7 @@ function allocate_namespaces() {
 	    if [[ -n "$ns" ]] ; then
 		namespaces_in_use[${ns#namespace/}]=1
 	    fi
-        done <<< "$("$OC" get ns -l "$basename" --no-headers -o name)"
+        done <<< "$("$OC" get ns -l "$basename" --no-headers -o name 2>/dev/null)"
     fi
     while (( ns_count++ < namespaces )) ; do
         while [[ -n "${namespaces_in_use[${basename}-$ns_idx]:-}" ]] ; do
@@ -1278,10 +1299,29 @@ function allocate_namespaces() {
     done
 }
 
+function find_first_deployment() {
+    if (( scale_deployments )) ; then
+	local ns
+	local deployment
+	local stuff
+	# shellcheck disable=SC2034
+        while read -r ns deployment stuff ; do
+	    if [[ -n "$deployment" ]] ; then
+		deployment=${deployment#${ns}-}
+		deployment=${deployment%-*}
+		if (( deployment + 1 > firstDeployment )) ; then
+		    firstDeployment=$((deployment + 1))
+		fi
+	    fi
+        done <<< "$("$OC" get deployments -l "$basename" -A --no-headers 2>/dev/null)"
+    fi
+}
+
 function run_clusterbuster_1() {
     local -A expected_secrets=()
     local -i i
     allocate_namespaces
+    find_first_deployment
     trap 'kill -9 $(jobs -p); exit' INT
     for i in $(seq 0 "$((parallelNamespaces - 1))") ; do
 	createObjects_n Namespace "$parallelNamespaces" "$blocksizeNamespaces" "$((i * blocksizeNamespaces))" "$sleepNamespaces" &
@@ -1298,7 +1338,7 @@ function run_clusterbuster_1() {
 	local nsd
 	for i in $(seq 0 $((namespaces - 1))) ; do
 	    ns="secret/secret-${basename}-${namespaces_to_create[$i]##*-}"
-	    for j in $(seq 0 $((depsPerNamespace - 1))) ; do
+	    for j in $(seq $firstDeployment $((depsPerNamespace + firstDeployment - 1))) ; do
 		nsd="${ns}-$j"
 		for k in $(seq 0 $((secrets - 1))) ; do
 		    expected_secrets["${nsd}-$k"]=1
