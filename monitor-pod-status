@@ -11,6 +11,8 @@ declare -i podcount
 declare -i nscount
 declare -i nodestatus
 
+declare -r OC=${OC:-oc}
+
 while :; do
     start=$(printf "%(%s)T" -1)
     podcount=0
@@ -37,13 +39,13 @@ while :; do
 	esac
 	podcount=$((podcount+1))
 	podstatus[$status]=$((${podstatus[$status]:-0}+1))
-    done <<< "$(oc get pods --all-namespaces -l clusterbuster=true --no-headers --ignore-not-found=true)"
+    done <<< "$("$OC" get pods --all-namespaces -l clusterbuster=true --no-headers --ignore-not-found=true)"
     while read -r ns status rest ; do
 	[[ -n $ns ]] || break
 	status=${status:0:1}
 	nscount=$((nscount+1))
 	nsstatus[$status]=$((${nsstatus[$status]:-0}+1))
-    done <<< "$(oc get namespaces -l clusterbuster=true --no-headers --ignore-not-found=true)"
+    done <<< "$("$OC" get namespaces -l clusterbuster=true --no-headers --ignore-not-found=true 2>/dev/null)"
     # shellcheck disable=SC2034
     while read -r ns name stype rest ; do
 	[[ -n $ns ]] || break
@@ -54,13 +56,13 @@ while :; do
 	fi
 	secstatus[$stype]=$((${secstatus[$stype]:-0}+1))
 	# We're looking for other secrets that can't be tagged.
-    done <<< "$(oc get secrets --all-namespaces --no-headers --ignore-not-found=true |grep clusterbuster)"
+    done <<< "$("$OC" get secrets --all-namespaces --no-headers --ignore-not-found=true 2>/dev/null |grep clusterbuster)"
     while read -r node status rest ; do
 	[[ -n $node ]] || break
 	status=${status:0:1}
 	nodecount=$((nodecount+1))
 	nodestatus[$status]=$((${nodestatus[$status]:-0}+1))
-    done <<< "$(oc get nodes -l node-role.kubernetes.io/worker --no-headers --ignore-not-found=true)"
+    done <<< "$("$OC" get nodes -l node-role.kubernetes.io/worker --no-headers --ignore-not-found=true 2>/dev/null)"
     printf "%s " "$(printf "%(%T)T" -1)" Pods: "$(for s in P R C T E X I U ; do echo -n "${podstatus[$s]:-0}$s "; done)" "/ $podcount" "  NS:" "$(for s in A T ; do echo -n "${nsstatus[$s]:-0}$s "; done)" "/ $nscount" "  Sec:" "$(for s in A S ; do echo -n "${secstatus[$s]:-0}$s "; done)" "  Node:" "$(for s in R N ; do echo -n "${nodestatus[$s]:-0}$s "; done)" "/ $nodecount"
     echo
     end=$(printf "%(%s)T" -1)
