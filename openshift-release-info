@@ -30,6 +30,7 @@ my $opt_all_upgrades;
 my $opt_os;
 my $opt_print_color;
 my $opt_print_only_validated;
+my $verbose;
 my $help;
 
 sub read_releases() {
@@ -106,6 +107,32 @@ sub get_release_info($) {
 	warn "Can't read release info for $release\n";
     }
     return $response;
+}
+
+sub get_release_detail($) {
+    my ($release) = @_;
+    my ($response);
+    open(INFO, "-|", "oc adm release info -o json $release") || warn "Can't run oc adm release info: $!\n";
+    my ($jsontxt);
+    while (<INFO>) {
+	$jsontxt .= $_;
+    }
+    close INFO;
+    my $json = decode_json($jsontxt);
+    my (%reldetail);
+    if (defined $$json{'references'}{'spec'}{'tags'}) {
+	foreach my $tag (@{$$json{'references'}{'spec'}{'tags'}}) {
+	    my ($name) = $$tag{'name'};
+	    my ($repo) = $$tag{'annotations'}{'io.openshift.build.source-location'};
+	    my ($commit) = $$tag{'annotations'}{'io.openshift.build.commit.id'};
+	    my ($image) = $$tag{'from'}{'name'};
+	    $reldetail{$name} = {};
+	    $reldetail{$name}{'repo'} = $repo;
+	    $reldetail{$name}{'commit'} = $commit;
+	    $reldetail{$name}{'image'} = $image;
+	}
+    }
+    return %reldetail;
 }
 
 sub get_os_build($) {
@@ -196,8 +223,20 @@ sub parse_options($) {
     return %attrs;
 }
 
+my %generic_commands = (
+    "os"         => 1,
+    "payload"    => 1,
+    "url"        => 1,
+    "upgrades"   => 0,
+    "components" => 0,
+    );
+
 sub do_command($$\@) {
     my ($command, $channel, $releases) = @_;
+    my ($plural) = $generic_commands{$command};
+    if (! $plural && length @$releases != 1) {
+	die "Error: command '$command' takes only one release\n";
+    }
     my (@releases) = get_releases($channel, @$releases);
     foreach my $release (@releases) {
 	my ($always_print_release) = 0;
@@ -224,6 +263,30 @@ sub do_command($$\@) {
 		    $answer = "\n  " . join("\n  ", @answers) . "\n";
 		}
 	    }
+	} elsif ($command eq "components") {
+	    my (%stuff) = get_release_detail($release_payloads[$idx]);
+	    my ($maxnamelen) = 1;
+	    my ($maxrepolen) = 1;
+	    if ($verbose) {
+		foreach my $name (keys %stuff) {
+		    if (length $name > $maxnamelen) {
+			$maxnamelen = length $name;
+		    }
+		    if (length $stuff{$name}{'repo'} > $maxrepolen) {
+			$maxrepolen = length $stuff{$name}{'repo'};
+		    }
+		}
+		my (@answers);
+		my ($printfstr) = "%-${maxnamelen}s %-${maxrepolen}s %s";
+		foreach my $name (sort keys %stuff) {
+		    my ($a1) = sprintf($printfstr, $name, $stuff{$name}{'repo'}, $stuff{$name}{'commit'});
+		    $a1 =~ s/ +$//;
+		    push @answers, $a1;
+		}
+		$answer = join("\n", @answers);
+	    } else {
+		$answer = join("\n", sort keys %stuff);
+	    }
 	}
 	if ($answer ne '') {
 	    if ($#releases > 0 || $always_print_release) {
@@ -239,6 +302,8 @@ sub print_help_and_exit() {
   Usage: openshift-release-info [opts] command args...
     Commands:
       channels                List available channels.
+      components <release>    List components associated with release.
+                              With -v, print repo and commit hash.
       os [releases...]        Print OS version for specified release[s] or all
                               if none specified.
       payload [releases...]   Print payload for specified release[s].
@@ -251,8 +316,9 @@ sub print_help_and_exit() {
       -B base                 Use the specified base.  At present, this should
                               be openshift-release or origin-release.
       -c channel              Restrict releases to the specified channel.
-      -C		      Print release status with each release in CSV.
-      -G		      Print only validated releases.
+      -C                      Print release status with each release in CSV.
+      -G                      Print only validated releases.
+      -v                      Print verbose information, as appropriate.
 EOF
     exit 1;
 }
@@ -261,7 +327,8 @@ GetOptions("B=s" => \$base_repo,
 	   "c=s" => \$opt_channel,
 	   "C!"  => \$opt_print_color,
 	   "G!"  => \$opt_print_only_validated,
-	   "h"   => \$help);
+	   "h"   => \$help,
+	   "v"   => \$verbose);
 
 if ($help) {
     print_help_and_exit();
@@ -278,20 +345,13 @@ $base="https://$base_repo.svc.ci.openshift.org";
 $dot_url="${base}/graph?format=dot";
 $cincy_url="$base/graph";
 
-my %generic_commands = (
-    "os"       => 1,
-    "payload"  => 1,
-    "url"      => 1,
-    "upgrades" => 1,
-    );
-
 if ($command eq "help") {
     print_help_and_exit();
 } elsif ($command eq "channels") {
     print_channels();
 } elsif ($command eq "releases") {
     print_releases($opt_channel);
-} elsif ($generic_commands{$command}) {
+} elsif (defined $generic_commands{$command}) {
     do_command($command, $opt_channel, @ARGV);
 } else {
     print STDERR "Unknown command '$command'.\n";
