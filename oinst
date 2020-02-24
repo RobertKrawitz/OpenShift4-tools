@@ -162,7 +162,7 @@ declare platformconfdata=
 declare -a options_to_process=()
 declare -A option_registrations=()
 
-function print_help() {
+function _print_help() {
     cat <<EOF
 Usage: $___topsc [options] [install_type]
     install_type: one of
@@ -210,13 +210,17 @@ $(do_platforms platform_help install_types | indent 7)
 EOF
 }
 
+function print_help() {
+    _print_help | ${PAGER:-more}
+}
+
 function help() {
     [[ -n ${1:-} ]] && echo "$___topsc: Unknown option $1"
     print_help
     exit 1
 }
 
-function help_extended() {
+function _help_extended() {
     print_help
     cat <<EOF
 
@@ -286,6 +290,10 @@ $(do_platforms platform_help default_domain | indent -28)
         force_local_tools   Use the local toolchain to install with.
                             Turns on do_override if a version is specified.
 EOF
+}
+
+function help_extended() {
+    _help_extended | ${PAGER:-more}
     exit 1
 }
 
