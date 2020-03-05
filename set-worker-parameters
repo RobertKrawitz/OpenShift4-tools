@@ -109,6 +109,8 @@ spec:
     matchLabels:
       custom-kubelet: large-pods
   kubeletConfig:
+    apiVersion: machineconfiguration.openshift.io/v1
+    kind: KubeletConfig
 $(for arg in "${!args[@]}" ; do
       echo "    $arg: ${args[$arg]}"
 done)
