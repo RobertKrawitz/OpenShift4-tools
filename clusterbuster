@@ -552,7 +552,7 @@ function createResources() {
     for token in "$@" ; do
 	local resource=${token%%=*}
 	local value=${token#*=}
-	echo "$resource: \"$value\""
+	echo "$resource: $value"
     done
 }
 
