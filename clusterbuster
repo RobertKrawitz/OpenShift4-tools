@@ -53,6 +53,7 @@ declare -i defaultBytes=1000000000
 declare podType=ClusterBuster
 declare podsleeptime=infinity
 declare basename=clusterbuster
+declare deploymentType=deployment
 declare -i basetime
 declare opt
 declare -r nl=$'\n'
@@ -91,6 +92,8 @@ Usage: $0 [options] [name]
                        For cpu, this refers to processes per pod.
        -S              Scale up (add namespaces to existing load) (default no)
        -s secrets      Number of secrets per deployment (default 0)
+       -T type         Use the specified deployment type:
+                       pod or deployment (default $deploymentType)
        -w wait         Number of seconds to wait between ops (default 0)
        -W              Wait for secrets to be created (default 1)
        -x              Use pod affinity between client and server (default no)
@@ -434,6 +437,7 @@ function process_option() {
 	wait_secrets)		    wait_for_secrets=$optvalue			;;
 	scale_ns)	   	    scale_ns=$optvalue				;;
 	scale_deployments)   	    scale_deployments=$optvalue			;;
+	deployment_type)            deploymentType=$optvalue			;;
 	affinity)
 	    case "$optvalue" in
 		1|'') affinity=1   ;;
@@ -449,9 +453,13 @@ function process_option() {
 	    ;;
 	*) help "$optname" ;;
     esac
+    if [[ $deploymentType != pod && $deploymentType != deployment ]] ; then
+	echo "-T/--deployment_type must be either por or deployment"
+	help
+    fi
 }
 
-while getopts ":B:b:c:D:d:EeHhM:m:N:nP:p:qr:Ss:t:vWw:Xxz:-:" opt ; do
+while getopts ":B:b:c:D:d:EeHhM:m:N:nP:p:qr:Ss:T:t:vWw:Xxz:-:" opt ; do
     case "$opt" in
 	B) basename="$OPTARG"		;;
 	D) dataRate="$OPTARG"           ;;
@@ -473,6 +481,7 @@ while getopts ":B:b:c:D:d:EeHhM:m:N:nP:p:qr:Ss:t:vWw:Xxz:-:" opt ; do
 	r) replicas="$OPTARG"           ;;
 	S) scale_ns=1			;;
 	s) secrets="$OPTARG"            ;;
+	T) deploymentType="$OPTARG"	;;
 	t) set_xfer_time "$OPTARG"	;;
 	v) verbose=1			;;
 	W) wait_for_secrets=0		;;
@@ -714,6 +723,7 @@ function createContainersPausePodYAML() {
     local namespace=$1
     local i=$2
     local secretCount=$3
+    # shellcheck disable=SC2034
     local -i pods=$4
     local -i containers=$5
     local -i j
@@ -728,13 +738,57 @@ EOF
     done
 }
 
+function createClassicSpec() {
+    local namespace=$1
+    local i=$2
+    local secretCount=$3
+    local -i replicas=$4
+    local -i containers=$5
+cat <<EOF
+spec:
+  nodeSelector:
+    node-role.kubernetes.io/worker: ""
+  terminationGracePeriodSeconds: 1
+$(indent 2 createPodResources)
+  containers:
+$(indent 2 createContainers${podType}YAML "$@")
+$(indent 2 createVolumesYAML "$namespace" "$i" "$secretCount")
+EOF
+}
+
 function createDeploymentClassicYAML() {
     local namespace=$1
     local i=$2
     local secretCount=$3
-    local -i pods=$4
+    local -i replicas=$4
     local -i containers=$5
-    cat <<EOF
+    if [[ $deploymentType = pod ]] ; then
+	local -i j=0
+	while (( j < replicas )) ; do
+	    createObject <<EOF
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ${namespace}-${i}-${j}
+  namespace: $namespace
+  nodeSelector:
+    node-role.kubernetes.io/worker: ""
+  selector:
+    matchLabels:
+      app: ${namespace}-${i}
+  labels:
+    ${basename}: "true"
+    name: ${namespace}-${i}
+    app: ${namespace}-${i}
+    ${basename}: "true"
+    ${basename}-client: "true"
+    clusterbusterbase: "true"
+$(createClassicSpec "$@")
+EOF
+	    j=$((j+1))
+	done
+    else
+	createObject <<EOF
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -744,7 +798,7 @@ metadata:
     ${basename}: "true"
     clusterbusterbase: "true"
 spec:
-  replicas: $pods
+  replicas: $replicas
   nodeSelector:
     node-role.kubernetes.io/worker: ""
   selector:
@@ -759,16 +813,9 @@ spec:
         clusterbusterbase: "true"
         name: ${namespace}-$i
         app: ${namespace}-$i
-    spec:
-      nodeSelector:
-        node-role.kubernetes.io/worker: ""
-      terminationGracePeriodSeconds: 1
-      restartPolicy: Always
-$(indent 6 createPodResources)
-      containers:
-$(indent 6 createContainers${podType}YAML "$@")
-$(indent 6 createVolumesYAML "$namespace" "$i" "$secretCount")
+$(indent 4 createClassicSpec "$@")
 EOF
+    fi
 }
 
 function cpuSoakerPerl() {
@@ -785,19 +832,19 @@ sub runit() {
     my ($stime) = $start[0] + ($start[1] / 1000000);
     my ($prevtime) = $stime;
     for (;;) {
-	my ($a) = 1;
-	for (my $i = 0; $i < 10000; $i++) {
-	    $a = $a + $a;
-	}
-	my (@now) = gettimeofday();
-	my ($ntime) = $now[0] + ($now[1] / 1000000);
-	if ($ntime - $prevtime >= 5) {
-	    $prevtime = $ntime;
-	    my ($user, $system, $cuser, $csystem) = times();
-	    my ($etime) = $ntime - $stime;
-	    my ($cputime) = $user + $system + $cuser + $csystem;
-	    printf STDERR "pid %d elapsed %.03f cpu %.03f util %6.3f\n", $$$$, $etime, $cputime, 100.0 * $cputime / $etime;
-	}
+        my ($a) = 1;
+        for (my $i = 0; $i < 10000; $i++) {
+            $a = $a + $a;
+        }
+        my (@now) = gettimeofday();
+        my ($ntime) = $now[0] + ($now[1] / 1000000);
+        if ($ntime - $prevtime >= 5) {
+            $prevtime = $ntime;
+            my ($user, $system, $cuser, $csystem) = times();
+            my ($etime) = $ntime - $stime;
+            my ($cputime) = $user + $system + $cuser + $csystem;
+            printf STDERR "pid %d elapsed %.03f cpu %.03f util %6.3f\n", $$$$, $etime, $cputime, 100.0 * $cputime / $etime;
+        }
     }
 }
 our ($procs) = @ARGV;
@@ -840,13 +887,54 @@ EOF
     done
 }
 
-function createDeploymentSoakerYAML() {
+function createSoakerSpec() {
     local namespace=$1
     local i=$2
     local secretCount=$3
     local -i processes=$4
     local -i containers=$5
     cat <<EOF
+spec:
+  nodeSelector:
+    node-role.kubernetes.io/worker: ""
+  terminationGracePeriodSeconds: 1
+  restartPolicy: Always
+$(indent 2 createPodResources)
+  containers:
+$(indent 2 createContainersCPUSoakerYAML "$@")
+$(indent 2 createVolumesYAML "$namespace" "$i" "$secretCount")
+EOF
+}
+
+function createDeploymentSoakerYAML() {
+    local namespace=$1
+    local i=$2
+    local secretCount=$3
+    local -i processes=$4
+    local -i containers=$5
+    if [[ $deploymentType = pod ]] ; then
+	createObject <<EOF
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ${namespace}-${i}
+  namespace: $namespace
+  nodeSelector:
+    node-role.kubernetes.io/worker: ""
+  selector:
+    matchLabels:
+      app: ${namespace}-${i}
+  labels:
+    ${basename}: "true"
+    name: ${namespace}-${i}
+    app: ${namespace}-${i}
+    ${basename}: "true"
+    ${basename}-client: "true"
+    clusterbusterbase: "true"
+$(createSoakerSpec "$@")
+EOF
+    else
+	createObject <<EOF
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -871,16 +959,9 @@ spec:
         clusterbusterbase: "true"
         name: ${namespace}-$i
         app: ${namespace}-$i
-    spec:
-      nodeSelector:
-        node-role.kubernetes.io/worker: ""
-      terminationGracePeriodSeconds: 1
-      restartPolicy: Always
-$(indent 6 createPodResources)
-      containers:
-$(indent 6 createContainersCPUSoakerYAML "$@")
-$(indent 6 createVolumesYAML "$namespace" "$i" "$secretCount")
+$(indent 4 createSoakerSpec "$@")
 EOF
+    fi
 }
 
 function createService() {
@@ -935,7 +1016,7 @@ use strict;
 use Time::Piece;
 use Time::HiRes qw(gettimeofday);
 $SIG{TERM} = sub { POSIX::_exit(0); };
-my ($basetime, $listen_port, $container, $msgSize, $ts) = @ARGV;
+my ($basetime, $listen_port, $container, $msgSize, $ts, $expected_clients) = @ARGV;
 sub timestamp($) {
     my ($str) = @_;
     my (@now) = gettimeofday();
@@ -955,7 +1036,8 @@ die "can't get port $port: $!\n" if ($port ne $listen_port);
 timestamp("Listening on port $listen_port");
 $SIG{CHLD} = 'IGNORE';
 
-for (;;) {
+print STDERR "Expect $expected_client clients\n";
+while ($expected_clients > 0) {
     accept(CLIENT, SOCK) || next;
     if ((my $child = fork()) == 0) {
 	close(SOCK);
@@ -994,10 +1076,14 @@ for (;;) {
 	}
     } else {
 	close(CLIENT);
+	$expected_clients--;
     }
 }
-while (wait() >= 0) {
+print STDERR "Waiting for all clients to exit:\n";
+while ((my $pid = wait()) >= 0) {
+    print STDERR "   $pid\n";
 }
+print STDERR "Done!\n";
 EOF
 }
 
@@ -1005,6 +1091,8 @@ function createServerContainerYAML() {
     local namespace=$1
     local i=$2
     local secretCount=$3
+    local msgSize=$4
+    local expectedClients=$5
     cat <<EOF
 - name: server
   image: perl
@@ -1023,7 +1111,26 @@ $(indent 4 serverContainerPerl)
   - "${namespace}-${i}-server"
   - "$msgSize"
   - "$(ts)"
+  - "$expectedClients"
 $(indent 2 createVolumeMountsYAML "$namespace" "$i" "$secretCount")
+EOF
+}
+
+function createServerSpec() {
+    local namespace=$1
+    local i=$2
+    local secretCount=$3
+    local msgSize=$4
+    local expectedClients=$5
+    cat <<EOF
+spec:
+  nodeSelector:
+    node-role.kubernetes.io/worker: ""
+  terminationGracePeriodSeconds: 1
+$(indent 2 createPodResources)
+  containers:
+$(indent 2 createServerContainerYAML "$@")
+$(indent 2 createVolumesYAML "$namespace" "$i" "$secretCount")
 EOF
 }
 
@@ -1031,7 +1138,33 @@ function createServerDeployment() {
     local namespace=$1
     local i=$2
     local secretCount=$3
-    createObject <<EOF
+    local msgSize=$4
+    local expectedClients=$5
+    if [[ $deploymentType = pod ]] ; then
+	createObject <<EOF
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ${namespace}-${i}-server
+  namespace: $namespace
+  nodeSelector:
+    node-role.kubernetes.io/worker: ""
+  selector:
+    matchLabels:
+      app: ${namespace}-${i}
+  labels:
+    ${basename}: "true"
+    name: ${namespace}-${i}
+    app: ${namespace}-${i}
+    k8s-app: ${namespace}-${i}-server
+    ${basename}: "true"
+    ${basename}-server: "true"
+    clusterbusterbase: "true"
+$(createServerSpec "$@")
+  restartPolicy: Never
+EOF
+    else
+	createObject <<EOF
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -1058,15 +1191,9 @@ spec:
         ${basename}: "true"
         ${basename}-server: "true"
         clusterbusterbase: "true"
-    spec:
-      nodeSelector:
-        node-role.kubernetes.io/worker: ""
-      terminationGracePeriodSeconds: 1
-$(indent 6 createPodResources)
-      containers:
-$(indent 6 createServerContainerYAML "$namespace" "$i" "$secretCount")
-$(indent 6 createVolumesYAML "$namespace" "$i" "$secretCount")
+$(indent 4 createServerSpec "$@")
 EOF
+    fi
 }
 
 function clientContainerPerl() {
@@ -1293,6 +1420,28 @@ affinity:
 EOF
 }
 
+function createClientSpec() {
+    local namespace=$1
+    local i=$2
+    local secretCount=$3
+    local replicas=$4
+    local dataRate=$5
+    local bytes=$6
+    local msgSize=$7
+    local containers=$8
+    cat <<EOF
+spec:
+  nodeSelector:
+    node-role.kubernetes.io/worker: ""
+  terminationGracePeriodSeconds: 1
+$(indent 2 createPodResources)
+$(indent 2 createClientAffinityYAML "${namespace}-${i}-server")
+  containers:
+$(indent 2 createClientContainerYAML "$namespace" "$i" "$secretCount" "$dataRate" "$bytes" "$msgSize" "$containers")
+$(indent 2 createVolumesYAML "$namespace" "$i" "$secretCount")
+EOF
+}
+
 function createClientDeployment() {
     local namespace=$1
     local i=$2
@@ -1302,7 +1451,34 @@ function createClientDeployment() {
     local bytes=$6
     local msgSize=$7
     local containers=$8
-    createObject <<EOF
+    if [[ $deploymentType = pod ]] ; then
+	local -i j=0
+	while (( j < replicas )) ; do
+	    createObject <<EOF
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ${namespace}-${i}-client-${j}
+  namespace: $namespace
+  nodeSelector:
+    node-role.kubernetes.io/worker: ""
+  selector:
+    matchLabels:
+      app: ${namespace}-${i}-client
+  labels:
+    ${basename}: "true"
+    name: ${namespace}-${i}-client
+    app: ${namespace}-${i}-client
+    ${basename}: "true"
+    ${basename}-client: "true"
+    clusterbusterbase: "true"
+$(createClientSpec "$@")
+  restartPolicy: Never
+EOF
+	    j=$((j+1))
+	done
+    else
+	createObject <<EOF
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -1329,27 +1505,20 @@ spec:
         ${basename}: "true"
         ${basename}-client: "true"
         clusterbusterbase: "true"
-    spec:
-      nodeSelector:
-        node-role.kubernetes.io/worker: ""
-      terminationGracePeriodSeconds: 1
-$(indent 6 createPodResources)
-$(indent 6 createClientAffinityYAML "${namespace}-${i}-server")
-      containers:
-$(indent 6 createClientContainerYAML "$namespace" "$i" "$secretCount" "$dataRate" "$bytes" "$msgSize" "$containers")
-$(indent 6 createVolumesYAML "$namespace" "$i" "$secretCount")
+$(indent 4 createClientSpec "$@")
 EOF
+    fi
 }
 
 function createDeploymentSimple() {
     local namespace=$1
     local count=${2:-1}
     local secretCount=${3:-1}
-    local pods=${4:-1}
+    local replicas=${4:-1}
     local containers=${5:-1}
     local -i i
     for i in $(seq $firstDeployment $((count + firstDeployment - 1))) ; do
-	createObject <<< "$(createDeploymentClassicYAML "$namespace" "$i" "$secretCount"  "$replicas" "$containers")"
+	createDeploymentClassicYAML "$namespace" "$i" "$secretCount"  "$replicas" "$containers"
     done
 }
 
@@ -1365,11 +1534,11 @@ function createDeploymentCPUSoaker() {
     local namespace=$1
     local count=${2:-1}
     local secretCount=${3:-1}
-    local pods=${4:-1}
+    local replicas=${4:-1}
     local containers=${5:-1}
     local -i i
     for i in $(seq $firstDeployment $((count + firstDeployment - 1))) ; do
-	createObject <<< "$(createDeploymentSoakerYAML "$namespace" "$i" "$secretCount"  "$replicas" "$containers")"
+	createDeploymentSoakerYAML "$namespace" "$i" "$secretCount"  "$replicas" "$containers"
     done
 }
 
@@ -1377,13 +1546,13 @@ function createDeploymentServer() {
     local namespace=$1
     local count=${2:-1}
     local secretCount=${3:-1}
-    local pods=${4:-1}
+    local replicas=${4:-1}
     local containers=${5:-1}
     local -i i
     for i in $(seq $firstDeployment $((count + firstDeployment - 1))) ; do
 	createService "$namespace" "$namespace-$i"
 	(( createRoutes )) && createRoute "$namespace" "$namespace-$i"
-	createServerDeployment "$namespace" "$i" "$secretCount" "$msgSize"
+	createServerDeployment "$namespace" "$i" "$secretCount" "$msgSize" "$((containers * replicas))"
 	createClientDeployment "$namespace" "$i" "$secretCount" "$replicas" "$dataRate" "$bytes" "$msgSize" "$containers"
     done
 }

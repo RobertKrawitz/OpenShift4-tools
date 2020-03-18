@@ -26,7 +26,8 @@ while :; do
     while read -r ns pod count status rest ; do
 	[[ -n $pod ]] || break
 	case "$status" in
-	    ContainerCreating)    status=C ;;
+	    Completed)		  status=C ;;
+	    ContainerCreating)    status=O ;;
 	    CrashLoopBackOff)     status=E ;;
 	    Error)                status=E ;;
 	    CreateContainerError) status=X ;;
@@ -63,7 +64,7 @@ while :; do
 	nodecount=$((nodecount+1))
 	nodestatus[$status]=$((${nodestatus[$status]:-0}+1))
     done <<< "$("$OC" get nodes -l node-role.kubernetes.io/worker --no-headers --ignore-not-found=true 2>/dev/null)"
-    printf "%s " "$(printf "%(%T)T" -1)" Pods: "$(for s in P R C T E X I U ; do echo -n "${podstatus[$s]:-0}$s "; done)" "/ $podcount" "  NS:" "$(for s in A T ; do echo -n "${nsstatus[$s]:-0}$s "; done)" "/ $nscount" "  Sec:" "$(for s in A S ; do echo -n "${secstatus[$s]:-0}$s "; done)" "  Node:" "$(for s in R N ; do echo -n "${nodestatus[$s]:-0}$s "; done)" "/ $nodecount"
+    printf "%s " "$(printf "%(%T)T" -1)" Pods: "$(for s in P R C O T E X I U ; do echo -n "${podstatus[$s]:-0}$s "; done)" "/ $podcount" "  NS:" "$(for s in A T ; do echo -n "${nsstatus[$s]:-0}$s "; done)" "/ $nscount" "  Sec:" "$(for s in A S ; do echo -n "${secstatus[$s]:-0}$s "; done)" "  Node:" "$(for s in R N ; do echo -n "${nodestatus[$s]:-0}$s "; done)" "/ $nodecount"
     echo
     end=$(printf "%(%s)T" -1)
     stime=$((start+delay-end))
