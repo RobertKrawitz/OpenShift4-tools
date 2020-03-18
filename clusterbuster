@@ -84,10 +84,11 @@ Usage: $0 [options] [name]
        -H              Print extended help
        -n              Print what would be done without doing it
        -N namespaces   Number of namespaces to create (default 1)
-       -P podtype      Pod type (classic, pause, server)
+       -P podtype      Pod type (classic, pause, server, cpu)
        -p parallel     Number of operations to perform in parallel (default 1)
        -r replicas     Number of replicas per deployment (default 1)
                        For client/server, this refers to client pods.
+                       For cpu, this refers to processes per pod.
        -S              Scale up (add namespaces to existing load) (default no)
        -s secrets      Number of secrets per deployment (default 0)
        -w wait         Number of seconds to wait between ops (default 0)
@@ -511,6 +512,7 @@ fi
 case "$podType" in
     classic|ClusterBuster) podType=ClusterBuster ;;
     server)                podType=Server        ;;
+    cpu*|CPU*|soaker)      podType=CPUSoaker     ;;
     pause|PausePod|*)      podType=PausePod      ;;
 esac
 
@@ -765,6 +767,118 @@ spec:
 $(indent 6 createPodResources)
       containers:
 $(indent 6 createContainers${podType}YAML "$@")
+$(indent 6 createVolumesYAML "$namespace" "$i" "$secretCount")
+EOF
+}
+
+function cpuSoakerPerl() {
+    cat <<'EOF'
+#!/usr/bin/perl
+use POSIX;
+use strict;
+use Time::Piece;
+use Time::HiRes qw(gettimeofday);
+$SIG{TERM} = sub { POSIX::_exit(0); };
+
+sub runit() {
+    my (@start) = gettimeofday();
+    my ($stime) = $start[0] + ($start[1] / 1000000);
+    my ($prevtime) = $stime;
+    for (;;) {
+	my ($a) = 1;
+	for (my $i = 0; $i < 10000; $i++) {
+	    $a = $a + $a;
+	}
+	my (@now) = gettimeofday();
+	my ($ntime) = $now[0] + ($now[1] / 1000000);
+	if ($ntime - $prevtime >= 5) {
+	    $prevtime = $ntime;
+	    my ($user, $system, $cuser, $csystem) = times();
+	    my ($etime) = $ntime - $stime;
+	    my ($cputime) = $user + $system + $cuser + $csystem;
+	    printf STDERR "pid %d elapsed %.03f cpu %.03f util %6.3f\n", $$$$, $etime, $cputime, 100.0 * $cputime / $etime;
+	}
+    }
+}
+our ($procs) = @ARGV;
+$SIG{CHLD} = 'IGNORE';
+if ($procs > 1) {
+    while ($procs-- > 1) {
+        if ((my $child = fork()) == 0) {
+            runit();
+            POSIX::_exit(0);
+        }
+    }
+}
+runit();
+POSIX::_exit(0);
+EOF
+}
+
+function createContainersCPUSoakerYAML() {
+    local namespace=$1
+    local i=$2
+    local secretCount=$3
+    local -i processes=$4
+    local -i containers=$5
+    local -i j
+    for j in $(seq 0 $((containers - 1))) ; do
+	cat <<EOF
+- name: ${namespace}-$i-$j
+  imagePullPolicy: IfNotPresent
+  image: perl
+$(indent 2 createContainerResources)
+  command:
+  - perl
+  args:
+  - -e
+  - |
+$(indent 4 cpuSoakerPerl)
+  - "$processes"
+$(indent 2 createVolumeMountsYAML "$namespace" "$i" "$secretCount")
+EOF
+    done
+}
+
+function createDeploymentSoakerYAML() {
+    local namespace=$1
+    local i=$2
+    local secretCount=$3
+    local -i processes=$4
+    local -i containers=$5
+    cat <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ${namespace}-$i
+  namespace: $namespace
+  labels:
+    ${basename}: "true"
+    clusterbusterbase: "true"
+spec:
+  replicas: 1
+  nodeSelector:
+    node-role.kubernetes.io/worker: ""
+  selector:
+    matchLabels:
+      app: ${namespace}-$i
+  strategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        ${basename}: "true"
+        clusterbusterbase: "true"
+        name: ${namespace}-$i
+        app: ${namespace}-$i
+    spec:
+      nodeSelector:
+        node-role.kubernetes.io/worker: ""
+      terminationGracePeriodSeconds: 1
+      restartPolicy: Always
+$(indent 6 createPodResources)
+      containers:
+$(indent 6 createContainersCPUSoakerYAML "$@")
 $(indent 6 createVolumesYAML "$namespace" "$i" "$secretCount")
 EOF
 }
@@ -1227,7 +1341,7 @@ $(indent 6 createVolumesYAML "$namespace" "$i" "$secretCount")
 EOF
 }
 
-function createDeploymentPausePod() {
+function createDeploymentSimple() {
     local namespace=$1
     local count=${2:-1}
     local secretCount=${3:-1}
@@ -1239,8 +1353,24 @@ function createDeploymentPausePod() {
     done
 }
 
+function createDeploymentPausePod() {
+    createDeploymentSimple "$@"
+}
+
 function createDeploymentClusterBuster() {
-    createDeploymentPausePod "$@"
+    createDeploymentSimple "$@"
+}
+
+function createDeploymentCPUSoaker() {
+    local namespace=$1
+    local count=${2:-1}
+    local secretCount=${3:-1}
+    local pods=${4:-1}
+    local containers=${5:-1}
+    local -i i
+    for i in $(seq $firstDeployment $((count + firstDeployment - 1))) ; do
+	createObject <<< "$(createDeploymentSoakerYAML "$namespace" "$i" "$secretCount"  "$replicas" "$containers")"
+    done
 }
 
 function createDeploymentServer() {
