@@ -831,11 +831,14 @@ sub runit() {
     my (@start) = gettimeofday();
     my ($stime) = $start[0] + ($start[1] / 1000000);
     my ($prevtime) = $stime;
+    my ($iterations) = 0;
+    my ($loops_per_iteration) = 10000;
     for (;;) {
         my ($a) = 1;
-        for (my $i = 0; $i < 10000; $i++) {
+        for (my $i = 0; $i < $loops_per_iteration; $i++) {
             $a = $a + $a;
         }
+	$iterations += $loops_per_iteration;
         my (@now) = gettimeofday();
         my ($ntime) = $now[0] + ($now[1] / 1000000);
         if ($ntime - $prevtime >= 5) {
@@ -843,7 +846,7 @@ sub runit() {
             my ($user, $system, $cuser, $csystem) = times();
             my ($etime) = $ntime - $stime;
             my ($cputime) = $user + $system + $cuser + $csystem;
-            printf STDERR "pid %d elapsed %.03f cpu %.03f util %6.3f\n", $$$$, $etime, $cputime, 100.0 * $cputime / $etime;
+            printf STDERR "pid %d elapsed %.03f cpu %.03f util %6.3f iter %d ips %d\n", $$$$, $etime, $cputime, 100.0 * $cputime / $etime, $iterations, $iterations / $etime;
         }
     }
 }
