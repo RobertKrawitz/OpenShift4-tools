@@ -843,7 +843,6 @@ sub runit() {
         my (@now) = gettimeofday();
         my ($ntime) = $now[0] + ($now[1] / 1000000);
         if ($ntime - $prevtime >= 5) {
-            $prevtime = $ntime;
 	    my (@times) = times();
             my ($user, $system, $cuser, $csystem) = times();
             my ($etime) = $ntime - $stime;
@@ -851,7 +850,8 @@ sub runit() {
 	    my ($icputime) = $times[0] + $times[1] + $times[2] + $times[3] -
                 $prevtimes[0] - $prevtimes[1] - $prevtimes[2] - $prevtimes[3];
             printf STDERR "pid %d elapsed %.03f cpu %.03f util %6.3f (%0.3f) iter %d ips %d\n", $$$$, $etime, $cputime, 100.0 * $cputime / $etime, 100.0 * $icputime / ($ntime - $prevtime), $iterations, $iterations / $etime;
-           @prevtimes = @times;
+            $prevtime = $ntime;
+            @prevtimes = @times;
         }
     }
 }
