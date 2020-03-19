@@ -23,9 +23,11 @@ PATH="${cmddir}:$PATH"
 
 set -eu
 
+# This was renamed from hyperkube to kubelet between 4.1 and 4.2, evidently.
+declare kubelet_bin=kubelet
 declare godir=${GOPATH:-$HOME/go}
 declare -r srcdir="$godir/src/github.com/openshift/origin"
-declare lkubelet="$srcdir/_output/local/bin/linux/amd64/hyperkube"
+declare lkubelet="$srcdir/_output/local/bin/linux/amd64/${kubelet_bin}"
 declare bastion=bastion-
 declare -i rebuild=1
 declare -i do_setup_cert=0
@@ -126,9 +128,9 @@ function rcp() {
 
 function build_upload() {
     cd "$srcdir"
-    make WHAT=vendor/k8s.io/kubernetes/cmd/hyperkube
-    ls -l _output/local/bin/linux/amd64/hyperkube
-    md5sum _output/local/bin/linux/amd64/hyperkube
+    make WHAT=vendor/k8s.io/kubernetes/cmd/${kubelet_bin}
+    ls -l _output/local/bin/linux/amd64/${kubelet_bin}
+    md5sum _output/local/bin/linux/amd64/${kubelet_bin}
 }
 
 if (( rebuild && !do_uninstall && copy_kubelet )) ; then
@@ -174,17 +176,17 @@ found_md5=$(md5sum "$lkubelet" |awk '{print $1}')
 
 sudo mount -o remount,rw /usr || die "Can't remount /usr rw"
 
-sudo cp "$lkubelet" hyperkube.NEW
-cmp "$lkubelet" hyperkube.NEW || die -r "$lkubelet and hyperkube.NEW failed compare!"
-if [[ -f hyperkube && ! -f hyperkube.OLD ]] ; then
-    sudo mv hyperkube hyperkube.OLD
+sudo cp "$lkubelet" @KUBELET@.NEW
+cmp "$lkubelet" @KUBELET@.NEW || die -r "$lkubelet and @KUBELET@.NEW failed compare!"
+if [[ -f @KUBELET@ && ! -f @KUBELET@.OLD ]] ; then
+    sudo mv @KUBELET@ @KUBELET@.OLD
 fi
-sudo mv hyperkube.NEW hyperkube || die -r "Can't rename hyperkube.NEW to hyperkube!"
+sudo mv @KUBELET@.NEW @KUBELET@ || die -r "Can't rename @KUBELET@.NEW to @KUBELET@!"
 cd /
 sudo mount -o remount,ro /usr 2>&1 |grep -v 'mount point is busy'
 sudo sysctl -w kernel.pid_max=4194304 >/dev/null
 sudo systemctl restart kubelet.service
-ps aux |grep /usr/bin/hyperkube |grep kubelet |grep -v grep
+ps aux |grep /usr/bin/@KUBELET@ |grep kubelet |grep -v grep
 EOL
 }
 
@@ -196,7 +198,7 @@ function install_kubelet_n() {
     set -e
     while (( rotor < ${#all_nodes[@]} )) ; do
 	local node=${all_nodes[$rotor]}
-	echo "$node: " "$(tar cf - install-kubelet hyperkube.gz | ssh -o StrictHostKeyChecking=no -i ~/.ssh/temp_install "$node" 'cd /var/tmp; rm -f install-kubelet hyperkube.gz; tar xf -; /var/tmp/install-kubelet /var/tmp/hyperkube.gz '"$expected_md5")"
+	echo "$node: " "$(tar cf - install-kubelet @KUBELET@.gz | ssh -o StrictHostKeyChecking=no -i ~/.ssh/temp_install "$node" 'cd /var/tmp; rm -f install-kubelet @KUBELET@.gz; tar xf -; /var/tmp/install-kubelet /var/tmp/@KUBELET@.gz '"$expected_md5")"
 	rotor=$((rotor + parallel_kube))
     done
 }
@@ -213,18 +215,18 @@ fi
 cd /var/tmp
 generate_install_kubelet > install-kubelet
 chmod +x install-kubelet
-chmod +x hyperkube
-echo "$myname: " "$(./install-kubelet /var/tmp/hyperkube "$expected_md5")"
-rm -f /var/tmp/hyperkube.gz
-gzip -c /var/tmp/hyperkube > /var/tmp/hyperkube.gz
-chmod +x /var/tmp/hyperkube.gz
+chmod +x @KUBELET@
+echo "$myname: " "$(./install-kubelet /var/tmp/@KUBELET@ "$expected_md5")"
+rm -f /var/tmp/@KUBELET@.gz
+gzip -c /var/tmp/@KUBELET@ > /var/tmp/@KUBELET@.gz
+chmod +x /var/tmp/@KUBELET@.gz
 # Don't try to copy this to ourself.
 for i in $(seq 1 $parallel_kube) ; do
     install_kubelet_n "$parallel_kube" "$i" &
 done
 wait
-rm -f /var/tmp/hyperkube.gz
-ls -l /usr/bin/hyperkube
+rm -f /var/tmp/@KUBELET@.gz
+ls -l /usr/bin/@KUBELET@
 EOF
 }
 
@@ -246,15 +248,15 @@ function die() {
 
 cd "$lbindir" || die "Can't cd $lbindir!"
 
-if [[ -f hyperkube.OLD ]] ; then
+if [[ -f @KUBELET@.OLD ]] ; then
     sudo mount -o remount,rw /usr || die "Can't remount /usr rw"
-    sudo mv hyperkube.OLD hyperkube || die -r "Can't rename hyperkube.OLD to hyperkube"
+    sudo mv @KUBELET@.OLD @KUBELET@ || die -r "Can't rename @KUBELET@.OLD to @KUBELET@"
     cd /
     sudo mount -o remount,ro /usr 2>&1 |grep -v 'mount point is busy'
     sudo systemctl restart kubelet.service
-    ps aux |grep hyperkube |grep kubelet |grep -v grep
+    ps aux |grep @KUBELET@ |grep kubelet |grep -v grep
 else
-    echo "No old hyperkube to restore"
+    echo "No old @KUBELET@ to restore"
 fi
 EOL
 }
@@ -288,11 +290,11 @@ for i in $(seq 1 $parallel_kube) ; do
     uninstall_kubelet_n "$parallel_kube" "$i" &
 done
 wait
-ls -l /usr/bin/hyperkube
+ls -l /usr/bin/@KUBELET@
 EOF
 }
 
-function generate_grappling_hook() {
+function generate_grappling_hook_1() {
     echo "#!/bin/bash"
     local -a nodes=()
     readarray -t nodes
@@ -302,6 +304,10 @@ function generate_grappling_hook() {
     else
 	generate_grappling_hook_install
     fi
+}
+
+function generate_grappling_hook() {
+    generate_grappling_hook_1 | sed "s/@KUBELET@/$kubelet_bin/g"
 }
 
 function install_ssh_key_n() {
