@@ -833,7 +833,7 @@ sub runit() {
     my ($prevtime) = $stime;
     my ($iterations) = 0;
     my ($loops_per_iteration) = 10000;
-    my (@prevtimes)
+    my (@prevtimes);
     for (;;) {
         my ($a) = 1;
         for (my $i = 0; $i < $loops_per_iteration; $i++) {
