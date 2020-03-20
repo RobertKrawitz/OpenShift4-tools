@@ -840,7 +840,12 @@ sub runit() {
     my ($loops_per_iteration) = 10000;
     my ($basecpu) = cputime();
     my ($prevcpu) = $basecpu;
-    
+    my ($firsttime) = 1;
+    my ($avgcpu) = 0;
+    my ($weight) = .25;
+    my ($icputime);
+    my ($interval) = 5;
+
     for (;;) {
         my ($a) = 1;
         for (my $i = 0; $i < $loops_per_iteration; $i++) {
@@ -849,14 +854,20 @@ sub runit() {
 	$iterations += $loops_per_iteration;
         my (@now) = gettimeofday();
         my ($ntime) = $now[0] + ($now[1] / 1000000);
-        if ($ntime - $prevtime >= 5) {
+        if ($ntime - $prevtime >= $interval) {
 	    my (@times) = times();
             my ($user, $system, $cuser, $csystem) = times();
             my ($etime) = $ntime - $stime;
 	    my ($cpu) = cputime();
             my ($cputime) = $cpu - $basecpu;
 	    my ($icputime) = $cpu - $prevcpu;
-            printf STDERR "pid %d elapsed %.03f cpu %.03f util %6.3f (%0.3f) iter %d ips %d\n", $$$$, $etime, $cputime, 100.0 * $cputime / $etime, 100.0 * $icputime / ($ntime - $prevtime), $iterations, $iterations / $etime;
+	    if ($firsttime) {
+		$avgcpu = $cputime;
+		$firsttime = 0;
+	    } else {
+		$avgcpu = ($icputime * $weight) + ($avgcpu * (1.0 - $weight));
+	    }
+            printf STDERR "pid %d elapsed %.03f cpu %0.3f util %7.3f avg %7.3f mov %7.3f iter %d ips %d\n", $$$$, $etime, $cputime, 100.0 * $cputime / $etime, 100.0 * $icputime / ($ntime - $prevtime), 100 * $avgcpu / ($ntime - $prevtime), $iterations, $iterations / $etime;
             $prevtime = $ntime;
             $prevcpu = $cpu;
         }
