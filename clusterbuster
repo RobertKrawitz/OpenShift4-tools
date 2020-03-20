@@ -827,13 +827,20 @@ use Time::Piece;
 use Time::HiRes qw(gettimeofday);
 $SIG{TERM} = sub { POSIX::_exit(0); };
 
+sub cputime() {
+    my (@times) = times();
+    return $times[0] + $times[1] + $times[2] + $times[3];
+}
+
 sub runit() {
     my (@start) = gettimeofday();
     my ($stime) = $start[0] + ($start[1] / 1000000);
     my ($prevtime) = $stime;
     my ($iterations) = 0;
     my ($loops_per_iteration) = 10000;
-    my (@prevtimes);
+    my ($basecpu) = cputime();
+    my ($prevcpu) = $basecpu;
+    
     for (;;) {
         my ($a) = 1;
         for (my $i = 0; $i < $loops_per_iteration; $i++) {
@@ -846,12 +853,12 @@ sub runit() {
 	    my (@times) = times();
             my ($user, $system, $cuser, $csystem) = times();
             my ($etime) = $ntime - $stime;
-            my ($cputime) = $user + $system + $cuser + $csystem;
-	    my ($icputime) = $times[0] + $times[1] + $times[2] + $times[3] -
-                $prevtimes[0] - $prevtimes[1] - $prevtimes[2] - $prevtimes[3];
+	    my ($cpu) = cputime();
+            my ($cputime) = $cpu - $basecpu;
+	    my ($icputime) = $cpu - $prevcpu;
             printf STDERR "pid %d elapsed %.03f cpu %.03f util %6.3f (%0.3f) iter %d ips %d\n", $$$$, $etime, $cputime, 100.0 * $cputime / $etime, 100.0 * $icputime / ($ntime - $prevtime), $iterations, $iterations / $etime;
             $prevtime = $ntime;
-            @prevtimes = @times;
+            $prevcpu = $cpu;
         }
     }
 }
