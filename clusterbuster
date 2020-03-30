@@ -1062,7 +1062,7 @@ die "can't get port $port: $!\n" if ($port ne $listen_port);
 timestamp("Listening on port $listen_port");
 $SIG{CHLD} = 'IGNORE';
 
-print STDERR "Expect $expected_client clients\n";
+print STDERR "Expect $expected_clients clients\n";
 while ($expected_clients > 0) {
     accept(CLIENT, SOCK) || next;
     if ((my $child = fork()) == 0) {
