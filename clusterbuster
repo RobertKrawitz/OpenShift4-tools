@@ -65,6 +65,7 @@ declare -A namespaces_in_use=()
 declare -a namespaces_to_create=()
 declare -i scale_ns=0
 declare -i scale_deployments=1
+declare runtimeClass=
 
 declare accumulateddata=
 
@@ -165,10 +166,13 @@ Extended Options:
        --parallel_namespaces=N
        --parallel_deployments=N
 
-    Resources and Limits:
+    Pod Options:
        --<type>=<resource=value>
+                        Resource requests and limits
                         <type> is pod_resource_request, pod_resource_limit,
                         container_resource_request, or container_resource_limit
+       --runtimeclass=class
+                        Run the pods in the designated runtimeclass.
 
     Client/server options:
        --affinity       Force affinity between client and server pods
@@ -439,6 +443,7 @@ function process_option() {
 	scale_ns)	   	    scale_ns=$optvalue				;;
 	scale_deployments)   	    scale_deployments=$optvalue			;;
 	deployment_type)            deploymentType=$optvalue			;;
+	runtimeclass|runtime_class) runtimeClass=$optvalue			;;
 	affinity)
 	    case "$optvalue" in
 		1|'') affinity=1   ;;
@@ -501,6 +506,8 @@ done
 (( !blocksizeSecrets )) && blocksizeSecrets=$blocksize
 (( !blocksizeNamespaces )) && blocksizeNamespaces=$blocksize
 (( !blocksizeDeployments )) && blocksizeDeployments=$blocksize
+
+[[ -n $runtimeClass ]] && runtimeClass="runtimeClassName: \"$runtimeClass\""
 
 shift $((OPTIND - 1))
 
@@ -751,6 +758,7 @@ spec:
     node-role.kubernetes.io/worker: ""
   terminationGracePeriodSeconds: 1
 $(indent 2 createPodResources)
+$(indent 2 <<< "$runtimeClass")
   containers:
 $(indent 2 createContainers${podType}YAML "$@")
 $(indent 2 createVolumesYAML "$namespace" "$i" "$secretCount")
@@ -927,6 +935,7 @@ spec:
   terminationGracePeriodSeconds: 1
   restartPolicy: Always
 $(indent 2 createPodResources)
+$(indent 2 <<< "$runtimeClass")
   containers:
 $(indent 2 createContainersCPUSoakerYAML "$@")
 $(indent 2 createVolumesYAML "$namespace" "$i" "$secretCount")
@@ -1155,6 +1164,7 @@ spec:
     node-role.kubernetes.io/worker: ""
   terminationGracePeriodSeconds: 1
 $(indent 2 createPodResources)
+$(indent 2 <<< "$runtimeClass")
   containers:
 $(indent 2 createServerContainerYAML "$@")
 $(indent 2 createVolumesYAML "$namespace" "$i" "$secretCount")
@@ -1262,18 +1272,24 @@ my ($fname,$faliases,$ftype,$flen,$faddr);
 do {
     ($fname,$faliases,$ftype,$flen,$faddr) = gethostbyname($srvhost);
     my $sockaddr = "S n a4 x8";
-    my $straddr = inet_ntoa($faddr);
-    timestamp("Connecting to $srvhost ($fname, $ftype, $straddr)");
-    $ghbn_time = xtime();
-    my $sockmeta = pack($sockaddr, AF_INET, $connect_port, $faddr);
-    socket(CONN, AF_INET, SOCK_STREAM, getprotobyname('tcp')) || die "can't make socket: $!";
-    $stime = xtime();
-    if (connect(CONN, $sockmeta)) {
-	$connected = 1;
-    } else {
-	timestamp("Could not connect to $srvhost on port $connect_port: $!");
-	close CONN;
+    if (length($faddr) < 4) {
+	print STDERR "Malformed address, waiting for addr for $srvhost\n";
 	sleep(1);
+    } else {
+        print STDERR "srvhost $srvhost => '$faddr'\n";
+        my $straddr = inet_ntoa($faddr);
+        timestamp("Connecting to $srvhost ($fname, $ftype, $straddr)");
+        $ghbn_time = xtime();
+        my $sockmeta = pack($sockaddr, AF_INET, $connect_port, $faddr);
+        socket(CONN, AF_INET, SOCK_STREAM, getprotobyname('tcp')) || die "can't make socket: $!";
+        $stime = xtime();
+        if (connect(CONN, $sockmeta)) {
+            $connected = 1;
+        } else {
+            timestamp("Could not connect to $srvhost on port $connect_port: $!");
+            close CONN;
+            sleep(1);
+        }
     }
 } while (! $connected);
 $SIG{TERM} = sub { close CONN; POSIX::_exit(0); };
@@ -1302,7 +1318,7 @@ if ($bytes != $bytesMax) {
 if ($xfertime != $xfertimeMax) {
     $xfertime += int(rand($xfertimeMax - $xfertime + 1));
 }
-if ($MBSec > 0) {
+if ($MBSec != 0) {
     my $delaytime = $basetime + $poddelay - $dstime;
     my $pass = 0;
     my $e0 = 0;
@@ -1340,7 +1356,7 @@ if ($MBSec > 0) {
 	}
 	my $curtime = xtime();
 	$starttime += $bufsize / ($MBSec * 1000000);
-	if ($curtime < $starttime) {
+	if ($curtime < $starttime && $MBSec > 0) {
 	    if ($ENV{"VERBOSE"} > 0) {
 		timestamp(sprintf("Sleeping %8.6f", $starttime - $curtime));
 	    }
@@ -1352,7 +1368,7 @@ if ($MBSec > 0) {
 	    $ex += $en;
 	    $ex2 += $en * $en;
 	} else {
-	    if ($ENV{"VERBOSE"} > 0) {
+	    if ($ENV{"VERBOSE"} > 0 && $MBSec > 0) {
 		timestamp("Not sleeping");
 	    }
 	    $ex -= $e0;
@@ -1463,6 +1479,7 @@ spec:
   terminationGracePeriodSeconds: 1
 $(indent 2 createPodResources)
 $(indent 2 createClientAffinityYAML "${namespace}-${i}-server")
+$(indent 2 <<< "$runtimeClass")
   containers:
 $(indent 2 createClientContainerYAML "$namespace" "$i" "$secretCount" "$dataRate" "$bytes" "$msgSize" "$containers")
 $(indent 2 createVolumesYAML "$namespace" "$i" "$secretCount")
