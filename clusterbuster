@@ -38,6 +38,7 @@ declare -i sleeptime=0
 declare -i doit=1
 declare -i blockitemcount=0
 declare -i port=7777
+declare -i syncPort=7778
 declare -i affinity=0
 declare -i verbose=0
 declare -i wait_for_secrets=1
@@ -65,6 +66,7 @@ declare -A namespaces_in_use=()
 declare -a namespaces_to_create=()
 declare -i scale_ns=0
 declare -i scale_deployments=1
+declare -i syncStart=0
 declare runtimeClass=
 
 declare accumulateddata=
@@ -104,6 +106,7 @@ Usage: $0 [options] [name]
                        constant.
        --opt[=val]     Set the specified option.  Use -H or --help-everything
                        to get a list.
+       -Y              Sync start of data transfer or CPU load (default no)
 
     Client/server options:
        -D data rate    Data rate for client/server (MB/sec) (default 0)
@@ -444,6 +447,7 @@ function process_option() {
 	scale_deployments)   	    scale_deployments=$optvalue			;;
 	deployment_type)            deploymentType=$optvalue			;;
 	runtimeclass|runtime_class) runtimeClass=$optvalue			;;
+	sync|syncstart|sync_start)  syncStart=$((1-syncStart))			;;
 	affinity)
 	    case "$optvalue" in
 		1|'') affinity=1   ;;
@@ -465,7 +469,7 @@ function process_option() {
     fi
 }
 
-while getopts ":B:b:c:D:d:EeHhM:m:N:nP:p:qr:Ss:T:t:vWw:Xxz:-:" opt ; do
+while getopts ":B:b:c:D:d:EeHhM:m:N:nP:p:qr:Ss:T:t:vWw:XxYz:-:" opt ; do
     case "$opt" in
 	B) basename="$OPTARG"		;;
 	D) dataRate="$OPTARG"           ;;
@@ -493,6 +497,7 @@ while getopts ":B:b:c:D:d:EeHhM:m:N:nP:p:qr:Ss:T:t:vWw:Xxz:-:" opt ; do
 	W) wait_for_secrets=0		;;
 	w) sleeptime="$OPTARG"          ;;
 	x) affinity=1			;;
+	Y) syncStart=$((1-syncStart))	;;
 	z) podsleeptime="$OPTARG"	;;
 	-) process_option "$OPTARG"	;;
 	*) help "$OPTARG"               ;;
@@ -827,24 +832,212 @@ EOF
     fi
 }
 
-function cpuSoakerPerl() {
+function syncPerl() {
     cat <<'EOF'
 #!/usr/bin/perl
+use Socket;
 use POSIX;
 use strict;
 use Time::Piece;
 use Time::HiRes qw(gettimeofday);
 $SIG{TERM} = sub { POSIX::_exit(0); };
+my ($listen_port, $expected_clients) = @ARGV;
+sub timestamp($) {
+    my ($str) = @_;
+    my (@now) = gettimeofday();
+    printf STDERR  "sync %s.%06d %s\n", gmtime($now[0])->strftime("%Y-%m-%dT%T"), $now[1], $str;
+}
+timestamp("Clusterbuster sync starting");
+my $sockaddr = "S n a4 x8";
+socket(SOCK, AF_INET, SOCK_STREAM, getprotobyname('tcp')) || die "socket: $!";
+$SIG{TERM} = sub { close SOCK; POSIX::_exit(0); };
+setsockopt(SOCK,SOL_SOCKET, SO_REUSEADDR, pack("l",1)) || die "setsockopt reuseaddr: $!\n";
+setsockopt(SOCK,SOL_SOCKET, SO_KEEPALIVE, pack("l",1)) || die "setsockopt keepalive: $!\n";
+bind(SOCK, pack($sockaddr, AF_INET, $listen_port, "\0\0\0\0")) || die "bind: $!\n";
+listen(SOCK, 5) || die "listen: $!";
+my $mysockaddr = getsockname(SOCK);
+my ($junk, $port, $addr) = unpack($sockaddr, $mysockaddr);
+die "can't get port $port: $!\n" if ($port ne $listen_port);
+timestamp("Listening on port $listen_port");
+$SIG{CHLD} = 'IGNORE';
+my (@clients);
+
+print STDERR "Expect $expected_clients clients\n";
+while ($expected_clients > 0) {
+    my ($client);
+    accept($client, SOCK) || next;
+    my $peeraddr = getpeername($client);
+    my ($port, $addr) = sockaddr_in($peeraddr);
+    my $peerhost = gethostbyaddr($addr, AF_INET);
+    my $peeraddr = inet_ntoa($addr);
+    timestamp("Accepted connection from $peerhost ($peeraddr) on $port");
+    push @clients, $client;
+    $expected_clients--;
+}
+timestamp("Waiting 1 second to sync:");
+sleep(1);
+timestamp("Done!");
+POSIX::_exit(0);
+EOF
+}
+
+function createSyncYAML() {
+    local namespace=$1
+    local expectedClients=$2
+    cat <<EOF
+- name: ${namespace}-sync
+  imagePullPolicy: IfNotPresent
+  image: perl
+  ports:
+  - containerPort: $port
+  command:
+  - perl
+  args:
+  - -e
+  - |
+$(indent 4 syncPerl)
+  - "$syncPort"
+  - "$expectedClients"
+EOF
+}
+
+function createSyncSpec() {
+    local namespace=$1
+    local expectedClients=$2
+    cat <<EOF
+spec:
+  nodeSelector:
+    node-role.kubernetes.io/worker: ""
+  terminationGracePeriodSeconds: 1
+$(indent 2 <<< "$runtimeClass")
+  containers:
+$(indent 2 createSyncYAML "$@")
+EOF
+}
+
+
+function createSyncDeployment() {
+    local namespace=$1
+    local expectedClients=$2
+    if [[ $deploymentType = pod ]] ; then
+	createObject <<EOF
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ${namespace}-sync
+  namespace: $namespace
+  nodeSelector:
+    node-role.kubernetes.io/worker: ""
+  selector:
+    matchLabels:
+      app: ${namespace}-sync
+  labels:
+    ${basename}: "true"
+    name: ${namespace}-sync
+    app: ${namespace}-sync
+    k8s-app: ${namespace}-sync
+    ${basename}: "true"
+    ${basename}-sync: "true"
+    clusterbusterbase: "true"
+$(createSyncSpec "$@")
+  restartPolicy: Never
+EOF
+    else
+	createObject <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ${namespace}-sync
+  namespace: $namespace
+  labels:
+    ${basename}: "true"
+    clusterbusterbase: "true"
+spec:
+  replicas: 1
+  nodeSelector:
+    node-role.kubernetes.io/worker: ""
+  selector:
+    matchLabels:
+      app: ${namespace}
+  strategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        name: ${namespace}
+        app: ${namespace}
+        k8s-app: ${namespace}-sync
+        ${basename}: "true"
+        ${basename}-server: "true"
+        clusterbusterbase: "true"
+$(indent 4 createSyncSpec "$@")
+EOF
+    fi
+}
+
+function cpuSoakerPerl() {
+    cat <<'EOF'
+#!/usr/bin/perl
+
+use Socket;
+use POSIX;
+use strict;
+use Time::Piece;
+use Time::HiRes qw(gettimeofday);
+our ($basetime, $crtime, $poddelay, $processes, $runtime, $exit_at_end, $synchost, $syncport) = @ARGV;
+$SIG{TERM} = sub { kill 'KILL', -1; POSIX::_exit(0); };
 
 sub cputime() {
     my (@times) = times();
     return $times[0] + $times[1] + $times[2] + $times[3];
 }
 
+sub ts() {
+    my (@now) = gettimeofday();
+    return sprintf("%s.%06d", gmtime($now[0])->strftime("%Y-%m-%dT%T"), $now[1]);
+}
+sub timestamp($) {
+    my ($str) = @_;
+    printf STDERR "%7d %s %s\n", $$$$, ts(), $str;
+}
+
+sub xtime() {
+    my (@now) = gettimeofday();
+    return $now[0] + ($now[1] / 1000000.0);
+}
+sub connect_to($$$$) {
+    my ($addr, $port) = @_;
+    my ($connected) = 0;
+    my ($ghbn_time, $stime);
+    my ($fname,$faliases,$ftype,$flen,$faddr);
+    my ($sock);
+    do {
+        ($fname,$faliases,$ftype,$flen,$faddr) = gethostbyname($addr);
+        my $sockaddr = "S n a4 x8";
+        if (length($faddr) < 4) {
+            print STDERR "Malformed address, waiting for addr for $addr\n";
+            sleep(1);
+        } else {
+            my $straddr = inet_ntoa($faddr);
+            timestamp("Connecting to $addr:$port ($fname, $ftype)");
+            $ghbn_time = xtime();
+            my $sockmeta = pack($sockaddr, AF_INET, $port, $faddr);
+            socket($sock, AF_INET, SOCK_STREAM, getprotobyname('tcp')) || die "can't make socket: $!";
+            $stime = xtime();
+            if (connect($sock, $sockmeta)) {
+                $connected = 1;
+            } else {
+                timestamp("Could not connect to $addr on port $port: $!");
+                close $sock;
+                sleep(1);
+            }
+        }
+    } while (! $connected);
+    return ($sock, $ghbn_time, $stime);
+}
+
+
 sub runit() {
-    my (@start) = gettimeofday();
-    my ($stime) = $start[0] + ($start[1] / 1000000);
-    my ($prevtime) = $stime;
     my ($iterations) = 0;
     my ($loops_per_iteration) = 10000;
     my ($basecpu) = cputime();
@@ -854,46 +1047,77 @@ sub runit() {
     my ($weight) = .25;
     my ($icputime);
     my ($interval) = 5;
+    my $start_time;
+    my ($dstime) = xtime();
 
-    for (;;) {
+    my $delaytime = $basetime + $poddelay - $dstime;
+    if ($synchost ne '') {
+        timestamp("Waiting for sync on $synchost:$syncport");
+        my ($sync_conn, $i1, $i2) = connect_to($synchost, $syncport);
+        my ($sbuf);
+        my ($answer) = sysread($sync_conn, $sbuf, 1024);
+        my ($str) = sprintf("Got sync (%s, %d, %s)!", $answer, length $sbuf, $!);
+        timestamp($str);
+    }
+    my ($stime1) = xtime();
+    my ($stime) = $stime1;
+    my ($prevtime) = $stime;
+    my ($scputime) = cputime();
+    while ($runtime <= 0 || xtime() - $stime1 < $runtime) {
         my ($a) = 1;
         for (my $i = 0; $i < $loops_per_iteration; $i++) {
             $a = $a + $a;
         }
-	$iterations += $loops_per_iteration;
-        my (@now) = gettimeofday();
-        my ($ntime) = $now[0] + ($now[1] / 1000000);
-        if ($ntime - $prevtime >= $interval) {
-	    my (@times) = times();
-            my ($user, $system, $cuser, $csystem) = times();
-            my ($etime) = $ntime - $stime;
-	    my ($cpu) = cputime();
-            my ($cputime) = $cpu - $basecpu;
-	    my ($icputime) = $cpu - $prevcpu;
-	    if ($firsttime) {
-		$avgcpu = $cputime;
-		$firsttime = 0;
-	    } else {
-		$avgcpu = ($icputime * $weight) + ($avgcpu * (1.0 - $weight));
-	    }
-            printf STDERR "pid %d elapsed %.03f cpu %0.3f util %7.3f avg %7.3f mov %7.3f iter %d ips %d\n", $$$$, $etime, $cputime, 100.0 * $cputime / $etime, 100.0 * $icputime / ($ntime - $prevtime), 100 * $avgcpu / ($ntime - $prevtime), $iterations, $iterations / $etime;
-            $prevtime = $ntime;
-            $prevcpu = $cpu;
+        $iterations += $loops_per_iteration;
+        if ($ENV{"VERBOSE"} > 0) {
+	    my ($ntime) = xtime();
+	    if ($ntime - $prevtime >= $interval) {
+		my (@times) = times();
+		my ($user, $system, $cuser, $csystem) = times();
+		my ($etime) = $ntime - $stime;
+		my ($cpu) = cputime();
+		my ($cputime) = $cpu - $basecpu;
+		my ($icputime) = $cpu - $prevcpu;
+		if ($firsttime) {
+		    $avgcpu = $cputime;
+		    $firsttime = 0;
+		} else {
+		    $avgcpu = ($icputime * $weight) + ($avgcpu * (1.0 - $weight));
+		}
+		printf STDERR "pid %d elapsed %.03f cpu %0.3f util %7.3f avg %7.3f mov %7.3f iter %d ips %d\n", $$$$, $etime, $cputime, 100.0 * $cputime / $etime, 100.0 * $icputime / ($ntime - $prevtime), 100 * $avgcpu / ($ntime - $prevtime), $iterations, $iterations / $etime;
+		$prevtime = $ntime;
+		$prevcpu = $cpu;
+            }
         }
     }
+    my ($etime) = xtime();
+    my ($eltime) = $etime - $stime1;
+    my ($cputime) = cputime() - $scputime;
+    printf STDERR "STATS %d %.3f %.3f %.3f %.3f %.3f %.3f %7.3f %d %d\n",
+        $$$$, $crtime - $basetime, $dstime - $basetime, $stime1 - $basetime,
+        $eltime, $etime - $basetime, $cputime, 100.0 * $cputime / $eltime, $iterations,
+        $iterations / ($etime - $stime1);
 }
-our ($procs) = @ARGV;
 $SIG{CHLD} = 'IGNORE';
-if ($procs > 1) {
-    while ($procs-- > 1) {
+if ($processes > 1) {
+    for (my $i = 0; $i < $processes; $i++) {
         if ((my $child = fork()) == 0) {
             runit();
-            POSIX::_exit(0);
+            exit(0);
         }
     }
+} else {
+    runit();
 }
-runit();
-POSIX::_exit(0);
+if ($exit_at_end) {
+    timestamp("About to exit");
+    while (wait() > 0) {}
+    timestamp("Done waiting");
+    POSIX::_exit(0);
+} else {
+    timestamp("Waiting forever");
+    pause()
+}
 EOF
 }
 
@@ -904,19 +1128,35 @@ function createContainersCPUSoakerYAML() {
     local -i processes=$4
     local -i containers=$5
     local -i j
+    local syncService=
+    local syncPortNum=
+    if (( syncStart )) ; then
+	syncService="service-${namespace}-sync"
+	syncPortNum=$syncPort
+    fi
     for j in $(seq 0 $((containers - 1))) ; do
 	cat <<EOF
-- name: ${namespace}-$i-$j
+- name: ${namespace}-soaker-$i-$j
   imagePullPolicy: IfNotPresent
   image: perl
 $(indent 2 createContainerResources)
+  env:
+  - name: VERBOSE
+    value: "$verbose"
   command:
   - perl
   args:
   - -e
   - |
 $(indent 4 cpuSoakerPerl)
+  - "$basetime"
+  - "$(ts)"
+  - "$poddelay"
   - "$processes"
+  - "$xferTime"
+  - "$exitAtEnd"
+  - "$syncService"
+  - "$syncPortNum"
 $(indent 2 createVolumeMountsYAML "$namespace" "$i" "$secretCount")
 EOF
     done
@@ -942,7 +1182,7 @@ $(indent 2 createVolumesYAML "$namespace" "$i" "$secretCount")
 EOF
 }
 
-function createDeploymentSoakerYAML() {
+function createSoakerDeployment() {
     local namespace=$1
     local i=$2
     local secretCount=$3
@@ -953,28 +1193,29 @@ function createDeploymentSoakerYAML() {
 apiVersion: v1
 kind: Pod
 metadata:
-  name: ${namespace}-${i}
+  name: ${namespace}-soaker-${i}
   namespace: $namespace
   nodeSelector:
     node-role.kubernetes.io/worker: ""
   selector:
     matchLabels:
-      app: ${namespace}-${i}
+      app: ${namespace}-soaker-${i}
   labels:
     ${basename}: "true"
-    name: ${namespace}-${i}
-    app: ${namespace}-${i}
+    name: ${namespace}-soaker-${i}
+    app: ${namespace}-soaker-${i}
     ${basename}: "true"
     ${basename}-client: "true"
     clusterbusterbase: "true"
 $(createSoakerSpec "$@")
+  restartPolicy: Never
 EOF
     else
 	createObject <<EOF
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: ${namespace}-$i
+  name: ${namespace}-soaker-$i
   namespace: $namespace
   labels:
     ${basename}: "true"
@@ -985,7 +1226,7 @@ spec:
     node-role.kubernetes.io/worker: ""
   selector:
     matchLabels:
-      app: ${namespace}-$i
+      app: ${namespace}-soaker-$i
   strategy:
     type: RollingUpdate
   template:
@@ -993,8 +1234,8 @@ spec:
       labels:
         ${basename}: "true"
         clusterbusterbase: "true"
-        name: ${namespace}-$i
-        app: ${namespace}-$i
+        name: ${namespace}-soaker-$i
+        app: ${namespace}-soaker-$i
 $(indent 4 createSoakerSpec "$@")
 EOF
     fi
@@ -1003,6 +1244,7 @@ EOF
 function createService() {
     local namespace=$1
     local deployment=$2
+    local portnum=$3
     createObject <<EOF
 apiVersion: v1
 kind: Service
@@ -1014,8 +1256,8 @@ metadata:
     clusterbusterbase: "true"
 spec:
   ports:
-  - port: $port
-    targetPort: $port
+  - port: $portnum
+    targetPort: $portnum
   selector:
     name: "${deployment}"
 EOF
@@ -1061,7 +1303,7 @@ sub timestamp($) {
 timestamp("Clusterbuster server starting");
 my $sockaddr = "S n a4 x8";
 socket(SOCK, AF_INET, SOCK_STREAM, getprotobyname('tcp')) || die "socket: $!";
-$SIG{TERM} = sub { close SOCK; POSIX::_exit(0); };
+$SIG{TERM} = sub { close SOCK; kill 'KILL', -1; POSIX::_exit(0); };
 setsockopt(SOCK,SOL_SOCKET, SO_REUSEADDR, pack("l",1)) || die "setsockopt reuseaddr: $!\n";
 setsockopt(SOCK,SOL_SOCKET, SO_KEEPALIVE, pack("l",1)) || die "setsockopt keepalive: $!\n";
 bind(SOCK, pack($sockaddr, AF_INET, $listen_port, "\0\0\0\0")) || die "bind: $!\n";
@@ -1242,8 +1484,8 @@ use POSIX;
 use strict;
 use Time::HiRes qw(gettimeofday usleep);
 use Time::Piece;
-$SIG{TERM} = sub { POSIX::_exit(0); };
-my ($basetime, $poddelay, $connect_port, $container, $srvhost, $data_rate, $bytes, $bytesMax, $msgSize, $xfertime, $xfertimeMax, $crtime, $exit_at_end) = @ARGV;
+$SIG{TERM} = sub { kill 'KILL', -1; POSIX::_exit(0); };
+my ($basetime, $poddelay, $connect_port, $container, $srvhost, $data_rate, $bytes, $bytesMax, $msgSize, $xfertime, $xfertimeMax, $crtime, $exit_at_end, $synchost, $syncport) = @ARGV;
 my ($etime, $data_sent, $detime, $stime, $end_time, $dstime, $mean, $stdev, $user, $sys, $cuser, $csys, $elapsed);
 my $start_time;
 my $ghbn_time;
@@ -1265,44 +1507,60 @@ sub print_stats() {
 	   $dstime - $basetime, $end_time - $basetime, $elapsed, $user, $sys,
 	   $data_sent, $detime, $data_sent / $detime / 1000000.0, $mean, $stdev;
 }
+sub connect_to($$$$) {
+    my ($addr, $port) = @_;
+    my ($connected) = 0;
+    my ($ghbn_time, $stime);
+    my ($fname,$faliases,$ftype,$flen,$faddr);
+    my ($sock);
+    do {
+        ($fname,$faliases,$ftype,$flen,$faddr) = gethostbyname($addr);
+        my $sockaddr = "S n a4 x8";
+        if (length($faddr) < 4) {
+            print STDERR "Malformed address, waiting for addr for $addr\n";
+            sleep(1);
+        } else {
+            print STDERR "addr $addr => '$faddr'\n";
+            my $straddr = inet_ntoa($faddr);
+            timestamp("Connecting to $addr:$port ($fname, $ftype)");
+            $ghbn_time = xtime();
+            my $sockmeta = pack($sockaddr, AF_INET, $port, $faddr);
+            socket($sock, AF_INET, SOCK_STREAM, getprotobyname('tcp')) || die "can't make socket: $!";
+            $stime = xtime();
+            if (connect($sock, $sockmeta)) {
+                $connected = 1;
+            } else {
+                timestamp("Could not connect to $addr on port $port: $!");
+                close $sock;
+                sleep(1);
+            }
+        }
+    } while (! $connected);
+    return ($sock, $ghbn_time, $stime);
+}
+$SIG{TERM} = sub { POSIX::_exit(0); };
 timestamp("Clusterbuster client starting");
 $start_time = xtime();
-my ($connected) = 0;
-my ($fname,$faliases,$ftype,$flen,$faddr);
-do {
-    ($fname,$faliases,$ftype,$flen,$faddr) = gethostbyname($srvhost);
-    my $sockaddr = "S n a4 x8";
-    if (length($faddr) < 4) {
-	print STDERR "Malformed address, waiting for addr for $srvhost\n";
-	sleep(1);
-    } else {
-        print STDERR "srvhost $srvhost => '$faddr'\n";
-        my $straddr = inet_ntoa($faddr);
-        timestamp("Connecting to $srvhost ($fname, $ftype, $straddr)");
-        $ghbn_time = xtime();
-        my $sockmeta = pack($sockaddr, AF_INET, $connect_port, $faddr);
-        socket(CONN, AF_INET, SOCK_STREAM, getprotobyname('tcp')) || die "can't make socket: $!";
-        $stime = xtime();
-        if (connect(CONN, $sockmeta)) {
-            $connected = 1;
-        } else {
-            timestamp("Could not connect to $srvhost on port $connect_port: $!");
-            close CONN;
-            sleep(1);
-        }
-    }
-} while (! $connected);
-$SIG{TERM} = sub { close CONN; POSIX::_exit(0); };
+my ($conn);
+($conn, $ghbn_time, $stime) = connect_to($srvhost, $connect_port);
+$SIG{TERM} = sub { close $conn; POSIX::_exit(0); };
+if ($synchost ne '') {
+    timestamp("Waiting for sync on $synchost:$syncport");
+    my ($sync_conn, $i1, $i2) = connect_to($synchost, $syncport);
+    my ($sbuf);
+    my ($answer) = sysread($sync_conn, $sbuf, 1024);
+    my ($str) = sprintf("Got sync (%s, %d, %s)!", $answer, length $sbuf, $!);
+    timestamp($str);
+}
 $etime = xtime();
 $elapsed = $etime - $stime;
-my $peeraddr = getpeername(CONN);
+my $peeraddr = getpeername($conn);
 my ($port, $addr) = sockaddr_in($peeraddr);
 my $peerhost = gethostbyaddr($addr, AF_INET);
 $peeraddr = inet_ntoa($addr);
 timestamp("Connected to $peerhost ($peeraddr) on port tcp:$port");
 my $buffer = "";
 vec($buffer, $msgSize - 1, 8) = "A";
-my $tbuf;
 my $nread;
 my $bufsize = length($buffer);
 my $starttime = xtime();
@@ -1334,7 +1592,7 @@ if ($MBSec != 0) {
 	   ($xfertime > 0 && xtime() - $dstime < $xfertime)) {
 	my $nwrite;
 	my $nleft = $bufsize;
-	while ($nleft > 0 && ($nwrite = syswrite(CONN, $buffer, $nleft)) > 0) {
+	while ($nleft > 0 && ($nwrite = syswrite($conn, $buffer, $nleft)) > 0) {
 	    $nleft -= $nwrite;
 	    $data_sent += $nwrite;
 	}
@@ -1345,7 +1603,7 @@ if ($MBSec != 0) {
 	}
 	$nleft = $bufsize;
 	my $tbuf;
-	while (($nread = sysread(CONN, $tbuf, $nleft)) > 0) {
+	while (($nread = sysread($conn, $tbuf, $nleft)) > 0) {
 	    $nleft -= $nread;
 	}
 	if ($nread < 0) {
@@ -1408,6 +1666,12 @@ function createClientContainerYAML() {
     local msgSize=$6
     local containers=$7
     local -i j
+    local syncService=
+    local syncPortNum=
+    if (( syncStart )) ; then
+	syncService="service-${namespace}-sync"
+	syncPortNum=$syncPort
+    fi
     for j in $(seq 0 $((containers - 1))) ; do
 	cat <<EOF
 - name: client-${j}
@@ -1436,6 +1700,8 @@ $(indent 4 clientContainerPerl)
   - "$xferTimeMax"
   - "$(ts)"
   - "$exitAtEnd"
+  - "$syncService"
+  - "$syncPortNum"
 $(indent 2 createVolumeMountsYAML "$namespace" "$i" "$secretCount")
 EOF
     done
@@ -1581,8 +1847,12 @@ function createDeploymentCPUSoaker() {
     local replicas=${4:-1}
     local containers=${5:-1}
     local -i i
+    if (( syncStart )) ; then
+	createService "$namespace" "${namespace}-sync" "$syncPort"
+	createSyncDeployment "$namespace" "$((containers * replicas * $count))"
+    fi
     for i in $(seq $firstDeployment $((count + firstDeployment - 1))) ; do
-	createDeploymentSoakerYAML "$namespace" "$i" "$secretCount"  "$replicas" "$containers"
+	createSoakerDeployment "$namespace" "$i" "$secretCount"  "$replicas" "$containers"
     done
 }
 
@@ -1593,8 +1863,12 @@ function createDeploymentServer() {
     local replicas=${4:-1}
     local containers=${5:-1}
     local -i i
+    if (( syncStart )) ; then
+	createService "$namespace" "${namespace}-sync" "$syncPort"
+	createSyncDeployment "$namespace" "$((containers * replicas * count))"
+    fi
     for i in $(seq $firstDeployment $((count + firstDeployment - 1))) ; do
-	createService "$namespace" "$namespace-$i"
+	createService "$namespace" "$namespace-$i" "$port"
 	(( createRoutes )) && createRoute "$namespace" "$namespace-$i"
 	createServerDeployment "$namespace" "$i" "$secretCount" "$msgSize" "$((containers * replicas))"
 	createClientDeployment "$namespace" "$i" "$secretCount" "$replicas" "$dataRate" "$bytes" "$msgSize" "$containers"

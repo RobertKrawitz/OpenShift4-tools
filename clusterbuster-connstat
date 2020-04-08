@@ -10,17 +10,19 @@ read -r -d '' jq_cmd <<\EOF
 EOF
 
 declare -i parallel=1
-declare -i curjobs=0
+declare -i summarize=0
 declare basename=clusterbuster
 
 declare OC
 OC=$(type -p oc)
 OC=${OC:-$(type -p kubectl)}	# kubectl might not work, though...
 
-while getopts ':p:B:' opt ; do
+while getopts ':p:B:rs' opt ; do
     case "$opt" in
 	B) basename=$OPTARG ;;
 	p) parallel=$OPTARG ;;
+	r) rate=1	    ;;
+	s) summarize=1	    ;;
 	*) ;;
     esac
 done
@@ -72,7 +74,7 @@ function prettyprint() {
 	    printfstr1+=' '
 	fi
 	printfstr0+="%-${width}.${width}s"
-	
+
 	if [[ $fmt = *'s' ]] ; then
 	    printfstr1+="%-${width}$fmt"
 	else
@@ -100,15 +102,16 @@ function retrieve_pod_stats() {
     local -i connection_refused=0
     local -i blocks=0
     local statline=''
+    local -a statlines=()
     case "$status" in
-	running|completed)
+	running|completed|terminated)
 	    # This is actually faster than reading lines if there's a lot of data.
 	    local data
 	    data="$(oc logs -n "$ns" "$pod" -c "$container")"
 	    connection_refused=$(grep -c 'Connection refused' <<< "$data")
 	    connection_failures=$(grep -c 'Could not connect' <<< "$data")
 	    blocks=$(grep -c 'Write/Read' <<< "$data")
-	    statline=$(grep 'STATS' <<< "$data")
+	    readarray -t statlines <<< $(grep 'STATS' <<< "$data")
 	    ;;
 	'')
 	    return
@@ -116,31 +119,130 @@ function retrieve_pod_stats() {
 	*)
 	    ;;
     esac
-    echo "-n $ns $pod -c $container $status $connection_failures $connection_refused $blocks $statline"
+    if (( ${#statlines[@]} )) ; then
+	local statline=
+	for statline in "${statlines[@]}" ; do
+	    echo "-n $ns $pod -c $container $status $connection_failures $connection_refused $blocks $statline"
+	done
+    else
+	echo "-n $ns $pod -c $container $status $connection_failures $connection_refused $blocks"
+    fi
 }
 
 declare wait_n=$(( BASH_VERSINFO[0] > 4 || (BASH_VERSINFO[0] > 4 && BASH_VERSINFO[1] >= 3) ))
 
 trap exit INT
 
-while read -r ns pod container status ; do
-    if (( parallel > 1 )) ; then
-	if (( wait_n )) ; then
-	    while (( curjobs >= parallel )) ; do
-		wait -n
-		curjobs=$((curjobs - 1))
-	    done
-	elif (( curjobs >= parallel )) ; then
-	    wait
-	    curjobs=0
+function get_stats() {
+    local -i curjobs=0
+    while read -r ns pod container status ; do
+	if (( parallel > 1 )) ; then
+	    if (( wait_n )) ; then
+		while (( curjobs >= parallel )) ; do
+		    wait -n
+		    curjobs=$((curjobs - 1))
+		done
+	    elif (( curjobs >= parallel )) ; then
+		wait
+		curjobs=0
+	    fi
+	    retrieve_pod_stats "$ns" "$pod" "$container" "$status"&
+	    curjobs=$((curjobs + 1))
+	else
+	    retrieve_pod_stats "$ns" "$pod" "$container" "$status"
 	fi
-	retrieve_pod_stats "$ns" "$pod" "$container" "$status"&
-	curjobs=$((curjobs + 1))
-    else
-	retrieve_pod_stats "$ns" "$pod" "$container" "$status"
-    fi
-done <<< "$(oc get pods -ojson -l "${basename}-client" -A | jq -r "$jq_cmd")"
+    done <<< "$(oc get pods -ojson -l "${basename}-client" -A | jq -r "$jq_cmd")"
 
-if (( curjobs )) ; then
-    wait
+    if (( curjobs )) ; then
+	wait
+    fi
+}
+
+function clean() {
+    local num=${1//./}
+    num=${num##0}
+    echo ${num:-0}
+}
+
+function do_summarize() {
+    while : ; do
+	local -i total=0
+	local -i found_all=1
+	local -i line_count=0
+	local -i first_start=0
+	local -i last_end=0
+	local -i total_et=0
+	local -i total_cpu=0
+	local -i total_cpu_util=0
+	local -i total_iterations=0
+	local -i pod_first_start=0
+	local -i pod_last_start=0
+	local -a output
+	local mode=
+	while read -r -a output ; do
+	    if [[ -z "$mode" ]] ; then
+		case "${output[2]}" in
+		    *'soaker'*) mode=soaker ;;
+		    *'client'*) mode=server ;;
+		    *)                      ;;
+		esac
+	    fi
+	    if [[ -z "${output[11]:-}" ]] ; then
+		found_all=0
+	    elif [[ $mode = server ]] ; then
+		total+=${output[19]}
+		line_count+=1
+		local -i start=${output[14]//./}
+		local -i end=${output[15]//./}
+		local -i et=${output[20]//./}
+		if (( start < first_start || first_start == 0 )) ; then first_start=start; fi
+		if (( end > last_end || last_end == 0 )) ; then last_end=end; fi
+		total_et+=$et
+	    elif [[ $mode = soaker ]] ; then
+		line_count+=1
+		local -i pod_start=$(clean ${output[11]})
+		if (( pod_start < pod_first_start || pod_first_start == 0 )) ; then pod_first_start=pod_start; fi
+		if (( pod_start > pod_last_start )) ; then pod_last_start=pod_start; fi
+		local -i start=$(clean ${output[13]})
+		local -i end=$(clean ${output[15]})
+		local -i et=$(clean ${output[14]})
+		if (( start < first_start || first_start == 0 )) ; then first_start=start; fi
+		if (( end > last_end || last_end == 0 )) ; then last_end=end; fi
+		total_cpu+=$(clean ${output[16]})
+		total_cpu_util+=$(clean ${output[17]})
+		total_iterations+=$(clean ${output[18]})
+		total_et+=$et
+	    fi
+	done <<< "$(get_stats)"
+	if ((found_all)) ; then
+	    case "$mode" in
+		server)
+		    echo "Bytes: $total"
+		    echo "Average_elapsed: $(bc <<< "scale=3; $total_et/$line_count/1000")"
+		    echo "Elapsed_span: $(bc <<< "scale=3; ($last_end-$first_start)/1000)")"
+		    echo "Data rate: $((total*2*1000/(total_et/line_count)/1024/1024))"
+		    ;;
+		soaker)
+		    echo "Iterations: $total_iterations"
+		    echo "Average_elapsed: $(bc <<< "scale=3; $total_et/$line_count/1000")"
+		    echo "Elapsed_span: $(bc <<< "scale=3; ($last_end-$first_start)/1000")"
+		    echo "Starting span: $(bc <<< "scale=3; ($pod_last_start-$pod_first_start)/1000")"
+		    echo "Total CPU: $(bc <<< "scale=3; $total_cpu/1000")"
+		    echo "CPU utilization: $(bc <<< "scale=3; $total_cpu_util/1000")%"
+		    echo "Iterations/CPU sec: $(bc <<< "scale=0; $total_iterations/($total_cpu/1000)")"
+		    echo "Iterations/sec: $(bc <<< "scale=0; $total_iterations/($total_et/$line_count/1000)")"
+		    ;;
+		*)
+		    echo "Unknown mode $mode"
+		    ;;
+		esac
+	    return
+	fi
+    done
+}
+
+if (( summarize )) ; then
+    do_summarize
+else
+    get_stats
 fi
