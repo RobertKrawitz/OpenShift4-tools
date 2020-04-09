@@ -219,7 +219,7 @@ function do_summarize() {
 		server)
 		    echo "Bytes: $total"
 		    echo "Average_elapsed: $(bc <<< "scale=3; $total_et/$line_count/1000")"
-		    echo "Elapsed_span: $(bc <<< "scale=3; ($last_end-$first_start)/1000)")"
+		    echo "Elapsed_span: $(bc <<< "scale=3; ($last_end-$first_start)/1000")"
 		    echo "Data rate: $((total*2*1000/(total_et/line_count)/1024/1024))"
 		    ;;
 		soaker)
