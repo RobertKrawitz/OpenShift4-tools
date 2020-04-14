@@ -1326,10 +1326,11 @@ while ($expected_clients > 0) {
 	my $peeraddr = inet_ntoa($addr);
 	timestamp("Accepted connection from $peerhost ($peeraddr) on $port!");
 	my ($consec_empty) = 0;
+	my $buffer;
+	my $nread;
+	my $ntotal = 0;
+	my $nwrite;
 	while (1) {
-	    my $buffer;
-	    my $nread;
-	    my $ntotal = 0;
 	    while ($ntotal < $msgSize && ($nread = sysread(CLIENT, $buffer, $msgSize, $ntotal)) > 0) {
 		$ntotal += $nread;
 		$consec_empty=0;
@@ -1344,12 +1345,11 @@ while ($expected_clients > 0) {
 		}
 	        $consec_empty++;
 	    }
-	    my $nwrite;
 	    while ($ntotal > 0 && ($nwrite = syswrite(CLIENT, $buffer, $ntotal)) > 0) {
 		$ntotal -= $nwrite;
 	    }
 	    if ($nwrite < 0) {
-		die timestamp("Write failed: $!");
+		die "Write failed: $!\n";
 	    }
 	}
     } else {
@@ -1357,11 +1357,11 @@ while ($expected_clients > 0) {
 	$expected_clients--;
     }
 }
-print STDERR "Waiting for all clients to exit:\n";
+timestamp("Waiting for all clients to exit:");
 while ((my $pid = wait()) >= 0) {
-    print STDERR "   $pid\n";
+    timestamp("   $pid");
 }
-print STDERR "Done!\n";
+timestamp("Done!");
 EOF
 }
 
@@ -1489,6 +1489,11 @@ my ($basetime, $poddelay, $connect_port, $container, $srvhost, $data_rate, $byte
 my ($etime, $data_sent, $detime, $stime, $end_time, $dstime, $mean, $stdev, $user, $sys, $cuser, $csys, $elapsed);
 my $start_time;
 my $ghbn_time;
+my $pass = 0;
+my $e0 = 0;
+my $ex = 0;
+my $ex2 = 0;
+my $time_overhead = 0;
 sub ts() {
     my (@now) = gettimeofday();
     return sprintf("%s.%06d", gmtime($now[0])->strftime("%Y-%m-%dT%T"), $now[1]);
@@ -1501,11 +1506,19 @@ sub xtime() {
     my (@now) = gettimeofday();
     return $now[0] + ($now[1] / 1000000.0);
 }
+sub calibrate_time() {
+    for (my $i = 0; $i < 1000; $i++) {
+        my ($start) = xtime();
+	my ($end) = xtime();
+	$time_overhead += $end - $start;
+    }
+    $time_overhead /= 1000;
+}
 sub print_stats() {
-    printf STDERR "STATS %.3f %.3f %.3f %.3f %.3f %.3f %.6f %.3f %.3f %d %.3f %.3f %.6f %.6f\n",
+    printf STDERR "STATS %.3f %.3f %.3f %.3f %.3f %.3f %.6f %.3f %.3f %d %.3f %.3f %.6f %.6f %.6f\n",
 	   $crtime - $basetime, $start_time - $basetime, $ghbn_time - $basetime, $etime - $basetime,
 	   $dstime - $basetime, $end_time - $basetime, $elapsed, $user, $sys,
-	   $data_sent, $detime, $data_sent / $detime / 1000000.0, $mean, $stdev;
+	   $data_sent, $detime, $data_sent / $detime / 1000000.0, $mean, $stdev, $time_overhead;
 }
 sub connect_to($$$$) {
     my ($addr, $port) = @_;
@@ -1520,7 +1533,6 @@ sub connect_to($$$$) {
             print STDERR "Malformed address, waiting for addr for $addr\n";
             sleep(1);
         } else {
-            print STDERR "addr $addr => '$faddr'\n";
             my $straddr = inet_ntoa($faddr);
             timestamp("Connecting to $addr:$port ($fname, $ftype)");
             $ghbn_time = xtime();
@@ -1577,17 +1589,15 @@ if ($xfertime != $xfertimeMax) {
     $xfertime += int(rand($xfertimeMax - $xfertime + 1));
 }
 if ($MBSec != 0) {
+    calibrate_time();
     my $delaytime = $basetime + $poddelay - $dstime;
-    my $pass = 0;
-    my $e0 = 0;
-    my $ex = 0;
-    my $ex2 = 0;
     timestamp("Using $bufsize byte buffer");
     if ($delaytime > 0) {
 	timestamp("Sleeping $delaytime seconds to synchronize");
 	usleep($delaytime * 1000000);
     }
     $dstime = xtime();
+    my ($tbuf, $rtt_start, $rtt_end, $rtt_elapsed);
     while (($bytes > 0 && $data_sent < $bytes) ||
 	   ($xfertime > 0 && xtime() - $dstime < $xfertime)) {
 	my $nwrite;
@@ -1602,15 +1612,23 @@ if ($MBSec != 0) {
 	    die "Write failed: $!\n";
 	}
 	$nleft = $bufsize;
-	my $tbuf;
-	while (($nread = sysread($conn, $tbuf, $nleft)) > 0) {
+	 $rtt_start = xtime();
+	while ($nleft > 0 && ($nread = sysread($conn, $tbuf, $nleft)) > 0) {
 	    $nleft -= $nread;
 	}
+        $rtt_end = xtime();
+	$rtt_elapsed = $rtt_end - $rtt_start - $time_overhead; 
+	if ($pass == 0) {
+	    $e0 = $rtt_elapsed - $;
+	}
+	my $en = $rtt_elapsed - $e0;
+	$ex += $en;
+	$ex2 += $en * $en;
 	if ($nread < 0) {
 	    die "Read failed: $!\n";
 	}
 	if ($ENV{"VERBOSE"} > 0) {
-	    timestamp("Write/Read $bufsize");
+	    timestamp(sprintf("Write/Read %d %.6f", $bufsize, $rtt_elapsed));
 	}
 	my $curtime = xtime();
 	$starttime += $bufsize / ($MBSec * 1000000);
@@ -1619,28 +1637,16 @@ if ($MBSec != 0) {
 		timestamp(sprintf("Sleeping %8.6f", $starttime - $curtime));
 	    }
 	    usleep(($starttime - $curtime) * 1000000);
-	    if ($pass == 0) {
-		$e0 = $starttime - $curtime;
-	    }
-	    my $en = ($starttime - $curtime) - $e0;
-	    $ex += $en;
-	    $ex2 += $en * $en;
 	} else {
 	    if ($ENV{"VERBOSE"} > 0 && $MBSec > 0) {
 		timestamp("Not sleeping");
 	    }
-	    $ex -= $e0;
-	    $ex2 += $e0 * $e0;
 	}
 	$pass++;
     }
-    if ( $pass > 0) {
-	$mean = ($ex / $pass) + $e0;
-    }
-    if ($pass > 1) {
-	$stdev = sqrt(($ex2 - ($ex * $ex / $pass)) / ($pass - 1));
-    }
 }
+$mean = ($ex / $pass) + $e0;
+$stdev = sqrt(($ex2 - ($ex * $ex / $pass)) / ($pass - 1));
 ($user, $sys, $cuser, $csys) = times;
 $end_time = xtime();
 $detime = $end_time - $dstime;
