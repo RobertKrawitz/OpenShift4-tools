@@ -872,7 +872,11 @@ while ($expected_clients > 0) {
     my ($port, $addr) = sockaddr_in($peeraddr);
     my $peerhost = gethostbyaddr($addr, AF_INET);
     my $peeraddr = inet_ntoa($addr);
-    timestamp("Accepted connection from $peerhost ($peeraddr) on $port");
+    my ($tbuf) = "NULL";
+    if (sysread($client, $tbuf, 1024) <= 0) {
+        timestamp("Read token from $peerhost failed: $!");
+    }
+    timestamp("Accepted connection from $peerhost ($peeraddr) on $port, token $tbuf");
     push @clients, $client;
     $expected_clients--;
 }
@@ -1028,6 +1032,7 @@ sub connect_to($$$$) {
             $stime = xtime();
             if (connect($sock, $sockmeta)) {
                 $connected = 1;
+                timestamp("Connected to $addr:$port ($fname, $ftype), waiting for sync");
             } else {
                 timestamp("Could not connect to $addr on port $port: $!");
                 close $sock;
@@ -1057,7 +1062,14 @@ sub runit() {
         timestamp("Waiting for sync on $synchost:$syncport");
         my ($sync_conn, $i1, $i2) = connect_to($synchost, $syncport);
         my ($sbuf);
-        my ($answer) = sysread($sync_conn, $sbuf, 1024);
+	my ($tbuf) = sprintf('%d', rand() * 999999999);
+	timestamp("Writing token $tbuf to sync");
+	my ($answer) = syswrite($sync_conn, $tbuf, length $tbuf);
+	if ($answer != length $tbuf) {
+	    timestamp("Write token failed: $!");
+	    exit(1);
+	}
+	$answer = sysread($sync_conn, $sbuf, 1024);
         my ($str) = sprintf("Got sync (%s, %d, %s)!", $answer, length $sbuf, $!);
         timestamp($str);
     }
@@ -1562,7 +1574,14 @@ if ($synchost ne '') {
     timestamp("Waiting for sync on $synchost:$syncport");
     my ($sync_conn, $i1, $i2) = connect_to($synchost, $syncport);
     my ($sbuf);
-    my ($answer) = sysread($sync_conn, $sbuf, 1024);
+    my ($tbuf) = sprintf('%d', rand() * 999999999);
+    timestamp("Writing token $tbuf to sync");
+    my ($answer) = syswrite($sync_conn, $tbuf, length $tbuf);
+    if ($answer != length $tbuf) {
+	timestamp("Write token failed: $!");
+	exit(1);
+    }
+    $answer = sysread($sync_conn, $sbuf, 1024);
     my ($str) = sprintf("Got sync (%s, %d, %s)!", $answer, length $sbuf, $!);
     timestamp($str);
 }
