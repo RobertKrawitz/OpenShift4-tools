@@ -5,23 +5,29 @@ read -r -d '' jq_cmd <<\EOF
 [foreach .items[]? as $item
  ([[],[]];0;
  (if ($item.kind == "Pod") then
-   ([foreach $item.spec.containers[]? as $container ([[],[]];0; [$item.metadata.namespace, $item.metadata.name, $container.name, [foreach $item.status.containerStatuses[]? as $status ([[],[]]; 0; if ($container.name == $status.name) then $status.state | keys[0] else null end)]] | flatten | map (select (. != null)) | join(" "))])
+   ([foreach $item.spec.containers[]? as $container ([[],[]];0; [$item.metadata.namespace, $item.metadata.name, $container.name,
+     (if ($item.status.containerStatuses? == null) then
+      ($item.status.phase + ": " + $item.status.conditions[0].reason?)
+     else
+      [foreach $item.status.containerStatuses[]? as $status ([[],[]]; 0; if ($container.name == $status.name) then $status.state | keys[0] else null end)] end)] | flatten | map (select (. != null)) | join(" "))])
  else null end))] | flatten | map (select (. != null))[]
 EOF
 
 declare -i parallel=1
 declare -i summarize=0
+declare -i timeout=-1
 declare basename=clusterbuster
 
 declare OC
 OC=$(type -p oc)
 OC=${OC:-$(type -p kubectl)}	# kubectl might not work, though...
 
-while getopts ':p:B:rs' opt ; do
+while getopts ':p:B:rst:' opt ; do
     case "$opt" in
 	B) basename=$OPTARG ;;
 	p) parallel=$OPTARG ;;
 	r) rate=1	    ;;
+	t) timeout=$OPTARG  ;;
 	s) summarize=1	    ;;
 	*) ;;
     esac
@@ -160,11 +166,14 @@ function get_stats() {
 
 function clean() {
     local num=${1//./}
-    num=${num##0}
+    while [[ $num = "0"* ]] ; do
+	num=${num##0}
+    done
     echo ${num:-0}
 }
 
 function do_summarize() {
+    local -i start_time=$(printf '%(%s)T' -1)
     while : ; do
 	local -i total=0
 	local -i found_all=1
@@ -218,6 +227,7 @@ function do_summarize() {
 	    case "$mode" in
 		server)
 		    echo "Bytes: $total"
+		    echo "Containers: $line_count"
 		    echo "Average_elapsed: $(bc <<< "scale=3; $total_et/$line_count/1000")"
 		    echo "Elapsed_span: $(bc <<< "scale=3; ($last_end-$first_start)/1000")"
 		    echo "Data rate: $((total*2*1000/(total_et/line_count)/1024/1024))"
@@ -229,14 +239,18 @@ function do_summarize() {
 		    echo "Starting span: $(bc <<< "scale=3; ($pod_last_start-$pod_first_start)/1000")"
 		    echo "Total CPU: $(bc <<< "scale=3; $total_cpu/1000")"
 		    echo "CPU utilization: $(bc <<< "scale=3; $total_cpu_util/1000")%"
-		    echo "Iterations/CPU sec: $(bc <<< "scale=0; $total_iterations/($total_cpu/1000)")"
-		    echo "Iterations/sec: $(bc <<< "scale=0; $total_iterations/($total_et/$line_count/1000)")"
+		    echo "Iterations/CPU sec: $(bc <<< "scale=0; $total_iterations*1000/$total_cpu")"
+		    echo "Iterations/sec: $(bc <<< "scale=0; $total_iterations*1000*$line_count/$total_et")"
 		    ;;
 		*)
 		    echo "Unknown mode $mode"
 		    ;;
 		esac
 	    return
+	fi
+	if (( timeout > 0 && $(printf '%(%s)T' -1) - start_time > timeout  )) ; then
+	    echo "Summary timed out ($timeout seconds)"
+	    return 1
 	fi
     done
 }
