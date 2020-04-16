@@ -176,6 +176,7 @@ Extended Options:
                         container_resource_request, or container_resource_limit
        --runtimeclass=class
                         Run the pods in the designated runtimeclass.
+       --kata           Synonym for --runtimeclass=kata-qemu
 
     Client/server options:
        --affinity       Force affinity between client and server pods
@@ -447,6 +448,7 @@ function process_option() {
 	scale_deployments)   	    scale_deployments=$optvalue			;;
 	deployment_type)            deploymentType=$optvalue			;;
 	runtimeclass|runtime_class) runtimeClass=$optvalue			;;
+	kata)			    runtimeClass=kata-qemu			;;
 	sync|syncstart|sync_start)  syncStart=$((1-syncStart))			;;
 	affinity)
 	    case "$optvalue" in
