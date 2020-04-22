@@ -932,13 +932,13 @@ kind: Pod
 metadata:
   name: ${namespace}-sync
   namespace: $namespace
+  restartPolicy: Never
   nodeSelector:
     node-role.kubernetes.io/worker: ""
   selector:
     matchLabels:
       app: ${namespace}-sync
   labels:
-    ${basename}: "true"
     name: ${namespace}-sync
     app: ${namespace}-sync
     k8s-app: ${namespace}-sync
@@ -946,7 +946,6 @@ metadata:
     ${basename}-sync: "true"
     clusterbusterbase: "true"
 $(createSyncSpec "$@")
-  restartPolicy: Never
 EOF
     else
 	createObject <<EOF
@@ -960,21 +959,21 @@ metadata:
     clusterbusterbase: "true"
 spec:
   replicas: 1
+  strategy:
+    type: RollingUpdate
   nodeSelector:
     node-role.kubernetes.io/worker: ""
   selector:
     matchLabels:
-      app: ${namespace}
-  strategy:
-    type: RollingUpdate
+      app: ${namespace}-sync
   template:
     metadata:
       labels:
-        name: ${namespace}
-        app: ${namespace}
+        name: ${namespace}-sync
+        app: ${namespace}-sync
         k8s-app: ${namespace}-sync
         ${basename}: "true"
-        ${basename}-server: "true"
+        ${basename}-sync: "true"
         clusterbusterbase: "true"
 $(indent 4 createSyncSpec "$@")
 EOF
@@ -1216,11 +1215,10 @@ metadata:
       app: ${namespace}-soaker-${i}
   labels:
     ${basename}: "true"
+    clusterbusterbase: "true"
     name: ${namespace}-soaker-${i}
     app: ${namespace}-soaker-${i}
-    ${basename}: "true"
-    ${basename}-client: "true"
-    clusterbusterbase: "true"
+    ${basename}-soaker: "true"
 $(createSoakerSpec "$@")
   restartPolicy: Never
 EOF
@@ -1250,6 +1248,7 @@ spec:
         clusterbusterbase: "true"
         name: ${namespace}-soaker-$i
         app: ${namespace}-soaker-$i
+        ${basename}-soaker: "true"
 $(indent 4 createSoakerSpec "$@")
 EOF
     fi
@@ -1440,13 +1439,13 @@ kind: Pod
 metadata:
   name: ${namespace}-${i}-server
   namespace: $namespace
+  restartPolicy: Never
   nodeSelector:
     node-role.kubernetes.io/worker: ""
   selector:
     matchLabels:
       app: ${namespace}-${i}
   labels:
-    ${basename}: "true"
     name: ${namespace}-${i}
     app: ${namespace}-${i}
     k8s-app: ${namespace}-${i}-server
@@ -1454,7 +1453,6 @@ metadata:
     ${basename}-server: "true"
     clusterbusterbase: "true"
 $(createServerSpec "$@")
-  restartPolicy: Never
 EOF
     else
 	createObject <<EOF
@@ -1478,8 +1476,8 @@ spec:
   template:
     metadata:
       labels:
-        name: ${namespace}-$i
-        app: ${namespace}-$i
+        name: ${namespace}-${i}
+        app: ${namespace}-${i}
         k8s-app: ${namespace}-${i}-server
         ${basename}: "true"
         ${basename}-server: "true"
@@ -1876,7 +1874,7 @@ function createDeploymentCPUSoaker() {
     local -i i
     if (( syncStart )) ; then
 	createService "$namespace" "${namespace}-sync" "$syncPort"
-	createSyncDeployment "$namespace" "$((containers * replicas * $count))"
+	createSyncDeployment "$namespace" "$((containers * replicas * count))"
     fi
     for i in $(seq $firstDeployment $((count + firstDeployment - 1))) ; do
 	createSoakerDeployment "$namespace" "$i" "$secretCount"  "$replicas" "$containers"
