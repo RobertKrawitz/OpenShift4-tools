@@ -22,11 +22,10 @@ declare OC
 OC=$(type -p oc)
 OC=${OC:-$(type -p kubectl)}	# kubectl might not work, though...
 
-while getopts ':p:B:rst:' opt ; do
+while getopts ':p:B:st:' opt ; do
     case "$opt" in
 	B) basename=$OPTARG ;;
 	p) parallel=$OPTARG ;;
-	r) rate=1	    ;;
 	t) timeout=$OPTARG  ;;
 	s) summarize=1	    ;;
 	*) ;;
@@ -90,7 +89,7 @@ function prettyprint() {
     printfstr0+='\n'
     printfstr1+='\n'
 
-	# shellcheck disable=SC2059
+    # shellcheck disable=SC2059
     printf "$printfstr0" "${rowzero[@]}"
     for row in "${rows[@]}" ; do
 	# shellcheck disable=SC2059
@@ -117,7 +116,7 @@ function retrieve_pod_stats() {
 	    connection_refused=$(grep -c 'Connection refused' <<< "$data")
 	    connection_failures=$(grep -c 'Could not connect' <<< "$data")
 	    blocks=$(grep -c 'Write/Read' <<< "$data")
-	    readarray -t statlines <<< $(grep 'STATS' <<< "$data")
+	    readarray -t statlines <<< "$(grep 'STATS' <<< "$data")"
 	    ;;
 	'')
 	    return
@@ -169,10 +168,11 @@ function clean() {
     while [[ $num = "0"* ]] ; do
 	num=${num##0}
     done
-    echo ${num:-0}
+    echo "${num:-0}"
 }
 
 function do_summarize() {
+    # shellcheck disable=SC2155
     local -i start_time=$(printf '%(%s)T' -1)
     while : ; do
 	local -i total=0
@@ -201,25 +201,32 @@ function do_summarize() {
 	    elif [[ $mode = server ]] ; then
 		total+=${output[19]}
 		line_count+=1
-		local -i start=${output[14]//./}
-		local -i end=${output[15]//./}
-		local -i et=${output[20]//./}
+		# shellcheck disable=SC2155
+		local -i start=$(clean "${output[14]}")
+		# shellcheck disable=SC2155
+		local -i end=$(clean "${output[15]}")
+		# shellcheck disable=SC2155
+		local -i et=$(clean "${output[20]}")
 		if (( start < first_start || first_start == 0 )) ; then first_start=start; fi
 		if (( end > last_end || last_end == 0 )) ; then last_end=end; fi
 		total_et+=$et
 	    elif [[ $mode = soaker ]] ; then
 		line_count+=1
-		local -i pod_start=$(clean ${output[11]})
+		# shellcheck disable=SC2155
+		local -i pod_start=$(clean "${output[11]}")
 		if (( pod_start < pod_first_start || pod_first_start == 0 )) ; then pod_first_start=pod_start; fi
 		if (( pod_start > pod_last_start )) ; then pod_last_start=pod_start; fi
-		local -i start=$(clean ${output[13]})
-		local -i end=$(clean ${output[15]})
-		local -i et=$(clean ${output[14]})
+		# shellcheck disable=SC2155
+		local -i start=$(clean "${output[13]}")
+		# shellcheck disable=SC2155
+		local -i end=$(clean "${output[15]}")
+		# shellcheck disable=SC2155
+		local -i et=$(clean "${output[14]}")
 		if (( start < first_start || first_start == 0 )) ; then first_start=start; fi
 		if (( end > last_end || last_end == 0 )) ; then last_end=end; fi
-		total_cpu+=$(clean ${output[16]})
-		total_cpu_util+=$(clean ${output[17]})
-		total_iterations+=$(clean ${output[18]})
+		total_cpu+=$(clean "${output[16]}")
+		total_cpu_util+=$(clean "${output[17]}")
+		total_iterations+=$(clean "${output[18]}")
 		total_et+=$et
 	    fi
 	done <<< "$(get_stats)"
