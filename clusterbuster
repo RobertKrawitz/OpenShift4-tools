@@ -1329,7 +1329,7 @@ timestamp("Listening on port $listen_port");
 $SIG{CHLD} = 'IGNORE';
 
 print STDERR "Expect $expected_clients clients\n";
-while ($expected_clients > 0) {
+while ($expected_clients != 0) {
     accept(CLIENT, SOCK) || next;
     if ((my $child = fork()) == 0) {
 	close(SOCK);
@@ -1701,7 +1701,7 @@ function createClientContainerYAML() {
     fi
     for j in $(seq 0 $((containers - 1))) ; do
 	cat <<EOF
-- name: client-${j}
+- name: c${j}
   image: "perl"
   imagePullPolicy: IfNotPresent
 $(indent 2 createContainerResources)
@@ -1897,7 +1897,11 @@ function createDeploymentServer() {
     for i in $(seq $firstDeployment $((count + firstDeployment - 1))) ; do
 	createService "$namespace" "$namespace-$i" "$port"
 	(( createRoutes )) && createRoute "$namespace" "$namespace-$i"
-	createServerDeployment "$namespace" "$i" "$secretCount" "$msgSize" "$((containers * replicas))"
+	if [[ $deploymentType = Pod ]] ; then
+	    createServerDeployment "$namespace" "$i" "$secretCount" "$msgSize" "$((containers * replicas))"
+	else
+	    createServerDeployment "$namespace" "$i" "$secretCount" "$msgSize" "-1"
+	fi
 	createClientDeployment "$namespace" "$i" "$secretCount" "$replicas" "$dataRate" "$bytes" "$msgSize" "$containers"
     done
 }
