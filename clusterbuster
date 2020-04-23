@@ -1076,7 +1076,7 @@ sub runit() {
     my ($stime) = $stime1;
     my ($prevtime) = $stime;
     my ($scputime) = cputime();
-    while ($runtime <= 0 || xtime() - $stime1 < $runtime) {
+    while ($runtime < 0 || xtime() - $stime1 < $runtime) {
         my ($a) = 1;
         for (my $i = 0; $i < $loops_per_iteration; $i++) {
             $a = $a + $a;
