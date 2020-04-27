@@ -213,7 +213,7 @@ function do_summarize() {
 	    elif [[ $mode = soaker ]] ; then
 		line_count+=1
 		# shellcheck disable=SC2155
-		local -i pod_start=$(clean "${output[11]}")
+		local -i pod_start=$(($(clean "${output[12]}") - $(clean "${output[11]}")))
 		if (( pod_start < pod_first_start || pod_first_start == 0 )) ; then pod_first_start=pod_start; fi
 		if (( pod_start > pod_last_start )) ; then pod_last_start=pod_start; fi
 		# shellcheck disable=SC2155
@@ -243,11 +243,20 @@ function do_summarize() {
 		    echo "Iterations: $total_iterations"
 		    echo "Average_elapsed: $(bc <<< "scale=3; $total_et/$line_count/1000")"
 		    echo "Elapsed_span: $(bc <<< "scale=3; ($last_end-$first_start)/1000")"
+		    echo "First start: $(bc <<< "scale=3; ($pod_first_start)/1000")"
 		    echo "Starting span: $(bc <<< "scale=3; ($pod_last_start-$pod_first_start)/1000")"
 		    echo "Total CPU: $(bc <<< "scale=3; $total_cpu/1000")"
 		    echo "CPU utilization: $(bc <<< "scale=3; $total_cpu_util/1000")%"
-		    echo "Iterations/CPU sec: $(bc <<< "scale=0; $total_iterations*1000/$total_cpu")"
-		    echo "Iterations/sec: $(bc <<< "scale=0; $total_iterations*1000*$line_count/$total_et")"
+		    if (( total_cpu == 0 )) ; then
+			echo "Iterations/CPU sec: 0"
+		    else
+			echo "Iterations/CPU sec: $(bc <<< "scale=0; $total_iterations*1000/$total_cpu")"
+		    fi
+		    if (( total_et == 0 )) ; then
+			echo "Iterations/sec: 0"
+		    else
+			echo "Iterations/sec: $(bc <<< "scale=0; $total_iterations*1000*$line_count/$total_et")"
+		    fi
 		    ;;
 		*)
 		    echo "Unknown mode $mode"
