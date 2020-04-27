@@ -843,7 +843,10 @@ use strict;
 use Time::Piece;
 use Time::HiRes qw(gettimeofday);
 $SIG{TERM} = sub { POSIX::_exit(0); };
-my ($listen_port, $expected_clients) = @ARGV;
+my ($listen_port, $expected_clients, $passes) = @ARGV;
+if (! $passes) {
+    $passes = 1;
+}
 sub timestamp($) {
     my ($str) = @_;
     my (@now) = gettimeofday();
@@ -861,35 +864,46 @@ my $mysockaddr = getsockname(SOCK);
 my ($junk, $port, $addr) = unpack($sockaddr, $mysockaddr);
 die "can't get port $port: $!\n" if ($port ne $listen_port);
 timestamp("Listening on port $listen_port");
-$SIG{CHLD} = 'IGNORE';
 my (@clients);
 
-print STDERR "Expect $expected_clients clients\n";
-while ($expected_clients > 0) {
-    my ($client);
-    accept($client, SOCK) || next;
-    my $peeraddr = getpeername($client);
-    my ($port, $addr) = sockaddr_in($peeraddr);
-    my $peerhost = gethostbyaddr($addr, AF_INET);
-    my $peeraddr = inet_ntoa($addr);
-    my ($tbuf) = "NULL";
-    if (sysread($client, $tbuf, 1024) <= 0) {
-        timestamp("Read token from $peerhost failed: $!");
+while ($passes < 0 || $passes-- > 0) {
+    my $child = fork();
+    if ($child == 0) {
+	print STDERR "Expect $expected_clients clients\n";
+	while ($expected_clients > 0) {
+	    my ($client);
+	    accept($client, SOCK) || next;
+	    my $peeraddr = getpeername($client);
+	    my ($port, $addr) = sockaddr_in($peeraddr);
+	    my $peerhost = gethostbyaddr($addr, AF_INET);
+	    my $peeraddr = inet_ntoa($addr);
+	    my ($tbuf) = "NULL";
+	    if (sysread($client, $tbuf, 1024) <= 0) {
+		timestamp("Read token from $peerhost failed: $!");
+	    }
+	    timestamp("Accepted connection from $peerhost ($peeraddr) on $port, token $tbuf");
+	    push @clients, $client;
+	    $expected_clients--;
+	}
+	timestamp("Waiting 1 second to sync:");
+	sleep(1);
+	timestamp("Done!");
+        POSIX::_exit(0);
+    } elsif ($child < 1) {
+        timestamp("Fork failed: $!");
+	POSIX::_exit(1);
+    } else {
+        wait();
     }
-    timestamp("Accepted connection from $peerhost ($peeraddr) on $port, token $tbuf");
-    push @clients, $client;
-    $expected_clients--;
 }
-timestamp("Waiting 1 second to sync:");
-sleep(1);
-timestamp("Done!");
 POSIX::_exit(0);
 EOF
 }
 
 function createSyncYAML() {
-    local namespace=$1
-    local expectedClients=$2
+    local passes=${1:-1}
+    local namespace=$2
+    local expectedClients=$3
     cat <<EOF
 - name: ${namespace}-sync
   imagePullPolicy: IfNotPresent
@@ -904,12 +918,11 @@ function createSyncYAML() {
 $(indent 4 syncPerl)
   - "$syncPort"
   - "$expectedClients"
+  - "$passes"
 EOF
 }
 
 function createSyncSpec() {
-    local namespace=$1
-    local expectedClients=$2
     cat <<EOF
 spec:
   nodeSelector:
@@ -923,8 +936,6 @@ EOF
 
 
 function createSyncDeployment() {
-    local namespace=$1
-    local expectedClients=$2
     if [[ $deploymentType = pod ]] ; then
 	createObject <<EOF
 apiVersion: v1
@@ -932,7 +943,6 @@ kind: Pod
 metadata:
   name: ${namespace}-sync
   namespace: $namespace
-  restartPolicy: Never
   nodeSelector:
     node-role.kubernetes.io/worker: ""
   selector:
@@ -945,7 +955,8 @@ metadata:
     ${basename}: "true"
     ${basename}-sync: "true"
     clusterbusterbase: "true"
-$(createSyncSpec "$@")
+$(createSyncSpec 1 "$@")
+  restartPolicy: Never
 EOF
     else
 	createObject <<EOF
@@ -975,7 +986,7 @@ spec:
         ${basename}: "true"
         ${basename}-sync: "true"
         clusterbusterbase: "true"
-$(indent 4 createSyncSpec "$@")
+$(indent 4 createSyncSpec -1 "$@")
 EOF
     fi
 }
@@ -1219,6 +1230,7 @@ metadata:
     name: ${namespace}-soaker-${i}
     app: ${namespace}-soaker-${i}
     ${basename}-soaker: "true"
+    ${basename}-client: "true"
 $(createSoakerSpec "$@")
   restartPolicy: Never
 EOF
@@ -1249,6 +1261,7 @@ spec:
         name: ${namespace}-soaker-$i
         app: ${namespace}-soaker-$i
         ${basename}-soaker: "true"
+        ${basename}-client: "true"
 $(indent 4 createSoakerSpec "$@")
 EOF
     fi
