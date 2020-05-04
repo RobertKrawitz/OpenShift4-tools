@@ -191,9 +191,10 @@ function do_summarize() {
 	while read -r -a output ; do
 	    if [[ -z "$mode" ]] ; then
 		case "${output[2]}" in
-		    *'soaker'*) mode=soaker ;;
-		    *'client'*) mode=server ;;
-		    *)                      ;;
+		    *'soaker'*)   mode=soaker   ;;
+		    *'client'*)   mode=server   ;;
+		    *'sysbench'*) mode=sysbench ;;
+		    *)                          ;;
 		esac
 	    fi
 	    if [[ -z "${output[11]:-}" ]] ; then
