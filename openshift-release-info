@@ -30,6 +30,7 @@ my $opt_all_upgrades;
 my $opt_os;
 my $opt_print_color;
 my $opt_print_only_validated;
+my $opt_match_pattern;
 my $verbose;
 my $help;
 
@@ -188,17 +189,19 @@ sub get_releases($\@) {
     return @answer;
 }
 
-sub print_channels() {
+sub print_channels(;$) {
+    my ($pattern) = @_;
     read_releases();
-    print join("\n", @channels), "\n";
+    print join("\n", grep {$_ =~ /$pattern/} @channels ), "\n";
 }
 
-sub print_releases($) {
-    my ($channel) = @_;
+sub print_releases($;$) {
+    my ($channel, $pattern) = @_;
     read_releases();
     read_graph();
     foreach my $idx (0..$#release_labels) {
 	if ($channel eq '' || $release_channels[$idx] eq $channel) {
+	    next if (! ($release_labels[$idx] =~ /$pattern/));
 	    next if ($opt_print_only_validated && $release_colors[$idx]);
 	    if ($opt_print_color && $release_colors[$idx]) {
 		print "$release_labels[$idx] $release_colors[$idx]\n";
@@ -316,6 +319,8 @@ sub print_help_and_exit() {
       -B base                 Use the specified base.  At present, this should
                               be openshift-release or origin-release.
       -c channel              Restrict releases to the specified channel.
+      -m pattern              Only print releases or channels matching
+                              regexp pattern.
       -C                      Print release status with each release in CSV.
       -G                      Print only validated releases.
       -v                      Print verbose information, as appropriate.
@@ -324,6 +329,7 @@ EOF
 }
 
 GetOptions("B=s" => \$base_repo,
+	   "m=s" => \$opt_match_pattern,
 	   "c=s" => \$opt_channel,
 	   "C!"  => \$opt_print_color,
 	   "G!"  => \$opt_print_only_validated,
@@ -348,9 +354,9 @@ $cincy_url="$base/graph";
 if ($command eq "help") {
     print_help_and_exit();
 } elsif ($command eq "channels") {
-    print_channels();
+    print_channels($opt_match_pattern);
 } elsif ($command eq "releases") {
-    print_releases($opt_channel);
+    print_releases($opt_channel, $opt_match_pattern);
 } elsif (defined $generic_commands{$command}) {
     do_command($command, $opt_channel, @ARGV);
 } else {
