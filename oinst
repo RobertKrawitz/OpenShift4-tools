@@ -783,6 +783,11 @@ Could not extract installer from image.  Common reasons:
   you've used the query option).  This will fail quickly with a
   clear error message.
 
+* The version of `oc' on your system is too old.
+
+  Versions of oc prior to 4.1 do not understand the command to
+  extract the installer.
+
 EOF
     warn_authentication_failure
 }
