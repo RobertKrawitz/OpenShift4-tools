@@ -17,6 +17,8 @@ declare -i parallel=1
 declare -i summarize=0
 declare -i timeout=-1
 declare basename=clusterbuster
+declare -A expected_rows=()
+declare -A cached_stats=()
 
 declare OC
 OC=$(type -p oc)
@@ -108,6 +110,8 @@ function retrieve_pod_stats() {
     local -i blocks=0
     local statline=''
     local -a statlines=()
+    local row_prefix='!'
+    local pname="$ns $pod $container"
     case "$status" in
 	running|completed|terminated)
 	    # This is actually faster than reading lines if there's a lot of data.
@@ -116,7 +120,10 @@ function retrieve_pod_stats() {
 	    connection_refused=$(grep -c 'Connection refused' <<< "$data")
 	    connection_failures=$(grep -c 'Could not connect' <<< "$data")
 	    blocks=$(grep -c 'Write/Read' <<< "$data")
-	    readarray -t statlines <<< "$(grep 'STATS' <<< "$data")"
+	    readarray -t statlines <<< "$(grep -E '^STATS' <<< "$data")"
+	    if [[ $data = *"FINIS"* ]] ; then
+		row_prefix=
+	    fi
 	    ;;
 	'')
 	    return
@@ -127,20 +134,38 @@ function retrieve_pod_stats() {
     if (( ${#statlines[@]} )) ; then
 	local statline=
 	for statline in "${statlines[@]}" ; do
-	    echo "-n $ns $pod -c $container $status $connection_failures $connection_refused $blocks $statline"
+	    echo "${row_prefix}-n $ns $pod -c $container $status $connection_failures $connection_refused $blocks $statline"
 	done
     else
-	echo "-n $ns $pod -c $container $status $connection_failures $connection_refused $blocks"
+	echo "!-n $ns $pod -c $container $status $connection_failures $connection_refused $blocks"
     fi
 }
 
 declare wait_n=$(( BASH_VERSINFO[0] > 4 || (BASH_VERSINFO[0] > 4 && BASH_VERSINFO[1] >= 3) ))
 
+function get_all_pods() {
+    local basename=$1
+    local ns
+    while read -r ns ; do
+	ns=${ns##*/}
+	oc get pods -ojson -l "${basename}-client" -n "$ns"
+    done <<< "$(oc get ns -l "$basename" --no-headers | awk '{print $1}')"
+}
+
 trap exit INT
 
-function get_stats() {
+function process_stats() {
     local -i curjobs=0
+    local ns
+    local pod
+    local container
+    local status
     while read -r ns pod container status ; do
+	local xcache=${cached_stats["$ns $pod $container"]:-}
+	if [[ -n "$xcache" ]] ; then
+	    echo "$xcache"
+	    continue
+	fi
 	if (( parallel > 1 )) ; then
 	    if (( wait_n )) ; then
 		while (( curjobs >= parallel )) ; do
@@ -156,11 +181,15 @@ function get_stats() {
 	else
 	    retrieve_pod_stats "$ns" "$pod" "$container" "$status"
 	fi
-    done <<< "$(oc get pods -ojson -l "${basename}-client" -A | jq -r "$jq_cmd")"
+    done
 
     if (( curjobs )) ; then
 	wait
     fi
+}
+
+function get_stats() {
+    process_stats <<< "$(get_all_pods "$basename" | jq -r "$jq_cmd")"
 }
 
 function clean() {
@@ -174,10 +203,11 @@ function clean() {
 function do_summarize() {
     # shellcheck disable=SC2155
     local -i start_time=$(printf '%(%s)T' -1)
+    local pass=1
+    local -i line_count=0
     while : ; do
 	local -i total=0
 	local -i found_all=1
-	local -i line_count=0
 	local -i first_start=0
 	local -i last_end=0
 	local -i total_et=0
@@ -197,9 +227,20 @@ function do_summarize() {
 		    *)                          ;;
 		esac
 	    fi
-	    if [[ -z "${output[11]:-}" ]] ; then
+	    if [[ -z "${output[*]}" ]] ; then
+	       continue
+	    fi
+	    local item="${output[1]} ${output[2]} ${output[4]}"
+	    if [[ -z "${output[10]:-}" || ${output[0]} = '!'* ]] ; then
 		found_all=0
-	    elif [[ $mode = server ]] ; then
+		continue
+	    fi
+	    if [[ -z "${cached_stats[$item]}" ]] ; then
+		cached_stats[$item]=
+	    fi
+	    cached_stats[$item]+="${output[*]}"$'\n'
+	    unset pod_cache["$item"]
+	    if [[ $mode = server ]] ; then
 		total+=${output[19]}
 		line_count+=1
 		# shellcheck disable=SC2155
@@ -265,6 +306,7 @@ function do_summarize() {
 		esac
 	    return
 	fi
+	pass=$((pass+1))
 	if (( timeout > 0 && $(printf '%(%s)T' -1) - start_time > timeout  )) ; then
 	    echo "Summary timed out ($timeout seconds)"
 	    return 1
@@ -275,5 +317,5 @@ function do_summarize() {
 if (( summarize )) ; then
     do_summarize
 else
-    get_stats
+    get_stats |sed -e 's/^!//'
 fi

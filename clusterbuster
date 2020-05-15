@@ -716,20 +716,22 @@ function createVolumeMountsYAML() {
   readOnly: true
 EOF
     done
-    local vol
-    for vol in "${emptydirs[@]}" ; do
-	cat <<EOF
+    if [[ -n "${emptydirs[*]}" ]] ; then
+	local vol
+	for vol in "${emptydirs[@]}" ; do
+	    cat <<EOF
 - name: ${vol##*/}
   mountPath: "$vol"
 EOF
-    done
+	done
+    fi
 }
 
 function createVolumesYAML() {
     local namespace=$1
     local deployment=${2:-1}
     local secrets=${3:-1}
-    (( secrets + ${#emptydirs[@]} )) || return;
+    (( secrets + ${#emptydirs[@]})) || return;
     local -i i
     echo "volumes:"
     for i in $(seq 0 $((secrets - 1))) ; do
@@ -739,14 +741,17 @@ function createVolumesYAML() {
   secret:
     secretName: $name
 EOF
-    local vol
-    for vol in "${emptydirs[@]}" ; do
-	cat <<EOF
+    done
+
+    if [[ -n "${emptydirs[*]}" ]] ; then
+	local vol
+	for vol in "${emptydirs[@]}" ; do
+	    cat <<EOF
 - name: ${vol##*/}
   emptydDir: {}
 EOF
-    done
-    done
+	done
+    fi
 }
 
 function createContainersClusterBusterYAML() {
@@ -1246,6 +1251,7 @@ if ($exit_at_end) {
     timestamp("About to exit");
     while (wait() > 0) {}
     timestamp("Done waiting");
+    print STDERR "FINIS\n";
     POSIX::_exit(0);
 } else {
     timestamp("Waiting forever");
@@ -1532,6 +1538,7 @@ if ($processes > 1) {
 } else {
     runit();
 }
+print STDERR "FINIS\n";
 if ($exit_at_end) {
     timestamp("About to exit");
     while (wait() > 0) {}
@@ -2098,6 +2105,7 @@ if ($detime <= 0) {
 timestamp("Done");
 my ($results) = stats();
 print STDERR "$results\n";
+print STDERR "FINIS\n";
 do_sync($synchost, $syncport, "-n $namespace $podname -c $container $results");
 if (! $exit_at_end) {
     pause();
@@ -2422,7 +2430,7 @@ function run_clusterbuster_1() {
 
     # If previous secrets weren't all created, this will yield
     # the wrong result.
-    if (( wait_for_secrets )) ; then
+    if (( doit && wait_for_secrets )) ; then
 	local -i i
 	local -i j
 	local -i k
