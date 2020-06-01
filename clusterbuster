@@ -50,7 +50,9 @@ declare -i poddelay=0
 declare -i xferTime=0
 declare -i xferTimeMax=0
 declare -i exitAtEnd=0
+declare -i reportObjectCreation=1
 declare -i defaultBytes=1000000000
+declare -A objectsCreated=()
 declare podType=ClusterBuster
 declare podsleeptime=infinity
 declare basename=clusterbuster
@@ -72,6 +74,13 @@ declare -a emptydirs=()
 declare -a sysbench_generic_options=()
 declare -a sysbench_fileio_options=()
 declare -A sysbench_fileio_tests=()
+declare -i report=0
+declare -i verbose_report=0
+declare -i cleanup=0
+declare -i timeout=-1
+declare pathdir=${0%/*}
+declare -a unknown_opts=()
+declare -i totalObjectsCreated=0
 
 declare accumulateddata=
 
@@ -80,6 +89,10 @@ OC=$(type -p oc)
 OC=${OC:-$(type -p kubectl)}	# kubectl might not work, though...
 
 function _helpmsg() {
+    local opt
+    for opt in "$@" ; do
+	echo "Unknown option $opt"
+    done
 cat <<EOF
 Usage: $0 [options] [name]
     Options:
@@ -144,6 +157,11 @@ Extended Options:
        --secrets=N      Number of secrets (-s)
        --replicas=N     Number of replicas per deployment (-r)
        --podsleep=N     Time for pod to sleep before exit (-z)
+       --report         Print report (client/server, soaker,
+                        sysbench only)
+       --verbose-report Print detailed report
+       --cleanup        Clean up generated objects
+       --timeout=N      Time out reporting
 
     Tuning object creation (short equivalents):
        --scale-ns=[0,1] Scale up the number of namespaces.
@@ -338,7 +356,7 @@ EOF
 }
 
 function help() {
-    _helpmsg | "${PAGER:-more}"
+    _helpmsg "$@" | "${PAGER:-more}"
     exit 1
 }
 
@@ -367,6 +385,109 @@ function timestamp() {
 }
 
 trap exit INT
+
+function find_free_port_perl() {
+    cat <<'EOF'
+#!/usr/bin/perl
+
+use Socket;
+use POSIX;
+use strict;
+use Getopt::Long;
+Getopt::Long::Configure("bundling", "pass_through");
+
+my ($port) = 4097;
+
+GetOptions("p=i" => \$port);
+
+while ($port < 65535) {
+    my $sockaddr = "S n a4 x8";
+    my ($socket);
+    socket($socket, AF_INET, SOCK_STREAM, getprotobyname('tcp')) || die "socket: $!";
+    setsockopt($socket,SOL_SOCKET, SO_REUSEADDR, pack("l",1)) || die "setsockopt reuseaddr: $!\n";
+    setsockopt($socket,SOL_SOCKET, SO_KEEPALIVE, pack("l",1)) || die "setsockopt keepalive: $!\n";
+    if (bind($socket, pack($sockaddr, AF_INET, $port, "\0\0\0\0"))) {
+	print "$port\n";
+	exit 0;
+    }
+    $port++;
+}
+die "Can't find free port!\n";
+EOF
+}
+
+function find_free_port() {
+    perl -e "$(find_free_port_perl)"
+}
+
+function get_logs_perl() {
+    cat <<'EOF'
+#!/usr/bin/perl
+
+use Socket;
+use POSIX;
+use strict;
+use Getopt::Long;
+Getopt::Long::Configure("bundling", "pass_through");
+
+my ($timeout) = -1;
+my ($port) = 4096;
+my ($expect_count) = -1;
+
+GetOptions("t=i" => \$timeout,
+	   "p=i" => \$port,
+	   "c=i" => \$expect_count);
+
+my $sockaddr = "S n a4 x8";
+my ($socket);
+socket($socket, AF_INET, SOCK_STREAM, getprotobyname('tcp')) || die "socket: $!";
+setsockopt($socket,SOL_SOCKET, SO_REUSEADDR, pack("l",1)) || die "setsockopt reuseaddr: $!\n";
+setsockopt($socket,SOL_SOCKET, SO_KEEPALIVE, pack("l",1)) || die "setsockopt keepalive: $!\n";
+if (!bind($socket, pack($sockaddr, AF_INET, $port, "\0\0\0\0"))) {
+    die "Can't bind to port $port\n";
+}
+listen($socket, 100) || die "Can't listen on port $port\n";
+
+my ($client_count) = 0;
+eval {
+    if ($timeout > 0) {
+	alarm $timeout;
+    }
+    my $kid;
+    while ($expect_count < 0 || $client_count < $expect_count) {
+    	my $child = fork;
+	if ($child == 0) {
+	    my ($client);
+	    accept ($client, $socket) || next;
+	    close ($socket);
+	    my ($tbuf) = "";
+	    my ($status);
+	    if (($status = sysread($client, $tbuf, 1024)) > 0) {
+		print "$tbuf\n";
+	    }
+	    exit(0);
+        }
+	do {
+	    $kid = waitpid(-1, WNOHANG);
+ 	} while ($kid > 0);
+	$client_count++;
+    }
+    do {
+	$kid = wait();
+    } while ($kid > 0);
+};
+
+if ($@) {
+    die "$@";
+}
+EOF
+}
+
+function get_logs() {
+    local varg=
+    ((verbose_report)) && varg=-v
+    exec perl -e "$(get_logs_perl)" -- "$@" | "${pathdir:-.}/clusterbuster-connstat" -s -f - "$varg"
+}
 
 function set_xfer() {
     local sizespec=$1
@@ -418,6 +539,7 @@ function process_option() {
 	    optvalue=1
 	fi
     fi
+    # shellcheck disable=SC2206
     case "$noptname" in
 	help_all*)		    help_extended				;;
 	help_everything*)	    help_everything				;;
@@ -466,7 +588,12 @@ function process_option() {
 	scale_deployments)   	    scale_deployments=$optvalue			;;
 	deployment_type)            deploymentType=$optvalue			;;
 	runtimeclass|runtime_class) runtimeClass=$optvalue			;;
-	kata)			    runtimeClass=kata-qemu			;;
+	report_object_creation)	    reportObjectCreation=$optvalue		;;
+	kata)			    runtimeClass=kata				;;
+	report)	    		    report=$optvalue				;;
+	cleanup)		    cleanup=$optvalue				;;
+	timeout)		    timeout=$optvalue				;;
+	verbose_report)		    verbose_report=$optvalue			;;
 	emptydir)		    emptydirs+=("$optvalue")			;;
 	sync|syncstart|sync_start)  syncStart=$((1-syncStart))			;;
 	sysbench_general_options)   sysbench_general_options+=(${optvalue//,/ });;
@@ -479,18 +606,18 @@ function process_option() {
 	    ;;
 	affinity)
 	    case "$optvalue" in
-		1|'') affinity=1   ;;
-		2|anti) affinity=2 ;;
-		*) affinity=0      ;;
+		1|'') affinity=1      ;;
+		2|anti) affinity=2    ;;
+		*) affinity=0         ;;
 	    esac
 	    ;;
 	antiaffinity|anti_affinity)
 	    case "$optvalue" in
-		1|'') affinity=2   ;;
-		*) affinity=0      ;;
+		1|'') affinity=2      ;;
+		*) affinity=0         ;;
 	    esac
 	    ;;
-	*) help "$optname" ;;
+	*) unknown_opts+=("$noptname") ;;
     esac
     if [[ $deploymentType != pod && $deploymentType != deployment ]] ; then
 	echo "-T/--deployment_type must be either por or deployment"
@@ -498,7 +625,7 @@ function process_option() {
     fi
 }
 
-while getopts ":B:b:c:D:d:EeHhM:m:N:nP:p:qr:Ss:T:t:vWw:XxYz:-:" opt ; do
+while getopts ":B:b:c:D:d:EeHhM:m:N:nP:p:Qqr:Ss:T:t:vWw:XxYz:-:" opt ; do
     case "$opt" in
 	B) basename="$OPTARG"		;;
 	D) dataRate="$OPTARG"           ;;
@@ -516,6 +643,7 @@ while getopts ":B:b:c:D:d:EeHhM:m:N:nP:p:qr:Ss:T:t:vWw:XxYz:-:" opt ; do
 	m) msgSize="$OPTARG"		;;
 	n) doit=0			;;
 	p) parallel="$OPTARG"           ;;
+	Q) reportObjectCreation=0	;;
 	q) verbose=0			;;
 	r) replicas="$OPTARG"           ;;
 	S) scale_ns=1			;;
@@ -532,6 +660,7 @@ while getopts ":B:b:c:D:d:EeHhM:m:N:nP:p:qr:Ss:T:t:vWw:XxYz:-:" opt ; do
 	*) help "$OPTARG"               ;;
     esac
 done
+[[ -n "${unknown_opts[*]}" ]] && help "${unknown_opts[@]}"
 
 (( !parallelSecrets )) && parallelSecrets=$parallel
 (( !parallelNamespaces )) && parallelNamespaces=$parallel
@@ -1048,7 +1177,7 @@ use POSIX;
 use strict;
 use Time::Piece;
 use Time::HiRes qw(gettimeofday);
-our ($basetime, $crtime, $poddelay, $processes, $rundir, $runtime, $exit_at_end, $synchost, $syncport, $sysbench_generic_args, $sysbench_cmd, $sysbench_fileio_args, $sysbench_modes) = @ARGV;
+our ($namespace, $pod, $container, $basetime, $crtime, $poddelay, $processes, $rundir, $runtime, $exit_at_end, $synchost, $syncport, $loghost, $logport, $sysbench_generic_args, $sysbench_cmd, $sysbench_fileio_args, $sysbench_modes) = @ARGV;
 $SIG{TERM} = sub { kill 'KILL', -1; POSIX::_exit(0); };
 
 sub cputime() {
@@ -1103,12 +1232,12 @@ sub connect_to($$$$) {
 
 sub do_sync($$$$;$) {
     my ($addr, $port, $token) = @_;
-    if (not $synchost) { return; }
+    if (not $addr) { return; }
     if (not $token) {
         $token = sprintf('%d', rand() * 999999999);
     }
-    timestamp("Waiting for sync on $synchost:$syncport");
-    my ($sync_conn, $i1, $i2) = connect_to($synchost, $syncport);
+    timestamp("Waiting for sync on $addr:$port");
+    my ($sync_conn, $i1, $i2) = connect_to($addr, $port);
     my ($sbuf);
     timestamp("Writing token $token to sync");
     my ($answer) = syswrite($sync_conn, $token, length $token);
@@ -1148,7 +1277,7 @@ sub runit() {
         timestamp("No run directory $rundir!");
 	exit(1);
     }
-    $rundir += "/$$$$";
+    $rundir .= "/$$$$";
     if (! mkdir($rundir)) {
         timestamp("Cannot create run directory $rundir: $!");
 	exit(1);
@@ -1235,6 +1364,7 @@ sub runit() {
 	    $readops, $writeops, $fsyncops, $readrate, $writerate, $et, $min_lat, $avg_lat, $max_lat, $p95_lat);
     print STDERR "$answer\n";
     do_sync($synchost, $syncport, $answer);
+    do_sync($loghost, $logport, "-n $namespace $pod -c $container terminated 0 0 0 $answer");
 }
 $SIG{CHLD} = 'IGNORE';
 if ($processes > 1) {
@@ -1266,6 +1396,8 @@ function createContainersSysbenchYAML() {
     local secretCount=$3
     local -i processes=$4
     local -i containers=$5
+    local log_host=${6:-}
+    local -i log_port=${7:-0}
     local -i j
     local syncService=
     local syncPortNum=
@@ -1290,6 +1422,9 @@ $(indent 2 createContainerResources)
   - -e
   - |
 $(indent 4 sysbenchPerl)
+  - "$namespace"
+  - "${namespace}-sysbench-${i}"
+  - "c${j}"
   - "$basetime"
   - "$(ts)"
   - "$poddelay"
@@ -1299,6 +1434,8 @@ $(indent 4 sysbenchPerl)
   - "$exitAtEnd"
   - "$syncService"
   - "$syncPortNum"
+  - "$log_host"
+  - "$log_port"
   - "${sysbench_generic_options[*]}"
   - "fileio"
   - "${sysbench_fileio_options[*]}"
@@ -1398,7 +1535,7 @@ use POSIX;
 use strict;
 use Time::Piece;
 use Time::HiRes qw(gettimeofday);
-our ($basetime, $crtime, $poddelay, $processes, $runtime, $exit_at_end, $synchost, $syncport) = @ARGV;
+our ($namespace, $pod, $container, $basetime, $crtime, $poddelay, $processes, $runtime, $exit_at_end, $synchost, $syncport, $loghost, $logport) = @ARGV;
 $SIG{TERM} = sub { kill 'KILL', -1; POSIX::_exit(0); };
 
 sub cputime() {
@@ -1453,12 +1590,13 @@ sub connect_to($$$$) {
 
 sub do_sync($$$$;$) {
     my ($addr, $port, $token) = @_;
-    if (not $synchost) { return; }
+    my $otoken = $token;
+    if (not $addr) { return; }
     if (not $token) {
         $token = sprintf('%d', rand() * 999999999);
     }
-    timestamp("Waiting for sync on $synchost:$syncport");
-    my ($sync_conn, $i1, $i2) = connect_to($synchost, $syncport);
+    timestamp("Waiting for sync on $addr:$port");
+    my ($sync_conn, $i1, $i2) = connect_to($addr, $port);
     my ($sbuf);
     timestamp("Writing token $token to sync");
     my ($answer) = syswrite($sync_conn, $token, length $token);
@@ -1526,6 +1664,7 @@ sub runit() {
         $iterations / ($etime - $stime1));
     print STDERR "$answer\n";
     do_sync($synchost, $syncport, $answer);
+    do_sync($loghost, $logport, "-n $namespace $pod -c $container terminated 0 0 0 $answer");
 }
 $SIG{CHLD} = 'IGNORE';
 if ($processes > 1) {
@@ -1557,6 +1696,8 @@ function createContainersCPUSoakerYAML() {
     local secretCount=$3
     local -i processes=$4
     local -i containers=$5
+    local log_host=${6:-}
+    local -i log_port=${7:-0}
     local -i j
     local syncService=
     local syncPortNum=
@@ -1579,6 +1720,9 @@ $(indent 2 createContainerResources)
   - -e
   - |
 $(indent 4 cpuSoakerPerl)
+  - "$namespace"
+  - "${namespace}-soaker-${i}"
+  - "c$j"
   - "$basetime"
   - "$(ts)"
   - "$poddelay"
@@ -1587,6 +1731,8 @@ $(indent 4 cpuSoakerPerl)
   - "$exitAtEnd"
   - "$syncService"
   - "$syncPortNum"
+  - "$log_host"
+  - "$log_port"
 $(indent 2 createVolumeMountsYAML "$namespace" "$i" "$secretCount")
 EOF
     done
@@ -1916,7 +2062,7 @@ use strict;
 use Time::HiRes qw(gettimeofday usleep);
 use Time::Piece;
 $SIG{TERM} = sub { kill 'KILL', -1; POSIX::_exit(0); };
-my ($basetime, $poddelay, $connect_port, $container, $srvhost, $data_rate, $bytes, $bytesMax, $msgSize, $xfertime, $xfertimeMax, $crtime, $exit_at_end, $synchost, $syncport, $namespace, $podname) = @ARGV;
+my ($namespace, $pod, $container, $basetime, $poddelay, $connect_port, $container, $srvhost, $data_rate, $bytes, $bytesMax, $msgSize, $xfertime, $xfertimeMax, $crtime, $exit_at_end, $synchost, $syncport, $namespace, $log_host, $log_port, $podname) = @ARGV;
 my ($etime, $data_sent, $detime, $stime, $end_time, $dstime, $mean, $stdev, $user, $sys, $cuser, $csys, $elapsed);
 my $start_time;
 my $ghbn_time;
@@ -1924,6 +2070,8 @@ my $pass = 0;
 my $e0 = 0;
 my $ex = 0;
 my $ex2 = 0;
+my ($cfail) = 0;
+my ($refused) = 0;
 my $time_overhead = 0;
 sub ts() {
     my (@now) = gettimeofday();
@@ -1962,6 +2110,7 @@ sub connect_to($$$$) {
         my $sockaddr = "S n a4 x8";
         if (length($faddr) < 4) {
             print STDERR "Malformed address, waiting for addr for $addr\n";
+	    $cfail++;
             sleep(1);
         } else {
             my $straddr = inet_ntoa($faddr);
@@ -1973,6 +2122,10 @@ sub connect_to($$$$) {
             if (connect($sock, $sockmeta)) {
                 $connected = 1;
             } else {
+	        $cfail++;
+		if ($! =~ /refused/) {
+		    $refused++;
+		}
                 timestamp("Could not connect to $addr on port $port: $!");
                 close $sock;
                 sleep(1);
@@ -1990,20 +2143,20 @@ $SIG{TERM} = sub { close $conn; POSIX::_exit(0); };
 
 sub do_sync($$$$;$) {
     my ($addr, $port, $token) = @_;
-    if (not $synchost) { return; }
+    if (not $addr) { return; }
     if (not $token) {
         $token = sprintf('%d', rand() * 999999999);
     }
-    timestamp("Waiting for sync on $synchost:$syncport");
-    my ($sync_conn, $i1, $i2) = connect_to($synchost, $syncport);
+    timestamp("Waiting for  on $addr:$port");
+    my ($_conn, $i1, $i2) = connect_to($addr, $port);
     my ($sbuf);
     timestamp("Writing token $token to sync");
-    my ($answer) = syswrite($sync_conn, $token, length $token);
+    my ($answer) = syswrite($_conn, $token, length $token);
     if ($answer != length $token) {
 	timestamp("Write token failed: $!");
 	exit(1);
     }
-    $answer = sysread($sync_conn, $sbuf, 1024);
+    $answer = sysread($_conn, $sbuf, 1024);
     my ($str) = sprintf("Got sync (%s, %d, %s)!", $answer, length $sbuf, $!);
     timestamp($str);
 }
@@ -2061,7 +2214,7 @@ if ($MBSec != 0) {
 	    $nleft -= $nread;
 	}
         $rtt_end = xtime();
-	$rtt_elapsed = $rtt_end - $rtt_start - $time_overhead; 
+	$rtt_elapsed = $rtt_end - $rtt_start - $time_overhead;
 	if ($pass == 0) {
 	    $e0 = $rtt_elapsed - $;
 	}
@@ -2106,7 +2259,12 @@ timestamp("Done");
 my ($results) = stats();
 print STDERR "$results\n";
 print STDERR "FINIS\n";
-do_sync($synchost, $syncport, "-n $namespace $podname -c $container $results");
+if ($syncport) {
+    do_sync($synchost, $syncport, "-n $namespace $pod -c $container $results");
+}
+if ($log_port > 0) {
+    do_sync($log_host, $log_port, "-n $namespace $pod -c $container terminated $cfail $refused $pass $results");
+}
 if (! $exit_at_end) {
     pause();
 }
@@ -2122,7 +2280,10 @@ function createClientContainerYAML() {
     local bytes=$5
     local msgSize=$6
     local containers=$7
-    local podname=$8
+    local log_host=$8
+    local log_port=$9
+    local podname=${10}
+    local replica=${11}
     local -i j
     local syncService=
     local syncPortNum=
@@ -2145,6 +2306,9 @@ $(indent 2 createContainerResources)
   - -e
   - |
 $(indent 4 clientContainerPerl)
+  - "$namespace"
+  - "${namespace}-${i}-client-$replica"
+  - "$j"
   - "$basetime"
   - "$poddelay"
   - "$port"
@@ -2161,6 +2325,8 @@ $(indent 4 clientContainerPerl)
   - "$syncService"
   - "$syncPortNum"
   - "$namespace"
+  - "$log_host"
+  - "$log_port"
   - "$podname"
 $(indent 2 createVolumeMountsYAML "$namespace" "$i" "$secretCount")
 EOF
@@ -2198,7 +2364,10 @@ function createClientSpec() {
     local bytes=$6
     local msgSize=$7
     local containers=$8
-    local podname=$9
+    local log_host=${9:-}
+    local -i log_port=${10:-0}
+    local podname=${11}
+    local replica=${12}
     cat <<EOF
 spec:
   nodeSelector:
@@ -2208,7 +2377,7 @@ $(indent 2 createPodResources)
 $(indent 2 createClientAffinityYAML "${namespace}-${i}-server")
 $(indent 2 <<< "$runtimeClass")
   containers:
-$(indent 2 createClientContainerYAML "$namespace" "$i" "$secretCount" "$dataRate" "$bytes" "$msgSize" "$containers" "$podname")
+$(indent 2 createClientContainerYAML "$namespace" "$i" "$secretCount" "$dataRate" "$bytes" "$msgSize" "$containers" "$log_host" "$log_port" "$podname" "$replica")
 $(indent 2 createVolumesYAML "$namespace" "$i" "$secretCount")
 EOF
 }
@@ -2222,6 +2391,8 @@ function createClientDeployment() {
     local bytes=$6
     local msgSize=$7
     local containers=$8
+    local log_host=${9:-}
+    local -i log_port=${10:-0}
     if [[ $deploymentType = pod ]] ; then
 	local -i j=0
 	while (( j < replicas )) ; do
@@ -2244,7 +2415,7 @@ metadata:
     ${basename}: "true"
     ${basename}-client: "true"
     clusterbusterbase: "true"
-$(createClientSpec "$@" "$podname")
+$(createClientSpec "$@" "$podname" "$j")
   restartPolicy: Never
 EOF
 	    j=$((j+1))
@@ -2278,7 +2449,7 @@ spec:
         ${basename}: "true"
         ${basename}-client: "true"
         clusterbusterbase: "true"
-$(indent 4 createClientSpec "$@" "$podname")
+$(indent 4 createClientSpec "$@" "$podname" "x")
 EOF
     fi
 }
@@ -2295,12 +2466,36 @@ function createDeploymentSimple() {
     done
 }
 
+function createSyncSimple() {
+    :
+}
+
+function calculateLogsRequiredSimple() {
+    echo 0
+}
+
 function createDeploymentPausePod() {
     createDeploymentSimple "$@"
 }
 
+function createSyncPausePod() {
+    :
+}
+
+function calculateLogsRequiredPausePod() {
+    echo 0
+}
+
 function createDeploymentClusterBuster() {
     createDeploymentSimple "$@"
+}
+
+function createSyncClusterBuster() {
+    :
+}
+
+function calculateLogsRequiredClusterBuster() {
+    echo 0
 }
 
 function createDeploymentSysbench() {
@@ -2309,14 +2504,34 @@ function createDeploymentSysbench() {
     local secretCount=${3:-1}
     local replicas=${4:-1}
     local containers=${5:-1}
+    local log_host=${6:-}
+    local -i log_port=${7:-0}
     local -i i
     if (( syncStart )) ; then
 	createService "$namespace" "${namespace}-sync" "$syncPort"
 	createSyncDeployment 3 "$namespace" "$((containers * replicas * count))"
     fi
     for i in $(seq $firstDeployment $((count + firstDeployment - 1))) ; do
-	createSysbenchDeployment "$namespace" "$i" "$secretCount"  "$replicas" "$containers"
+	createSysbenchDeployment "$namespace" "$i" "$secretCount"  "$replicas" "$containers" "$log_host" "$log_port"
     done
+}
+
+function createSyncSysbench() {
+    local namespace=$1
+    local count=${2:-1}
+    local secretCount=${3:-1}
+    local replicas=${4:-1}
+    local containers=${5:-1}
+    createService "$namespace" "${namespace}-sync" "$syncPort"
+    createSyncDeployment 3 "$namespace" "$((containers * replicas * count))"
+}
+
+function calculateLogsRequiredSysbench() {
+    local -i namespaces=$1
+    local -i depsPerNamespace=${2:-1}
+    local -i replicas=${3:-1}
+    local -i containers=${4:-1}
+    echo $((namespaces * containers * replicas * depsPerNamespace))
 }
 
 function createDeploymentCPUSoaker() {
@@ -2325,14 +2540,34 @@ function createDeploymentCPUSoaker() {
     local secretCount=${3:-1}
     local replicas=${4:-1}
     local containers=${5:-1}
+    local log_host=${6:-}
+    local -i log_port=${7:-0}
     local -i i
     if (( syncStart )) ; then
 	createService "$namespace" "${namespace}-sync" "$syncPort"
 	createSyncDeployment 2 "$namespace" "$((containers * replicas * count))"
     fi
     for i in $(seq $firstDeployment $((count + firstDeployment - 1))) ; do
-	createSoakerDeployment "$namespace" "$i" "$secretCount"  "$replicas" "$containers"
+	createSoakerDeployment "$namespace" "$i" "$secretCount"  "$replicas" "$containers" "$log_host" "$log_port"
     done
+}
+
+function createSyncCPUSoaker() {
+    local namespace=$1
+    local count=${2:-1}
+    local secretCount=${3:-1}
+    local replicas=${4:-1}
+    local containers=${5:-1}
+    createService "$namespace" "${namespace}-sync" "$syncPort"
+    createSyncDeployment 2 "$namespace" "$((containers * replicas * count))"
+}
+
+function calculateLogsRequiredCPUSoaker() {
+    local -i namespaces=$1
+    local -i depsPerNamespace=${2:-1}
+    local -i replicas=${3:-1}
+    local -i containers=${4:-1}
+    echo $((namespaces * containers * replicas * depsPerNamespace))
 }
 
 function createDeploymentServer() {
@@ -2341,11 +2576,14 @@ function createDeploymentServer() {
     local secretCount=${3:-1}
     local replicas=${4:-1}
     local containers=${5:-1}
+    local log_host=${6:-}
+    local -i log_port=${7:-0}
     local -i i
     if (( syncStart )) ; then
 	createService "$namespace" "${namespace}-sync" "$syncPort"
 	createSyncDeployment 2 "$namespace" "$((containers * replicas * count))"
     fi
+
     for i in $(seq $firstDeployment $((count + firstDeployment - 1))) ; do
 	createService "$namespace" "$namespace-$i" "$port"
 	(( createRoutes )) && createRoute "$namespace" "$namespace-$i"
@@ -2354,12 +2592,36 @@ function createDeploymentServer() {
 	else
 	    createServerDeployment "$namespace" "$i" "$secretCount" "$msgSize" "-1"
 	fi
-	createClientDeployment "$namespace" "$i" "$secretCount" "$replicas" "$dataRate" "$bytes" "$msgSize" "$containers"
+	createClientDeployment "$namespace" "$i" "$secretCount" "$replicas" "$dataRate" "$bytes" "$msgSize" "$containers" "$log_host" "$log_port"
     done
+}
+
+function calculateLogsRequiredServer() {
+    local -i namespaces=$1
+    local -i depsPerNamespace=${2:-1}
+    local -i replicas=${3:-1}
+    local -i containers=${4:-1}
+    echo $((namespaces * containers * replicas * depsPerNamespace))
+}
+
+function createSyncServer() {
+    local namespace=$1
+    local count=${2:-1}
+    local secretCount=${3:-1}
+    local replicas=${4:-1}
+    local containers=${5:-1}
+    createService "$namespace" "${namespace}-sync" "$syncPort"
+    createSyncDeployment 2 "$namespace" "$((containers * replicas * count))"
 }
 
 function createDeployment() {
     "createDeployment${podType}" "$@"
+}
+
+function createSync() {
+    if (( syncStart )) ; then
+	"createSync${podType}" "$@"
+    fi
 }
 
 function createObjects_n() {
@@ -2417,16 +2679,64 @@ function find_first_deployment() {
     fi
 }
 
-function run_clusterbuster_1() {
-    local -A expected_secrets=()
-    local -i i
-    allocate_namespaces
-    find_first_deployment
+function createAllNamespaces() {
+    local i
     trap 'kill -9 $(jobs -p); exit' INT
     for i in $(seq 0 "$((parallelNamespaces - 1))") ; do
 	createObjects_n Namespace "$parallelNamespaces" "$blocksizeNamespaces" "$((i * blocksizeNamespaces))" "$sleepNamespaces" &
     done
     wait
+}
+
+function createAllSecrets() {
+    local i
+    trap 'kill -9 $(jobs -p); exit' INT
+    for i in $(seq 0 "$((parallelSecrets - 1))") ; do
+	createObjects_n Secrets "$parallelSecrets" "$blocksizeSecrets" "$((i * blocksizeSecrets))" "$sleepSecrets" "$depsPerNamespace" "$secrets" &
+    done
+    wait
+}
+
+function createAllDeployments() {
+    local i
+    trap 'kill -9 $(jobs -p); exit' INT
+    for i in $(seq 0 "$((parallelDeployments - 1))") ; do
+	export PARALLEL_ROTOR=$i
+	createObjects_n Deployment "$parallelDeployments" "$blocksizeDeployments" "$((i * blocksizeDeployments))" "$sleepDeployments" "$depsPerNamespace" "$secrets" "$replicas" "$containers" "$log_host" "$log_port" &
+    done
+    wait
+}
+
+function createAllObjects() {
+    local found_objtype
+    local objtype=$1
+    shift
+    while read -r line ; do
+	if [[ $line =~ ^[[:digit:]]{4}(-[[:digit:]]{2}){2}T([[:digit:]]{2}:){2}[[:digit:]]{2}\.[[:digit:]]{6}\ +([-a-z0-9]+)/([-a-z0-9]+)\ +created$ ]] ; then
+	    if (( reportObjectCreation )) ; then
+		echo "$line"
+	    fi
+	    totalObjectsCreated=$((totalObjectsCreated+1))
+	    found_objtype=${BASH_REMATCH[3]}
+	    if [[ -z ${objectsCreated[$found_objtype]:-} ]] ; then
+		objectsCreated[$found_objtype]=1
+	    else
+		objectsCreated[$found_objtype]=$((${objectsCreated[$found_objtype]:-}+1))
+	    fi
+	elif [[ -n "$line" ]] ; then
+	    echo "$line"
+	fi
+    done <<< "$("createAll${objtype}" "$@" 2>&1)"
+}
+
+function run_clusterbuster_1() {
+    local -A expected_secrets=()
+    local -i i
+    local -i status=0
+    allocate_namespaces
+    find_first_deployment
+    trap 'kill -INT $(jobs -p); exit' INT
+    createAllObjects Namespaces
 
     # If previous secrets weren't all created, this will yield
     # the wrong result.
@@ -2447,10 +2757,7 @@ function run_clusterbuster_1() {
 	done
     fi
 
-    for i in $(seq 0 "$((parallelSecrets - 1))") ; do
-	createObjects_n Secrets "$parallelSecrets" "$blocksizeSecrets" "$((i * blocksizeSecrets))" "$sleepSecrets" "$depsPerNamespace" "$secrets" &
-    done
-    wait
+    createAllObjects Secrets
 
     local secname=""
     while (( ${#expected_secrets[@]} )) ; do
@@ -2466,11 +2773,69 @@ function run_clusterbuster_1() {
     done
 
     basetime=$(printf '%(%s)T' -1)
-    for i in $(seq 0 "$((parallelDeployments - 1))") ; do
-	export PARALLEL_ROTOR=$i
-	createObjects_n Deployment "$parallelDeployments" "$blocksizeDeployments" "$((i * blocksizeDeployments))" "$sleepDeployments" "$depsPerNamespace" "$secrets" "$replicas" "$containers" &
-    done
+
+    local -i logs_expected=0
+    local log_host=
+    local -i log_port=0
+    if ((report)) ; then
+	logs_expected="$("calculateLogsRequired${podType}" "$namespaces" "$depsPerNamespace" "$replicas" "$containers")"
+	if ((logs_expected)) ; then
+	    log_host=$(hostname -f)
+	    log_port=$(find_free_port)
+	    (( log_port )) || fatal "Can't get port to listen for logs on!"
+	    get_logs -p "$log_port" -c "$logs_expected" &
+	fi
+    fi
+    createAllObjects Deployments
+
+    if ((report && logs_expected && timeout > 0)) ; then
+	local -i finis=0
+	while (( timeout < 0 || timeout-- )) ; do
+	    # This appears to be needed for the shell to actually reap
+	    # any terminated jobs.  Without this, the test below always
+	    # succeeds so the job doesn't exit.
+	    jobs -l >/dev/null
+	    if jobs -l |grep -q . ; then
+		sleep 1
+	    else
+		finis=1
+		break
+	    fi
+	done
+	if (( ! finis )) ; then
+	    exec 3>&2 2>/dev/null
+	    kill %get_logs
+	    exec 2>&3 3>&-
+	    echo "Run did not terminate" 1>&2
+	    status=1
+	fi
+    fi
+    exec 3>&2 2>/dev/null
     wait
+    exec 2>&3 3>&-
+
+    local objtype
+    while read -r objtype ; do
+	[[ -n "${objtype:-}" ]] && printf "Created %${#totalObjectsCreated}d %s(s)\n" "${objectsCreated[$objtype]}" "$objtype"
+    done <<< "$( (IFS=$'\n'; echo "${!objectsCreated[*]}") | sort)"
+    echo "Created $totalObjectsCreated object(s) total"
+    if ((cleanup)) ; then
+	if (( reportObjectCreation )) ; then
+	    oc delete ns -l "$basename"
+	else
+	    echo "Deleted  $(oc delete ns -l "$basename" |wc -l) namespace(s)"
+	fi
+    fi
+
+    return $status
+    # Create sync pods after actual deployments
+#    if (( syncStart )) ; then
+#	for i in $(seq 0 "$((parallelDeployments - 1))") ; do
+#	    export PARALLEL_ROTOR=$i
+#	    createObjects_n Sync "$parallelDeployments" "$blocksizeDeployments" "$((i * blocksizeDeployments))" "$sleepDeployments" "$depsPerNamespace" "$secrets" "$replicas" "$containers" &
+#	done
+#	wait
+#    fi
 }
 
 (run_clusterbuster_1)

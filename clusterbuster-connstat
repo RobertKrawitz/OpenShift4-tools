@@ -16,20 +16,25 @@ EOF
 declare -i parallel=1
 declare -i summarize=0
 declare -i timeout=-1
+declare -i verbose=0
 declare basename=clusterbuster
 declare -A expected_rows=()
 declare -A cached_stats=()
+declare statsfile=
 
 declare OC
 OC=$(type -p oc)
 OC=${OC:-$(type -p kubectl)}	# kubectl might not work, though...
 
-while getopts ':p:B:st:' opt ; do
+while getopts ':p:B:st:f:vq' opt ; do
     case "$opt" in
-	B) basename=$OPTARG ;;
-	p) parallel=$OPTARG ;;
-	t) timeout=$OPTARG  ;;
-	s) summarize=1	    ;;
+	B) basename=$OPTARG 	  ;;
+	p) parallel=$OPTARG 	  ;;
+	t) timeout=$OPTARG  	  ;;
+	s) summarize=1	    	  ;;
+	f) statsfile=$OPTARG	  ;;
+	v) verbose=$((verbose+1)) ;;
+	q) verbose=0        	  ;;
 	*) ;;
     esac
 done
@@ -98,6 +103,120 @@ function prettyprint() {
 	# shellcheck disable=SC2086
 	printf "$printfstr1" $row
     done
+}
+
+function process_summary() {
+    local -i line_count=0
+    local -i total=0
+    local -i first_start=0
+    local -i last_end=0
+    local -i total_et=0
+    local -i total_cpu=0
+    local -i total_cpu_util=0
+    local -i total_iterations=0
+    local -i pod_start=0
+    local -i pod_first_start=0
+    local -i pod_last_start=0
+    local -i read_ops=0
+    local -i write_ops=0
+    local -i fsync_ops=0
+    local -i readrate=0
+    local -i writerate=0
+    local -a output
+    local mode=
+    while read -r -a output ; do
+	[[ -n "${output[*]}" ]] || continue
+	if [[ -z "$mode" ]] ; then
+	    case "${output[2]}" in
+		*'soaker'*)   mode=soaker   ;;
+		*'client'*)   mode=server   ;;
+		*'sysbench'*) mode=sysbench ;;
+		*)                          ;;
+	    esac
+	fi
+	local -i start
+	local -i end
+	local -i et
+	if (( verbose )) ; then
+	    echo "${output[*]}"
+	fi
+	case "$mode" in
+	    server)
+		total+=${output[19]}
+		start=$(clean "${output[14]}")
+		end=$(clean "${output[15]}")
+		et=$(clean "${output[20]}")
+		if (( start < first_start || first_start == 0 )) ; then first_start=start; fi
+		if (( end > last_end || last_end == 0 )) ; then last_end=end; fi
+		;;
+	    soaker)
+		pod_start=$(($(clean "${output[12]}") - $(clean "${output[11]}")))
+		if (( pod_start < pod_first_start || pod_first_start == 0 )) ; then pod_first_start=pod_start; fi
+		if (( pod_start > pod_last_start )) ; then pod_last_start=pod_start; fi
+		start=$(clean "${output[13]}")
+		end=$(clean "${output[15]}")
+		et=$(clean "${output[14]}")
+		if (( start < first_start || first_start == 0 )) ; then first_start=start; fi
+		if (( end > last_end || last_end == 0 )) ; then last_end=end; fi
+		total_cpu+=$(clean "${output[16]}")
+		total_cpu_util+=$(clean "${output[17]}")
+		total_iterations+=$(clean "${output[18]}")
+		;;
+	    sysbench)
+		start=$(clean "${output[11]}")
+		end=$(clean "${output[13]}")
+		et=$(clean "${output[19]}")
+		if (( start < first_start || first_start == 0 )) ; then first_start=start; fi
+		if (( end > last_end || last_end == 0 )) ; then last_end=end; fi
+		read_ops+=$(clean "${output[14]}")
+		write_ops+=$(clean "${output[15]}")
+		fsync_ops+=$(clean "${output[16]}")
+		readrate+=${output[17]}
+		writerate+=${output[18]}
+		;;
+	esac
+	line_count+=1
+	total_et+=$et
+    done
+    (( line_count )) || return
+    case "$mode" in
+	server)
+	    echo "Bytes: $total"
+	    echo "Containers: $line_count"
+	    echo "Average_elapsed: $(bc <<< "scale=3; $total_et/$line_count/1000")"
+	    echo "Elapsed_span: $(bc <<< "scale=3; ($last_end-$first_start)/1000")"
+	    echo "Data rate: $((total*2*1000/(total_et/line_count)/1024/1024))"
+	    ;;
+	soaker)
+	    echo "Iterations: $total_iterations"
+	    echo "Average_elapsed: $(bc <<< "scale=3; $total_et/$line_count/1000")"
+	    echo "Elapsed_span: $(bc <<< "scale=3; ($last_end-$first_start)/1000")"
+	    echo "First start: $(bc <<< "scale=3; ($pod_first_start)/1000")"
+	    echo "Starting span: $(bc <<< "scale=3; ($pod_last_start-$pod_first_start)/1000")"
+	    echo "Total CPU: $(bc <<< "scale=3; $total_cpu/1000")"
+	    echo "CPU utilization: $(bc <<< "scale=3; $total_cpu_util/1000")%"
+	    if (( total_cpu == 0 )) ; then
+		echo "Iterations/CPU sec: 0"
+	    else
+		echo "Iterations/CPU sec: $(bc <<< "scale=0; $total_iterations*1000/$total_cpu")"
+	    fi
+	    if (( total_et == 0 )) ; then
+		echo "Iterations/sec: 0"
+	    else
+		echo "Iterations/sec: $(bc <<< "scale=0; $total_iterations*1000*$line_count/$total_et")"
+	    fi
+	    ;;
+	sysbench)
+	    echo "Read ops/sec:  $(bc <<< "scale=3; $read_ops / $total_et * $line_count * 1000")"
+	    echo "Write ops/sec: $(bc <<< "scale=3; $write_ops / $total_et * $line_count * 1000")"
+	    echo "Fsync ops/sec: $(bc <<< "scale=3; $fsync_ops / $total_et * $line_count * 1000")"
+	    echo "Read rate MB/sec: $(bc <<< "scale=3; $readrate / $total_et * $line_count")"
+	    echo "Write rate MB/sec: $(bc <<< "scale=3; $writerate / $total_et * $line_count")"
+	    ;;
+	*)
+	    echo "Unknown mode $mode"
+	    ;;
+    esac
 }
 
 function retrieve_pod_stats() {
@@ -204,118 +323,37 @@ function do_summarize() {
     # shellcheck disable=SC2155
     local -i start_time=$(printf '%(%s)T' -1)
     local pass=1
-    local -i line_count=0
     while : ; do
-	local -i total=0
 	local -i found_all=1
-	local -i first_start=0
-	local -i last_end=0
-	local -i total_et=0
-	local -i total_cpu=0
-	local -i total_cpu_util=0
-	local -i total_iterations=0
-	local -i pod_first_start=0
-	local -i pod_last_start=0
-	local -a output
-	local mode=
 	while read -r -a output ; do
-	    if [[ -z "$mode" ]] ; then
-		case "${output[2]}" in
-		    *'soaker'*)   mode=soaker   ;;
-		    *'client'*)   mode=server   ;;
-		    *'sysbench'*) mode=sysbench ;;
-		    *)                          ;;
-		esac
-	    fi
-	    if [[ -z "${output[*]}" ]] ; then
-	       continue
-	    fi
+	    [[ -n "${output[*]}" ]] || continue
 	    local item="${output[1]} ${output[2]} ${output[4]}"
 	    if [[ -z "${output[10]:-}" || ${output[0]} = '!'* ]] ; then
 		found_all=0
-		continue
-	    fi
-	    if [[ -z "${cached_stats[$item]}" ]] ; then
-		cached_stats[$item]=
-	    fi
-	    cached_stats[$item]+="${output[*]}"$'\n'
-	    unset pod_cache["$item"]
-	    if [[ $mode = server ]] ; then
-		total+=${output[19]}
-		line_count+=1
-		# shellcheck disable=SC2155
-		local -i start=$(clean "${output[14]}")
-		# shellcheck disable=SC2155
-		local -i end=$(clean "${output[15]}")
-		# shellcheck disable=SC2155
-		local -i et=$(clean "${output[20]}")
-		if (( start < first_start || first_start == 0 )) ; then first_start=start; fi
-		if (( end > last_end || last_end == 0 )) ; then last_end=end; fi
-		total_et+=$et
-	    elif [[ $mode = soaker ]] ; then
-		line_count+=1
-		# shellcheck disable=SC2155
-		local -i pod_start=$(($(clean "${output[12]}") - $(clean "${output[11]}")))
-		if (( pod_start < pod_first_start || pod_first_start == 0 )) ; then pod_first_start=pod_start; fi
-		if (( pod_start > pod_last_start )) ; then pod_last_start=pod_start; fi
-		# shellcheck disable=SC2155
-		local -i start=$(clean "${output[13]}")
-		# shellcheck disable=SC2155
-		local -i end=$(clean "${output[15]}")
-		# shellcheck disable=SC2155
-		local -i et=$(clean "${output[14]}")
-		if (( start < first_start || first_start == 0 )) ; then first_start=start; fi
-		if (( end > last_end || last_end == 0 )) ; then last_end=end; fi
-		total_cpu+=$(clean "${output[16]}")
-		total_cpu_util+=$(clean "${output[17]}")
-		total_iterations+=$(clean "${output[18]}")
-		total_et+=$et
+	    else
+		[[ -n "${cached_stats[$item]:-}" ]] || cached_stats[$item]=
+		cached_stats[$item]+="${output[*]}"$'\n'
+		unset pod_cache["$item"]
 	    fi
 	done <<< "$(get_stats)"
 	if ((found_all)) ; then
-	    case "$mode" in
-		server)
-		    echo "Bytes: $total"
-		    echo "Containers: $line_count"
-		    echo "Average_elapsed: $(bc <<< "scale=3; $total_et/$line_count/1000")"
-		    echo "Elapsed_span: $(bc <<< "scale=3; ($last_end-$first_start)/1000")"
-		    echo "Data rate: $((total*2*1000/(total_et/line_count)/1024/1024))"
-		    ;;
-		soaker)
-		    echo "Iterations: $total_iterations"
-		    echo "Average_elapsed: $(bc <<< "scale=3; $total_et/$line_count/1000")"
-		    echo "Elapsed_span: $(bc <<< "scale=3; ($last_end-$first_start)/1000")"
-		    echo "First start: $(bc <<< "scale=3; ($pod_first_start)/1000")"
-		    echo "Starting span: $(bc <<< "scale=3; ($pod_last_start-$pod_first_start)/1000")"
-		    echo "Total CPU: $(bc <<< "scale=3; $total_cpu/1000")"
-		    echo "CPU utilization: $(bc <<< "scale=3; $total_cpu_util/1000")%"
-		    if (( total_cpu == 0 )) ; then
-			echo "Iterations/CPU sec: 0"
-		    else
-			echo "Iterations/CPU sec: $(bc <<< "scale=0; $total_iterations*1000/$total_cpu")"
-		    fi
-		    if (( total_et == 0 )) ; then
-			echo "Iterations/sec: 0"
-		    else
-			echo "Iterations/sec: $(bc <<< "scale=0; $total_iterations*1000*$line_count/$total_et")"
-		    fi
-		    ;;
-		*)
-		    echo "Unknown mode $mode"
-		    ;;
-		esac
+	    echo "$(IFS=$'\n'; echo "${cached_stats[*]}")"
 	    return
 	fi
 	pass=$((pass+1))
 	if (( timeout > 0 && $(printf '%(%s)T' -1) - start_time > timeout  )) ; then
-	    echo "Summary timed out ($timeout seconds)"
+	    echo "Summary timed out ($timeout seconds)" 1>&2
 	    return 1
 	fi
     done
 }
 
 if (( summarize )) ; then
-    do_summarize
+    case "$statsfile" in
+	-)  process_summary		   ;;
+	'') do_summarize | process_summary ;;
+	*)  process_summary < "$statsfile" ;;
+    esac
 else
     get_stats |sed -e 's/^!//'
 fi
