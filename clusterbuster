@@ -76,6 +76,7 @@ declare -a sysbench_fileio_options=()
 declare -A sysbench_fileio_tests=()
 declare -i report=0
 declare -i verbose_report=0
+declare -i precleanup=0
 declare -i cleanup=0
 declare -i timeout=-1
 declare pathdir=${0%/*}
@@ -160,6 +161,7 @@ Extended Options:
        --report         Print report (client/server, soaker,
                         sysbench only)
        --verbose-report Print detailed report
+       --precleanup     Clean up any prior objects
        --cleanup        Clean up generated objects
        --timeout=N      Time out reporting
 
@@ -455,22 +457,29 @@ eval {
     }
     my $kid;
     while ($expect_count < 0 || $client_count < $expect_count) {
+    	my $client;
+	accept ($client, $socket) || next;
     	my $child = fork;
 	if ($child == 0) {
-	    my ($client);
-	    accept ($client, $socket) || next;
 	    close ($socket);
 	    my ($tbuf) = "";
 	    my ($status);
 	    if (($status = sysread($client, $tbuf, 1024)) > 0) {
 		print "$tbuf\n";
 	    }
+	    close($client);
 	    exit(0);
-        }
+        } else {
+	    close($client);
+	    if ($child > 0) {
+		$client_count++;
+	    } else {
+		warn "Fork failed: $!"
+	    }
+	}
 	do {
 	    $kid = waitpid(-1, WNOHANG);
  	} while ($kid > 0);
-	$client_count++;
     }
     do {
 	$kid = wait();
@@ -591,6 +600,7 @@ function process_option() {
 	report_object_creation)	    reportObjectCreation=$optvalue		;;
 	kata)			    runtimeClass=kata				;;
 	report)	    		    report=$optvalue				;;
+	precleanup)		    precleanup=$optvalue			;;
 	cleanup)		    cleanup=$optvalue				;;
 	timeout)		    timeout=$optvalue				;;
 	verbose_report)		    verbose_report=$optvalue			;;
@@ -1236,18 +1246,25 @@ sub do_sync($$$$;$) {
     if (not $token) {
         $token = sprintf('%d', rand() * 999999999);
     }
-    timestamp("Waiting for sync on $addr:$port");
-    my ($sync_conn, $i1, $i2) = connect_to($addr, $port);
-    my ($sbuf);
-    timestamp("Writing token $token to sync");
-    my ($answer) = syswrite($sync_conn, $token, length $token);
-    if ($answer != length $token) {
-	timestamp("Write token failed: $!");
-	exit(1);
+    while (1) {
+	timestamp("Waiting for sync on $addr:$port");
+	my ($sync_conn, $i1, $i2) = connect_to($addr, $port);
+	my ($sbuf);
+	timestamp("Writing token $token to sync");
+	my ($answer) = syswrite($sync_conn, $token, length $token);
+	if ($answer != length $token) {
+	    timestamp("Write token failed: $!");
+	    exit(1);
+	}
+	$answer = sysread($sync_conn, $sbuf, 1024);
+	my ($str) = sprintf("Got sync (%s, %d, %s)!", $answer, length $sbuf, $!);
+	if ($!) {
+	    timestamp("$str, retrying");
+	} else {
+	    timestamp("$str, got sync");
+	    return;
+        }
     }
-    $answer = sysread($sync_conn, $sbuf, 1024);
-    my ($str) = sprintf("Got sync (%s, %d, %s)!", $answer, length $sbuf, $!);
-    timestamp($str);
 }
 
 sub runit() {
@@ -1595,18 +1612,25 @@ sub do_sync($$$$;$) {
     if (not $token) {
         $token = sprintf('%d', rand() * 999999999);
     }
-    timestamp("Waiting for sync on $addr:$port");
-    my ($sync_conn, $i1, $i2) = connect_to($addr, $port);
-    my ($sbuf);
-    timestamp("Writing token $token to sync");
-    my ($answer) = syswrite($sync_conn, $token, length $token);
-    if ($answer != length $token) {
-	timestamp("Write token failed: $!");
-	exit(1);
+    while (1) {
+	timestamp("Waiting for sync on $addr:$port");
+	my ($sync_conn, $i1, $i2) = connect_to($addr, $port);
+	my ($sbuf);
+	timestamp("Writing token $token to sync");
+	my ($answer) = syswrite($sync_conn, $token, length $token);
+	if ($answer != length $token) {
+	    timestamp("Write token failed: $!");
+	    exit(1);
+	}
+	$answer = sysread($sync_conn, $sbuf, 1024);
+	my ($str) = sprintf("Got sync (%s, %d, %s)!", $answer, length $sbuf, $!);
+	if ($!) {
+	    timestamp("$str, retrying");
+	} else {
+	    timestamp("$str, got sync");
+	    return;
+        }
     }
-    $answer = sysread($sync_conn, $sbuf, 1024);
-    my ($str) = sprintf("Got sync (%s, %d, %s)!", $answer, length $sbuf, $!);
-    timestamp($str);
 }
 
 sub runit() {
@@ -2121,6 +2145,7 @@ sub connect_to($$$$) {
             $stime = xtime();
             if (connect($sock, $sockmeta)) {
                 $connected = 1;
+                timestamp("Connected to $addr:$port ($fname, $ftype), waiting for sync");
             } else {
 	        $cfail++;
 		if ($! =~ /refused/) {
@@ -2147,18 +2172,25 @@ sub do_sync($$$$;$) {
     if (not $token) {
         $token = sprintf('%d', rand() * 999999999);
     }
-    timestamp("Waiting for  on $addr:$port");
-    my ($_conn, $i1, $i2) = connect_to($addr, $port);
-    my ($sbuf);
-    timestamp("Writing token $token to sync");
-    my ($answer) = syswrite($_conn, $token, length $token);
-    if ($answer != length $token) {
-	timestamp("Write token failed: $!");
-	exit(1);
+    while (1) {
+	timestamp("Waiting for sync on $addr:$port");
+	my ($_conn, $i1, $i2) = connect_to($addr, $port);
+	my ($sbuf);
+	timestamp("Writing token $token to sync");
+	my ($answer) = syswrite($_conn, $token, length $token);
+	if ($answer != length $token) {
+	    timestamp("Write token failed: $!");
+	    exit(1);
+	}
+	$answer = sysread($_conn, $sbuf, 1024);
+	my ($str) = sprintf("Got sync (%s, %d, %s)!", $answer, length $sbuf, $!);
+	if ($!) {
+	    timestamp("$str, retrying");
+	} else {
+	    timestamp("$str, got sync");
+	    return;
+        }
     }
-    $answer = sysread($_conn, $sbuf, 1024);
-    my ($str) = sprintf("Got sync (%s, %d, %s)!", $answer, length $sbuf, $!);
-    timestamp($str);
 }
 do_sync($synchost, $syncport);
 $etime = xtime();
@@ -2733,9 +2765,16 @@ function run_clusterbuster_1() {
     local -A expected_secrets=()
     local -i i
     local -i status=0
+    if (( precleanup )) ; then
+	if (( reportObjectCreation )) ; then
+	    oc delete ns -l "$basename"
+	else
+	    echo "Deleted  $(oc delete ns -l "$basename" |wc -l) namespace(s)"
+	fi
+    fi
     allocate_namespaces
     find_first_deployment
-    trap 'kill -INT $(jobs -p); exit' INT
+    trap 'if [[ -n "$(jobs -p)" ]] ; then kill -INT $(jobs -p); fi; exit' INT
     createAllObjects Namespaces
 
     # If previous secrets weren't all created, this will yield
