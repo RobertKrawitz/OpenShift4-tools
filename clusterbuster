@@ -17,6 +17,7 @@
 set -u
 
 declare -i namespaces=1
+declare useNamespaces=1
 declare -i depsPerNamespace=1
 declare -i secrets=0
 declare -i replicas=1
@@ -107,6 +108,8 @@ Usage: $0 [options] [name]
                        get an extended description.
        -n              Print what would be done without doing it
        -N namespaces   Number of namespaces to create (default 1)
+                       If 0 is specified, then no namespaces are created
+                       and the current namespace is used.
        -P podtype      Pod type (classic, pause, server, cpu, sysbench)
        -p parallel     Number of operations to perform in parallel (default 1)
        -r replicas     Number of replicas per deployment (default 1)
@@ -672,6 +675,10 @@ while getopts ":B:b:c:D:d:EeHhM:m:N:nP:p:Qqr:Ss:T:t:vWw:XxYz:-:" opt ; do
 done
 [[ -n "${unknown_opts[*]}" ]] && help "${unknown_opts[@]}"
 
+if (( namespaces <= 0 )) ; then
+    namespaces=1
+    useNamespaces=
+fi
 (( !parallelSecrets )) && parallelSecrets=$parallel
 (( !parallelNamespaces )) && parallelNamespaces=$parallel
 (( !parallelDeployments )) && parallelDeployments=$parallel
@@ -802,6 +809,7 @@ function createObject() {
 
 function createNamespace() {
     local namespace=$1
+    [[ -z "$useNamespaces" ]] && return
     createObject <<EOF
 apiVersion: v1
 kind: Namespace
@@ -819,6 +827,7 @@ function createSecrets() {
     local secrets=${3:-1}
     local -i i
     local -i j
+    local nsline=${useNamespaces:+  namespace: "$namespace"}
     (( secrets )) || return;
     for i in $(seq $firstDeployment $((depsPerNamespace + firstDeployment - 1))) ; do
 	for j in $(seq 0 $((secrets - 1))) ; do
@@ -827,7 +836,7 @@ apiVersion: v1
 kind: Secret
 metadata:
   name: "secret-${namespace}-${i}-${j}"
-  namespace: "$namespace"
+$nsline
   labels:
     ${basename}: "true"
     clusterbusterbase: "true"
@@ -964,6 +973,7 @@ function createDeploymentClassicYAML() {
     local secretCount=$3
     local -i replicas=$4
     local -i containers=$5
+    local nsline=${useNamespaces:+  namespace: "$namespace"}
     if [[ $deploymentType = pod ]] ; then
 	local -i j=0
 	while (( j < replicas )) ; do
@@ -972,7 +982,7 @@ apiVersion: v1
 kind: Pod
 metadata:
   name: ${namespace}-${i}-${j}
-  namespace: $namespace
+$nsline
   nodeSelector:
     node-role.kubernetes.io/worker: ""
   selector:
@@ -995,7 +1005,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: ${namespace}-$i
-  namespace: $namespace
+$nsline
   labels:
     ${basename}: "true"
     clusterbusterbase: "true"
@@ -1123,13 +1133,14 @@ EOF
 
 function createSyncDeployment() {
     local syncCount=$1; shift
+    local nsline=${useNamespaces:+  namespace: "$namespace"}
     if [[ $deploymentType = pod ]] ; then
 	createObject <<EOF
 apiVersion: v1
 kind: Pod
 metadata:
   name: ${namespace}-sync
-  namespace: $namespace
+$nsline
   nodeSelector:
     node-role.kubernetes.io/worker: ""
   selector:
@@ -1151,7 +1162,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: ${namespace}-sync
-  namespace: $namespace
+$nsline
   labels:
     ${basename}: "true"
     clusterbusterbase: "true"
@@ -1488,13 +1499,14 @@ function createSysbenchDeployment() {
     local secretCount=$3
     local -i processes=$4
     local -i containers=$5
+    local nsline=${useNamespaces:+  namespace: "$namespace"}
     if [[ $deploymentType = pod ]] ; then
 	createObject <<EOF
 apiVersion: v1
 kind: Pod
 metadata:
   name: ${namespace}-sysbench-${i}
-  namespace: $namespace
+$nsline
   nodeSelector:
     node-role.kubernetes.io/worker: ""
   selector:
@@ -1516,7 +1528,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: ${namespace}-sysbench-$i
-  namespace: $namespace
+$nsline
   labels:
     ${basename}: "true"
     clusterbusterbase: "true"
@@ -1788,13 +1800,14 @@ function createSoakerDeployment() {
     local secretCount=$3
     local -i processes=$4
     local -i containers=$5
+    local nsline=${useNamespaces:+  namespace: "$namespace"}
     if [[ $deploymentType = pod ]] ; then
 	createObject <<EOF
 apiVersion: v1
 kind: Pod
 metadata:
   name: ${namespace}-soaker-${i}
-  namespace: $namespace
+$nsline
   nodeSelector:
     node-role.kubernetes.io/worker: ""
   selector:
@@ -1816,7 +1829,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: ${namespace}-soaker-$i
-  namespace: $namespace
+$nsline
   labels:
     ${basename}: "true"
     clusterbusterbase: "true"
@@ -1847,12 +1860,13 @@ function createService() {
     local namespace=$1
     local deployment=$2
     local portnum=$3
+    local nsline=${useNamespaces:+  namespace: "$namespace"}
     createObject <<EOF
 apiVersion: v1
 kind: Service
 metadata:
   name: "service-${deployment}"
-  namespace: "$namespace"
+$nsline
   labels:
     ${basename}: "true"
     clusterbusterbase: "true"
@@ -1868,12 +1882,13 @@ EOF
 function createRoute() {
     local namespace=$1
     local deployment=$2
+    local nsline=${useNamespaces:+  namespace: "$namespace"}
     createObject <<EOF
 apiVersion: v1
 kind: Route
 metadata:
   name: "route-${deployment}"
-  namespace: "$namespace"
+$nsline
   labels:
     ${basename}: "true"
     clusterbusterbase: "true"
@@ -2021,13 +2036,14 @@ function createServerDeployment() {
     local secretCount=$3
     local msgSize=$4
     local expectedClients=$5
+    local nsline=${useNamespaces:+  namespace: "$namespace"}
     if [[ $deploymentType = pod ]] ; then
 	createObject <<EOF
 apiVersion: v1
 kind: Pod
 metadata:
   name: ${namespace}-${i}-server
-  namespace: $namespace
+$nsline
   nodeSelector:
     node-role.kubernetes.io/worker: ""
   selector:
@@ -2049,7 +2065,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: ${namespace}-${i}-server
-  namespace: $namespace
+$nsline
   labels:
     ${basename}: "true"
     clusterbusterbase: "true"
@@ -2425,6 +2441,7 @@ function createClientDeployment() {
     local containers=$8
     local log_host=${9:-}
     local -i log_port=${10:-0}
+    local nsline=${useNamespaces:+  namespace: "$namespace"}
     if [[ $deploymentType = pod ]] ; then
 	local -i j=0
 	while (( j < replicas )) ; do
@@ -2434,7 +2451,7 @@ apiVersion: v1
 kind: Pod
 metadata:
   name: $podname
-  namespace: $namespace
+$nsline
   nodeSelector:
     node-role.kubernetes.io/worker: ""
   selector:
@@ -2459,7 +2476,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: $podname
-  namespace: $namespace
+$nsline
   labels:
     ${basename}: "true"
     clusterbusterbase: "true"
@@ -2761,16 +2778,30 @@ function createAllObjects() {
     done <<< "$("createAll${objtype}" "$@" 2>&1)"
 }
 
+function doCleanup() {
+    local -a objectsToClean
+    local objtype
+    (( doit )) || return
+    if [[ -n "$useNamespaces" ]] ; then
+	objectsToClean=(namespace)
+    else
+	objectsToClean=("$deploymentType" secret route service)
+    fi
+    for objtype in "${objectsToClean[@]}" ; do
+	if (( reportObjectCreation )) ; then
+	    "$OC" delete "$objtype" -l "$basename"
+	else
+	    echo "Deleted  $("$OC" delete "$objtype" -l "$basename" |wc -l) ${objtype}(s)"
+	fi
+    done
+}
+
 function run_clusterbuster_1() {
     local -A expected_secrets=()
     local -i i
     local -i status=0
     if (( precleanup )) ; then
-	if (( reportObjectCreation )) ; then
-	    oc delete ns -l "$basename"
-	else
-	    echo "Deleted  $(oc delete ns -l "$basename" |wc -l) namespace(s)"
-	fi
+	doCleanup
     fi
     allocate_namespaces
     find_first_deployment
@@ -2798,25 +2829,27 @@ function run_clusterbuster_1() {
 
     createAllObjects Secrets
 
-    local secname=""
-    while (( ${#expected_secrets[@]} )) ; do
-	while read -r secname ; do
-	    [[ -n "${secname:-}" ]] && unset "expected_secrets[$secname]"
-	done <<< "$("$OC" get secret -oname --no-headers -l "$basename" -A)"
-	if (( ${#expected_secrets[@]} )) ; then
-	    echo "Still waiting for ${#expected_secrets[@]} to be created."
-	    sleep 10
-	else
-	    break
-	fi
-    done
+    if (( doit )) ; then
+	local secname=""
+	while (( ${#expected_secrets[@]} )) ; do
+	    while read -r secname ; do
+		[[ -n "${secname:-}" ]] && unset "expected_secrets[$secname]"
+	    done <<< "$("$OC" get secret -oname --no-headers -l "$basename" -A)"
+	    if (( ${#expected_secrets[@]} )) ; then
+		echo "Still waiting for ${#expected_secrets[@]} to be created."
+		sleep 10
+	    else
+		break
+	    fi
+	done
+    fi
 
     basetime=$(printf '%(%s)T' -1)
 
     local -i logs_expected=0
     local log_host=
     local -i log_port=0
-    if ((report)) ; then
+    if ((doit && report)) ; then
 	logs_expected="$("calculateLogsRequired${podType}" "$namespaces" "$depsPerNamespace" "$replicas" "$containers")"
 	if ((logs_expected)) ; then
 	    log_host=$(hostname -f)
@@ -2827,6 +2860,7 @@ function run_clusterbuster_1() {
     fi
     createAllObjects Deployments
 
+    (( doit )) || return
     if ((report && logs_expected && timeout > 0)) ; then
 	local -i finis=0
 	while (( timeout < 0 || timeout-- )) ; do
@@ -2859,11 +2893,7 @@ function run_clusterbuster_1() {
     done <<< "$( (IFS=$'\n'; echo "${!objectsCreated[*]}") | sort)"
     echo "Created $totalObjectsCreated object(s) total"
     if ((cleanup)) ; then
-	if (( reportObjectCreation )) ; then
-	    oc delete ns -l "$basename"
-	else
-	    echo "Deleted  $(oc delete ns -l "$basename" |wc -l) namespace(s)"
-	fi
+	doCleanup
     fi
 
     return $status
