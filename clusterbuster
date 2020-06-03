@@ -633,7 +633,7 @@ function process_option() {
 	*) unknown_opts+=("$noptname") ;;
     esac
     if [[ $deploymentType != pod && $deploymentType != deployment ]] ; then
-	echo "-T/--deployment_type must be either por or deployment"
+	echo "-T/--deployment_type must be either pod or deployment"
 	help
     fi
 }
@@ -673,7 +673,7 @@ while getopts ":B:b:c:D:d:EeHhM:m:N:nP:p:Qqr:Ss:T:t:vWw:XxYz:-:" opt ; do
 	*) help "$OPTARG"               ;;
     esac
 done
-[[ -n "${unknown_opts[*]}" ]] && help "${unknown_opts[@]}"
+[[ -n "${unknown_opts[*]:-}" ]] && help "${unknown_opts[@]}"
 
 if (( namespaces <= 0 )) ; then
     namespaces=1
