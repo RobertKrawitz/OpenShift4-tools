@@ -83,6 +83,7 @@ declare -i timeout=-1
 declare pathdir=${0%/*}
 declare -a unknown_opts=()
 declare -i totalObjectsCreated=0
+declare nodeSelector='node-role.kubernetes.io/worker='
 
 declare accumulateddata=
 
@@ -195,6 +196,10 @@ Extended Options:
        --parallel_secrets=N
        --parallel_namespaces=N
        --parallel_deployments=N
+       --node_selector=selector
+                        Annotate pods with the specified node selector
+                        Default $nodeSelector
+                        Specify empty value to not provide a node selector.
 
     Pod Options:
        --<type>=<resource=value>
@@ -204,7 +209,7 @@ Extended Options:
        --runtimeclass=class
                         Run the pods in the designated runtimeclass.
        --kata           Synonym for --runtimeclass=kata-qemu
-       --emptydir=dir	Mount an emptydir volume at the specified mount point.
+       --emptydir=dir   Mount an emptydir volume at the specified mount point.
 
     Client/server options:
        --affinity       Force affinity between client and server pods
@@ -589,6 +594,8 @@ function process_option() {
 	sleep_secrets)		    sleepSecrets=$optvalue			;;
 	sleep_namespaces)	    sleepNamespaces=$optvalue			;;
 	sleep_deployments)	    sleepDeployments=$optvalue			;;
+	nodeselector)		    nodeSelector=$optvalue			;;
+	node_selector)		    nodeSelector=$optvalue			;;
 	exit_at_end)		    exitAtEnd=$optvalue				;;
 	pod_resource_request)	    pod_resource_requests+=("$optvalue")	;;
 	pod_resource_limit)	    pod_resource_limits+=("$optvalue")		;;
@@ -744,6 +751,15 @@ function finishCreation() {
     if [[ $doit -ne 0 && -n $accumulateddata ]] ; then
 	"${OC}" apply -f - <<< "$accumulateddata" | timestamp
 	accumulateddata=
+    fi
+}
+
+function node_selector() {
+    if [[ -n "$nodeSelector" ]] ; then
+	cat <<EOF
+nodeSelector:
+  $nodeSelector: ""
+EOF
     fi
 }
 
@@ -956,8 +972,7 @@ function createClassicSpec() {
     local -i containers=$5
 cat <<EOF
 spec:
-  nodeSelector:
-    node-role.kubernetes.io/worker: ""
+$(indent 2 node_selector)
   terminationGracePeriodSeconds: 1
 $(indent 2 createPodResources)
 $(indent 2 <<< "$runtimeClass")
@@ -983,8 +998,7 @@ kind: Pod
 metadata:
   name: ${namespace}-${i}-${j}
 $nsline
-  nodeSelector:
-    node-role.kubernetes.io/worker: ""
+$(indent 2 node_selector)
   selector:
     matchLabels:
       app: ${namespace}-${i}
@@ -1011,8 +1025,7 @@ $nsline
     clusterbusterbase: "true"
 spec:
   replicas: $replicas
-  nodeSelector:
-    node-role.kubernetes.io/worker: ""
+$(indent 2 node_selector)
   selector:
     matchLabels:
       app: ${namespace}-$i
@@ -1121,8 +1134,7 @@ EOF
 function createSyncSpec() {
     cat <<EOF
 spec:
-  nodeSelector:
-    node-role.kubernetes.io/worker: ""
+$(indent 2 node_selector)
   terminationGracePeriodSeconds: 1
 $(indent 2 <<< "$runtimeClass")
   containers:
@@ -1141,8 +1153,7 @@ kind: Pod
 metadata:
   name: ${namespace}-sync
 $nsline
-  nodeSelector:
-    node-role.kubernetes.io/worker: ""
+$(indent 2 node_selector)
   selector:
     matchLabels:
       app: ${namespace}-sync
@@ -1170,8 +1181,7 @@ spec:
   replicas: 1
   strategy:
     type: RollingUpdate
-  nodeSelector:
-    node-role.kubernetes.io/worker: ""
+$(indent 2 node_selector)
   selector:
     matchLabels:
       app: ${namespace}-sync
@@ -1481,8 +1491,7 @@ function createSysbenchSpec() {
     local -i containers=$5
     cat <<EOF
 spec:
-  nodeSelector:
-    node-role.kubernetes.io/worker: ""
+$(indent 2 node_selector)
   terminationGracePeriodSeconds: 1
   restartPolicy: Always
 $(indent 2 createPodResources)
@@ -1507,8 +1516,7 @@ kind: Pod
 metadata:
   name: ${namespace}-sysbench-${i}
 $nsline
-  nodeSelector:
-    node-role.kubernetes.io/worker: ""
+$(indent 2 node_selector)
   selector:
     matchLabels:
       app: ${namespace}-sysbench-${i}
@@ -1534,8 +1542,7 @@ $nsline
     clusterbusterbase: "true"
 spec:
   replicas: 1
-  nodeSelector:
-    node-role.kubernetes.io/worker: ""
+$(indent 2 node_selector)
   selector:
     matchLabels:
       app: ${namespace}-sysbench-$i
@@ -1782,8 +1789,7 @@ function createSoakerSpec() {
     local -i containers=$5
     cat <<EOF
 spec:
-  nodeSelector:
-    node-role.kubernetes.io/worker: ""
+$(indent 2 node_selector)
   terminationGracePeriodSeconds: 1
   restartPolicy: Always
 $(indent 2 createPodResources)
@@ -1808,8 +1814,7 @@ kind: Pod
 metadata:
   name: ${namespace}-soaker-${i}
 $nsline
-  nodeSelector:
-    node-role.kubernetes.io/worker: ""
+$(indent 2 node_selector)
   selector:
     matchLabels:
       app: ${namespace}-soaker-${i}
@@ -1835,8 +1840,7 @@ $nsline
     clusterbusterbase: "true"
 spec:
   replicas: 1
-  nodeSelector:
-    node-role.kubernetes.io/worker: ""
+$(indent 2 node_selector)
   selector:
     matchLabels:
       app: ${namespace}-soaker-$i
@@ -2019,8 +2023,7 @@ function createServerSpec() {
     local expectedClients=$5
     cat <<EOF
 spec:
-  nodeSelector:
-    node-role.kubernetes.io/worker: ""
+$(indent 2 node_selector)
   terminationGracePeriodSeconds: 1
 $(indent 2 createPodResources)
 $(indent 2 <<< "$runtimeClass")
@@ -2044,8 +2047,7 @@ kind: Pod
 metadata:
   name: ${namespace}-${i}-server
 $nsline
-  nodeSelector:
-    node-role.kubernetes.io/worker: ""
+$(indent 2 node_selector)
   selector:
     matchLabels:
       app: ${namespace}-${i}
@@ -2071,8 +2073,7 @@ $nsline
     clusterbusterbase: "true"
 spec:
   replicas: 1
-  nodeSelector:
-    node-role.kubernetes.io/worker: ""
+$(indent 2 node_selector)
   selector:
     matchLabels:
       app: ${namespace}-$i
@@ -2418,8 +2419,7 @@ function createClientSpec() {
     local replica=${12}
     cat <<EOF
 spec:
-  nodeSelector:
-    node-role.kubernetes.io/worker: ""
+$(indent 2 node_selector)
   terminationGracePeriodSeconds: 1
 $(indent 2 createPodResources)
 $(indent 2 createClientAffinityYAML "${namespace}-${i}-server")
@@ -2452,8 +2452,7 @@ kind: Pod
 metadata:
   name: $podname
 $nsline
-  nodeSelector:
-    node-role.kubernetes.io/worker: ""
+$(indent 2 node_selector)
   selector:
     matchLabels:
       app: ${namespace}-${i}-client
@@ -2482,8 +2481,7 @@ $nsline
     clusterbusterbase: "true"
 spec:
   replicas: $replicas
-  nodeSelector:
-    node-role.kubernetes.io/worker: ""
+$(indent 2 node_selector)
   restartPolicy: Never
   selector:
     matchLabels:
