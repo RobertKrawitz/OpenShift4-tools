@@ -312,13 +312,14 @@ trap exit INT
 function process_stats() {
     local -i curjobs=0
     local ns
+    local nsfield
     local pod
     local container
     local status
     if (( use_namespace )) ; then
-	ns=ns
+	nsfield=ns
     fi
-    while read -r $ns pod container status ; do
+    while read -r $nsfield pod container status ; do
 	local xcache=${cached_stats["$ns $pod $container"]:-}
 	if [[ -n "$xcache" ]] ; then
 	    echo "$xcache"
