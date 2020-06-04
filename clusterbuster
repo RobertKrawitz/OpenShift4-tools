@@ -83,7 +83,7 @@ declare -i timeout=-1
 declare pathdir=${0%/*}
 declare -a unknown_opts=()
 declare -i totalObjectsCreated=0
-declare nodeSelector='node-role.kubernetes.io/worker='
+declare nodeSelector='node-role.kubernetes.io/worker'
 
 declare accumulateddata=
 
