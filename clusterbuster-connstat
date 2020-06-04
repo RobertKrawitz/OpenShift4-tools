@@ -1,7 +1,36 @@
 #!/bin/bash
 
 declare jq_cmd
-read -r -d '' jq_cmd <<\EOF
+
+declare -i parallel=1
+declare -i summarize=0
+declare -i timeout=-1
+declare -i verbose=0
+declare -i use_namespace=1
+declare basename=clusterbuster
+declare -A cached_stats=()
+declare statsfile=
+
+declare OC
+OC=$(type -p oc)
+OC=${OC:-$(type -p kubectl)}	# kubectl might not work, though...
+
+while getopts ':p:B:st:f:vqN' opt ; do
+    case "$opt" in
+	B) basename=$OPTARG 	  ;;
+	p) parallel=$OPTARG 	  ;;
+	t) timeout=$OPTARG  	  ;;
+	s) summarize=1	    	  ;;
+	f) statsfile=$OPTARG	  ;;
+	v) verbose=$((verbose+1)) ;;
+	N) use_namespace=0	  ;;
+	q) verbose=0        	  ;;
+	*) ;;
+    esac
+done
+
+if (( use_namespace )) ; then
+    read -r -d '' jq_cmd <<\EOF
 [foreach .items[]? as $item
  ([[],[]];0;
  (if ($item.kind == "Pod") then
@@ -12,32 +41,19 @@ read -r -d '' jq_cmd <<\EOF
       [foreach $item.status.containerStatuses[]? as $status ([[],[]]; 0; if ($container.name == $status.name) then $status.state | keys[0] else null end)] end)] | flatten | map (select (. != null)) | join(" "))])
  else null end))] | flatten | map (select (. != null))[]
 EOF
-
-declare -i parallel=1
-declare -i summarize=0
-declare -i timeout=-1
-declare -i verbose=0
-declare basename=clusterbuster
-declare -A expected_rows=()
-declare -A cached_stats=()
-declare statsfile=
-
-declare OC
-OC=$(type -p oc)
-OC=${OC:-$(type -p kubectl)}	# kubectl might not work, though...
-
-while getopts ':p:B:st:f:vq' opt ; do
-    case "$opt" in
-	B) basename=$OPTARG 	  ;;
-	p) parallel=$OPTARG 	  ;;
-	t) timeout=$OPTARG  	  ;;
-	s) summarize=1	    	  ;;
-	f) statsfile=$OPTARG	  ;;
-	v) verbose=$((verbose+1)) ;;
-	q) verbose=0        	  ;;
-	*) ;;
-    esac
-done
+else
+    read -r -d '' jq_cmd <<\EOF
+[foreach .items[]? as $item
+ ([[],[]];0;
+ (if ($item.kind == "Pod") then
+   ([foreach $item.spec.containers[]? as $container ([[],[]];0; [$item.metadata.name, $container.name,
+     (if ($item.status.containerStatuses? == null) then
+      ($item.status.phase + ": " + $item.status.conditions[0].reason?)
+     else
+      [foreach $item.status.containerStatuses[]? as $status ([[],[]]; 0; if ($container.name == $status.name) then $status.state | keys[0] else null end)] end)] | flatten | map (select (. != null)) | join(" "))])
+ else null end))] | flatten | map (select (. != null))[]
+EOF
+fi
 
 (( parallel <= 0 )) && parallel=1
 
@@ -150,17 +166,17 @@ function process_summary() {
 		if (( end > last_end || last_end == 0 )) ; then last_end=end; fi
 		;;
 	    soaker)
-		pod_start=$(($(clean "${output[12]}") - $(clean "${output[11]}")))
+		pod_start=$(($(clean "${output[12]}")))
 		if (( pod_start < pod_first_start || pod_first_start == 0 )) ; then pod_first_start=pod_start; fi
 		if (( pod_start > pod_last_start )) ; then pod_last_start=pod_start; fi
-		start=$(clean "${output[13]}")
-		end=$(clean "${output[15]}")
-		et=$(clean "${output[14]}")
+		start=$(clean "${output[14]}")
+		end=$(clean "${output[16]}")
+		et=$(clean "${output[15]}")
 		if (( start < first_start || first_start == 0 )) ; then first_start=start; fi
 		if (( end > last_end || last_end == 0 )) ; then last_end=end; fi
-		total_cpu+=$(clean "${output[16]}")
-		total_cpu_util+=$(clean "${output[17]}")
-		total_iterations+=$(clean "${output[18]}")
+		total_cpu+=$(clean "${output[17]}")
+		total_cpu_util+=$(clean "${output[18]}")
+		total_iterations+=$(clean "${output[19]}")
 		;;
 	    sysbench)
 		start=$(clean "${output[11]}")
@@ -230,12 +246,14 @@ function retrieve_pod_stats() {
     local statline=''
     local -a statlines=()
     local row_prefix='!'
-    local pname="$ns $pod $container"
+    ns=${ns:+-n "$ns"}
+    local ns1=${ns:-NA NA}
     case "$status" in
 	running|completed|terminated)
 	    # This is actually faster than reading lines if there's a lot of data.
 	    local data
-	    data="$(oc logs -n "$ns" "$pod" -c "$container")"
+	    # shellcheck disable=SC2086
+	    data="$("${OC}" logs $ns "$pod" -c "$container")"
 	    connection_refused=$(grep -c 'Connection refused' <<< "$data")
 	    connection_failures=$(grep -c 'Could not connect' <<< "$data")
 	    blocks=$(grep -c 'Write/Read' <<< "$data")
@@ -253,10 +271,10 @@ function retrieve_pod_stats() {
     if (( ${#statlines[@]} )) ; then
 	local statline=
 	for statline in "${statlines[@]}" ; do
-	    echo "${row_prefix}-n $ns $pod -c $container $status $connection_failures $connection_refused $blocks $statline"
+	    echo "${row_prefix}${ns1} $pod -c $container $status $connection_failures $connection_refused $blocks $statline"
 	done
     else
-	echo "!-n $ns $pod -c $container $status $connection_failures $connection_refused $blocks"
+	echo "!${ns1} $pod -c $container $status $connection_failures $connection_refused $blocks"
     fi
 }
 
@@ -264,11 +282,15 @@ declare wait_n=$(( BASH_VERSINFO[0] > 4 || (BASH_VERSINFO[0] > 4 && BASH_VERSINF
 
 function get_all_pods() {
     local basename=$1
-    local ns
-    while read -r ns ; do
-	ns=${ns##*/}
-	oc get pods -ojson -l "${basename}-client" -n "$ns"
-    done <<< "$(oc get ns -l "$basename" --no-headers | awk '{print $1}')"
+    if (( use_namespace )) ; then
+	local ns
+	while read -r ns ; do
+	    ns=${ns##*/}
+	    "${OC}" get pods -ojson -l "${basename}-client" -n "$ns"
+	done <<< "$("${OC}" get ns -l "$basename" --no-headers | awk '{print $1}')"
+    else
+	"${OC}" get pods -ojson -l "${basename}-client"
+    fi
 }
 
 trap exit INT
@@ -279,7 +301,10 @@ function process_stats() {
     local pod
     local container
     local status
-    while read -r ns pod container status ; do
+    if (( use_namespace )) ; then
+	ns=ns
+    fi
+    while read -r $ns pod container status ; do
 	local xcache=${cached_stats["$ns $pod $container"]:-}
 	if [[ -n "$xcache" ]] ; then
 	    echo "$xcache"
