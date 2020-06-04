@@ -121,18 +121,32 @@ function prettyprint() {
     done
 }
 
+function maxbits() {
+    local -i i
+    local -i a
+    for i in $(seq 0 127) ; do
+	a=$((2**i + ((2**i)-1)))
+	if (( a > a + 1)) ; then
+	    echo $i
+	    return
+	fi
+    done
+    echo $i
+}
+
 function process_summary() {
     local -i line_count=0
     local -i total=0
-    local -i first_start=0
-    local -i last_end=0
+    local -i maxbits=$(($(maxbits)))
+    local -i first_start=$(((2**maxbits) + ((2**maxbits)-1) ))
+    local -i last_end=$((first_start + 1))
     local -i total_et=0
     local -i total_cpu=0
     local -i total_cpu_util=0
     local -i total_iterations=0
     local -i pod_start=0
-    local -i pod_first_start=0
-    local -i pod_last_start=0
+    local -i pod_first_start=$first_start
+    local -i pod_last_start=$last_end
     local -i read_ops=0
     local -i write_ops=0
     local -i fsync_ops=0
@@ -162,28 +176,28 @@ function process_summary() {
 		start=$(clean "${output[14]}")
 		end=$(clean "${output[15]}")
 		et=$(clean "${output[20]}")
-		if (( start < first_start || first_start == 0 )) ; then first_start=start; fi
-		if (( end > last_end || last_end == 0 )) ; then last_end=end; fi
+		if (( start < first_start )) ; then first_start=start; fi
+		if (( end > last_end )) ; then last_end=end; fi
 		;;
 	    soaker)
 		pod_start=$(($(clean "${output[12]}")))
-		if (( pod_start < pod_first_start || pod_first_start == 0 )) ; then pod_first_start=pod_start; fi
+		if (( pod_start < pod_first_start )) ; then pod_first_start=pod_start; fi
 		if (( pod_start > pod_last_start )) ; then pod_last_start=pod_start; fi
-		start=$(clean "${output[14]}")
-		end=$(clean "${output[16]}")
-		et=$(clean "${output[15]}")
-		if (( start < first_start || first_start == 0 )) ; then first_start=start; fi
-		if (( end > last_end || last_end == 0 )) ; then last_end=end; fi
-		total_cpu+=$(clean "${output[17]}")
-		total_cpu_util+=$(clean "${output[18]}")
-		total_iterations+=$(clean "${output[19]}")
+		start=$(clean "${output[13]}")
+		end=$(clean "${output[15]}")
+		et=$(clean "${output[14]}")
+		if (( start < first_start )) ; then first_start=start; fi
+		if (( end > last_end )) ; then last_end=end; fi
+		total_cpu+=$(clean "${output[16]}")
+		total_cpu_util+=$(clean "${output[17]}")
+		total_iterations+=$(clean "${output[18]}")
 		;;
 	    sysbench)
 		start=$(clean "${output[11]}")
 		end=$(clean "${output[13]}")
 		et=$(clean "${output[19]}")
-		if (( start < first_start || first_start == 0 )) ; then first_start=start; fi
-		if (( end > last_end || last_end == 0 )) ; then last_end=end; fi
+		if (( start < first_start )) ; then first_start=start; fi
+		if (( end > last_end )) ; then last_end=end; fi
 		read_ops+=$(clean "${output[14]}")
 		write_ops+=$(clean "${output[15]}")
 		fsync_ops+=$(clean "${output[16]}")
@@ -200,15 +214,15 @@ function process_summary() {
 	    echo "Bytes: $total"
 	    echo "Containers: $line_count"
 	    echo "Average_elapsed: $(bc <<< "scale=3; $total_et/$line_count/1000")"
-	    echo "Elapsed_span: $(bc <<< "scale=3; ($last_end-$first_start)/1000")"
+	    echo "Elapsed_span: $(bc <<< "scale=3; (($last_end)-($first_start))/1000")"
 	    echo "Data rate: $((total*2*1000/(total_et/line_count)/1024/1024))"
 	    ;;
 	soaker)
 	    echo "Iterations: $total_iterations"
 	    echo "Average_elapsed: $(bc <<< "scale=3; $total_et/$line_count/1000")"
-	    echo "Elapsed_span: $(bc <<< "scale=3; ($last_end-$first_start)/1000")"
+	    echo "Elapsed_span: $(bc <<< "scale=3; (($last_end)-($first_start))/1000")"
 	    echo "First start: $(bc <<< "scale=3; ($pod_first_start)/1000")"
-	    echo "Starting span: $(bc <<< "scale=3; ($pod_last_start-$pod_first_start)/1000")"
+	    echo "Starting span: $(bc <<< "scale=3; (($pod_last_start)-($pod_first_start))/1000")"
 	    echo "Total CPU: $(bc <<< "scale=3; $total_cpu/1000")"
 	    echo "CPU utilization: $(bc <<< "scale=3; $total_cpu_util/1000")%"
 	    if (( total_cpu == 0 )) ; then
@@ -337,11 +351,16 @@ function get_stats() {
 }
 
 function clean() {
+    local sign=
     local num=${1//./}
+    if [[ num = '-'* ]] ; then
+	sign=-
+	num=${num#-}
+    fi
     while [[ $num = "0"* ]] ; do
 	num=${num##0}
     done
-    echo "${num:-0}"
+    echo "${sign}${num:-0}"
 }
 
 function do_summarize() {
