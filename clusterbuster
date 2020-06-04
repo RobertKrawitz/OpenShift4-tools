@@ -1326,6 +1326,7 @@ sub runit() {
     }
     do_sync($synchost, $syncport);
     timestamp("Preparing...");
+    timestamp("sysbench --time=$runtime $sysbench_generic_args $sysbench_cmd prepare --file-test-mode=$mode $sysbench_fileio_args");
     open(PREPARE, "-|", "sysbench --time=$runtime $sysbench_generic_args $sysbench_cmd prepare --file-test-mode=$mode $sysbench_fileio_args") || die "Can't run sysbench: $!\n";
     while (<PREPARE>) {
 	if ($_ =~ /^([[:digit:]]+) bytes written in ([[:digit:].]+) seconds/) {
@@ -1360,6 +1361,7 @@ sub runit() {
     my ($prevtime) = $stime;
     my ($scputime) = cputime();
     timestamp("Running...");
+    timestamp("sysbench --time=$runtime $sysbench_generic_args $sysbench_cmd run --file-test-mode=$mode $sysbench_fileio_args");
     open(RUN, "-|", "sysbench --time=$runtime $sysbench_generic_args $sysbench_cmd run --file-test-mode=$mode $sysbench_fileio_args") || die "Can't run sysbench: $!\n";
     while (<RUN>) {
 	if ($_ =~ m;^[[:space:]]*reads/s:[[:space:]]*([[:digit:].]+);) {
@@ -1389,6 +1391,8 @@ sub runit() {
 	}
     }
     close RUN;
+    timestamp("Cleanup...");
+    timestamp("sysbench --time=$runtime $sysbench_generic_args $sysbench_cmd cleanup --file-test-mode=$mode $sysbench_fileio_args");
     open(CLEANUP, "-|", "sysbench --time=$runtime $sysbench_generic_args $sysbench_cmd cleanup --file-test-mode=$mode $sysbench_fileio_args") || die "Can't run sysbench: $!\n";
     while (<CLEANUP>) {
         if ($ENV{"VERBOSE"} > 0) {
