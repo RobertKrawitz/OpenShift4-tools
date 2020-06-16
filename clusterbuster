@@ -54,6 +54,7 @@ declare -i exitAtEnd=0
 declare -i reportObjectCreation=1
 declare -i defaultBytes=1000000000
 declare -A objectsCreated=()
+declare baseoffset=0
 declare podType=ClusterBuster
 declare podsleeptime=infinity
 declare basename=clusterbuster
@@ -162,6 +163,9 @@ Extended Options:
        --secrets=N      Number of secrets (-s)
        --replicas=N     Number of replicas per deployment (-r)
        --podsleep=N     Time for pod to sleep before exit (-z)
+       --baseoffset=N   Add specified offset to base time
+                        for calculation of start time offset
+                        to correct for clock skew.  May be float.
        --report         Print report (client/server, soaker,
                         sysbench only)
        --verbose-report Print detailed report
@@ -616,6 +620,7 @@ function process_option() {
 	verbose_report)		    verbose_report=$optvalue			;;
 	emptydir)		    emptydirs+=("$optvalue")			;;
 	sync|syncstart|sync_start)  syncStart=$((1-syncStart))			;;
+	baseoffset|base_offset)     baseoffset=$optvalue			;;
 	sysbench_general_options)   sysbench_general_options+=(${optvalue//,/ });;
 	sysbench_fileio_options)    sysbench_fileio_options+=(${optvalue//,/ }) ;;
 	sysbench_fileio_tests)
@@ -1208,8 +1213,10 @@ use POSIX;
 use strict;
 use Time::Piece;
 use Time::HiRes qw(gettimeofday);
-our ($namespace, $pod, $container, $basetime, $crtime, $poddelay, $processes, $rundir, $runtime, $exit_at_end, $synchost, $syncport, $loghost, $logport, $sysbench_generic_args, $sysbench_cmd, $sysbench_fileio_args, $sysbench_modes) = @ARGV;
+our ($namespace, $pod, $container, $basetime, $baseoffset, $crtime, $poddelay, $processes, $rundir, $runtime, $exit_at_end, $synchost, $syncport, $loghost, $logport, $sysbench_generic_args, $sysbench_cmd, $sysbench_fileio_args, $sysbench_modes) = @ARGV;
 $SIG{TERM} = sub { kill 'KILL', -1; POSIX::_exit(0); };
+$basetime += $baseoffset;
+$crtime += $baseoffset;
 
 sub cputime() {
     my (@times) = times();
@@ -1371,9 +1378,9 @@ sub runit() {
 	} elsif ($_ =~ m;^[[:space:]]*fsyncs/s:[[:space:]]*([[:digit:].]+);) {
 	    $fsyncops = $1;
 	} elsif ($_ =~ m;^[[:space:]]*read, MiB/s:[[:space:]]*([[:digit:].]+);) {
-	    $readrate = $1 * 1048576.0;
+	    $readrate = $1;
 	} elsif ($_ =~ m;^[[:space:]]*written, MiB/s:[[:space:]]*([[:digit:].]+);) {
-	    $writerate = $1 * 1048576.0;
+	    $writerate = $1;
 	} elsif ($_ =~ m;^[[:space:]]*total time:[[:space:]]*([[:digit:].]+)s;) {
 	    $et = $1;
 	} elsif ($_ =~ m;^[[:space:]]*min:[[:space:]]*([[:digit:].]+);) {
@@ -1468,6 +1475,7 @@ $(indent 4 sysbenchPerl)
   - "${namespace}-sysbench-${i}"
   - "c${j}"
   - "$basetime"
+  - "$baseoffset"
   - "$(ts)"
   - "$poddelay"
   - "$processes"
@@ -1575,8 +1583,10 @@ use POSIX;
 use strict;
 use Time::Piece;
 use Time::HiRes qw(gettimeofday);
-our ($namespace, $pod, $container, $basetime, $crtime, $poddelay, $processes, $runtime, $exit_at_end, $synchost, $syncport, $loghost, $logport) = @ARGV;
+our ($namespace, $pod, $container, $basetime, $baseoffset, $crtime, $poddelay, $processes, $runtime, $exit_at_end, $synchost, $syncport, $loghost, $logport) = @ARGV;
 $SIG{TERM} = sub { kill 'KILL', -1; POSIX::_exit(0); };
+$basetime += $baseoffset;
+$crtime += $baseoffset;
 
 sub cputime() {
     my (@times) = times();
@@ -1596,6 +1606,7 @@ sub xtime() {
     my (@now) = gettimeofday();
     return $now[0] + ($now[1] / 1000000.0);
 }
+my ($dstime) = xtime();
 sub connect_to($$$$) {
     my ($addr, $port) = @_;
     my ($connected) = 0;
@@ -1667,7 +1678,6 @@ sub runit() {
     my ($icputime);
     my ($interval) = 5;
     my $start_time;
-    my ($dstime) = xtime();
 
     my $delaytime = $basetime + $poddelay - $dstime;
     do_sync($synchost, $syncport);
@@ -1771,6 +1781,7 @@ $(indent 4 cpuSoakerPerl)
   - "${namespace}-soaker-${i}"
   - "c$j"
   - "$basetime"
+  - "$baseoffset"
   - "$(ts)"
   - "$poddelay"
   - "$processes"
@@ -1919,7 +1930,8 @@ use strict;
 use Time::Piece;
 use Time::HiRes qw(gettimeofday);
 $SIG{TERM} = sub { POSIX::_exit(0); };
-my ($basetime, $listen_port, $container, $msgSize, $ts, $expected_clients) = @ARGV;
+my ($basetime, $baseoffset, $listen_port, $container, $msgSize, $ts, $expected_clients) = @ARGV;
+$basetime += $baseoffset;
 sub timestamp($) {
     my ($str) = @_;
     my (@now) = gettimeofday();
@@ -2010,6 +2022,7 @@ $(indent 2 createContainerResources)
   - |
 $(indent 4 serverContainerPerl)
   - "$basetime"
+  - "$baseoffset"
   - "$port"
   - "${namespace}-${i}-server"
   - "$msgSize"
@@ -2107,7 +2120,9 @@ use strict;
 use Time::HiRes qw(gettimeofday usleep);
 use Time::Piece;
 $SIG{TERM} = sub { kill 'KILL', -1; POSIX::_exit(0); };
-my ($namespace, $pod, $container, $basetime, $poddelay, $connect_port, $container, $srvhost, $data_rate, $bytes, $bytesMax, $msgSize, $xfertime, $xfertimeMax, $crtime, $exit_at_end, $synchost, $syncport, $namespace, $log_host, $log_port, $podname) = @ARGV;
+my ($namespace, $pod, $container, $basetime, $baseoffset, $poddelay, $connect_port, $container, $srvhost, $data_rate, $bytes, $bytesMax, $msgSize, $xfertime, $xfertimeMax, $crtime, $exit_at_end, $synchost, $syncport, $namespace, $log_host, $log_port, $podname) = @ARGV;
+$basetime += $baseoffset;
+$crtime += $baseoffset;
 my ($etime, $data_sent, $detime, $stime, $end_time, $dstime, $mean, $stdev, $user, $sys, $cuser, $csys, $elapsed);
 my $start_time;
 my $ghbn_time;
@@ -2363,6 +2378,7 @@ $(indent 4 clientContainerPerl)
   - "${namespace}-${i}-client-$replica"
   - "$j"
   - "$basetime"
+  - "$baseoffset"
   - "$poddelay"
   - "$port"
   - "c${j}"
@@ -2865,6 +2881,11 @@ function run_clusterbuster_1() {
     if ((report && logs_expected && timeout > 0)) ; then
 	local -i finis=0
 	while (( timeout < 0 || timeout-- )) ; do
+	    if "${OC}" get pods -A -l "$basename" |grep -q -E -e '(Error|Evicted|Crash)' ; then
+		echo "Run failed:" 1>&2
+		"${OC}" get pods -A -l "$basename" |grep -E -e '(Error|Evicted|Crash)'
+		break
+	    fi
 	    # This appears to be needed for the shell to actually reap
 	    # any terminated jobs.  Without this, the test below always
 	    # succeeds so the job doesn't exit.
