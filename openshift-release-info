@@ -35,7 +35,7 @@ my $verbose;
 my $help;
 
 sub read_releases() {
-    open(DOT, "-|", "curl --silent $dot_url") || die "Can't read $dot_url: $!\n";
+    open(DOT, "-|", "curl --silent -L $dot_url") || die "Can't read $dot_url: $!\n";
     my ($current_channel);
     while (<DOT>) {
 	chomp;
@@ -72,7 +72,7 @@ sub read_releases() {
 }
 
 sub read_graph() {
-    open(GRAPH, "-|", "curl --silent $cincy_url") || die "Can't read $cincy_url: $!\n";
+    open(GRAPH, "-|", "curl --silent -L $cincy_url") || die "Can't read $cincy_url: $!\n";
     my ($jsontxt);
     while (<GRAPH>) {
 	$jsontxt .= $_;
