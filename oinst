@@ -55,7 +55,7 @@ function clean_startup() {
 # It's fine for the running script to be removed, since the shell still
 # has its open file descriptor.
 if [[ $# = 0 || $1 != "--DoIt=$0" ]] ; then
-    tmpsc=$(mktemp)
+    tmpsc=$(mktemp -t oinst.XXXXXXXXXX)
     [[ -z $tmpsc || ! -f $tmpsc || -L $tmpsc ]] && fatal "Can't create temporary script file"
     trap clean_startup EXIT SIGHUP SIGINT SIGQUIT SIGTERM
     PATH+=${PATH:+:}$___topdir
@@ -385,7 +385,7 @@ function do_create_bastion_if_needed() {
     (( create_bastion )) || return
     platform_dispatch supports_bastion || return
     echo "Creating bastion host"
-    curl -s -S https://raw.githubusercontent.com/eparis/ssh-bastion/master/deploy/deploy.sh | bash
+    curl -s -S -L https://raw.githubusercontent.com/eparis/ssh-bastion/master/deploy/deploy.sh | bash
     # shellcheck disable=SC2181
     if (( $? )) ; then
 	echo "Create bastion host failed"
@@ -881,7 +881,7 @@ function installer_setup() {
 	not_latest=0
 	release_channel=${release_channel:-${release_base_map[$repo]:-}}
 	echo "Retrieving release data from $release_source/$release_channel/latest"
-	release_data="$(curl --silent "$release_source/$release_channel/latest")"
+	release_data="$(curl -S --silent -L "$release_source/$release_channel/latest")"
 	[[ -n $release_data ]] || fatal "Can't extract release data!"
 	install_version="$("$JQ" -r '.name' <<< "$release_data")"
 	[[ -n $install_version ]] || fatal "Can't extract install version!"
@@ -1115,7 +1115,7 @@ function run_postinstall() {
 		mkdir "$install_dir/bin" || fatal "Can't create $install_dir/bin"
 	    fi
 	    echo "Downloading oc binary..."
-	    if curl --silent --compressed -k "https://${download_route}/amd64/linux/oc" -o "$install_dir/bin/oc" ; then
+	    if curl -S --silent -L --compressed -k "https://${download_route}/amd64/linux/oc" -o "$install_dir/bin/oc" ; then
 		chmod +x "$install_dir/bin/oc"
 		PATH="$install_dir/bin:$PATH"
 	    else

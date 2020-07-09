@@ -227,7 +227,7 @@ function _____libvirt_base_domain() {
 function _____libvirt_platform() {
     # maipo is channel, not base.
     #local baseURL='https://releases-rhcos.svc.ci.openshift.org/storage/releases/maipo'
-    #local install_version=${install_version:-"$(curl --silent "$baseURL/builds.json" | "$JQ" -r '.builds[0]')"}
+    #local install_version=${install_version:-"$(curl --silent -S -L "$baseURL/builds.json" | "$JQ" -r '.builds[0]')"}
     cat <<EOF
 libvirt:
   URI: $OPENSHIFT_INSTALL_LIBVIRT_URI
