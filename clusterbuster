@@ -24,13 +24,16 @@ declare -i replicas=1
 declare -i parallel=1
 declare -i firstDeployment=0
 declare -i sleepSecrets=0
+declare -i sleepConfigMaps=0
 declare -i sleepNamespaces=0
 declare -i sleepDeployments=0
 declare -i parallelSecrets=0
+declare -i parallelConfigMaps=0
 declare -i parallelNamespaces=0
 declare -i parallelDeployments=0
 declare -i blocksize=1
 declare -i blocksizeSecrets=0
+declare -i blocksizeConfigMaps=0
 declare -i blocksizeNamespaces=0
 declare -i blocksizeDeployments=0
 declare -i containers=1
@@ -76,6 +79,8 @@ declare -a emptydirs=()
 declare -a sysbench_generic_options=()
 declare -a sysbench_fileio_options=()
 declare -A sysbench_fileio_tests=()
+declare -a fio_generic_options=()
+declare -a fio_jobfiles=()
 declare -i report=0
 declare -i verbose_report=0
 declare -i precleanup=0
@@ -84,6 +89,9 @@ declare -i timeout=-1
 declare pathdir=${0%/*}
 declare -a unknown_opts=()
 declare -i totalObjectsCreated=0
+# <name, filename with contents>
+declare -a configMapFiles=()
+declare configmapMountDir=/etc/map
 declare nodeSelector='node-role.kubernetes.io/worker'
 
 declare accumulateddata=
@@ -112,7 +120,7 @@ Usage: $0 [options] [name]
        -N namespaces   Number of namespaces to create (default 1)
                        If 0 is specified, then no namespaces are created
                        and the current namespace is used.
-       -P podtype      Pod type (classic, pause, server, cpu, sysbench)
+       -P podtype      Pod type (classic, pause, server, cpu, fio, sysbench)
        -p parallel     Number of operations to perform in parallel (default 1)
        -r replicas     Number of replicas per deployment (default 1)
                        For client/server, this refers to client pods.
@@ -167,7 +175,7 @@ Extended Options:
                         for calculation of start time offset
                         to correct for clock skew.  May be float.
        --report         Print report (client/server, soaker,
-                        sysbench only)
+                        fio, sysbench only)
        --verbose-report Print detailed report
        --precleanup     Clean up any prior objects
        --cleanup        Clean up generated objects
@@ -232,6 +240,12 @@ Extended Options:
                         numbers may be used to specify maximum time.
        --verbose        Print verbose log messages (-v)
        --wait_secrets   Wait for secrets to be created (-W) (default 1)
+
+    Fio General Options:
+       --fio-general-options=<options>
+                        Space or comma separated general fio options
+       --fio-jobfile=<file>
+			Name of fio job file to use.  May be repeated.
 
     Sysbench General Options:
        --sysbench-general-options=<options>
@@ -589,12 +603,15 @@ function process_option() {
 	poddelay)		    poddelay=$optvalue				;;
 	transfertime)		    set_xfer_time "$optvalue"			;;
 	first_deployment)	    firstDeployment=$optvalue			;;
+	parallel_configmaps)	    parallelConfigMaps=$optvalue		;;
 	parallel_secrets)	    parallelSecrets=$optvalue			;;
 	parallel_namespaces)	    parallelNamespaces=$optvalue		;;
 	parallel_deployments)	    parallelDeployments=$optvalue		;;
+	blocksize_configmaps)	    blocksizeConfigMaps=$optvalue		;;
 	blocksize_secrets)	    blocksizeSecrets=$optvalue			;;
 	blocksize_namespaces)	    blocksizeNamespaces=$optvalue		;;
 	blocksize_deployments)	    blocksizeDeployments=$optvalue		;;
+	sleep_configmaps)	    sleepConfigMaps=$optvalue			;;
 	sleep_secrets)		    sleepSecrets=$optvalue			;;
 	sleep_namespaces)	    sleepNamespaces=$optvalue			;;
 	sleep_deployments)	    sleepDeployments=$optvalue			;;
@@ -621,13 +638,20 @@ function process_option() {
 	emptydir)		    emptydirs+=("$optvalue")			;;
 	sync|syncstart|sync_start)  syncStart=$((1-syncStart))			;;
 	baseoffset|base_offset)     baseoffset=$optvalue			;;
-	sysbench_general_options)   sysbench_general_options+=(${optvalue//,/ });;
+	configmapfile)		    configMapFiles+=("$optvalue")		;;
+	sysbench_general_options)   sysbench_generic_options+=(${optvalue//,/ });;
+	sysbench_generic_options)   sysbench_generic_options+=(${optvalue//,/ });;
 	sysbench_fileio_options)    sysbench_fileio_options+=(${optvalue//,/ }) ;;
 	sysbench_fileio_tests)
 	    local ftest
 	    for ftest in ${optvalue//,/ } ; do
 		sysbench_fileio_tests[$ftest]=1
 	    done
+	    ;;
+	fio_generic_options)	   fio_generic_options+=(${optvalue//,/ })      ;;
+	fio_jobfile)
+	    fio_jobfiles+=("$optvalue")
+	    configMapFiles+=("$optvalue")
 	    ;;
 	affinity)
 	    case "$optvalue" in
@@ -647,6 +671,19 @@ function process_option() {
     if [[ $deploymentType != pod && $deploymentType != deployment ]] ; then
 	echo "-T/--deployment_type must be either pod or deployment"
 	help
+    fi
+}
+
+function checkConfigMaps() {
+    local errors=0
+    for mapfile in "$@" ; do
+	if [[ ! -r "$mapfile" ]] ; then
+	    echo "Can't find configmap file $mapfile"
+	    errors=$((errors+1))
+	fi
+    done
+    if (( errors )) ; then
+	exit 1
     fi
 }
 
@@ -686,15 +723,18 @@ while getopts ":B:b:c:D:d:EeHhM:m:N:nP:p:Qqr:Ss:T:t:vWw:XxYz:-:" opt ; do
     esac
 done
 [[ -n "${unknown_opts[*]:-}" ]] && help "${unknown_opts[@]}"
+checkConfigMaps "${configMapFiles[@]}"
 
 if (( namespaces <= 0 )) ; then
     namespaces=1
     useNamespaces=
 fi
+(( !parallelConfigMaps )) && parallelConfigMaps=$parallel
 (( !parallelSecrets )) && parallelSecrets=$parallel
 (( !parallelNamespaces )) && parallelNamespaces=$parallel
 (( !parallelDeployments )) && parallelDeployments=$parallel
 
+(( !blocksizeConfigMaps )) && blocksizeConfigMaps=$blocksize
 (( !blocksizeSecrets )) && blocksizeSecrets=$blocksize
 (( !blocksizeNamespaces )) && blocksizeNamespaces=$blocksize
 (( !blocksizeDeployments )) && blocksizeDeployments=$blocksize
@@ -723,7 +763,9 @@ case "$podType" in
     server)                podType=Server        ;;
     cpu*|CPU*|soaker)      podType=CPUSoaker     ;;
     sysbench|Sysbench)     podType=Sysbench      ;;
-    pause|PausePod|*)      podType=PausePod      ;;
+    fio|Fio)		   podType=Fio           ;;
+    pause|PausePod)        podType=PausePod      ;;
+    *)			   help_all		 ;;
 esac
 
 if [[ -n ${1:-} ]] ; then
@@ -824,7 +866,26 @@ function createObject() {
 	    (( !sleeptime )) || sleep "$sleeptime"
 	fi
     else
-	echo "$data"
+	IFS= echo "$data"
+    fi
+}
+
+function createObjectFromFile() {
+    local objtype=$1; shift
+    local namespace=$1; shift
+    local objname=$1; shift
+    local file
+    for file in "$@" ; do
+	if [[ ! -r "$file" ]] ; then
+	    echo "Can't read file $file!"
+	    exit 1
+	fi
+    done
+    if (( doit )) ; then
+	"$OC" create ${useNamespaces:+-n "$namespace"} "$objtype" "$objname" "${@/#/--from-file=}"
+	(( !sleeptime )) || sleep "$sleeptime"
+    else
+	echo "$OC" create ${useNamespaces:+-n "$namespace"} "$objtype" "$objname" "${@/#/--from-file=}"
     fi
 }
 
@@ -870,11 +931,17 @@ EOF
     done
 }
 
+function createConfigMaps() {
+    local namespace=$1
+    (( ${#configMapFiles[@]} )) || return;
+    createObjectFromFile configmap "$namespace" "configmap-${namespace}" "${configMapFiles[@]}"
+}
+
 function createVolumeMountsYAML() {
     local namespace=$1
     local deployment=${2:-1}
     local secrets=${3:-1}
-    (( secrets + ${#emptydirs[@]})) || return;
+    (( secrets + ${#emptydirs[@]} + ${#configMapFiles[@]})) || return;
     echo "volumeMounts:"
     local -i i
     for i in $(seq 0 $((secrets - 1))) ; do
@@ -894,13 +961,20 @@ EOF
 EOF
 	done
     fi
+    if [[ -n "${configMapFiles[*]}" ]] ; then
+	cat <<EOF
+- name: "configmap-${namespace}"
+  mountPath: "${configmapMountDir}"
+  readOnly: true
+EOF
+    fi
 }
 
 function createVolumesYAML() {
     local namespace=$1
     local deployment=${2:-1}
     local secrets=${3:-1}
-    (( secrets + ${#emptydirs[@]})) || return;
+    (( secrets + ${#emptydirs[@]} + ${#configMapFiles[@]})) || return;
     local -i i
     echo "volumes:"
     for i in $(seq 0 $((secrets - 1))) ; do
@@ -920,6 +994,13 @@ EOF
   emptydDir: {}
 EOF
 	done
+    fi
+    if [[ -n "${configMapFiles[*]}" ]] ; then
+	cat <<EOF
+- name: "configmap-${namespace}"
+  configMap:
+    name: "configmap-${namespace}"
+EOF
     fi
 }
 
@@ -1574,6 +1655,338 @@ EOF
     fi
 }
 
+function fioPerl() {
+    cat <<'EOF'
+#!/usr/bin/perl
+
+use Socket;
+use POSIX;
+use strict;
+use Time::Piece;
+use Time::HiRes qw(gettimeofday);
+our ($namespace, $pod, $container, $basetime, $baseoffset, $crtime, $poddelay, $processes, $rundir, $runtime, $exit_at_end, $synchost, $syncport, $loghost, $logport, $jobfiles_dir, $fio_generic_args) = @ARGV;
+$SIG{TERM} = sub { kill 'KILL', -1; POSIX::_exit(0); };
+$basetime += $baseoffset;
+$crtime += $baseoffset;
+$rundir .= "/$$$$";
+if (! mkdir($rundir)) {
+    timestamp("Cannot create run directory $rundir: $!");
+    exit(1);
+}
+if (! chdir($rundir)) {
+    timestamp("Cannot cd $rundir: $!");
+    exit(1);
+}
+
+sub cputime() {
+    my (@times) = times();
+    return $times[0] + $times[1] + $times[2] + $times[3];
+}
+
+sub ts() {
+    my (@now) = gettimeofday();
+    return sprintf("%s.%06d", gmtime($now[0])->strftime("%Y-%m-%dT%T"), $now[1]);
+}
+sub timestamp($) {
+    my ($str) = @_;
+    printf STDERR "%7d %s %s\n", $$$$, ts(), $str;
+}
+
+sub xtime() {
+    my (@now) = gettimeofday();
+    return $now[0] + ($now[1] / 1000000.0);
+}
+sub connect_to($$$$) {
+    my ($addr, $port) = @_;
+    my ($connected) = 0;
+    my ($ghbn_time, $stime);
+    my ($fname,$faliases,$ftype,$flen,$faddr);
+    my ($sock);
+    do {
+        ($fname,$faliases,$ftype,$flen,$faddr) = gethostbyname($addr);
+        my $sockaddr = "S n a4 x8";
+        if (length($faddr) < 4) {
+            print STDERR "Malformed address, waiting for addr for $addr\n";
+            sleep(1);
+        } else {
+            my $straddr = inet_ntoa($faddr);
+            timestamp("Connecting to $addr:$port ($fname, $ftype)");
+            $ghbn_time = xtime();
+            my $sockmeta = pack($sockaddr, AF_INET, $port, $faddr);
+            socket($sock, AF_INET, SOCK_STREAM, getprotobyname('tcp')) || die "can't make socket: $!";
+            $stime = xtime();
+            if (connect($sock, $sockmeta)) {
+                $connected = 1;
+                timestamp("Connected to $addr:$port ($fname, $ftype), waiting for sync");
+            } else {
+                timestamp("Could not connect to $addr on port $port: $!");
+                close $sock;
+                sleep(1);
+            }
+        }
+    } while (! $connected);
+    return ($sock, $ghbn_time, $stime);
+}
+
+sub do_sync($$$$;$) {
+    my ($addr, $port, $token) = @_;
+    if (not $addr) { return; }
+    if (not $token) {
+        $token = sprintf('%d', rand() * 999999999);
+    }
+    while (1) {
+	timestamp("Waiting for sync on $addr:$port");
+	my ($sync_conn, $i1, $i2) = connect_to($addr, $port);
+	my ($sbuf);
+	timestamp("Writing token $token to sync");
+	my ($answer) = syswrite($sync_conn, $token, length $token);
+	if ($answer != length $token) {
+	    timestamp("Write token failed: $!");
+	    exit(1);
+	}
+	$answer = sysread($sync_conn, $sbuf, 1024);
+	my ($str) = sprintf("Got sync (%s, %d, %s)!", $answer, length $sbuf, $!);
+	if ($!) {
+	    timestamp("$str, retrying");
+	} else {
+	    timestamp("$str, got sync");
+	    return;
+        }
+    }
+}
+
+sub runit(;$) {
+    my ($jobfile) = @_;
+    my ($basecpu) = cputime();
+    my ($prevcpu) = $basecpu;
+    my ($firsttime) = 1;
+    my ($avgcpu) = 0;
+    my ($weight) = .25;
+    my ($icputime);
+    my ($interval) = 5;
+    my $start_time;
+    my ($dstime) = xtime();
+
+    my $delaytime = $basetime + $poddelay - $dstime;
+    do_sync($synchost, $syncport);
+    my ($stime1) = xtime();
+    my ($stime) = $stime1;
+    my ($prevtime) = $stime;
+    my ($scputime) = cputime();
+    timestamp("Running...");
+    timestamp("fio $fio_generic_args --output-format=json+ $jobfile");
+    pipe(READER, WRITER) || die "Can't create pipe: $!\n";
+    my ($pid) = fork();
+    if ($pid == -1) {
+        die "Can't fork: $!\n";
+    } elsif ($pid == 0) {
+        close READER;
+	open(STDOUT, ">&WRITER") || die "Can't dup stdout to writer: $!\n";
+	open(STDERR, ">&WRITER") || die "Can't dup stderr to writer: $!\n";
+	exec("/bin/bash", "-c", "fio $fio_generic_args --output-format=json+ $jobfile") || die "Can't run fio: $!\n";
+        # NOTREACHED
+	exit(1);
+    } else {
+        close WRITER;
+	while (<READER>) {
+	    print STDERR $_;
+	}
+	close WRITER;
+    }
+    my ($child) = wait();
+    if ($child < 0) {
+        print STDERR "*** Can't reap child (expected $pid, got $child)!\n";
+    } else {
+        my ($status) = $? >> 8;
+        print STDERR "fio returned $status\n";
+    }
+#    my ($answer) = sprintf("STATS %d %.3f %.3f %.3f %d %d %d %d %d %.03f %.06f %.06f %.06f %.06f",
+#	    $$$$, $crtime - $basetime, $dstime - $basetime, $stime1 - $basetime,
+#	    $readops, $writeops, $fsyncops, $readrate, $writerate, $et, $min_lat, $avg_lat, $max_lat, $p95_lat);
+#    print STDERR "$answer\n";
+#    do_sync($synchost, $syncport, $answer);
+     do_sync($synchost, $syncport);
+#    do_sync($loghost, $logport, "-n $namespace $pod -c $container terminated 0 0 0 $answer");
+}
+
+sub get_jobfiles($) {
+    my ($dir) = @_;
+    opendir DIR, $dir || die "Can't find job files in $dir: #!\n";
+    
+    my @files = map { "$dir/$_" } grep { -f "$dir/$_" } sort readdir DIR;
+    closedir DIR;
+    print STDERR "get_jobfiles($dir) => @files\n";
+    return @files;
+}
+
+my (@jobfiles) = get_jobfiles($jobfiles_dir);
+
+sub runall() {
+    if ($#jobfiles >= 0) {
+	foreach my $file (@jobfiles) {
+	    runit($file)
+	}
+    } else {
+        runit()
+    }
+}
+
+if ($processes > 1) {
+    for (my $i = 0; $i < $processes; $i++) {
+        if ((my $child = fork()) == 0) {
+            runall();
+            exit(0);
+        }
+    }
+} else {
+    runall();
+}
+if ($exit_at_end) {
+    timestamp("About to exit");
+    while (wait() > 0) {}
+    timestamp("Done waiting");
+    print STDERR "FINIS\n";
+    POSIX::_exit(0);
+} else {
+    timestamp("Waiting forever");
+    pause()
+}
+EOF
+}
+
+function createContainersFioYAML() {
+    local namespace=$1
+    local i=$2
+    local secretCount=$3
+    local -i processes=$4
+    local -i containers=$5
+    local log_host=${6:-}
+    local -i log_port=${7:-0}
+    local -i j
+    local syncService=
+    local syncPortNum=
+    if (( syncStart )) ; then
+	syncService="service-${namespace}-sync"
+	syncPortNum=$syncPort
+    fi
+    # For prototype, just use /tmp.
+    local workdir=${emptydirs[0]:-/tmp}
+    for j in $(seq 0 $((containers - 1))) ; do
+	cat <<EOF
+- name: "c${j}"
+  imagePullPolicy: Always
+  image: "quay.io/rkrawitz/fio:latest"
+$(indent 2 createContainerResources)
+  env:
+  - name: VERBOSE
+    value: "$verbose"
+  command:
+  - perl
+  args:
+  - -e
+  - |
+$(indent 4 fioPerl)
+  - "$namespace"
+  - "${namespace}-fio-${i}"
+  - "c${j}"
+  - "$basetime"
+  - "$baseoffset"
+  - "$(ts)"
+  - "$poddelay"
+  - "$processes"
+  - "$workdir"
+  - "$xferTime"
+  - "$exitAtEnd"
+  - "$syncService"
+  - "$syncPortNum"
+  - "$log_host"
+  - "$log_port"
+  - "$configmapMountDir"
+  - "${fio_generic_options[*]}"
+$(indent 2 createVolumeMountsYAML "$namespace" "$i" "$secretCount")
+EOF
+    done
+}
+
+function createFioSpec() {
+    local namespace=$1
+    local i=$2
+    local secretCount=$3
+    local -i processes=$4
+    local -i containers=$5
+    cat <<EOF
+spec:
+$(indent 2 node_selector)
+  terminationGracePeriodSeconds: 1
+  restartPolicy: Always
+$(indent 2 createPodResources)
+$(indent 2 <<< "$runtimeClass")
+  containers:
+$(indent 2 createContainersFioYAML "$@")
+$(indent 2 createVolumesYAML "$namespace" "$i" "$secretCount")
+EOF
+}
+
+function createFioDeployment() {
+    local namespace=$1
+    local i=$2
+    local secretCount=$3
+    local -i processes=$4
+    local -i containers=$5
+    local nsline=${useNamespaces:+  namespace: "$namespace"}
+    if [[ $deploymentType = pod ]] ; then
+	createObject <<EOF
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ${namespace}-fio-${i}
+$nsline
+$(indent 2 node_selector)
+  selector:
+    matchLabels:
+      app: ${namespace}-fio-${i}
+  labels:
+    ${basename}: "true"
+    clusterbusterbase: "true"
+    name: ${namespace}-fio-${i}
+    app: ${namespace}-fio-${i}
+    ${basename}-fio: "true"
+    ${basename}-client: "true"
+$(createFioSpec "$@")
+  restartPolicy: Never
+EOF
+    else
+	createObject <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ${namespace}-fio-$i
+$nsline
+  labels:
+    ${basename}: "true"
+    clusterbusterbase: "true"
+spec:
+  replicas: 1
+$(indent 2 node_selector)
+  selector:
+    matchLabels:
+      app: ${namespace}-fio-$i
+  strategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        ${basename}: "true"
+        clusterbusterbase: "true"
+        name: ${namespace}-fio-$i
+        app: ${namespace}-fio-$i
+        ${basename}-fio: "true"
+        ${basename}-client: "true"
+$(indent 4 createFioSpec "$@")
+EOF
+    fi
+}
+
 function cpuSoakerPerl() {
     cat <<'EOF'
 #!/usr/bin/perl
@@ -2123,11 +2536,10 @@ $SIG{TERM} = sub { kill 'KILL', -1; POSIX::_exit(0); };
 my ($namespace, $pod, $container, $basetime, $baseoffset, $poddelay, $connect_port, $container, $srvhost, $data_rate, $bytes, $bytesMax, $msgSize, $xfertime, $xfertimeMax, $crtime, $exit_at_end, $synchost, $syncport, $namespace, $log_host, $log_port, $podname) = @ARGV;
 $basetime += $baseoffset;
 $crtime += $baseoffset;
-my ($etime, $data_sent, $detime, $stime, $end_time, $dstime, $mean, $stdev, $user, $sys, $cuser, $csys, $elapsed);
+my ($etime, $data_sent, $detime, $stime, $end_time, $dstime, $mean, $max, $stdev, $user, $sys, $cuser, $csys, $elapsed);
 my $start_time;
 my $ghbn_time;
 my $pass = 0;
-my $e0 = 0;
 my $ex = 0;
 my $ex2 = 0;
 my ($cfail) = 0;
@@ -2154,10 +2566,10 @@ sub calibrate_time() {
     $time_overhead /= 1000;
 }
 sub stats() {
-    return sprintf("STATS %.3f %.3f %.3f %.3f %.3f %.3f %.6f %.3f %.3f %d %.3f %.3f %.6f %.6f %.6f",
+    return sprintf("STATS %.3f %.3f %.3f %.3f %.3f %.3f %.6f %.3f %.3f %d %.3f %.3f %.6f %.6f %.6f %.6f %d",
 	   $crtime - $basetime, $start_time - $basetime, $ghbn_time - $basetime, $etime - $basetime,
 	   $dstime - $basetime, $end_time - $basetime, $elapsed, $user, $sys,
-	   $data_sent, $detime, $data_sent / $detime / 1000000.0, $mean, $stdev, $time_overhead);
+	   $data_sent, $detime, $data_sent / $detime / 1000000.0, $mean, $max, $stdev, $time_overhead, $pass);
 }
 sub connect_to($$$$) {
     my ($addr, $port) = @_;
@@ -2246,6 +2658,7 @@ my $MBSec = $data_rate * 1;
 
 $data_sent = 0;
 $mean = 0;
+$max = 0;
 $stdev = 0;
 if ($bytes != $bytesMax) {
     $bytes += int(rand($bytesMax - $bytes + 1));
@@ -2262,11 +2675,12 @@ if ($MBSec != 0) {
 	usleep($delaytime * 1000000);
     }
     $dstime = xtime();
-    my ($tbuf, $rtt_start, $rtt_end, $rtt_elapsed);
+    my ($tbuf, $rtt_start, $rtt_elapsed, $en);
     while (($bytes > 0 && $data_sent < $bytes) ||
 	   ($xfertime > 0 && xtime() - $dstime < $xfertime)) {
 	my $nwrite;
 	my $nleft = $bufsize;
+	$rtt_start = xtime();
 	while ($nleft > 0 && ($nwrite = syswrite($conn, $buffer, $nleft)) > 0) {
 	    $nleft -= $nwrite;
 	    $data_sent += $nwrite;
@@ -2277,23 +2691,20 @@ if ($MBSec != 0) {
 	    die "Write failed: $!\n";
 	}
 	$nleft = $bufsize;
-	 $rtt_start = xtime();
 	while ($nleft > 0 && ($nread = sysread($conn, $tbuf, $nleft)) > 0) {
 	    $nleft -= $nread;
 	}
-        $rtt_end = xtime();
-	$rtt_elapsed = $rtt_end - $rtt_start - $time_overhead;
-	if ($pass == 0) {
-	    $e0 = $rtt_elapsed - $;
-	}
-	my $en = $rtt_elapsed - $e0;
+	$en = xtime() - $rtt_start - $time_overhead;
 	$ex += $en;
 	$ex2 += $en * $en;
+	if ($en > $max) {
+	    $max = $en;
+	}
 	if ($nread < 0) {
 	    die "Read failed: $!\n";
 	}
 	if ($ENV{"VERBOSE"} > 0) {
-	    timestamp(sprintf("Write/Read %d %.6f", $bufsize, $rtt_elapsed));
+	    timestamp(sprintf("Write/Read %d %.6f", $bufsize, $en));
 	}
 	my $curtime = xtime();
 	$starttime += $bufsize / ($MBSec * 1000000);
@@ -2311,7 +2722,7 @@ if ($MBSec != 0) {
     }
 }
 if ($pass > 0) {
-    $mean = ($ex / $pass) + $e0;
+    $mean = ($ex / $pass);
     if ($pass > 1) {
 	$stdev = sqrt(($ex2 - ($ex * $ex / $pass)) / ($pass - 1));
     }
@@ -2533,36 +2944,12 @@ function createDeploymentSimple() {
     done
 }
 
-function createSyncSimple() {
-    :
-}
-
-function calculateLogsRequiredSimple() {
-    echo 0
-}
-
 function createDeploymentPausePod() {
     createDeploymentSimple "$@"
 }
 
-function createSyncPausePod() {
-    :
-}
-
-function calculateLogsRequiredPausePod() {
-    echo 0
-}
-
 function createDeploymentClusterBuster() {
     createDeploymentSimple "$@"
-}
-
-function createSyncClusterBuster() {
-    :
-}
-
-function calculateLogsRequiredClusterBuster() {
-    echo 0
 }
 
 function createDeploymentSysbench() {
@@ -2591,6 +2978,34 @@ function createSyncSysbench() {
     local containers=${5:-1}
     createService "$namespace" "${namespace}-sync" "$syncPort"
     createSyncDeployment 3 "$namespace" "$((containers * replicas * count))"
+}
+
+function createDeploymentFio() {
+    local namespace=$1
+    local count=${2:-1}
+    local secretCount=${3:-1}
+    local replicas=${4:-1}
+    local containers=${5:-1}
+    local log_host=${6:-}
+    local -i log_port=${7:-0}
+    local -i i
+    if (( syncStart )) ; then
+	createService "$namespace" "${namespace}-sync" "$syncPort"
+	createSyncDeployment $((${#configMapFiles[@]} ? ${#configMapFiles[@]} * 2 : 2)) "$namespace" "$((containers * replicas * count))"
+    fi
+    for i in $(seq $firstDeployment $((count + firstDeployment - 1))) ; do
+	createFioDeployment "$namespace" "$i" "$secretCount"  "$replicas" "$containers" "$log_host" "$log_port"
+    done
+}
+
+function createSyncFio() {
+    local namespace=$1
+    local count=${2:-1}
+    local secretCount=${3:-1}
+    local replicas=${4:-1}
+    local containers=${5:-1}
+    createService "$namespace" "${namespace}-sync" "$syncPort"
+    createSyncDeployment $((${#configMapFiles[@]} ? ${#configMapFiles[@]} * 2 : 2)) "$namespace" "$((containers * replicas * count))"
 }
 
 function calculateLogsRequiredSysbench() {
@@ -2681,13 +3096,29 @@ function createSyncServer() {
     createSyncDeployment 2 "$namespace" "$((containers * replicas * count))"
 }
 
+function doSetup() {
+    if type -t "doSetup${podType}" >/dev/null ; then
+	"doSetup${podType}"
+    fi
+}
+
 function createDeployment() {
     "createDeployment${podType}" "$@"
 }
 
 function createSync() {
     if (( syncStart )) ; then
-	"createSync${podType}" "$@"
+	if type -t "createSync${podType}" >/dev/null  ; then
+	    "createSync${podType}" "$@"
+	fi
+    fi
+}
+
+function calculateLogsRequired() {
+    if type -t "calculateLogsRequired${podType}" >/dev/null ; then
+	"calculateLogsRequired${podType}" "$@"
+    else
+	echo 0
     fi
 }
 
@@ -2764,6 +3195,15 @@ function createAllSecrets() {
     wait
 }
 
+function createAllConfigMaps() {
+    local i
+    trap 'kill -9 $(jobs -p); exit' INT
+    for i in $(seq 0 "$((parallelConfigMaps - 1))") ; do
+	createObjects_n ConfigMaps "$parallelConfigMaps" "$blocksizeConfigMaps" "$((i * blocksizeConfigMaps))" "$sleepConfigMaps" &
+    done
+    wait
+}
+
 function createAllDeployments() {
     local i
     trap 'kill -9 $(jobs -p); exit' INT
@@ -2778,7 +3218,7 @@ function createAllObjects() {
     local found_objtype
     local objtype=$1
     shift
-    while read -r line ; do
+    while read -r 'line' ; do
 	if [[ $line =~ ^[[:digit:]]{4}(-[[:digit:]]{2}){2}T([[:digit:]]{2}:){2}[[:digit:]]{2}\.[[:digit:]]{6}\ +([-a-z0-9]+)/([-a-z0-9]+)\ +created$ ]] ; then
 	    if (( reportObjectCreation )) ; then
 		echo "$line"
@@ -2791,7 +3231,7 @@ function createAllObjects() {
 		objectsCreated[$found_objtype]=$((${objectsCreated[$found_objtype]:-}+1))
 	    fi
 	elif [[ -n "$line" ]] ; then
-	    echo "$line"
+	    (IFS=''; echo "$line")
 	fi
     done <<< "$("createAll${objtype}" "$@" 2>&1)"
 }
@@ -2846,6 +3286,7 @@ function run_clusterbuster_1() {
     fi
 
     createAllObjects Secrets
+    createAllObjects ConfigMaps
 
     if (( doit )) ; then
 	local secname=""
@@ -2866,7 +3307,7 @@ function run_clusterbuster_1() {
     local log_host=
     local -i log_port=0
     if ((doit && report)) ; then
-	logs_expected="$("calculateLogsRequired${podType}" "$namespaces" "$depsPerNamespace" "$replicas" "$containers")"
+	logs_expected="$("calculateLogsRequired" "$namespaces" "$depsPerNamespace" "$replicas" "$containers")"
 	if ((logs_expected)) ; then
 	    log_host=$(hostname -f)
 	    log_port=$(find_free_port)
@@ -2881,9 +3322,10 @@ function run_clusterbuster_1() {
     if ((report && logs_expected && timeout > 0)) ; then
 	local -i finis=0
 	while (( timeout < 0 || timeout-- )) ; do
-	    if "${OC}" get pods -A -l "$basename" |grep -q -E -e '(Error|Evicted|Crash)' ; then
+	    # CreateContainerError is not necessarily fatal
+	    if "${OC}" get pods -A -l "$basename" |grep -q -E -e '([^r]Error|Evicted|Crash)' ; then
 		echo "Run failed:" 1>&2
-		"${OC}" get pods -A -l "$basename" |grep -E -e '(Error|Evicted|Crash)'
+		"${OC}" get pods -A -l "$basename" |grep -E -e '([^r]Error|Evicted|Crash)'
 		break
 	    fi
 	    # This appears to be needed for the shell to actually reap
