@@ -437,7 +437,7 @@ trap exit INT
 function get_logs() {
     local varg=
     ((verbose_report)) && varg=-v
-    exec perl -e "$(get_logs_perl)" -- "$@" | "${pathdir:-.}/clusterbuster-connstat" -s -f - "$varg"
+    exec "${__libdir__}/get_logs" "$@" | "${pathdir:-.}/clusterbuster-connstat" -s -f - "$varg"
 }
 
 function set_xfer() {
@@ -2305,7 +2305,7 @@ function run_clusterbuster_1() {
 	    log_host=$(hostname -f)
 	    log_port=$("${__libdir__}/find_free_port")
 	    (( log_port )) || fatal "Can't get port to listen for logs on!"
-	    "${__libdir__}/get_logs" -p "$log_port" -c "$logs_expected" &
+	    get_logs -p "$log_port" -c "$logs_expected" &
 	fi
     fi
     basetime=$(printf '%(%s)T' -1)
