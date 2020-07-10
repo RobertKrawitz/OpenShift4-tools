@@ -11,9 +11,9 @@ set -u
 
 declare payload=$1
 shift
-export APPRENTICE_CONFIGMAP=${payload%/*}
-export APPRENTICE_INSDIR=/opt/tool-apprentice
-declare inplace="$APPRENTICE_INSDIR/${payload##*/}"
+export BAK_CONFIGMAP=${payload%/*}
+export BAK_INSDIR=/var/tmp
+declare inplace="$BAK_INSDIR/${payload##*/}"
 
 if [[ -f "$payload" ]] ; then
     cp "$payload" "$inplace"
