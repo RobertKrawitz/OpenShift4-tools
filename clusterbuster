@@ -80,7 +80,6 @@ declare -a sysbench_generic_options=()
 declare -a sysbench_fileio_options=()
 declare -A sysbench_fileio_tests=()
 declare -a fio_generic_options=()
-declare -a fio_jobfiles=()
 declare -i report=0
 declare -i verbose_report=0
 declare -i precleanup=0
@@ -91,7 +90,10 @@ declare -a unknown_opts=()
 declare -i totalObjectsCreated=0
 # <name, filename with contents>
 declare -a configMapFiles=()
+declare -a tolerations=()
 declare configmapMountDir=/etc/map
+declare systemConfigmapMountDir=/etc/bootstrap
+declare -i hasSystemConfigMap=0
 declare nodeSelector='node-role.kubernetes.io/worker'
 
 declare accumulateddata=
@@ -99,6 +101,22 @@ declare accumulateddata=
 declare OC
 OC=$(type -p oc)
 OC=${OC:-$(type -p kubectl)}	# kubectl might not work, though...
+
+declare __me__
+__me__=$(realpath -e "$0")
+
+if [[ -z "$__me__" ]] ; then
+    echo "Can't find my path!" 1>&2
+    exit 1
+fi
+
+declare __mydir__=${__me__%/*}
+declare __libdir__=${__mydir__}/lib/clusterbuster
+
+if [[ ! -d "$__libdir__" ]] ; then
+    echo "Can't find my library dir!" 1>&2
+    exit 1
+fi
 
 function _helpmsg() {
     local opt
@@ -222,6 +240,8 @@ Extended Options:
                         Run the pods in the designated runtimeclass.
        --kata           Synonym for --runtimeclass=kata-qemu
        --emptydir=dir   Mount an emptydir volume at the specified mount point.
+       --tolerate=<key:operator:effect>
+                        Apply the specified tolerations to created pods.
 
     Client/server options:
        --affinity       Force affinity between client and server pods
@@ -407,116 +427,12 @@ function ts() {
 }
 
 function timestamp() {
-    while read -r 'LINE' ; do
+    while IFS= read -r 'LINE' ; do
 	printf "%s %s\n" "$(TZ=GMT-0 date '+%Y-%m-%dT%T.%N' | cut -c1-26)" "$LINE"
     done
 }
 
 trap exit INT
-
-function find_free_port_perl() {
-    cat <<'EOF'
-#!/usr/bin/perl
-
-use Socket;
-use POSIX;
-use strict;
-use Getopt::Long;
-Getopt::Long::Configure("bundling", "pass_through");
-
-my ($port) = 4097;
-
-GetOptions("p=i" => \$port);
-
-while ($port < 65535) {
-    my $sockaddr = "S n a4 x8";
-    my ($socket);
-    socket($socket, AF_INET, SOCK_STREAM, getprotobyname('tcp')) || die "socket: $!";
-    setsockopt($socket,SOL_SOCKET, SO_REUSEADDR, pack("l",1)) || die "setsockopt reuseaddr: $!\n";
-    setsockopt($socket,SOL_SOCKET, SO_KEEPALIVE, pack("l",1)) || die "setsockopt keepalive: $!\n";
-    if (bind($socket, pack($sockaddr, AF_INET, $port, "\0\0\0\0"))) {
-	print "$port\n";
-	exit 0;
-    }
-    $port++;
-}
-die "Can't find free port!\n";
-EOF
-}
-
-function find_free_port() {
-    perl -e "$(find_free_port_perl)"
-}
-
-function get_logs_perl() {
-    cat <<'EOF'
-#!/usr/bin/perl
-
-use Socket;
-use POSIX;
-use strict;
-use Getopt::Long;
-Getopt::Long::Configure("bundling", "pass_through");
-
-my ($timeout) = -1;
-my ($port) = 4096;
-my ($expect_count) = -1;
-
-GetOptions("t=i" => \$timeout,
-	   "p=i" => \$port,
-	   "c=i" => \$expect_count);
-
-my $sockaddr = "S n a4 x8";
-my ($socket);
-socket($socket, AF_INET, SOCK_STREAM, getprotobyname('tcp')) || die "socket: $!";
-setsockopt($socket,SOL_SOCKET, SO_REUSEADDR, pack("l",1)) || die "setsockopt reuseaddr: $!\n";
-setsockopt($socket,SOL_SOCKET, SO_KEEPALIVE, pack("l",1)) || die "setsockopt keepalive: $!\n";
-if (!bind($socket, pack($sockaddr, AF_INET, $port, "\0\0\0\0"))) {
-    die "Can't bind to port $port\n";
-}
-listen($socket, 100) || die "Can't listen on port $port\n";
-
-my ($client_count) = 0;
-eval {
-    if ($timeout > 0) {
-	alarm $timeout;
-    }
-    my $kid;
-    while ($expect_count < 0 || $client_count < $expect_count) {
-    	my $client;
-	accept ($client, $socket) || next;
-    	my $child = fork;
-	if ($child == 0) {
-	    close ($socket);
-	    my ($tbuf) = "";
-	    my ($status);
-	    if (($status = sysread($client, $tbuf, 1024)) > 0) {
-		print "$tbuf\n";
-	    }
-	    close($client);
-	    exit(0);
-        } else {
-	    close($client);
-	    if ($child > 0) {
-		$client_count++;
-	    } else {
-		warn "Fork failed: $!"
-	    }
-	}
-	do {
-	    $kid = waitpid(-1, WNOHANG);
- 	} while ($kid > 0);
-    }
-    do {
-	$kid = wait();
-    } while ($kid > 0);
-};
-
-if ($@) {
-    die "$@";
-}
-EOF
-}
 
 function get_logs() {
     local varg=
@@ -639,6 +555,7 @@ function process_option() {
 	sync|syncstart|sync_start)  syncStart=$((1-syncStart))			;;
 	baseoffset|base_offset)     baseoffset=$optvalue			;;
 	configmapfile)		    configMapFiles+=("$optvalue")		;;
+	tolerate|toleration)	    tolerations+=("$optvalue")			;;
 	sysbench_general_options)   sysbench_generic_options+=(${optvalue//,/ });;
 	sysbench_generic_options)   sysbench_generic_options+=(${optvalue//,/ });;
 	sysbench_fileio_options)    sysbench_fileio_options+=(${optvalue//,/ }) ;;
@@ -650,7 +567,6 @@ function process_option() {
 	    ;;
 	fio_generic_options)	   fio_generic_options+=(${optvalue//,/ })      ;;
 	fio_jobfile)
-	    fio_jobfiles+=("$optvalue")
 	    configMapFiles+=("$optvalue")
 	    ;;
 	affinity)
@@ -723,7 +639,6 @@ while getopts ":B:b:c:D:d:EeHhM:m:N:nP:p:Qqr:Ss:T:t:vWw:XxYz:-:" opt ; do
     esac
 done
 [[ -n "${unknown_opts[*]:-}" ]] && help "${unknown_opts[@]}"
-checkConfigMaps "${configMapFiles[@]}"
 
 if (( namespaces <= 0 )) ; then
     namespaces=1
@@ -819,6 +734,21 @@ function createResources() {
     done
 }
 
+function createTolerations() {
+    local toleration
+    (( ${#tolerations[@]} )) || return
+    echo "tolerations:"
+    for toleration in "${tolerations[@]}" ; do
+	# shellcheck disable=SC2206
+	local -a tol=(${toleration//:/ })
+	cat <<EOF
+- key: "${tol[0]:-}"
+  operator: "${tol[1]:-}"
+  effect: "${tol[2]:-}"
+EOF
+    done
+}
+
 function createPodResources() {
     if (( ${#pod_resource_limits[@]} + ${#pod_resource_requests[@]} )) ; then
 	echo "resources:"
@@ -831,6 +761,7 @@ function createPodResources() {
 	    indent 4 createResources "${pod_resource_requests[@]}"
 	fi
     fi
+    createTolerations "${tolerations[@]}"
 }
 
 function createContainerResources() {
@@ -932,18 +863,29 @@ EOF
 }
 
 function createConfigMaps() {
-    local namespace=$1
-    (( ${#configMapFiles[@]} )) || return;
-    createObjectFromFile configmap "$namespace" "configmap-${namespace}" "${configMapFiles[@]}"
+    local namespace=$1; shift
+    local mapname=$1; shift
+    (( $# )) || return;
+    createObjectFromFile configmap "$namespace" "${mapname}-${namespace}" "$@"
+}
+
+function genericCommand() {
+    local command=$1
+    cat <<EOF
+command:
+- bootstrap.sh
+args:
+- "$systemConfigmapMountDir/$command"
+EOF
 }
 
 function createVolumeMountsYAML() {
     local namespace=$1
     local deployment=${2:-1}
     local secrets=${3:-1}
-    (( secrets + ${#emptydirs[@]} + ${#configMapFiles[@]})) || return;
-    echo "volumeMounts:"
+    (( secrets + ${#emptydirs[@]} + ${#configMapFiles[@]} + hasSystemConfigMap )) || return;
     local -i i
+    echo volumeMounts:
     for i in $(seq 0 $((secrets - 1))) ; do
 	local name="secret-${namespace}-${deployment}-$i"
 	cat <<EOF
@@ -968,13 +910,20 @@ EOF
   readOnly: true
 EOF
     fi
+    if (( hasSystemConfigMap )) ; then
+	cat <<EOF
+- name: "systemconfigmap-${namespace}"
+  mountPath: "${systemConfigmapMountDir}"
+  readOnly: true
+EOF
+    fi
 }
 
 function createVolumesYAML() {
     local namespace=$1
     local deployment=${2:-1}
     local secrets=${3:-1}
-    (( secrets + ${#emptydirs[@]} + ${#configMapFiles[@]})) || return;
+    (( secrets + ${#emptydirs[@]} + ${#configMapFiles[@]} + hasSystemConfigMap )) || return;
     local -i i
     echo "volumes:"
     for i in $(seq 0 $((secrets - 1))) ; do
@@ -1002,6 +951,13 @@ EOF
     name: "configmap-${namespace}"
 EOF
     fi
+    if (( hasSystemConfigMap )) ; then
+	cat <<EOF
+- name: "systemconfigmap-${namespace}"
+  configMap:
+    name: "systemconfigmap-${namespace}"
+EOF
+    fi
 }
 
 function createContainersClusterBusterYAML() {
@@ -1014,7 +970,7 @@ function createContainersClusterBusterYAML() {
     for j in $(seq 0 $((containers - 1))) ; do
 	cat <<EOF
 - name: ${namespace}-$i-$j
-  imagePullPolicy: IfNotPresent
+  imagePullPolicy: Always
   image: "busybox"
 $(indent 2 createContainerResources)
   command:
@@ -1042,7 +998,7 @@ function createContainersPausePodYAML() {
     for j in $(seq 0 $((containers - 1))) ; do
 	cat <<EOF
 - name: ${namespace}-$i-$j
-  imagePullPolicy: IfNotPresent
+  imagePullPolicy: Always
   image: "gcr.io/google_containers/pause-amd64:3.0"
 $(indent 2 createContainerResources)
 $(indent 2 createVolumeMountsYAML "$namespace" "$i" "$secretCount")
@@ -1129,91 +1085,21 @@ EOF
     fi
 }
 
-function syncPerl() {
-    cat <<'EOF'
-#!/usr/bin/perl
-use Socket;
-use POSIX;
-use strict;
-use Time::Piece;
-use Time::HiRes qw(gettimeofday);
-$SIG{TERM} = sub { POSIX::_exit(0); };
-my ($listen_port, $expected_clients, $syncCount) = @ARGV;
-if (! $syncCount) {
-    $syncCount = 1;
-}
-sub timestamp($) {
-    my ($str) = @_;
-    my (@now) = gettimeofday();
-    printf STDERR  "sync %s.%06d %s\n", gmtime($now[0])->strftime("%Y-%m-%dT%T"), $now[1], $str;
-}
-timestamp("Clusterbuster sync starting");
-my $sockaddr = "S n a4 x8";
-socket(SOCK, AF_INET, SOCK_STREAM, getprotobyname('tcp')) || die "socket: $!";
-$SIG{TERM} = sub { close SOCK; POSIX::_exit(0); };
-setsockopt(SOCK,SOL_SOCKET, SO_REUSEADDR, pack("l",1)) || die "setsockopt reuseaddr: $!\n";
-setsockopt(SOCK,SOL_SOCKET, SO_KEEPALIVE, pack("l",1)) || die "setsockopt keepalive: $!\n";
-bind(SOCK, pack($sockaddr, AF_INET, $listen_port, "\0\0\0\0")) || die "bind: $!\n";
-listen(SOCK, 5) || die "listen: $!";
-my $mysockaddr = getsockname(SOCK);
-my ($junk, $port, $addr) = unpack($sockaddr, $mysockaddr);
-die "can't get port $port: $!\n" if ($port ne $listen_port);
-timestamp("Listening on port $listen_port");
-my (@clients);
-
-while ($syncCount < 0 || $syncCount-- > 0) {
-    my $child = fork();
-    if ($child == 0) {
-	print STDERR "Expect $expected_clients clients\n";
-	while ($expected_clients > 0) {
-	    my ($client);
-	    accept($client, SOCK) || next;
-	    my $peeraddr = getpeername($client);
-	    my ($port, $addr) = sockaddr_in($peeraddr);
-	    my $peerhost = gethostbyaddr($addr, AF_INET);
-	    my $peeraddr = inet_ntoa($addr);
-	    my ($tbuf) = "NULL";
-	    if (sysread($client, $tbuf, 1024) <= 0) {
-		timestamp("Read token from $peerhost failed: $!");
-	    }
-	    timestamp("Accepted connection from $peerhost ($peeraddr) on $port, token $tbuf");
-	    push @clients, $client;
-	    $expected_clients--;
-	}
-	timestamp("Waiting 1 second to sync:");
-	sleep(1);
-	timestamp("Done!");
-        POSIX::_exit(0);
-    } elsif ($child < 1) {
-        timestamp("Fork failed: $!");
-	POSIX::_exit(1);
-    } else {
-        wait();
-    }
-}
-POSIX::_exit(0);
-EOF
-}
-
 function createSyncYAML() {
     local syncCount=${1:-1}
     local namespace=$2
     local expectedClients=$3
     cat <<EOF
 - name: ${namespace}-sync
-  imagePullPolicy: IfNotPresent
-  image: perl
+  imagePullPolicy: Always
+  image: "quay.io/rkrawitz/bench-army-knife"
   ports:
   - containerPort: $port
-  command:
-  - perl
-  args:
-  - -e
-  - |
-$(indent 4 syncPerl)
+$(indent 2 genericCommand sync.pl)
   - "$syncPort"
   - "$expectedClients"
   - "$syncCount"
+$(indent 2 createVolumeMountsYAML "$namespace" 0 0)
 EOF
 }
 
@@ -1222,9 +1108,11 @@ function createSyncSpec() {
 spec:
 $(indent 2 node_selector)
   terminationGracePeriodSeconds: 1
+$(indent 2 createTolerations "${tolerations[@]}")
 $(indent 2 <<< "$runtimeClass")
   containers:
 $(indent 2 createSyncYAML "$@")
+$(indent 2 createVolumesYAML "$namespace" 0 0)
 EOF
 }
 
@@ -1285,241 +1173,6 @@ EOF
     fi
 }
 
-function sysbenchPerl() {
-    cat <<'EOF'
-#!/usr/bin/perl
-
-use Socket;
-use POSIX;
-use strict;
-use Time::Piece;
-use Time::HiRes qw(gettimeofday);
-our ($namespace, $pod, $container, $basetime, $baseoffset, $crtime, $poddelay, $processes, $rundir, $runtime, $exit_at_end, $synchost, $syncport, $loghost, $logport, $sysbench_generic_args, $sysbench_cmd, $sysbench_fileio_args, $sysbench_modes) = @ARGV;
-$SIG{TERM} = sub { kill 'KILL', -1; POSIX::_exit(0); };
-$basetime += $baseoffset;
-$crtime += $baseoffset;
-
-sub cputime() {
-    my (@times) = times();
-    return $times[0] + $times[1] + $times[2] + $times[3];
-}
-
-sub ts() {
-    my (@now) = gettimeofday();
-    return sprintf("%s.%06d", gmtime($now[0])->strftime("%Y-%m-%dT%T"), $now[1]);
-}
-sub timestamp($) {
-    my ($str) = @_;
-    printf STDERR "%7d %s %s\n", $$$$, ts(), $str;
-}
-
-sub xtime() {
-    my (@now) = gettimeofday();
-    return $now[0] + ($now[1] / 1000000.0);
-}
-sub connect_to($$$$) {
-    my ($addr, $port) = @_;
-    my ($connected) = 0;
-    my ($ghbn_time, $stime);
-    my ($fname,$faliases,$ftype,$flen,$faddr);
-    my ($sock);
-    do {
-        ($fname,$faliases,$ftype,$flen,$faddr) = gethostbyname($addr);
-        my $sockaddr = "S n a4 x8";
-        if (length($faddr) < 4) {
-            print STDERR "Malformed address, waiting for addr for $addr\n";
-            sleep(1);
-        } else {
-            my $straddr = inet_ntoa($faddr);
-            timestamp("Connecting to $addr:$port ($fname, $ftype)");
-            $ghbn_time = xtime();
-            my $sockmeta = pack($sockaddr, AF_INET, $port, $faddr);
-            socket($sock, AF_INET, SOCK_STREAM, getprotobyname('tcp')) || die "can't make socket: $!";
-            $stime = xtime();
-            if (connect($sock, $sockmeta)) {
-                $connected = 1;
-                timestamp("Connected to $addr:$port ($fname, $ftype), waiting for sync");
-            } else {
-                timestamp("Could not connect to $addr on port $port: $!");
-                close $sock;
-                sleep(1);
-            }
-        }
-    } while (! $connected);
-    return ($sock, $ghbn_time, $stime);
-}
-
-sub do_sync($$$$;$) {
-    my ($addr, $port, $token) = @_;
-    if (not $addr) { return; }
-    if (not $token) {
-        $token = sprintf('%d', rand() * 999999999);
-    }
-    while (1) {
-	timestamp("Waiting for sync on $addr:$port");
-	my ($sync_conn, $i1, $i2) = connect_to($addr, $port);
-	my ($sbuf);
-	timestamp("Writing token $token to sync");
-	my ($answer) = syswrite($sync_conn, $token, length $token);
-	if ($answer != length $token) {
-	    timestamp("Write token failed: $!");
-	    exit(1);
-	}
-	$answer = sysread($sync_conn, $sbuf, 1024);
-	my ($str) = sprintf("Got sync (%s, %d, %s)!", $answer, length $sbuf, $!);
-	if ($!) {
-	    timestamp("$str, retrying");
-	} else {
-	    timestamp("$str, got sync");
-	    return;
-        }
-    }
-}
-
-sub runit() {
-    my ($files) = 0;
-    my ($totalbytes) = 0;
-    my ($seconds) = 0;
-    my ($rate) = 0;
-    my ($readops) = 0;
-    my ($writeops) = 0;
-    my ($fsyncops) = 0;
-    my ($readrate) = 0;
-    my ($writerate) = 0;
-    my ($et) = 0;
-    my ($min_lat) = 0;
-    my ($avg_lat) = 0;
-    my ($max_lat) = 0;
-    my ($p95_lat) = 0;
-    my (@known_sysbench_fileio_modes) = qw(seqwr seqrewr seqrd rndrd rndwr rndrw);
-    my ($iterations) = 0;
-    my ($loops_per_iteration) = 10000;
-    if ($sysbench_modes) {
-        @known_sysbench_fileio_modes = split(/ +/, $sysbench_modes);
-    }
-    timestamp(join("|", @known_sysbench_fileio_modes));
-    my ($mode) = $known_sysbench_fileio_modes[int(rand() * ($#known_sysbench_fileio_modes + 1.0))];
-    if (! -d $rundir) {
-        timestamp("No run directory $rundir!");
-	exit(1);
-    }
-    $rundir .= "/$$$$";
-    if (! mkdir($rundir)) {
-        timestamp("Cannot create run directory $rundir: $!");
-	exit(1);
-    }
-    if (! chdir($rundir)) {
-        timestamp("Cannot cd $rundir: $!");
-	exit(1);
-    }
-    do_sync($synchost, $syncport);
-    timestamp("Preparing...");
-    timestamp("sysbench --time=$runtime $sysbench_generic_args $sysbench_cmd prepare --file-test-mode=$mode $sysbench_fileio_args");
-    open(PREPARE, "-|", "sysbench --time=$runtime $sysbench_generic_args $sysbench_cmd prepare --file-test-mode=$mode $sysbench_fileio_args") || die "Can't run sysbench: $!\n";
-    while (<PREPARE>) {
-	if ($_ =~ /^([[:digit:]]+) bytes written in ([[:digit:].]+) seconds/) {
-	    $totalbytes = $1;
-	    $seconds = $2;
-	    $rate = $1 / $2;
-	} elsif ($_ =~ /^Creating file /) {
-	    $files++;
-	    next;
-	}
-        if ($ENV{"VERBOSE"} > 0) {
-       	    chomp;
-	    timestamp($_);
-	}
-    }
-    close PREPARE;
-
-    my ($basecpu) = cputime();
-    my ($prevcpu) = $basecpu;
-    my ($firsttime) = 1;
-    my ($avgcpu) = 0;
-    my ($weight) = .25;
-    my ($icputime);
-    my ($interval) = 5;
-    my $start_time;
-    my ($dstime) = xtime();
-
-    my $delaytime = $basetime + $poddelay - $dstime;
-    do_sync($synchost, $syncport);
-    my ($stime1) = xtime();
-    my ($stime) = $stime1;
-    my ($prevtime) = $stime;
-    my ($scputime) = cputime();
-    timestamp("Running...");
-    timestamp("sysbench --time=$runtime $sysbench_generic_args $sysbench_cmd run --file-test-mode=$mode $sysbench_fileio_args");
-    open(RUN, "-|", "sysbench --time=$runtime $sysbench_generic_args $sysbench_cmd run --file-test-mode=$mode $sysbench_fileio_args") || die "Can't run sysbench: $!\n";
-    while (<RUN>) {
-	if ($_ =~ m;^[[:space:]]*reads/s:[[:space:]]*([[:digit:].]+);) {
-	    $readops = $1;
-	} elsif ($_ =~ m;^[[:space:]]*writes/s:[[:space:]]*([[:digit:].]+);) {
-	    $writeops = $1;
-	} elsif ($_ =~ m;^[[:space:]]*fsyncs/s:[[:space:]]*([[:digit:].]+);) {
-	    $fsyncops = $1;
-	} elsif ($_ =~ m;^[[:space:]]*read, MiB/s:[[:space:]]*([[:digit:].]+);) {
-	    $readrate = $1;
-	} elsif ($_ =~ m;^[[:space:]]*written, MiB/s:[[:space:]]*([[:digit:].]+);) {
-	    $writerate = $1;
-	} elsif ($_ =~ m;^[[:space:]]*total time:[[:space:]]*([[:digit:].]+)s;) {
-	    $et = $1;
-	} elsif ($_ =~ m;^[[:space:]]*min:[[:space:]]*([[:digit:].]+);) {
-	    $min_lat = $1 / 1000.0;
-	} elsif ($_ =~ m;^[[:space:]]*avg:[[:space:]]*([[:digit:].]+);) {
-	    $avg_lat = $1 / 1000.0;
-	} elsif ($_ =~ m;^[[:space:]]*max:[[:space:]]*([[:digit:].]+);) {
-	    $max_lat = $1 / 1000.0;
-	} elsif ($_ =~ m;^[[:space:]]*95th percentile:[[:space:]]*([[:digit:].]+);) {
-	    $p95_lat = $1 / 1000.0;
-	}
-        if ($ENV{"VERBOSE"} > 0) {
-       	    chomp;
-	    timestamp($_);
-	}
-    }
-    close RUN;
-    timestamp("Cleanup...");
-    timestamp("sysbench --time=$runtime $sysbench_generic_args $sysbench_cmd cleanup --file-test-mode=$mode $sysbench_fileio_args");
-    open(CLEANUP, "-|", "sysbench --time=$runtime $sysbench_generic_args $sysbench_cmd cleanup --file-test-mode=$mode $sysbench_fileio_args") || die "Can't run sysbench: $!\n";
-    while (<CLEANUP>) {
-        if ($ENV{"VERBOSE"} > 0) {
-       	    chomp;
-	    timestamp($_);
-	}
-    }
-    close CLEANUP;
-    my ($answer) = sprintf("STATS %d %.3f %.3f %.3f %d %d %d %d %d %.03f %.06f %.06f %.06f %.06f",
-	    $$$$, $crtime - $basetime, $dstime - $basetime, $stime1 - $basetime,
-	    $readops, $writeops, $fsyncops, $readrate, $writerate, $et, $min_lat, $avg_lat, $max_lat, $p95_lat);
-    print STDERR "$answer\n";
-    do_sync($synchost, $syncport, $answer);
-    do_sync($loghost, $logport, "-n $namespace $pod -c $container terminated 0 0 0 $answer");
-}
-$SIG{CHLD} = 'IGNORE';
-if ($processes > 1) {
-    for (my $i = 0; $i < $processes; $i++) {
-        if ((my $child = fork()) == 0) {
-            runit();
-            exit(0);
-        }
-    }
-} else {
-    runit();
-}
-if ($exit_at_end) {
-    timestamp("About to exit");
-    while (wait() > 0) {}
-    timestamp("Done waiting");
-    print STDERR "FINIS\n";
-    POSIX::_exit(0);
-} else {
-    timestamp("Waiting forever");
-    pause()
-}
-EOF
-}
-
 function createContainersSysbenchYAML() {
     local namespace=$1
     local i=$2
@@ -1540,18 +1193,13 @@ function createContainersSysbenchYAML() {
     for j in $(seq 0 $((containers - 1))) ; do
 	cat <<EOF
 - name: "c${j}"
-  imagePullPolicy: IfNotPresent
-  image: "severalnines/sysbench"
+  imagePullPolicy: Always
+  image: "quay.io/rkrawitz/bench-army-knife"
 $(indent 2 createContainerResources)
   env:
   - name: VERBOSE
     value: "$verbose"
-  command:
-  - perl
-  args:
-  - -e
-  - |
-$(indent 4 sysbenchPerl)
+$(indent 2 genericCommand sysbench.pl)
   - "$namespace"
   - "${namespace}-sysbench-${i}"
   - "c${j}"
@@ -1655,205 +1303,6 @@ EOF
     fi
 }
 
-function fioPerl() {
-    cat <<'EOF'
-#!/usr/bin/perl
-
-use Socket;
-use POSIX;
-use strict;
-use Time::Piece;
-use Time::HiRes qw(gettimeofday);
-our ($namespace, $pod, $container, $basetime, $baseoffset, $crtime, $poddelay, $processes, $rundir, $runtime, $exit_at_end, $synchost, $syncport, $loghost, $logport, $jobfiles_dir, $fio_generic_args) = @ARGV;
-$SIG{TERM} = sub { kill 'KILL', -1; POSIX::_exit(0); };
-$basetime += $baseoffset;
-$crtime += $baseoffset;
-$rundir .= "/$$$$";
-if (! mkdir($rundir)) {
-    timestamp("Cannot create run directory $rundir: $!");
-    exit(1);
-}
-if (! chdir($rundir)) {
-    timestamp("Cannot cd $rundir: $!");
-    exit(1);
-}
-
-sub cputime() {
-    my (@times) = times();
-    return $times[0] + $times[1] + $times[2] + $times[3];
-}
-
-sub ts() {
-    my (@now) = gettimeofday();
-    return sprintf("%s.%06d", gmtime($now[0])->strftime("%Y-%m-%dT%T"), $now[1]);
-}
-sub timestamp($) {
-    my ($str) = @_;
-    printf STDERR "%7d %s %s\n", $$$$, ts(), $str;
-}
-
-sub xtime() {
-    my (@now) = gettimeofday();
-    return $now[0] + ($now[1] / 1000000.0);
-}
-sub connect_to($$$$) {
-    my ($addr, $port) = @_;
-    my ($connected) = 0;
-    my ($ghbn_time, $stime);
-    my ($fname,$faliases,$ftype,$flen,$faddr);
-    my ($sock);
-    do {
-        ($fname,$faliases,$ftype,$flen,$faddr) = gethostbyname($addr);
-        my $sockaddr = "S n a4 x8";
-        if (length($faddr) < 4) {
-            print STDERR "Malformed address, waiting for addr for $addr\n";
-            sleep(1);
-        } else {
-            my $straddr = inet_ntoa($faddr);
-            timestamp("Connecting to $addr:$port ($fname, $ftype)");
-            $ghbn_time = xtime();
-            my $sockmeta = pack($sockaddr, AF_INET, $port, $faddr);
-            socket($sock, AF_INET, SOCK_STREAM, getprotobyname('tcp')) || die "can't make socket: $!";
-            $stime = xtime();
-            if (connect($sock, $sockmeta)) {
-                $connected = 1;
-                timestamp("Connected to $addr:$port ($fname, $ftype), waiting for sync");
-            } else {
-                timestamp("Could not connect to $addr on port $port: $!");
-                close $sock;
-                sleep(1);
-            }
-        }
-    } while (! $connected);
-    return ($sock, $ghbn_time, $stime);
-}
-
-sub do_sync($$$$;$) {
-    my ($addr, $port, $token) = @_;
-    if (not $addr) { return; }
-    if (not $token) {
-        $token = sprintf('%d', rand() * 999999999);
-    }
-    while (1) {
-	timestamp("Waiting for sync on $addr:$port");
-	my ($sync_conn, $i1, $i2) = connect_to($addr, $port);
-	my ($sbuf);
-	timestamp("Writing token $token to sync");
-	my ($answer) = syswrite($sync_conn, $token, length $token);
-	if ($answer != length $token) {
-	    timestamp("Write token failed: $!");
-	    exit(1);
-	}
-	$answer = sysread($sync_conn, $sbuf, 1024);
-	my ($str) = sprintf("Got sync (%s, %d, %s)!", $answer, length $sbuf, $!);
-	if ($!) {
-	    timestamp("$str, retrying");
-	} else {
-	    timestamp("$str, got sync");
-	    return;
-        }
-    }
-}
-
-sub runit(;$) {
-    my ($jobfile) = @_;
-    my ($basecpu) = cputime();
-    my ($prevcpu) = $basecpu;
-    my ($firsttime) = 1;
-    my ($avgcpu) = 0;
-    my ($weight) = .25;
-    my ($icputime);
-    my ($interval) = 5;
-    my $start_time;
-    my ($dstime) = xtime();
-
-    my $delaytime = $basetime + $poddelay - $dstime;
-    do_sync($synchost, $syncport);
-    my ($stime1) = xtime();
-    my ($stime) = $stime1;
-    my ($prevtime) = $stime;
-    my ($scputime) = cputime();
-    timestamp("Running...");
-    timestamp("fio $fio_generic_args --output-format=json+ $jobfile");
-    pipe(READER, WRITER) || die "Can't create pipe: $!\n";
-    my ($pid) = fork();
-    if ($pid == -1) {
-        die "Can't fork: $!\n";
-    } elsif ($pid == 0) {
-        close READER;
-	open(STDOUT, ">&WRITER") || die "Can't dup stdout to writer: $!\n";
-	open(STDERR, ">&WRITER") || die "Can't dup stderr to writer: $!\n";
-	exec("/bin/bash", "-c", "fio $fio_generic_args --output-format=json+ $jobfile") || die "Can't run fio: $!\n";
-        # NOTREACHED
-	exit(1);
-    } else {
-        close WRITER;
-	while (<READER>) {
-	    print STDERR $_;
-	}
-	close WRITER;
-    }
-    my ($child) = wait();
-    if ($child < 0) {
-        print STDERR "*** Can't reap child (expected $pid, got $child)!\n";
-    } else {
-        my ($status) = $? >> 8;
-        print STDERR "fio returned $status\n";
-    }
-#    my ($answer) = sprintf("STATS %d %.3f %.3f %.3f %d %d %d %d %d %.03f %.06f %.06f %.06f %.06f",
-#	    $$$$, $crtime - $basetime, $dstime - $basetime, $stime1 - $basetime,
-#	    $readops, $writeops, $fsyncops, $readrate, $writerate, $et, $min_lat, $avg_lat, $max_lat, $p95_lat);
-#    print STDERR "$answer\n";
-#    do_sync($synchost, $syncport, $answer);
-     do_sync($synchost, $syncport);
-#    do_sync($loghost, $logport, "-n $namespace $pod -c $container terminated 0 0 0 $answer");
-}
-
-sub get_jobfiles($) {
-    my ($dir) = @_;
-    opendir DIR, $dir || die "Can't find job files in $dir: #!\n";
-    
-    my @files = map { "$dir/$_" } grep { -f "$dir/$_" } sort readdir DIR;
-    closedir DIR;
-    print STDERR "get_jobfiles($dir) => @files\n";
-    return @files;
-}
-
-my (@jobfiles) = get_jobfiles($jobfiles_dir);
-
-sub runall() {
-    if ($#jobfiles >= 0) {
-	foreach my $file (@jobfiles) {
-	    runit($file)
-	}
-    } else {
-        runit()
-    }
-}
-
-if ($processes > 1) {
-    for (my $i = 0; $i < $processes; $i++) {
-        if ((my $child = fork()) == 0) {
-            runall();
-            exit(0);
-        }
-    }
-} else {
-    runall();
-}
-if ($exit_at_end) {
-    timestamp("About to exit");
-    while (wait() > 0) {}
-    timestamp("Done waiting");
-    print STDERR "FINIS\n";
-    POSIX::_exit(0);
-} else {
-    timestamp("Waiting forever");
-    pause()
-}
-EOF
-}
-
 function createContainersFioYAML() {
     local namespace=$1
     local i=$2
@@ -1875,17 +1324,12 @@ function createContainersFioYAML() {
 	cat <<EOF
 - name: "c${j}"
   imagePullPolicy: Always
-  image: "quay.io/rkrawitz/fio:latest"
+  image: "quay.io/rkrawitz/bench-army-knife:latest"
 $(indent 2 createContainerResources)
   env:
   - name: VERBOSE
     value: "$verbose"
-  command:
-  - perl
-  args:
-  - -e
-  - |
-$(indent 4 fioPerl)
+$(indent 2 genericCommand fio.pl)
   - "$namespace"
   - "${namespace}-fio-${i}"
   - "c${j}"
@@ -1987,179 +1431,6 @@ EOF
     fi
 }
 
-function cpuSoakerPerl() {
-    cat <<'EOF'
-#!/usr/bin/perl
-
-use Socket;
-use POSIX;
-use strict;
-use Time::Piece;
-use Time::HiRes qw(gettimeofday);
-our ($namespace, $pod, $container, $basetime, $baseoffset, $crtime, $poddelay, $processes, $runtime, $exit_at_end, $synchost, $syncport, $loghost, $logport) = @ARGV;
-$SIG{TERM} = sub { kill 'KILL', -1; POSIX::_exit(0); };
-$basetime += $baseoffset;
-$crtime += $baseoffset;
-
-sub cputime() {
-    my (@times) = times();
-    return $times[0] + $times[1] + $times[2] + $times[3];
-}
-
-sub ts() {
-    my (@now) = gettimeofday();
-    return sprintf("%s.%06d", gmtime($now[0])->strftime("%Y-%m-%dT%T"), $now[1]);
-}
-sub timestamp($) {
-    my ($str) = @_;
-    printf STDERR "%7d %s %s\n", $$$$, ts(), $str;
-}
-
-sub xtime() {
-    my (@now) = gettimeofday();
-    return $now[0] + ($now[1] / 1000000.0);
-}
-my ($dstime) = xtime();
-sub connect_to($$$$) {
-    my ($addr, $port) = @_;
-    my ($connected) = 0;
-    my ($ghbn_time, $stime);
-    my ($fname,$faliases,$ftype,$flen,$faddr);
-    my ($sock);
-    do {
-        ($fname,$faliases,$ftype,$flen,$faddr) = gethostbyname($addr);
-        my $sockaddr = "S n a4 x8";
-        if (length($faddr) < 4) {
-            print STDERR "Malformed address, waiting for addr for $addr\n";
-            sleep(1);
-        } else {
-            my $straddr = inet_ntoa($faddr);
-            timestamp("Connecting to $addr:$port ($fname, $ftype)");
-            $ghbn_time = xtime();
-            my $sockmeta = pack($sockaddr, AF_INET, $port, $faddr);
-            socket($sock, AF_INET, SOCK_STREAM, getprotobyname('tcp')) || die "can't make socket: $!";
-            $stime = xtime();
-            if (connect($sock, $sockmeta)) {
-                $connected = 1;
-                timestamp("Connected to $addr:$port ($fname, $ftype), waiting for sync");
-            } else {
-                timestamp("Could not connect to $addr on port $port: $!");
-                close $sock;
-                sleep(1);
-            }
-        }
-    } while (! $connected);
-    return ($sock, $ghbn_time, $stime);
-}
-
-sub do_sync($$$$;$) {
-    my ($addr, $port, $token) = @_;
-    my $otoken = $token;
-    if (not $addr) { return; }
-    if (not $token) {
-        $token = sprintf('%d', rand() * 999999999);
-    }
-    while (1) {
-	timestamp("Waiting for sync on $addr:$port");
-	my ($sync_conn, $i1, $i2) = connect_to($addr, $port);
-	my ($sbuf);
-	timestamp("Writing token $token to sync");
-	my ($answer) = syswrite($sync_conn, $token, length $token);
-	if ($answer != length $token) {
-	    timestamp("Write token failed: $!");
-	    exit(1);
-	}
-	$answer = sysread($sync_conn, $sbuf, 1024);
-	my ($str) = sprintf("Got sync (%s, %d, %s)!", $answer, length $sbuf, $!);
-	if ($!) {
-	    timestamp("$str, retrying");
-	} else {
-	    timestamp("$str, got sync");
-	    return;
-        }
-    }
-}
-
-sub runit() {
-    my ($iterations) = 0;
-    my ($loops_per_iteration) = 10000;
-    my ($basecpu) = cputime();
-    my ($prevcpu) = $basecpu;
-    my ($firsttime) = 1;
-    my ($avgcpu) = 0;
-    my ($weight) = .25;
-    my ($icputime);
-    my ($interval) = 5;
-    my $start_time;
-
-    my $delaytime = $basetime + $poddelay - $dstime;
-    do_sync($synchost, $syncport);
-    my ($stime1) = xtime();
-    my ($stime) = $stime1;
-    my ($prevtime) = $stime;
-    my ($scputime) = cputime();
-    while ($runtime < 0 || xtime() - $stime1 < $runtime) {
-        my ($a) = 1;
-        for (my $i = 0; $i < $loops_per_iteration; $i++) {
-            $a = $a + $a;
-        }
-        $iterations += $loops_per_iteration;
-        if ($ENV{"VERBOSE"} > 0) {
-	    my ($ntime) = xtime();
-	    if ($ntime - $prevtime >= $interval) {
-		my (@times) = times();
-		my ($user, $system, $cuser, $csystem) = times();
-		my ($etime) = $ntime - $stime;
-		my ($cpu) = cputime();
-		my ($cputime) = $cpu - $basecpu;
-		my ($icputime) = $cpu - $prevcpu;
-		if ($firsttime) {
-		    $avgcpu = $cputime;
-		    $firsttime = 0;
-		} else {
-		    $avgcpu = ($icputime * $weight) + ($avgcpu * (1.0 - $weight));
-		}
-		printf STDERR "pid %d elapsed %.03f cpu %0.3f util %7.3f avg %7.3f mov %7.3f iter %d ips %d\n", $$$$, $etime, $cputime, 100.0 * $cputime / $etime, 100.0 * $icputime / ($ntime - $prevtime), 100 * $avgcpu / ($ntime - $prevtime), $iterations, $iterations / $etime;
-		$prevtime = $ntime;
-		$prevcpu = $cpu;
-            }
-        }
-    }
-    my ($etime) = xtime();
-    my ($eltime) = $etime - $stime1;
-    my ($cputime) = cputime() - $scputime;
-    my ($answer) = sprintf("STATS %d %.3f %.3f %.3f %.3f %.3f %.3f %7.3f %d %d",
-        $$$$, $crtime - $basetime, $dstime - $basetime, $stime1 - $basetime,
-        $eltime, $etime - $basetime, $cputime, 100.0 * $cputime / $eltime, $iterations,
-        $iterations / ($etime - $stime1));
-    print STDERR "$answer\n";
-    do_sync($synchost, $syncport, $answer);
-    do_sync($loghost, $logport, "-n $namespace $pod -c $container terminated 0 0 0 $answer");
-}
-$SIG{CHLD} = 'IGNORE';
-if ($processes > 1) {
-    for (my $i = 0; $i < $processes; $i++) {
-        if ((my $child = fork()) == 0) {
-            runit();
-            exit(0);
-        }
-    }
-} else {
-    runit();
-}
-print STDERR "FINIS\n";
-if ($exit_at_end) {
-    timestamp("About to exit");
-    while (wait() > 0) {}
-    timestamp("Done waiting");
-    POSIX::_exit(0);
-} else {
-    timestamp("Waiting forever");
-    pause()
-}
-EOF
-}
-
 function createContainersCPUSoakerYAML() {
     local namespace=$1
     local i=$2
@@ -2178,18 +1449,13 @@ function createContainersCPUSoakerYAML() {
     for j in $(seq 0 $((containers - 1))) ; do
 	cat <<EOF
 - name: "c$j"
-  imagePullPolicy: IfNotPresent
-  image: perl
+  imagePullPolicy: Always
+  image: "quay.io/rkrawitz/bench-army-knife"
 $(indent 2 createContainerResources)
   env:
   - name: VERBOSE
     value: "$verbose"
-  command:
-  - perl
-  args:
-  - -e
-  - |
-$(indent 4 cpuSoakerPerl)
+$(indent 2 genericCommand cpusoaker.pl)
   - "$namespace"
   - "${namespace}-soaker-${i}"
   - "c$j"
@@ -2334,87 +1600,6 @@ spec:
 EOF
 }
 
-function serverContainerPerl() {
-    cat <<'EOF'
-#!/usr/bin/perl
-use Socket;
-use POSIX;
-use strict;
-use Time::Piece;
-use Time::HiRes qw(gettimeofday);
-$SIG{TERM} = sub { POSIX::_exit(0); };
-my ($basetime, $baseoffset, $listen_port, $container, $msgSize, $ts, $expected_clients) = @ARGV;
-$basetime += $baseoffset;
-sub timestamp($) {
-    my ($str) = @_;
-    my (@now) = gettimeofday();
-    printf STDERR  "$container %s.%06d %s\n", gmtime($now[0])->strftime("%Y-%m-%dT%T"), $now[1], $str;
-}
-timestamp("Clusterbuster server starting");
-my $sockaddr = "S n a4 x8";
-socket(SOCK, AF_INET, SOCK_STREAM, getprotobyname('tcp')) || die "socket: $!";
-$SIG{TERM} = sub { close SOCK; kill 'KILL', -1; POSIX::_exit(0); };
-setsockopt(SOCK,SOL_SOCKET, SO_REUSEADDR, pack("l",1)) || die "setsockopt reuseaddr: $!\n";
-setsockopt(SOCK,SOL_SOCKET, SO_KEEPALIVE, pack("l",1)) || die "setsockopt keepalive: $!\n";
-bind(SOCK, pack($sockaddr, AF_INET, $listen_port, "\0\0\0\0")) || die "bind: $!\n";
-listen(SOCK, 5) || die "listen: $!";
-my $mysockaddr = getsockname(SOCK);
-my ($junk, $port, $addr) = unpack($sockaddr, $mysockaddr);
-die "can't get port $port: $!\n" if ($port ne $listen_port);
-timestamp("Listening on port $listen_port");
-$SIG{CHLD} = 'IGNORE';
-
-print STDERR "Expect $expected_clients clients\n";
-while ($expected_clients != 0) {
-    accept(CLIENT, SOCK) || next;
-    if ((my $child = fork()) == 0) {
-	close(SOCK);
-	$SIG{TERM} = sub { close CLIENT; POSIX::_exit(0); };
-	my $peeraddr = getpeername(CLIENT);
-	my ($port, $addr) = sockaddr_in($peeraddr);
-	my $peerhost = gethostbyaddr($addr, AF_INET);
-	my $peeraddr = inet_ntoa($addr);
-	timestamp("Accepted connection from $peerhost ($peeraddr) on $port!");
-	my ($consec_empty) = 0;
-	my $buffer;
-	my $nread;
-	my $ntotal = 0;
-	my $nwrite;
-	while (1) {
-	    while ($ntotal < $msgSize && ($nread = sysread(CLIENT, $buffer, $msgSize, $ntotal)) > 0) {
-		$ntotal += $nread;
-		$consec_empty=0;
-	    }
-	    if ($nread < 0) {
-		die "Write failed: $!\n";
-	    }
-	    if ($ntotal == 0) {
-	        if ($consec_empty > 1) {
-		    timestamp("Exiting $port");
-		    exit(0);
-		}
-	        $consec_empty++;
-	    }
-	    while ($ntotal > 0 && ($nwrite = syswrite(CLIENT, $buffer, $ntotal)) > 0) {
-		$ntotal -= $nwrite;
-	    }
-	    if ($nwrite < 0) {
-		die "Write failed: $!\n";
-	    }
-	}
-    } else {
-	close(CLIENT);
-	$expected_clients--;
-    }
-}
-timestamp("Waiting for all clients to exit:");
-while ((my $pid = wait()) >= 0) {
-    timestamp("   $pid");
-}
-timestamp("Done!");
-EOF
-}
-
 function createServerContainerYAML() {
     local namespace=$1
     local i=$2
@@ -2423,17 +1608,12 @@ function createServerContainerYAML() {
     local expectedClients=$5
     cat <<EOF
 - name: server
-  image: perl
-  imagePullPolicy: IfNotPresent
+  image: "quay.io/rkrawitz/bench-army-knife"
+  imagePullPolicy: Always
 $(indent 2 createContainerResources)
   ports:
   - containerPort: $port
-  command:
-  - perl
-  args:
-  - -e
-  - |
-$(indent 4 serverContainerPerl)
+$(indent 2 genericCommand server.pl)
   - "$basetime"
   - "$baseoffset"
   - "$port"
@@ -2523,234 +1703,6 @@ EOF
     fi
 }
 
-function clientContainerPerl() {
-    cat <<'EOF'
-#!/usr/bin/perl
-
-use Socket;
-use POSIX;
-use strict;
-use Time::HiRes qw(gettimeofday usleep);
-use Time::Piece;
-$SIG{TERM} = sub { kill 'KILL', -1; POSIX::_exit(0); };
-my ($namespace, $pod, $container, $basetime, $baseoffset, $poddelay, $connect_port, $container, $srvhost, $data_rate, $bytes, $bytesMax, $msgSize, $xfertime, $xfertimeMax, $crtime, $exit_at_end, $synchost, $syncport, $namespace, $log_host, $log_port, $podname) = @ARGV;
-$basetime += $baseoffset;
-$crtime += $baseoffset;
-my ($etime, $data_sent, $detime, $stime, $end_time, $dstime, $mean, $max, $stdev, $user, $sys, $cuser, $csys, $elapsed);
-my $start_time;
-my $ghbn_time;
-my $pass = 0;
-my $ex = 0;
-my $ex2 = 0;
-my ($cfail) = 0;
-my ($refused) = 0;
-my $time_overhead = 0;
-sub ts() {
-    my (@now) = gettimeofday();
-    return sprintf("%s.%06d", gmtime($now[0])->strftime("%Y-%m-%dT%T"), $now[1]);
-}
-sub timestamp($) {
-    my ($str) = @_;
-    printf STDERR "%s %s %s\n", $container, ts(), $str;
-}
-sub xtime() {
-    my (@now) = gettimeofday();
-    return $now[0] + ($now[1] / 1000000.0);
-}
-sub calibrate_time() {
-    for (my $i = 0; $i < 1000; $i++) {
-        my ($start) = xtime();
-	my ($end) = xtime();
-	$time_overhead += $end - $start;
-    }
-    $time_overhead /= 1000;
-}
-sub stats() {
-    return sprintf("STATS %.3f %.3f %.3f %.3f %.3f %.3f %.6f %.3f %.3f %d %.3f %.3f %.6f %.6f %.6f %.6f %d",
-	   $crtime - $basetime, $start_time - $basetime, $ghbn_time - $basetime, $etime - $basetime,
-	   $dstime - $basetime, $end_time - $basetime, $elapsed, $user, $sys,
-	   $data_sent, $detime, $data_sent / $detime / 1000000.0, $mean, $max, $stdev, $time_overhead, $pass);
-}
-sub connect_to($$$$) {
-    my ($addr, $port) = @_;
-    my ($connected) = 0;
-    my ($ghbn_time, $stime);
-    my ($fname,$faliases,$ftype,$flen,$faddr);
-    my ($sock);
-    do {
-        ($fname,$faliases,$ftype,$flen,$faddr) = gethostbyname($addr);
-        my $sockaddr = "S n a4 x8";
-        if (length($faddr) < 4) {
-            print STDERR "Malformed address, waiting for addr for $addr\n";
-	    $cfail++;
-            sleep(1);
-        } else {
-            my $straddr = inet_ntoa($faddr);
-            timestamp("Connecting to $addr:$port ($fname, $ftype)");
-            $ghbn_time = xtime();
-            my $sockmeta = pack($sockaddr, AF_INET, $port, $faddr);
-            socket($sock, AF_INET, SOCK_STREAM, getprotobyname('tcp')) || die "can't make socket: $!";
-            $stime = xtime();
-            if (connect($sock, $sockmeta)) {
-                $connected = 1;
-                timestamp("Connected to $addr:$port ($fname, $ftype), waiting for sync");
-            } else {
-	        $cfail++;
-		if ($! =~ /refused/) {
-		    $refused++;
-		}
-                timestamp("Could not connect to $addr on port $port: $!");
-                close $sock;
-                sleep(1);
-            }
-        }
-    } while (! $connected);
-    return ($sock, $ghbn_time, $stime);
-}
-$SIG{TERM} = sub { POSIX::_exit(0); };
-timestamp("Clusterbuster client starting");
-$start_time = xtime();
-my ($conn);
-($conn, $ghbn_time, $stime) = connect_to($srvhost, $connect_port);
-$SIG{TERM} = sub { close $conn; POSIX::_exit(0); };
-
-sub do_sync($$$$;$) {
-    my ($addr, $port, $token) = @_;
-    if (not $addr) { return; }
-    if (not $token) {
-        $token = sprintf('%d', rand() * 999999999);
-    }
-    while (1) {
-	timestamp("Waiting for sync on $addr:$port");
-	my ($_conn, $i1, $i2) = connect_to($addr, $port);
-	my ($sbuf);
-	timestamp("Writing token $token to sync");
-	my ($answer) = syswrite($_conn, $token, length $token);
-	if ($answer != length $token) {
-	    timestamp("Write token failed: $!");
-	    exit(1);
-	}
-	$answer = sysread($_conn, $sbuf, 1024);
-	my ($str) = sprintf("Got sync (%s, %d, %s)!", $answer, length $sbuf, $!);
-	if ($!) {
-	    timestamp("$str, retrying");
-	} else {
-	    timestamp("$str, got sync");
-	    return;
-        }
-    }
-}
-do_sync($synchost, $syncport);
-$etime = xtime();
-$elapsed = $etime - $stime;
-my $peeraddr = getpeername($conn);
-my ($port, $addr) = sockaddr_in($peeraddr);
-my $peerhost = gethostbyaddr($addr, AF_INET);
-$peeraddr = inet_ntoa($addr);
-timestamp("Connected to $peerhost ($peeraddr) on port tcp:$port");
-my $buffer = "";
-vec($buffer, $msgSize - 1, 8) = "A";
-my $nread;
-my $bufsize = length($buffer);
-my $starttime = xtime();
-my $MBSec = $data_rate * 1;
-($dstime) = xtime();
-
-$data_sent = 0;
-$mean = 0;
-$max = 0;
-$stdev = 0;
-if ($bytes != $bytesMax) {
-    $bytes += int(rand($bytesMax - $bytes + 1));
-}
-if ($xfertime != $xfertimeMax) {
-    $xfertime += int(rand($xfertimeMax - $xfertime + 1));
-}
-if ($MBSec != 0) {
-    calibrate_time();
-    my $delaytime = $basetime + $poddelay - $dstime;
-    timestamp("Using $bufsize byte buffer");
-    if ($delaytime > 0) {
-	timestamp("Sleeping $delaytime seconds to synchronize");
-	usleep($delaytime * 1000000);
-    }
-    $dstime = xtime();
-    my ($tbuf, $rtt_start, $rtt_elapsed, $en);
-    while (($bytes > 0 && $data_sent < $bytes) ||
-	   ($xfertime > 0 && xtime() - $dstime < $xfertime)) {
-	my $nwrite;
-	my $nleft = $bufsize;
-	$rtt_start = xtime();
-	while ($nleft > 0 && ($nwrite = syswrite($conn, $buffer, $nleft)) > 0) {
-	    $nleft -= $nwrite;
-	    $data_sent += $nwrite;
-	}
-	if ($nwrite == 0) {
-	    exit 0;
-	} elsif ($nwrite < 0) {
-	    die "Write failed: $!\n";
-	}
-	$nleft = $bufsize;
-	while ($nleft > 0 && ($nread = sysread($conn, $tbuf, $nleft)) > 0) {
-	    $nleft -= $nread;
-	}
-	$en = xtime() - $rtt_start - $time_overhead;
-	$ex += $en;
-	$ex2 += $en * $en;
-	if ($en > $max) {
-	    $max = $en;
-	}
-	if ($nread < 0) {
-	    die "Read failed: $!\n";
-	}
-	if ($ENV{"VERBOSE"} > 0) {
-	    timestamp(sprintf("Write/Read %d %.6f", $bufsize, $en));
-	}
-	my $curtime = xtime();
-	$starttime += $bufsize / ($MBSec * 1000000);
-	if ($curtime < $starttime && $MBSec > 0) {
-	    if ($ENV{"VERBOSE"} > 0) {
-		timestamp(sprintf("Sleeping %8.6f", $starttime - $curtime));
-	    }
-	    usleep(($starttime - $curtime) * 1000000);
-	} else {
-	    if ($ENV{"VERBOSE"} > 0 && $MBSec > 0) {
-		timestamp("Not sleeping");
-	    }
-	}
-	$pass++;
-    }
-}
-if ($pass > 0) {
-    $mean = ($ex / $pass);
-    if ($pass > 1) {
-	$stdev = sqrt(($ex2 - ($ex * $ex / $pass)) / ($pass - 1));
-    }
-}
-($user, $sys, $cuser, $csys) = times;
-$end_time = xtime();
-$detime = $end_time - $dstime;
-if ($detime <= 0) {
-    $detime = 0.00000001;
-}
-
-timestamp("Done");
-my ($results) = stats();
-print STDERR "$results\n";
-print STDERR "FINIS\n";
-if ($syncport) {
-    do_sync($synchost, $syncport, "-n $namespace $pod -c $container $results");
-}
-if ($log_port > 0) {
-    do_sync($log_host, $log_port, "-n $namespace $pod -c $container terminated $cfail $refused $pass $results");
-}
-if (! $exit_at_end) {
-    pause();
-}
-exit 0;
-EOF
-}
-
 function createClientContainerYAML() {
     local namespace=$1
     local i=$2
@@ -2773,18 +1725,13 @@ function createClientContainerYAML() {
     for j in $(seq 0 $((containers - 1))) ; do
 	cat <<EOF
 - name: c${j}
-  image: "perl"
-  imagePullPolicy: IfNotPresent
+  image: "quay.io/rkrawitz/bench-army-knife"
+  imagePullPolicy: Always
 $(indent 2 createContainerResources)
   env:
   - name: VERBOSE
     value: "$verbose"
-  command:
-  - perl
-  args:
-  - -e
-  - |
-$(indent 4 clientContainerPerl)
+$(indent 2 genericCommand client.pl)
   - "$namespace"
   - "${namespace}-${i}-client-$replica"
   - "$j"
@@ -2970,6 +1917,13 @@ function createDeploymentSysbench() {
     done
 }
 
+function listConfigMapsSysbench() {
+    cat <<EOF
+${__libdir__}/sysbench.pl
+${__libdir__}/sync.pl
+EOF
+}
+
 function createSyncSysbench() {
     local namespace=$1
     local count=${2:-1}
@@ -2996,6 +1950,13 @@ function createDeploymentFio() {
     for i in $(seq $firstDeployment $((count + firstDeployment - 1))) ; do
 	createFioDeployment "$namespace" "$i" "$secretCount"  "$replicas" "$containers" "$log_host" "$log_port"
     done
+}
+
+function listConfigMapsFio() {
+    cat <<EOF
+${__libdir__}/fio.pl
+${__libdir__}/sync.pl
+EOF
 }
 
 function createSyncFio() {
@@ -3032,6 +1993,13 @@ function createDeploymentCPUSoaker() {
     for i in $(seq $firstDeployment $((count + firstDeployment - 1))) ; do
 	createSoakerDeployment "$namespace" "$i" "$secretCount"  "$replicas" "$containers" "$log_host" "$log_port"
     done
+}
+
+function listConfigMapsCPUSoaker() {
+    cat <<EOF
+${__libdir__}/cpusoaker.pl
+${__libdir__}/sync.pl
+EOF
 }
 
 function createSyncCPUSoaker() {
@@ -3076,6 +2044,14 @@ function createDeploymentServer() {
 	fi
 	createClientDeployment "$namespace" "$i" "$secretCount" "$replicas" "$dataRate" "$bytes" "$msgSize" "$containers" "$log_host" "$log_port"
     done
+}
+
+function listConfigMapsServer() {
+    cat <<EOF
+${__libdir__}/client.pl
+${__libdir__}/server.pl
+${__libdir__}/sync.pl
+EOF
 }
 
 function calculateLogsRequiredServer() {
@@ -3195,13 +2171,26 @@ function createAllSecrets() {
     wait
 }
 
+function createSystemConfigMap() {
+    if type -t "listConfigMaps${podType}" >/dev/null ; then
+	local -a systemfiles
+	readarray -t systemfiles <<< "$(listConfigMaps${podType})"
+	trap 'kill -9 $(jobs -p); exit' INT
+	for i in $(seq 0 "$((parallelConfigMaps - 1))") ; do
+	    createObjects_n ConfigMaps "$parallelConfigMaps" "$blocksizeConfigMaps" "$((i * blocksizeConfigMaps))" "$sleepConfigMaps" "systemconfigmap" "${systemfiles[@]}"&
+	done
+	wait
+    fi
+}
+
 function createAllConfigMaps() {
     local i
     trap 'kill -9 $(jobs -p); exit' INT
     for i in $(seq 0 "$((parallelConfigMaps - 1))") ; do
-	createObjects_n ConfigMaps "$parallelConfigMaps" "$blocksizeConfigMaps" "$((i * blocksizeConfigMaps))" "$sleepConfigMaps" &
+	createObjects_n ConfigMaps "$parallelConfigMaps" "$blocksizeConfigMaps" "$((i * blocksizeConfigMaps))" "$sleepConfigMaps" "configmap" "${configMapFiles[@]}"&
     done
     wait
+    createSystemConfigMap
 }
 
 function createAllDeployments() {
@@ -3218,7 +2207,7 @@ function createAllObjects() {
     local found_objtype
     local objtype=$1
     shift
-    while read -r 'line' ; do
+    while IFS= read -r 'line' ; do
 	if [[ $line =~ ^[[:digit:]]{4}(-[[:digit:]]{2}){2}T([[:digit:]]{2}:){2}[[:digit:]]{2}\.[[:digit:]]{6}\ +([-a-z0-9]+)/([-a-z0-9]+)\ +created$ ]] ; then
 	    if (( reportObjectCreation )) ; then
 		echo "$line"
@@ -3286,7 +2275,11 @@ function run_clusterbuster_1() {
     fi
 
     createAllObjects Secrets
+    checkConfigMaps "${configMapFiles[@]}"
     createAllObjects ConfigMaps
+    if type -t "listConfigMaps${podType}" >/dev/null ; then
+	hasSystemConfigMap=1
+    fi
 
     if (( doit )) ; then
 	local secname=""
@@ -3310,9 +2303,9 @@ function run_clusterbuster_1() {
 	logs_expected="$("calculateLogsRequired" "$namespaces" "$depsPerNamespace" "$replicas" "$containers")"
 	if ((logs_expected)) ; then
 	    log_host=$(hostname -f)
-	    log_port=$(find_free_port)
+	    log_port=$("${__libdir__}/find_free_port")
 	    (( log_port )) || fatal "Can't get port to listen for logs on!"
-	    get_logs -p "$log_port" -c "$logs_expected" &
+	    "${__libdir__}/get_logs" -p "$log_port" -c "$logs_expected" &
 	fi
     fi
     basetime=$(printf '%(%s)T' -1)

@@ -74,6 +74,47 @@ etc. OpenShift 4 clusters.
 
 - **get-images**: retrieve the image and version of each image used by
   the cluster.
+  
+## Container images
+
+- **bench-army-knife** -- a flexible CentOS 8 based container that
+  contains pbench, fio, uperf, and many performance tools.  The
+  container using this image should usually be run with `bootstrap.sh`
+  as its command.  This takes the name of a file to run, along with
+  that file's arguments.  The file is normally mounted into a
+  container.  Among other things, it provides a convenient way to wrap
+  a benchmark (or other) run without having to either create a
+  separate image or pass it in on the command line itself.
+  
+  When using OpenShift or Kubernetes, the easiest way to pass the
+  script in is via a configmap.  For example:
+
+
+```
+$ oc create configmap systemconfigmap-cb-0 --from-file=/home/me/mytest
+
+$ oc apply -F - <<'EOF'
+spec:
+  containers:
+  - name: "c0"
+    imagePullPolicy: Always
+    image: "quay.io/rkrawitz/bench-army-knife:latest"
+    command:
+    - bootstrap.sh
+    args:
+    - "/etc/bootstrap/mytest"
+    - "arg0"
+    - "arg1"
+    volumeMounts:
+    - name: "systemconfigmap-cb-0"
+      mountPath: "/etc/bootstrap"
+      readOnly: true
+  volumes:
+  - name: "systemconfigmap-cb-0"
+    configMap:
+      name: "systemconfigmap-cb-0"
+EOF
+```
 
 ## oinst API
 

@@ -1,0 +1,25 @@
+#!/usr/bin/perl
+
+use Socket;
+use POSIX;
+use strict;
+use Getopt::Long;
+Getopt::Long::Configure("bundling", "pass_through");
+
+my ($port) = 4097;
+
+GetOptions("p=i" => \$port);
+
+while ($port < 65535) {
+    my $sockaddr = "S n a4 x8";
+    my ($socket);
+    socket($socket, AF_INET, SOCK_STREAM, getprotobyname('tcp')) || die "socket: $!";
+    setsockopt($socket,SOL_SOCKET, SO_REUSEADDR, pack("l",1)) || die "setsockopt reuseaddr: $!\n";
+    setsockopt($socket,SOL_SOCKET, SO_KEEPALIVE, pack("l",1)) || die "setsockopt keepalive: $!\n";
+    if (bind($socket, pack($sockaddr, AF_INET, $port, "\0\0\0\0"))) {
+	print "$port\n";
+	exit 0;
+    }
+    $port++;
+}
+die "Can't find free port!\n";

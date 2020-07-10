@@ -1,0 +1,65 @@
+#!/usr/bin/perl
+
+use Socket;
+use POSIX;
+use strict;
+use Getopt::Long;
+Getopt::Long::Configure("bundling", "pass_through");
+
+my ($timeout) = -1;
+my ($port) = 4096;
+my ($expect_count) = -1;
+
+GetOptions("t=i" => \$timeout,
+	   "p=i" => \$port,
+	   "c=i" => \$expect_count);
+
+my $sockaddr = "S n a4 x8";
+my ($socket);
+socket($socket, AF_INET, SOCK_STREAM, getprotobyname('tcp')) || die "socket: $!";
+setsockopt($socket,SOL_SOCKET, SO_REUSEADDR, pack("l",1)) || die "setsockopt reuseaddr: $!\n";
+setsockopt($socket,SOL_SOCKET, SO_KEEPALIVE, pack("l",1)) || die "setsockopt keepalive: $!\n";
+if (!bind($socket, pack($sockaddr, AF_INET, $port, "\0\0\0\0"))) {
+    die "Can't bind to port $port\n";
+}
+listen($socket, 100) || die "Can't listen on port $port\n";
+
+my ($client_count) = 0;
+eval {
+    if ($timeout > 0) {
+	alarm $timeout;
+    }
+    my $kid;
+    while ($expect_count < 0 || $client_count < $expect_count) {
+    	my $client;
+	accept ($client, $socket) || next;
+    	my $child = fork;
+	if ($child == 0) {
+	    close ($socket);
+	    my ($tbuf) = "";
+	    my ($status);
+	    if (($status = sysread($client, $tbuf, 1024)) > 0) {
+		print "$tbuf\n";
+	    }
+	    close($client);
+	    exit(0);
+        } else {
+	    close($client);
+	    if ($child > 0) {
+		$client_count++;
+	    } else {
+		warn "Fork failed: $!"
+	    }
+	}
+	do {
+	    $kid = waitpid(-1, WNOHANG);
+ 	} while ($kid > 0);
+    }
+    do {
+	$kid = wait();
+    } while ($kid > 0);
+};
+
+if ($@) {
+    die "$@";
+}
