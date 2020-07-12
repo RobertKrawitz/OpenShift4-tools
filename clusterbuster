@@ -95,6 +95,7 @@ declare configmapMountDir=/etc/map
 declare systemConfigmapMountDir=/etc/bootstrap
 declare -i hasSystemConfigMap=0
 declare nodeSelector='node-role.kubernetes.io/worker'
+declare get_logs_pid
 
 declare accumulateddata=
 
@@ -2306,6 +2307,7 @@ function run_clusterbuster_1() {
 	    log_port=$("${__libdir__}/find_free_port")
 	    (( log_port )) || fatal "Can't get port to listen for logs on!"
 	    get_logs -p "$log_port" -c "$logs_expected" &
+	    get_logs_pid=$!
 	fi
     fi
     basetime=$(printf '%(%s)T' -1)
@@ -2333,14 +2335,27 @@ function run_clusterbuster_1() {
 	    fi
 	done
 	if (( ! finis )) ; then
-	    exec 3>&2 2>/dev/null
-	    kill %get_logs
-	    exec 2>&3 3>&-
+	    if [[ -n "$get_logs_pid" ]] ; then
+		echo "Killing logger '$get_logs_pid'"
+		exec 3>&2 2>/dev/null
+		kill "$get_logs_pid"
+		sleep 3
+		kill -9 "$get_logs_pid"
+		get_logs_pid=
+		exec 2>&3 3>&-
+	    fi
 	    echo "Run did not terminate" 1>&2
 	    status=1
 	fi
     fi
     exec 3>&2 2>/dev/null
+    if [[ -n "$get_logs_pid" ]] ; then
+	echo "Killing logger '$get_logs_pid'"
+	kill "$get_logs_pid"
+	sleep 3
+	kill -9 "$get_logs_pid"
+	get_logs_pid=
+    fi
     wait
     exec 2>&3 3>&-
 
