@@ -762,7 +762,7 @@ function createPodResources() {
 	    indent 4 createResources "${pod_resource_requests[@]}"
 	fi
     fi
-    createTolerations "${tolerations[@]}"
+    (( ${#tolerations[@]} )) && createTolerations "${tolerations[@]}"
 }
 
 function createContainerResources() {
@@ -895,7 +895,7 @@ function createVolumeMountsYAML() {
   readOnly: true
 EOF
     done
-    if [[ -n "${emptydirs[*]}" ]] ; then
+    if [[ -n "${emptydirs[*]:-}" ]] ; then
 	local vol
 	for vol in "${emptydirs[@]}" ; do
 	    cat <<EOF
@@ -904,7 +904,7 @@ EOF
 EOF
 	done
     fi
-    if [[ -n "${configMapFiles[*]}" ]] ; then
+    if [[ -n "${configMapFiles[*]:-}" ]] ; then
 	cat <<EOF
 - name: "configmap-${namespace}"
   mountPath: "${configmapMountDir}"
@@ -936,7 +936,7 @@ function createVolumesYAML() {
 EOF
     done
 
-    if [[ -n "${emptydirs[*]}" ]] ; then
+    if [[ -n "${emptydirs[*]:-}" ]] ; then
 	local vol
 	for vol in "${emptydirs[@]}" ; do
 	    cat <<EOF
@@ -945,7 +945,7 @@ EOF
 EOF
 	done
     fi
-    if [[ -n "${configMapFiles[*]}" ]] ; then
+    if [[ -n "${configMapFiles[*]:-}" ]] ; then
 	cat <<EOF
 - name: "configmap-${namespace}"
   configMap:
@@ -2185,6 +2185,7 @@ function createSystemConfigMap() {
 }
 
 function createAllConfigMaps() {
+    (( ${#configMapFiles[@]} )) || return;
     local i
     trap 'kill -9 $(jobs -p); exit' INT
     for i in $(seq 0 "$((parallelConfigMaps - 1))") ; do
@@ -2276,7 +2277,7 @@ function run_clusterbuster_1() {
     fi
 
     createAllObjects Secrets
-    checkConfigMaps "${configMapFiles[@]}"
+    (( ${#configMapFiles[@]} )) && checkConfigMaps "${configMapFiles[@]}"
     createAllObjects ConfigMaps
     if type -t "listConfigMaps${podType}" >/dev/null ; then
 	hasSystemConfigMap=1
