@@ -1109,7 +1109,7 @@ function createSyncSpec() {
 spec:
 $(indent 2 node_selector)
   terminationGracePeriodSeconds: 1
-$(indent 2 createTolerations "${tolerations[@]}")
+$(indent 2 createTolerations ${tolerations+"${tolerations[@]}"})
 $(indent 2 <<< "$runtimeClass")
   containers:
 $(indent 2 createSyncYAML "$@")
@@ -1216,10 +1216,10 @@ $(indent 2 genericCommand sysbench.pl)
   - "$syncPortNum"
   - "$log_host"
   - "$log_port"
-  - "${sysbench_generic_options[*]}"
+  - "${sysbench_generic_options[*]:-}"
   - "fileio"
-  - "${sysbench_fileio_options[*]}"
-  - "${!sysbench_fileio_tests[*]}"
+  - "${sysbench_fileio_options[*]:-}"
+  - "${!sysbench_fileio_tests[*]:-}"
 $(indent 2 createVolumeMountsYAML "$namespace" "$i" "$secretCount")
 EOF
     done
@@ -1347,7 +1347,7 @@ $(indent 2 genericCommand fio.pl)
   - "$log_host"
   - "$log_port"
   - "$configmapMountDir"
-  - "${fio_generic_options[*]}"
+  - "${fio_generic_options[*]:-}"
 $(indent 2 createVolumeMountsYAML "$namespace" "$i" "$secretCount")
 EOF
     done
@@ -2363,7 +2363,7 @@ function run_clusterbuster_1() {
     local objtype
     while read -r objtype ; do
 	[[ -n "${objtype:-}" ]] && printf "Created %${#totalObjectsCreated}d %s(s)\n" "${objectsCreated[$objtype]}" "$objtype"
-    done <<< "$( (IFS=$'\n'; echo "${!objectsCreated[*]}") | sort)"
+    done <<< "$( (IFS=$'\n'; echo "${!objectsCreated[*]:-}") | sort)"
     echo "Created $totalObjectsCreated object(s) total"
     if ((cleanup)) ; then
 	doCleanup
