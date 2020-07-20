@@ -2185,6 +2185,7 @@ function createSystemConfigMap() {
 }
 
 function createAllConfigMaps() {
+    createSystemConfigMap
     (( ${#configMapFiles[@]} )) || return;
     local i
     trap 'kill -9 $(jobs -p); exit' INT
@@ -2192,7 +2193,6 @@ function createAllConfigMaps() {
 	createObjects_n ConfigMaps "$parallelConfigMaps" "$blocksizeConfigMaps" "$((i * blocksizeConfigMaps))" "$sleepConfigMaps" "configmap" "${configMapFiles[@]}"&
     done
     wait
-    createSystemConfigMap
 }
 
 function createAllDeployments() {
