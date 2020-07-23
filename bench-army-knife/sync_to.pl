@@ -14,7 +14,7 @@ my ($token);
 sub timestamp($) {
     my ($str) = @_;
     my (@now) = gettimeofday();
-    printf STDERR  "sync %s.%06d %s\n", gmtime($now[0])->strftime("%Y-%m-%dT%T"), $now[1], $str;
+    printf STDERR  "sync_to $$ %s.%06d %s\n", gmtime($now[0])->strftime("%Y-%m-%dT%T"), $now[1], $str;
 }
 if (not $addr) {
     die "No address provided!\n";

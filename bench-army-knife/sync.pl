@@ -9,10 +9,10 @@ my ($listen_port, $expected_clients, $syncCount) = @ARGV;
 if (! $syncCount) {
     $syncCount = 1;
 }
-sub timestamp($) {
-    my ($str) = @_;
+sub timestamp(@) {
+    my ($str) = join(" ", @_);
     my (@now) = gettimeofday();
-    printf STDERR  "sync %s.%06d %s\n", gmtime($now[0])->strftime("%Y-%m-%dT%T"), $now[1], $str;
+    printf STDERR  "sync $$ %s.%06d %s\n", gmtime($now[0])->strftime("%Y-%m-%dT%T"), $now[1], $str;
 }
 timestamp("Clusterbuster sync starting");
 my $sockaddr = "S n a4 x8";
@@ -38,6 +38,7 @@ while ($syncCount < 0 || $syncCount-- > 0) {
 	    accept($client, SOCK) || next;
 	    my $peeraddr = getpeername($client);
 	    my ($port, $addr) = sockaddr_in($peeraddr);
+	    timestamp("Accepted connection from " . inet_ntoa($addr));
 	    my $peerhost = gethostbyaddr($addr, AF_INET);
 	    my $peeraddr = inet_ntoa($addr);
 	    timestamp("Accepted connection from $peerhost ($peeraddr) on $port");

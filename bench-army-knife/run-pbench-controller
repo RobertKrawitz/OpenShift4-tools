@@ -46,8 +46,8 @@ for agent in "${agents[@]}" ; do
     pbench-register-tool-set --remote="$agent"
 done
 
-# Our user benchmark simply consists of a sync script
-sync.pl "$agent_sync_port" 1 "$client_sync_count" &
+# Our dummy user benchmark simply consists of a sync script
+sync.pl "$worker_sync_port" 1 "$client_sync_count" &
 pbench-user-benchmark --config="$config" -- sync_to.pl - "$worker_sync_port"
 echo "Waiting for re-sync after benchmarks"
 wait
