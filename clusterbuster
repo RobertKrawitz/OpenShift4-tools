@@ -43,6 +43,7 @@ declare -i doit=1
 declare -i blockitemcount=0
 declare -i port=7777
 declare -i syncPort=7778
+declare syncHost=
 declare -i affinity=0
 declare -i verbose=0
 declare -i wait_for_secrets=1
@@ -233,6 +234,8 @@ Extended Options:
                         Specify empty value to not provide a node selector.
 
     Pod Options:
+       --external_sync=host:port
+			Sync to external host rather than internally
        --<type>=<resource=value>
                         Resource requests and limits
                         <type> is pod_resource_request, pod_resource_limit,
@@ -582,6 +585,19 @@ function process_option() {
 		1|'') affinity=2      ;;
 		*) affinity=0         ;;
 	    esac
+	    ;;
+	external_sync)
+	    if [[ $optvalue =~ (([[:alnum:]][-_[:alnum:]]*[[:alnum:]]\.)*([[:alnum:]][-_[:alnum:]]*[[:alnum:]])):([1-9][[:digit:]]{0,4}) ]] ; then
+		syncHost=${BASH_REMATCH[1]}
+		syncPort=${BASH_REMATCH[4]}
+		if (( syncPort > 65535 )) ; then
+		    echo "Illegal external sync port (must be 1 <= port <= 65535)"
+		    help
+		fi
+	    else
+		echo "Undecipherable external sync host:port $optvalue"
+		help
+	    fi
 	    ;;
 	*) unknown_opts+=("$noptname") ;;
     esac
@@ -1186,7 +1202,7 @@ function createContainersSysbenchYAML() {
     local syncService=
     local syncPortNum=
     if (( syncStart )) ; then
-	syncService="service-${namespace}-sync"
+	syncService="${syncHost:-service-${namespace}-sync}"
 	syncPortNum=$syncPort
     fi
     # For prototype, just use /tmp.
@@ -1316,7 +1332,7 @@ function createContainersFioYAML() {
     local syncService=
     local syncPortNum=
     if (( syncStart )) ; then
-	syncService="service-${namespace}-sync"
+	syncService="${syncHost:-service-${namespace}-sync}"
 	syncPortNum=$syncPort
     fi
     # For prototype, just use /tmp.
@@ -1444,7 +1460,7 @@ function createContainersCPUSoakerYAML() {
     local syncService=
     local syncPortNum=
     if (( syncStart )) ; then
-	syncService="service-${namespace}-sync"
+	syncService="${syncHost:-service-${namespace}-sync}"
 	syncPortNum=$syncPort
     fi
     for j in $(seq 0 $((containers - 1))) ; do
@@ -1720,7 +1736,7 @@ function createClientContainerYAML() {
     local syncService=
     local syncPortNum=
     if (( syncStart )) ; then
-	syncService="service-${namespace}-sync"
+	syncService="${syncHost:-service-${namespace}-sync}"
 	syncPortNum=$syncPort
     fi
     for j in $(seq 0 $((containers - 1))) ; do
@@ -1909,7 +1925,7 @@ function createDeploymentSysbench() {
     local log_host=${6:-}
     local -i log_port=${7:-0}
     local -i i
-    if (( syncStart )) ; then
+    if [[ syncStart -gt 0 && -z "$syncHost" ]] ; then
 	createService "$namespace" "${namespace}-sync" "$syncPort"
 	createSyncDeployment 3 "$namespace" "$((containers * replicas * count))"
     fi
@@ -1944,7 +1960,7 @@ function createDeploymentFio() {
     local log_host=${6:-}
     local -i log_port=${7:-0}
     local -i i
-    if (( syncStart )) ; then
+    if [[ syncStart -gt 0 && -z "$syncHost" ]] ; then
 	createService "$namespace" "${namespace}-sync" "$syncPort"
 	createSyncDeployment $((${#configMapFiles[@]} ? ${#configMapFiles[@]} * 2 : 2)) "$namespace" "$((containers * replicas * count))"
     fi
@@ -1987,7 +2003,7 @@ function createDeploymentCPUSoaker() {
     local log_host=${6:-}
     local -i log_port=${7:-0}
     local -i i
-    if (( syncStart )) ; then
+    if [[ syncStart -gt 0 && -z "$syncHost" ]] ; then
 	createService "$namespace" "${namespace}-sync" "$syncPort"
 	createSyncDeployment 2 "$namespace" "$((containers * replicas * count))"
     fi
@@ -2030,7 +2046,7 @@ function createDeploymentServer() {
     local log_host=${6:-}
     local -i log_port=${7:-0}
     local -i i
-    if (( syncStart )) ; then
+    if [[ syncStart -gt 0 && -z "$syncHost" ]] ; then
 	createService "$namespace" "${namespace}-sync" "$syncPort"
 	createSyncDeployment 2 "$namespace" "$((containers * replicas * count))"
     fi
@@ -2084,7 +2100,7 @@ function createDeployment() {
 }
 
 function createSync() {
-    if (( syncStart )) ; then
+    if [[ syncStart -gt 0 && -z "$syncHost" ]] ; then
 	if type -t "createSync${podType}" >/dev/null  ; then
 	    "createSync${podType}" "$@"
 	fi
