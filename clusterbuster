@@ -587,13 +587,14 @@ function process_option() {
 	    esac
 	    ;;
 	external_sync)
-	    if [[ $optvalue =~ (([[:alnum:]][-_[:alnum:]]*[[:alnum:]]\.)*([[:alnum:]][-_[:alnum:]]*[[:alnum:]])):([1-9][[:digit:]]{0,4}) ]] ; then
+	    if [[ $optvalue =~ ^(-|([[:alnum:]][-_[:alnum:]]*[[:alnum:]]\.)*([[:alnum:]][-_[:alnum:]]*[[:alnum:]])):([1-9][[:digit:]]{0,4})$ ]] ; then
 		syncHost=${BASH_REMATCH[1]}
 		syncPort=${BASH_REMATCH[4]}
 		if (( syncPort > 65535 )) ; then
 		    echo "Illegal external sync port (must be 1 <= port <= 65535)"
 		    help
 		fi
+		syncStart=1
 	    else
 		echo "Undecipherable external sync host:port $optvalue"
 		help

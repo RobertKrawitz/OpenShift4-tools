@@ -72,6 +72,10 @@ sub connect_to($$) {
 sub do_sync($$;$) {
     my ($addr, $port, $token) = @_;
     if (not $addr) { return; }
+    if ($addr eq '-') {
+	$addr=`ip route get 1 |awk '{print \$(NF-2); exit}'`;
+	chomp $addr;
+    }
     if (not $token) {
         $token = sprintf('%d', rand() * 999999999);
     }
