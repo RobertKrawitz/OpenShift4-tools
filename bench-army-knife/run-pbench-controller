@@ -1,0 +1,59 @@
+#!/bin/bash
+
+exec 1>&2
+
+if (($# < 8)) ; then
+    echo "Usage: $0 configdir controller_sync_port expected_agents agent_sync_port worker_sync_port expected_clients client_sync_count config tools..."
+    exit 1
+fi
+
+ln -s /opt/pbench-agent /var/lib
+
+PATH=/usr/local/bin:$PATH
+
+declare configdir=$1; shift	# Secret containing pbench config and private key
+declare controller_sync_port=$1; shift
+declare expected_agents=$1; shift
+declare agent_sync_port=$1; shift
+declare worker_sync_port=$1; shift
+declare expected_clients=$1; shift
+declare client_sync_count=${1:-2}; shift
+declare config=$1; shift
+
+cat > "$HOME/.ssh/config" <<'EOF'
+Host *
+StrictHostKeyChecking no
+UserKnownHostsFile /dev/null
+Port 2022
+EOF
+
+if [[ ! -d "$configdir" || ! -f "$configdir/pbench-agent.cfg" || ! -f "$configdir/id_rsa" ]] ; then
+    echo "Can't find configdir $configdir or pbench-agent.cfg or secret key"
+    exit 1
+fi
+
+(umask 077 && cp -p "$configdir"/id_rsa /opt/pbench-agent/id_rsa && chown pbench:pbench /opt/pbench-agent/id_rsa)
+
+(umask 0333 && cp -p "$configdir"/pbench-agent.cfg /opt/pbench-agent/config/pbench-agent.cfg && chown pbench:pbench /opt/pbench-agent/config/pbench-agent.cfg)
+
+. /etc/profile.d/pbench-agent.sh
+
+declare -a agents=()
+
+readarray -t agents <<< "$(sync.pl "$controller_sync_port" "$expected_agents" 1)"
+
+for agent in "${agents[@]}" ; do
+    pbench-register-tool-set --remote="$agent"
+done
+
+# Our user benchmark simply consists of a sync script
+sync.pl "$agent_sync_port" 1 "$client_sync_count" &
+pbench-user-benchmark --config="$config" -- sync_to.pl - "$worker_sync_port"
+echo "Waiting for re-sync after benchmarks"
+wait
+echo "Moving results"
+pbench-move-results
+echo "Final sync"
+sync.pl "$controller_sync_port" "$expected_agents" 1
+echo "Wait forever"
+sleep infinity

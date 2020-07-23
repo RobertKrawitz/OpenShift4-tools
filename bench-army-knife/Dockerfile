@@ -1,26 +1,17 @@
-FROM docker.io/library/centos:8
+FROM quay.io/rkrawitz/bench-army-base:latest
 
-COPY pbench-8.repo /etc/yum.repos.d/pbench.repo
-RUN dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-8.noarch.rpm && \
-    dnf install -y --enablerepo PowerTools --enablerepo copr-pbench \
-    fio \
-    hostname \
-    iproute \
-    iputils \
-    jq \
-    openssh-clients \
-    openssh-server \
-    pbench-agent \
-    pbench-sysstat \
-    perf \
-    perl \
-    perl-Time-HiRes \
-    procps-ng \
-    rsync \
-    sysbench \
-    uperf && \
-    dnf -y clean all
-RUN mkdir -p /usr/local/bin
-COPY bootstrap.sh /usr/local/bin
-RUN chmod +x /usr/local/bin/bootstrap.sh
-RUN sed -i -e "s/.*PermitRootLogin.*/PermitRootLogin yes  ##/" -e "s/.*Port .*/Port 2022 ##/" /etc/ssh/sshd_config && ssh-keygen -A
+RUN sed -i -e "s/.*PermitRootLogin.*/PermitRootLogin yes ##/" \
+           -e "s/.*Port .*/Port 2022 ##/" /etc/ssh/sshd_config && \
+    ssh-keygen -A && \
+    ssh-keygen -t rsa -q -f "$HOME/.ssh/id_rsa" -N '' -C bench-army-knife && \
+    cat "$HOME/.ssh/id_rsa.pub" >> "$HOME/.ssh/authorized_keys" && \
+    chmod 600 "$HOME/.ssh/authorized_keys" && \
+    mkdir /var/lib/pbench
+COPY bootstrap.sh \
+     run-pbench-agent \
+     run-pbench-agent-ext \
+     run-pbench-controller \
+     run-pbench-controller-ext \
+     sync.pl \
+     sync_to.pl \
+     /usr/local/bin

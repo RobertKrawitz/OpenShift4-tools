@@ -1,0 +1,48 @@
+#!/bin/bash
+
+exec 1>&2
+
+if (($# < 2)) ; then
+    echo "Usage: $0 configdir_loc controller_port"
+    exit 1
+fi
+
+PATH=/usr/local/bin:$PATH
+
+. /etc/profile.d/pbench-agent.sh
+
+mount -t debugfs none /sys/kernel/debug
+
+declare configdir=$1; shift	# Secret containing pbench config and private key
+declare controller_port=$1; shift
+declare controller_host=$(ip route get 1 |awk '{print $(NF-2); exit}')
+
+# Make sure ssh authorized keys are set up correctly
+
+cat "$HOME/.ssh/id_rsa.pub" >> "$HOME/.ssh/authorized_keys"
+chown root "$HOME/.ssh/authorized_keys"
+chgrp root "$HOME/.ssh/authorized_keys"
+
+if [[ ! -d "$configdir" || ! -f "$configdir/pbench-agent.cfg" || ! -f "$configdir/id_rsa" ]] ; then
+    echo "Can't find configdir $configdir or pbench-agent.cfg or secret key"
+    exit 1
+fi
+
+(umask 077 && cp -p "$configdir"/id_rsa /opt/pbench-agent/id_rsa && chown pbench:pbench /opt/pbench-agent/id_rsa)
+
+(umask 0333 && cp -p "$configdir"/pbench-agent.cfg /opt/pbench-agent/config/pbench-agent.cfg && chown pbench:pbench /opt/pbench-agent/config/pbench-agent.cfg)
+
+/usr/sbin/sshd
+
+sleep 5
+# Set up anything we need to for the agent
+
+# Let the controller know that we're ready to go
+sync_to.pl "$controller_host" "$controller_port"
+
+# And wait around to be released after pbench-move-results
+sync_to.pl "$controller_host" "$controller_port"
+
+# Tear down anything we may need to for the agent
+
+sleep infinity

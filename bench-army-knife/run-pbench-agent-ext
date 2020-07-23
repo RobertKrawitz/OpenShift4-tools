@@ -1,0 +1,23 @@
+#!/bin/bash
+
+exec 1>&2
+
+if (($# < 3)) ; then
+    echo "Usage: $0 credential_url controller_host controller_port"
+    exit 1
+fi
+
+declare credential_url=$1; shift
+
+curl -S -s "$credential_url" > /tmp/fetch_credentials || {
+    echo "Unable to fetch credential generator"
+    exit 1
+}
+chmod +x /tmp/fetch_credentials
+
+/tmp/fetch_credentials || {
+    echo "Unable to extract credentials"
+    exit 1
+}
+
+exec run-pbench-agent /opt/pbench-agent/id_rsa /opt/bench-agent/config/pbench-agent.cfg "$@"

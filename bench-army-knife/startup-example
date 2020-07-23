@@ -1,0 +1,179 @@
+#!/bin/sh
+
+oc delete ns pbench
+oc adm new-project pbench
+oc project pbench
+oc create serviceaccount pbench
+oc adm policy add-cluster-role-to-user cluster-admin pbench
+oc adm policy add-scc-to-user privileged -z pbench
+# Need to use the correct key and agent configuration for your configuration.
+#oc create configmap credentials --from-file=$HOME/T/id_rsa --from-file=$HOME/T/pbench-agent.cfg
+
+port=30777
+agentPort=30888
+
+
+oc create -f - <<EOF
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: "pbench-controller"
+  namespace: "pbench"
+  labels:
+    name: pbench-controller
+    pbench-controller: "true"
+    app: pbench-controller
+spec:
+  ports:
+  - name: controller
+    port: $port
+    targetPort: $port
+  type: NodePort
+  selector:
+    name: pbench-controller
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: "pbench-agent"
+  namespace: "pbench"
+  labels:
+    name: pbench-agent
+    app: pbench-agent
+    pbench-agent: "true"
+spec:
+  ports:
+  - name: agent
+    port: $agentPort
+    targetPort: $agentPort
+  type: ClusterIP
+  selector:
+    name: pbench-controller
+EOF
+
+nodePort=''
+until [[ -n "$nodePort" ]] ; do
+    nodePort=$(oc get service -ojson pbench-controller 2>/dev/null |jq .spec.ports[0].nodePort)
+done
+
+agentNodePort='30888'
+until [[ -n "$agentNodePort" ]] ; do
+    agentNodePort=$(oc get service -ojson pbench-agent 2>/dev/null |jq .spec.ports[0].nodePort)
+done
+
+echo "Using ports $nodePort and $agentPort"
+
+oc create -f - <<EOF
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "controller"
+  namespace: "pbench"
+  nodeSelector:
+    node-role.kubernetes.io/worker: ""
+  selector:
+    matchLabels:
+      app: pbench-controller
+  labels:
+    name: pbench-controller
+    app: pbench-controller
+    pbench-controller: "true"
+    sync: "true"
+spec:
+  nodeSelector:
+    node-role.kubernetes.io/worker: ""
+  terminationGracePeriodSeconds: 1
+  restartPolicy: Always
+  containers:
+  - name: "c0"
+    imagePullPolicy: Always
+    image: "quay.io/rkrawitz/bench-army-knife:latest"
+    ports:
+    - containerPort: $port
+      name: controller
+    - containerPort: $agentPort
+      name: sync
+    env:
+    - name: VERBOSE
+      value: "0"
+    command:
+    - "/usr/local/bin/run-pbench-controller"
+    args:
+    - "/etc/credentials/"
+    - "$port"
+    - "3"
+    - "$agentPort"
+    - "$agentNodePort"
+    - "3"
+    - "2"
+    - "test-rlk"
+    volumeMounts:
+    - name: credentials
+      mountPath: "/etc/credentials"
+      readOnly: true
+  restartPolicy: Never
+  volumes:
+  - name: credentials
+    configMap:
+      name: credentials
+
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: agent
+  namespace: "pbench"
+  annotations:
+  openshift.io/scc: privileged
+spec:
+  selector:
+    matchLabels:
+      name: pbench-agent
+  template:
+    metadata:
+      labels:
+        name: pbench-agent
+        app: pbench-agent
+    spec:
+      nodeSelector: 
+        node-role.kubernetes.io/worker: ""
+      hostPID: true
+      hostNetwork: true
+      containers:
+      - name: "c0"
+        image: "quay.io/rkrawitz/bench-army-knife:latest"
+        imagePullPolicy: Always
+        securityContext:
+          privileged: true
+        ports:
+        - containerPort: 2022
+          protocol: TCP
+        env:
+        - name: VERBOSE
+          value: "0"
+        command:
+        - "/usr/local/bin/run-pbench-agent"
+        args:
+        - "/etc/credentials/"
+        - "$nodePort"
+        volumeMounts:
+        - name: key
+          mountPath: /root/.ssh/authorized_keys
+          readOnly: false
+        - name: credentials
+          mountPath: /etc/credentials
+          readOnl: true
+      serviceAccount: pbench
+      volumes:
+      - name: key
+        hostPath:
+          path: /home/core/.ssh/authorized_keys
+        resources: {}
+      - name: credentials
+        configMap:
+          name: credentials
+      terminationGracePeriod1: 1
+EOF
