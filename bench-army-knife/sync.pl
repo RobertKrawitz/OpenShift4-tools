@@ -34,14 +34,12 @@ while ($syncCount < 0 || $syncCount-- > 0) {
 	print STDERR "Expect $expected_clients clients\n";
 	while ($expected_clients > 0) {
 	    my ($client);
-	    timestamp("In client loop");
 	    accept($client, SOCK) || next;
 	    my $peeraddr = getpeername($client);
 	    my ($port, $addr) = sockaddr_in($peeraddr);
-	    timestamp("Accepted connection from " . inet_ntoa($addr));
 	    my $peerhost = gethostbyaddr($addr, AF_INET);
 	    my $peeraddr = inet_ntoa($addr);
-	    timestamp("Accepted connection from $peerhost ($peeraddr) on $port");
+	    # Report the peer address out
 	    print "$peeraddr\n";
 	    my ($tbuf) = "NULL";
 	    if (sysread($client, $tbuf, 1024) <= 0) {
@@ -54,8 +52,6 @@ while ($syncCount < 0 || $syncCount-- > 0) {
 	# Make sure that we're closed when we release the clients
 	# so if they immediately try to sync again they won't inadvertently connect.
 	close SOCK;
-	timestamp("Waiting 1 second to sync:");
-	sleep(1);
 	timestamp("Done!");
 	exit(0);
     } elsif ($child < 1) {
