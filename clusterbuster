@@ -2366,9 +2366,7 @@ function run_clusterbuster_1() {
 	    status=1
 	fi
     fi
-    if [[ -n "$get_logs_pid" ]] ; then
-	wait
-    fi
+    [[ -n "${get_logs_pid:-}" ]] && wait
 
     local objtype
     while read -r objtype ; do
