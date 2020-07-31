@@ -2366,21 +2366,14 @@ function run_clusterbuster_1() {
 	    status=1
 	fi
     fi
-    exec 3>&2 2>/dev/null
     if [[ -n "$get_logs_pid" ]] ; then
-	echo "Killing logger '$get_logs_pid'"
-	kill "$get_logs_pid"
-	sleep 3
-	kill -9 "$get_logs_pid"
-	get_logs_pid=
+	wait
     fi
-    wait
-    exec 2>&3 3>&-
 
     local objtype
     while read -r objtype ; do
 	[[ -n "${objtype:-}" ]] && printf "Created %${#totalObjectsCreated}d %s(s)\n" "${objectsCreated[$objtype]}" "$objtype"
-    done <<< "$( (IFS=$'\n'; echo "${!objectsCreated[*]:-}") | sort)"
+    done <<< "$( (IFS=$'\n'; echo "${!objectsCreated[*]}") | sort)"
     echo "Created $totalObjectsCreated object(s) total"
     if ((cleanup)) ; then
 	doCleanup
