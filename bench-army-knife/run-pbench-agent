@@ -4,12 +4,12 @@ exec 1>&2
 
 trap exit TERM INT
 
-declare ssh_port=2022
-
 if (($# < 1)) ; then
-    echo "Usage: $0 controller_port"
+    echo "Usage: $0 controller_port [controller_host]"
     exit 1
 fi
+
+sshd_port=2222
 
 PATH=/usr/local/bin:$PATH
 
@@ -17,11 +17,9 @@ PATH=/usr/local/bin:$PATH
 
 mount -t debugfs none /sys/kernel/debug
 
+ssh-keygen -A
 declare controller_port=$1; shift
-declare controller_host=$(ip route get 1 |awk '{print $(NF-2); exit}')
-#if [[ -n $1 ]] ; then
-#    ssh_port=$1
-#fi
+declare controller_host=${2:-$(ip route get 1 |awk '{print $(NF-2); exit}')}
 
 # Make sure ssh authorized keys are set up correctly
 
@@ -29,23 +27,32 @@ cat "$HOME/.ssh/id_rsa.pub" >> "$HOME/.ssh/authorized_keys"
 chown root "$HOME/.ssh/authorized_keys"
 chgrp root "$HOME/.ssh/authorized_keys"
 
-/usr/sbin/sshd -p "$ssh_port"
+/usr/sbin/sshd -p "$sshd_port"
 
 #sleep 5
 # Set up anything we need to for the agent
 
 # Let the controller know that we're ready to go
-declare sync_port
-sync_port=$(sync_to.pl "$controller_host" "$controller_port" "$ssh_port")
+sync_data=$(sync_to.pl "$controller_host" "$controller_port" "$sshd_port")
+echo "Got sync, data $sync_data" 1>&2
 declare ssh_tunnel_pid
 
-if [[ -n "$sync_port" ]] ; then
-    :
+if [[ $sync_data = "PASV "* ]] ; then
+    read -r passive remote_ssh_port tunnel_port login <<< "$sync_data"
+    ssh -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -n -R "$tunnel_port:localhost:$sshd_port" -p "$remote_ssh_port" "${login:+$login@}$controller_host" sleep infinity&
+    ssh_tunnel_pid=$!
+    # How to confirm that the tunnel is up???
+    sleep 5
+    cat $HOME/.ssh/known_hosts 1>&2
+    # Sync to confirm we have the tunnel up
+    sync_to.pl "$controller_host" "$controller_port" "$sshd_port"
+    trap "kill -9 $ssh_tunnel_pid; exit" TERM INT EXIT
 fi
 
 # And wait around to be released after pbench-move-results
-sync_to.pl "$controller_host" "$controller_port" "$ssh_port"
+sync_to.pl "$controller_host" "$controller_port" "$sshd_port"
 
 # Tear down anything we may need to for the agent
 
+# Sleep so we don't immediately restart
 sleep infinity

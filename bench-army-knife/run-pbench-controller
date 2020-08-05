@@ -5,13 +5,28 @@ exec 1>&2
 trap exit TERM INT
 
 if (($# < 8)) ; then
-    echo "Usage: $0 configdir controller_sync_port expected_agents agent_sync_port worker_sync_port expected_clients client_sync_count config tools..."
+    echo "Usage: $0 [[-P local_port] ...] [-p ssh_port] configdir controller_sync_port expected_agents agent_sync_port worker_sync_port expected_clients client_sync_count config tools..."
     exit 1
 fi
 
 ln -s /opt/pbench-agent /var/lib
 
 PATH=/usr/local/bin:$PATH
+
+declare -a local_ports=()
+declare ssh_port=
+declare ssh_listen_port=
+declare passive=0
+
+while getopts "P:L:" arg ; do
+    case "$arg" in
+	L) ssh_listen_port="$OPTARG";passive=1 ;;
+	P) ssh_port="$OPTARG"		       ;;
+	*)                           	       ;;
+    esac
+done
+
+shift $((OPTIND-1))
 
 declare configdir=$1; shift	# Secret containing pbench config and private key
 declare controller_sync_port=$1; shift
@@ -21,9 +36,10 @@ declare worker_sync_port=$1; shift
 declare expected_clients=$1; shift
 declare client_sync_count=${1:-2}; shift
 declare config=$1; shift
+declare sshd_pid=
 
 if [[ ! -d "$configdir" || ! -f "$configdir/pbench-agent.cfg" || ! -f "$configdir/id_rsa" ]] ; then
-    echo "Can't find configdir $configdir or pbench-agent.cfg or secret key"
+    echo "Can't find configdir $configdir or pbench-agent.cfg or secret key" 1>&2
     exit 1
 fi
 
@@ -34,38 +50,59 @@ fi
 . /etc/profile.d/pbench-agent.sh
 
 declare -a agents=()
-declare -a remote_ports=()
-declare -a local_ports=()
-declare -a all_ports=()
-declare -a ssh_server_pids=()
+declare -a port_data=()
 
-readarray -t all_ports <<< $(find-free-ports -n $((expected_agents * 2);
-for i in $(seq 0 $((expected_agents - 1))) ; do
-    remote_ports+=("${all_ports[$i]")
-    local_ports+=("${all_ports[$((i+expected_agents))]}")
-done
-    
-while read -r agent ; do
-    agents+=("$agent")
-    echo "Agent $agent"
-    cat >> "$HOME/.ssh/config" <<EOF
+if (( passive )) ; then
+    readarray -t local_ports <<< "$(find-free-ports -n "$expected_agents")"
+    for port in "${local_ports[@]}" ; do
+	port_data+=("PASV $ssh_port $port $(whoami)")
+    done
+    ssh-keygen -A
+    /usr/sbin/sshd -D -p "$ssh_listen_port" 1>&2 &
+    sshd_pid=$!
+    trap "kill -9 $sshd_pid; exit" TERM INT EXIT
+    i=0
+    while read -r agent token ; do
+	[[ -n "$agent" ]] || continue
+	agents+=("$agent")
+	echo "Agent $agent" 1>&2
+	cat >> "$HOME/.ssh/config" <<EOF
+Host $agent
+HostName localhost
+StrictHostKeyChecking no
+UserKnownHostsFile /dev/null
+Port ${local_ports[$i]}
+LogLevel ERROR
+
+EOF
+	i=$((i+1))
+    done <<< "$(sync.pl -v "$controller_sync_port" "$expected_agents" 1 "${port_data[@]}")"
+    # Wait until clients have their tunnels up
+    sync.pl "$controller_sync_port" "$expected_agents" 1
+else
+    while read -r agent token ; do
+	[[ -n "$agent" ]] || continue
+	agents+=("$agent")
+	echo "Agent $agent" 1>&2
+	cat >> "$HOME/.ssh/config" <<EOF
 Host $agent
 StrictHostKeyChecking no
 UserKnownHostsFile /dev/null
-Port $port
+Port $token
 LogLevel ERROR
+
 EOF
-done <<< "$(sync.pl -v "$controller_sync_port" "$expected_agents" "${ports[@]}")"
+    done <<< "$(sync.pl -v "$controller_sync_port" "$expected_agents" 1)"
+fi
 
 # Special case agent ports; everything else should use defaults.
 for agent in "${agents[@]}" ; do
     pbench-register-tool-set --remote="$agent"
 done
 
-pbench-user-benchmark --config="$config" -- sync.pl "$worker_sync_port" "$expected_clients" "$client_sync_count" &
-echo "Waiting for re-sync after benchmarks"
-wait
-echo "Moving results"
+echo "Waiting for benchmark to complete" 1>&2
+/opt/pbench-agent/bench-scripts/pbench-user-benchmark --config="$config" -- sync.pl "$worker_sync_port" "$expected_clients" "$client_sync_count"
+echo "Moving results" 1>&2
 pbench-move-results
-echo "Final sync"
-sync.pl "$controller_sync_port" "$expected_agents"
+echo "Final sync" 1>&2
+sync.pl "$controller_sync_port" "$expected_agents" 1

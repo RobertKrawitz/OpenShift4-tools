@@ -10,8 +10,8 @@ if ($addr eq '' || $addr eq '-') {
     $addr=`ip route get 1 |awk '{print \$(NF-2); exit}'`;
     chomp $addr;
 }
-my ($alt_addr) =`ip route get 1 |awk '{print \$3; exit}'`;
-chomp $alt_addr;
+#my ($alt_addr) =`ip route get 1 |awk '{print \$3; exit}'`;
+#chomp $alt_addr;
 sub timestamp($) {
     my ($str) = @_;
     my (@now) = gettimeofday();
@@ -24,15 +24,13 @@ if (not $token) {
     $token = sprintf('%d', rand() * 999999999);
 }
 
-sub connect_to {
-    my ($port, @addrs) = @_;
-    timestamp("Using addresses " . join(", ", @addrs));
+sub connect_to($$) {
+    my ($port, $addr) = @_;
     my ($connected) = 0;
     my ($fname,$faliases,$ftype,$flen,$faddr);
     my ($sock);
     my ($iteration) = 0;
     do {
-	my ($addr) = $addrs[$iteration++ % ($#addrs + 1)];
         ($fname,$faliases,$ftype,$flen,$faddr) = gethostbyname($addr);
         my $sockaddr = "S n a4 x8";
         if (length($faddr) < 4) {
@@ -58,7 +56,7 @@ sub connect_to {
 
 while (1) {
     timestamp("Waiting for sync on $addr:$port");
-    my ($_conn, $i1, $i2) = connect_to($port, $addr, $alt_addr);
+    my ($_conn, $i1, $i2) = connect_to($port, $addr);
     my ($sbuf);
     timestamp("Writing token $token to sync");
     my ($answer) = syswrite($_conn, $token, length $token);
@@ -67,7 +65,8 @@ while (1) {
 	exit(1);
     }
     $answer = sysread($_conn, $sbuf, 1024);
-    my ($str) = sprintf("Got sync (%s, %d, %s)!", $answer, length $sbuf, $!);
+    my ($str) = sprintf("Got sync (%s, %s, %s)!", $answer, $sbuf, $!);
+    print $sbuf;
     if ($!) {
 	timestamp("$str, retrying");
     } else {

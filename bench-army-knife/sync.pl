@@ -32,10 +32,11 @@ die "can't get port $port: $!\n" if ($port ne $listen_port);
 timestamp("Listening on port $listen_port");
 my (@clients);
 
+timestamp("Sync count will be $syncCount");
 while ($syncCount < 0 || $syncCount-- > 0) {
     my $child = fork();
     if ($child == 0) {
-	timestamp("Expect $expected_clients clients");
+	timestamp("Pass $syncCount expect $expected_clients clients");
 	while ($expected_clients > 0) {
 	    my ($client);
 	    accept($client, SOCK) || next;
@@ -55,6 +56,13 @@ while ($syncCount < 0 || $syncCount-- > 0) {
 	    push @clients, $client;
 	    $expected_clients--;
 	}
+	foreach my $i (0..$#clients) {
+	    if ($ssh_ports[$i]) {
+		timestamp("Sending $ssh_ports[$i]" . length $ssh_ports[$i]);
+		syswrite($clients[$i], $ssh_ports[$i], length $ssh_ports[$i]);
+	    }
+	}
+	sleep(1);
 	# Make sure that we're closed when we release the clients
 	# so if they immediately try to sync again they won't inadvertently connect.
 	close SOCK;
