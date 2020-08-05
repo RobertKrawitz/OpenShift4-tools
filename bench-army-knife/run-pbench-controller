@@ -57,7 +57,8 @@ if (( passive )) ; then
     for port in "${local_ports[@]}" ; do
 	port_data+=("PASV $ssh_port $port $(whoami)")
     done
-    ssh-keygen -A
+    declare -a hostkeys=(/etc/ssh/ssh_host*)
+    [[ -z "${hostkeys[*]}" ]] && ssh-keygen -A
     /usr/sbin/sshd -D -p "$ssh_listen_port" 1>&2 &
     sshd_pid=$!
     trap "kill -9 $sshd_pid; exit" TERM INT EXIT
