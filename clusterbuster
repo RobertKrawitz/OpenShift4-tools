@@ -97,6 +97,7 @@ declare systemConfigmapMountDir=/etc/bootstrap
 declare -i hasSystemConfigMap=0
 declare nodeSelector='node-role.kubernetes.io/worker'
 declare get_logs_pid
+declare -i pbenchNodePort=0
 
 declare accumulateddata=
 
@@ -200,6 +201,11 @@ Extended Options:
        --precleanup     Clean up any prior objects
        --cleanup        Clean up generated objects
        --timeout=N      Time out reporting
+
+    Using PBench:
+       --pbench_node_port=port
+			Use the specified port to connect to the controller.
+                        Indicates that pbench will be used.
 
     Tuning object creation (short equivalents):
        --scale-ns=[0,1] Scale up the number of namespaces.
@@ -560,6 +566,7 @@ function process_option() {
 	baseoffset|base_offset)     baseoffset=$optvalue			;;
 	configmapfile)		    configMapFiles+=("$optvalue")		;;
 	tolerate|toleration)	    tolerations+=("$optvalue")			;;
+	pbench_node_port)	    pbenchNodePort=$optvalue			;;
 	sysbench_general_options)   sysbench_generic_options+=(${optvalue//,/ });;
 	sysbench_generic_options)   sysbench_generic_options+=(${optvalue//,/ });;
 	sysbench_fileio_options)    sysbench_fileio_options+=(${optvalue//,/ }) ;;
@@ -937,6 +944,47 @@ EOF
     fi
 }
 
+function createPbenchAgentYAML() {
+    if (( pbenchNodePort > 0 )) ; then
+	# This isn't ideal, as there still can be collisions.
+	# Without a port server, this is certainly the most
+	# expeditious.
+	local sshPort=0
+	while (( sshPort < 2023 )) ; do
+	    sshPort=$RANDOM
+	done
+	cat <<EOF
+- name: "pbench-agent"
+  image: "quay.io/rkrawitz/bench-army-knife:latest"
+  imagePullPolicy: Always
+  securityContext:
+    privileged: true
+  ports:
+  - containerPort: $sshPort
+    protocol: TCP
+  env:
+  - name: VERBOSE
+    value: "0"
+  command:
+  - "/usr/local/bin/run-pbench-agent"
+  args:
+  - "$pbenchNodePort"
+  - "$sshPort"
+hostPID: true
+hostNetwork: true
+serviceAccount: pbench
+EOF
+    fi
+}
+
+function createPrivilegeYAML() {
+    if (( pbenchNodePort > 0)) ; then
+	cat <<EOF
+openshift.io/scc: privileged
+EOF
+    fi
+}
+
 function createVolumesYAML() {
     local namespace=$1
     local deployment=${2:-1}
@@ -1038,6 +1086,7 @@ $(indent 2 createPodResources)
 $(indent 2 <<< "$runtimeClass")
   containers:
 $(indent 2 createContainers${podType}YAML "$@")
+$(indent 2 createPbenchAgentYAML)
 $(indent 2 createVolumesYAML "$namespace" "$i" "$secretCount")
 EOF
 }
@@ -1058,6 +1107,7 @@ kind: Pod
 metadata:
   name: ${namespace}-${i}-${j}
 $nsline
+$(indent 2 createPrivilegeYAML)
 $(indent 2 node_selector)
   selector:
     matchLabels:
@@ -1080,6 +1130,7 @@ kind: Deployment
 metadata:
   name: ${namespace}-$i
 $nsline
+$(indent 2 createPrivilegeYAML)
   labels:
     ${basename}: "true"
     clusterbusterbase: "true"
@@ -1145,6 +1196,7 @@ kind: Pod
 metadata:
   name: ${namespace}-sync
 $nsline
+$(indent 2 createPrivilegeYAML)
 $(indent 2 node_selector)
   selector:
     matchLabels:
@@ -1165,6 +1217,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: ${namespace}-sync
+$(indent 2 createPrivilegeYAML)
 $nsline
   labels:
     ${basename}: "true"
@@ -1257,6 +1310,7 @@ $(indent 2 createPodResources)
 $(indent 2 <<< "$runtimeClass")
   containers:
 $(indent 2 createContainersSysbenchYAML "$@")
+$(indent 2 createPbenchAgentYAML)
 $(indent 2 createVolumesYAML "$namespace" "$i" "$secretCount")
 EOF
 }
@@ -1275,6 +1329,7 @@ kind: Pod
 metadata:
   name: ${namespace}-sysbench-${i}
 $nsline
+$(indent 2 createPrivilegeYAML)
 $(indent 2 node_selector)
   selector:
     matchLabels:
@@ -1296,6 +1351,7 @@ kind: Deployment
 metadata:
   name: ${namespace}-sysbench-$i
 $nsline
+$(indent 2 createPrivilegeYAML)
   labels:
     ${basename}: "true"
     clusterbusterbase: "true"
@@ -1385,6 +1441,7 @@ $(indent 2 createPodResources)
 $(indent 2 <<< "$runtimeClass")
   containers:
 $(indent 2 createContainersFioYAML "$@")
+$(indent 2 createPbenchAgentYAML)
 $(indent 2 createVolumesYAML "$namespace" "$i" "$secretCount")
 EOF
 }
@@ -1403,6 +1460,7 @@ kind: Pod
 metadata:
   name: ${namespace}-fio-${i}
 $nsline
+$(indent 2 createPrivilegeYAML)
 $(indent 2 node_selector)
   selector:
     matchLabels:
@@ -1424,6 +1482,7 @@ kind: Deployment
 metadata:
   name: ${namespace}-fio-$i
 $nsline
+$(indent 2 createPrivilegeYAML)
   labels:
     ${basename}: "true"
     clusterbusterbase: "true"
@@ -1508,6 +1567,7 @@ $(indent 2 createPodResources)
 $(indent 2 <<< "$runtimeClass")
   containers:
 $(indent 2 createContainersCPUSoakerYAML "$@")
+$(indent 2 createPbenchAgentYAML)
 $(indent 2 createVolumesYAML "$namespace" "$i" "$secretCount")
 EOF
 }
@@ -1526,6 +1586,7 @@ kind: Pod
 metadata:
   name: ${namespace}-soaker-${i}
 $nsline
+$(indent 2 createPrivilegeYAML)
 $(indent 2 node_selector)
   selector:
     matchLabels:
@@ -1547,6 +1608,7 @@ kind: Deployment
 metadata:
   name: ${namespace}-soaker-$i
 $nsline
+$(indent 2 createPrivilegeYAML)
   labels:
     ${basename}: "true"
     clusterbusterbase: "true"
@@ -1657,6 +1719,7 @@ $(indent 2 createPodResources)
 $(indent 2 <<< "$runtimeClass")
   containers:
 $(indent 2 createServerContainerYAML "$@")
+$(indent 2 createPbenchAgentYAML)
 $(indent 2 createVolumesYAML "$namespace" "$i" "$secretCount")
 EOF
 }
@@ -1676,6 +1739,7 @@ metadata:
   name: ${namespace}-${i}-server
 $nsline
 $(indent 2 node_selector)
+$(indent 2 createPrivilegeYAML)
   selector:
     matchLabels:
       app: ${namespace}-${i}
@@ -1696,6 +1760,7 @@ kind: Deployment
 metadata:
   name: ${namespace}-${i}-server
 $nsline
+$(indent 2 createPrivilegeYAML)
   labels:
     ${basename}: "true"
     clusterbusterbase: "true"
@@ -1822,6 +1887,7 @@ $(indent 2 createClientAffinityYAML "${namespace}-${i}-server")
 $(indent 2 <<< "$runtimeClass")
   containers:
 $(indent 2 createClientContainerYAML "$namespace" "$i" "$secretCount" "$dataRate" "$bytes" "$msgSize" "$containers" "$log_host" "$log_port" "$podname" "$replica")
+$(indent 2 createPbenchAgentYAML)
 $(indent 2 createVolumesYAML "$namespace" "$i" "$secretCount")
 EOF
 }
@@ -1848,7 +1914,9 @@ kind: Pod
 metadata:
   name: $podname
 $nsline
+$(indent 2 createPrivilegeYAML)
 $(indent 2 node_selector)
+$(indent 2 createPrivilegeYAML)
   selector:
     matchLabels:
       app: ${namespace}-${i}-client
@@ -1871,6 +1939,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: $podname
+$(indent 2 createPrivilegeYAML)
 $nsline
   labels:
     ${basename}: "true"
@@ -2378,14 +2447,6 @@ function run_clusterbuster_1() {
     fi
 
     return $status
-    # Create sync pods after actual deployments
-#    if (( syncStart )) ; then
-#	for i in $(seq 0 "$((parallelDeployments - 1))") ; do
-#	    export PARALLEL_ROTOR=$i
-#	    createObjects_n Sync "$parallelDeployments" "$blocksizeDeployments" "$((i * blocksizeDeployments))" "$sleepDeployments" "$depsPerNamespace" "$secrets" "$replicas" "$containers" &
-#	done
-#	wait
-#    fi
 }
 
 (run_clusterbuster_1)
