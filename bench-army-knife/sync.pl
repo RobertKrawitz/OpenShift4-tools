@@ -4,8 +4,13 @@ use POSIX;
 use strict;
 use Time::Piece;
 use Time::HiRes qw(gettimeofday);
+use Getopt::Long;
+Getopt::Long::Configure("bundling", "no_ignore_case", "pass_through");
+my ($verbose) = 0;
+GetOptions("v!" => \$verbose);
+
 $SIG{TERM} = sub { POSIX::_exit(0); };
-my ($listen_port, $expected_clients, $syncCount) = @ARGV;
+my ($listen_port, $expected_clients, $syncCount, @ssh_ports) = @ARGV;
 if (! $syncCount) {
     $syncCount = 1;
 }
@@ -14,7 +19,6 @@ sub timestamp(@) {
     my (@now) = gettimeofday();
     printf STDERR  "sync $$ %s.%06d %s\n", gmtime($now[0])->strftime("%Y-%m-%dT%T"), $now[1], $str;
 }
-timestamp("Clusterbuster sync starting");
 my $sockaddr = "S n a4 x8";
 socket(SOCK, AF_INET, SOCK_STREAM, getprotobyname('tcp')) || die "socket: $!";
 $SIG{TERM} = sub { close SOCK; POSIX::_exit(0); };
@@ -31,7 +35,7 @@ my (@clients);
 while ($syncCount < 0 || $syncCount-- > 0) {
     my $child = fork();
     if ($child == 0) {
-	print STDERR "Expect $expected_clients clients\n";
+	timestamp("Expect $expected_clients clients");
 	while ($expected_clients > 0) {
 	    my ($client);
 	    accept($client, SOCK) || next;
@@ -39,11 +43,13 @@ while ($syncCount < 0 || $syncCount-- > 0) {
 	    my ($port, $addr) = sockaddr_in($peeraddr);
 	    my $peerhost = gethostbyaddr($addr, AF_INET);
 	    my $peeraddr = inet_ntoa($addr);
-	    # Report the peer address out
-	    print "$peeraddr\n";
 	    my ($tbuf) = "NULL";
 	    if (sysread($client, $tbuf, 1024) <= 0) {
 		timestamp("Read token from $peerhost failed: $!");
+	    }
+	    # Report the peer address out
+	    if ($verbose) {
+		print "$peeraddr $tbuf\n";
 	    }
 	    timestamp("Accepted connection from $peerhost ($peeraddr) on $port, token $tbuf");
 	    push @clients, $client;

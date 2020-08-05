@@ -2,6 +2,8 @@
 
 exec 1>&2
 
+trap exit TERM INT
+
 if (($# < 8)) ; then
     echo "Usage: $0 configdir controller_sync_port expected_agents agent_sync_port worker_sync_port expected_clients client_sync_count config tools..."
     exit 1
@@ -32,17 +34,31 @@ fi
 . /etc/profile.d/pbench-agent.sh
 
 declare -a agents=()
+declare -a remote_ports=()
+declare -a local_ports=()
+declare -a all_ports=()
+declare -a ssh_server_pids=()
 
-readarray -t agents <<< "$(sync.pl "$controller_sync_port" "$expected_agents" 1)"
-
-# Special case agent ports; everything else should use defaults.
-for agent in "${agents[@]}" ; do
+readarray -t all_ports <<< $(find-free-ports -n $((expected_agents * 2);
+for i in $(seq 0 $((expected_agents - 1))) ; do
+    remote_ports+=("${all_ports[$i]")
+    local_ports+=("${all_ports[$((i+expected_agents))]}")
+done
+    
+while read -r agent ; do
+    agents+=("$agent")
+    echo "Agent $agent"
     cat >> "$HOME/.ssh/config" <<EOF
 Host $agent
 StrictHostKeyChecking no
 UserKnownHostsFile /dev/null
-Port 2022
+Port $port
+LogLevel ERROR
 EOF
+done <<< "$(sync.pl -v "$controller_sync_port" "$expected_agents" "${ports[@]}")"
+
+# Special case agent ports; everything else should use defaults.
+for agent in "${agents[@]}" ; do
     pbench-register-tool-set --remote="$agent"
 done
 
@@ -52,6 +68,4 @@ wait
 echo "Moving results"
 pbench-move-results
 echo "Final sync"
-sync.pl "$controller_sync_port" "$expected_agents" 1
-echo "Wait forever"
-sleep infinity
+sync.pl "$controller_sync_port" "$expected_agents"
