@@ -4,70 +4,227 @@ exec 1>&2
 
 trap exit TERM INT
 
-if (($# < 8)) ; then
-    echo "Usage: $0 [[-P local_port] ...] [-p ssh_port] configdir controller_sync_port expected_agents agent_sync_port worker_sync_port expected_clients client_sync_count config tools..."
-    exit 1
-fi
+set -u
 
-ln -s /opt/pbench-agent /var/lib
+#ln -s /opt/pbench-agent /var/lib
 
-PATH=/usr/local/bin:$PATH
+PATH=/usr/local/bin::$PATH
 
 declare -a local_ports=()
-declare ssh_port=
-declare ssh_listen_port=
+declare sshd_listen_port=${BAK_SSH_PORT:-}
 declare passive=0
+declare tools=()
+declare -a ssh_authorized_key_file=()
+declare expected_agents=
+declare -i worker_sync_count=2
+declare configdir # Secret containing pbench config and public and private key
+# shellcheck disable=2155
+declare configname="$(whoami)_$(hostname)_$(printf '%(%F%H-%M-%S)T' -1 )"
+declare ssh_ext_port
+declare -i worker_sync_port=0
+declare expected_clients=
+declare -i agent_sync_port=${BAK_AGENT_SYNC_PORT:-0}
+declare keyfile=${BAK_USER_PRIVATE_KEY:-$HOME/.ssh/id_rsa}
+declare verbose=
+declare -i waitforever=0
+declare -i max_wait_for_ssh_tunnel=60
 
-while getopts "P:L:" arg ; do
+function usage() {
+    if [[ -n "$*" ]] ; then
+	(IFS=$'\n'; echo "$*" 1>&2)
+    fi
+    cat 1>&2 <<EOF
+Usage: $0 [options] [command]
+       -A expected_agents             Number of expected agents.  Default $expected_agents.
+       -C worker_sync_count           Number of times worker benchmark is
+                                      expected to sync with the controller.
+                                      Should be at least 2 (start and end
+                                      of run).  Default $worker_sync_count.
+       -D configdir                   Directory containing pbench configuration
+                                      and public and private key for communication
+                                      with pbench server.  NO DEFAULT.
+       -K authorized_keyfile          File(s) containing authorized keys that
+                                      will be allowed to connect to us.
+                                      May be repeated.
+                                      Default is the public keyfile (-k).
+       -k keyfile                     Public and private key files used to
+                                      communicate with the agents.
+       -L sshd_listen_port            Port on which sshd should listen.
+                                      If not specified, controller will
+                                      connect to the agents.  NO DEFAULT.
+       -N configuration_name          Configuration name for pbench logging.
+                                      Default to <whoami><hostname><timestamp>.
+       -P external_ssh_port           Port that agents should attempt to connect
+                                      on, if different from -L.
+       -S worker_sync_port            Port on which benchmark workers should
+                                      sync.  NO DEFAULT.
+       -s agent_sync_port             Port on which agents should sync.
+                                      NO DEFAULT.
+       -t tool                        Additional tool(s) to register.  May be
+                                      repeated.
+       -v                             Increase verbosy.  May be repeated.
+       -W max_wait_time               Maximum time to wait for remote ssh
+                                      tunnels to come up.  Default $max_wait_for_ssh_tunnel.
+                                      -1 means wait forever.
+       -w                             Wait forever rather than exiting at the
+                                      end.
+EOF
+    exit 1
+}
+
+while getopts "P:L:K:k:t:N:D:A:S:s:C:c:vW:w" arg ; do
     case "$arg" in
-	L) ssh_listen_port="$OPTARG";passive=1 ;;
-	P) ssh_port="$OPTARG"		       ;;
+	A) expected_agents="$OPTARG"           ;;
+	C) worker_sync_count="$OPTARG"         ;;
+	c) expected_clients="$OPTARG"          ;;
+	D) configdir="$OPTARG"                 ;;
+	K) ssh_authorized_key_file+=("$OPTARG");;
+	k) keyfile="$OPTARG"                   ;;
+	L) sshd_listen_port="$OPTARG"          ;;
+	N) configname="$OPTARG"                ;;
+	P) ssh_ext_port="$OPTARG"	       ;;
+	S) worker_sync_port="$OPTARG"          ;;
+	s) agent_sync_port="$OPTARG"           ;;
+	t) tools+=("$OPTARG")                  ;;
+	v) verbose+=" -v"                      ;;
+	W) max_wait_for_ssh_tunnel=$OPTARG     ;;
+	w) waitforever=1                       ;;
 	*)                           	       ;;
     esac
 done
 
 shift $((OPTIND-1))
 
-declare configdir=$1; shift	# Secret containing pbench config and private key
-declare controller_sync_port=$1; shift
-declare expected_agents=$1; shift
-declare agent_sync_port=$1; shift
-declare worker_sync_port=$1; shift
-declare expected_clients=$1; shift
-declare client_sync_count=${1:-2}; shift
-declare config=$1; shift
+declare -a command=("$@")
+
+function valid_port() {
+    local port="$1"
+    [[ -n "$port" && $port -ge 1 && $port -le 65535 ]]
+}
+
+[[ -n "${sshd_listen_port:-}" ]] && passive=1
+if [[ -z "$expected_agents" && $(type -t oc) = file ]] ; then
+    expected_agents=$(oc get pods -n pbench -l pbench-agent --no-headers |wc -l)
+fi
+if [[ -z "${BAK_SERVER_CONFIG:-}" || -z "${BAK_SERVER_PRIVATE_KEY:-}" ]] ; then
+    [[ -z "$configdir" ]] && usage "-D must be specified."
+    [[ -d "$configdir" ]] || usage "-D $configdir does not exist."
+    [[ -r "$configdir"/pbench-agent.cfg ]] || usage "Expected configuration file $configdir/pbench-agent.cfg does not exist"
+    [[ -r "$configdir"/id_rsa ]] || usage "Expected private key $configdir/pbench-agent.cfg does not exist"
+fi
+[[ $keyfile == '/'* ]] || keyfile="$configdir/$keyfile"
+[[ -r "$keyfile" ]] || usage "Private key file $keyfile does not exist."
+[[ -r "${keyfile}.pub" ]] || usage "Public key file ${keyfile}.pub does not exist."
+ssh_ext_port=${ssh_ext_port:=$sshd_listen_port}
+valid_port "$sshd_listen_port" || usage "Invalid -L sshd listen port $sshd_listen_port"
+valid_port "$ssh_ext_port" || usage "Invalid -P ssh port $ssh_ext_port"
+if [[ -z "$*" ]] && ! valid_port "$worker_sync_port" ; then
+    usage "Invalid -S worker sync port $worker_sync_port"
+fi
+valid_port "$agent_sync_port" || usage "Invalid -s agent sync port $agent_sync_port"
+
 declare sshd_pid=
 
-if [[ ! -d "$configdir" || ! -f "$configdir/pbench-agent.cfg" || ! -f "$configdir/id_rsa" ]] ; then
-    echo "Can't find configdir $configdir or pbench-agent.cfg or secret key" 1>&2
-    exit 1
-fi
+declare server_key=${BAK_SERVER_PRIVATE_KEY:-$configdir/id_rsa}
+declare server_config=${BAK_SERVER_CONFIG:-$configdir/pbench-agent.cfg}
+(umask 077 && cp "$server_key" /opt/pbench-agent/id_rsa && chown pbench:pbench /opt/pbench-agent/id_rsa)
 
-(umask 077 && cp "$configdir"/id_rsa /opt/pbench-agent/id_rsa && chown pbench:pbench /opt/pbench-agent/id_rsa)
+(umask 0333 && cp "$server_config" /opt/pbench-agent/config/pbench-agent.cfg && chown pbench:pbench /opt/pbench-agent/config/pbench-agent.cfg)
 
-(umask 0333 && cp "$configdir"/pbench-agent.cfg /opt/pbench-agent/config/pbench-agent.cfg && chown pbench:pbench /opt/pbench-agent/config/pbench-agent.cfg)
-
+set +u				# Until the script is fixed.
+# shellcheck disable=1091
 . /etc/profile.d/pbench-agent.sh
+set -u
 
 declare -a agents=()
 declare -a port_data=()
+# shellcheck disable=2155
+declare ssh_tmpdir=$(mktemp -d -t --suffix=.pbench_ssh)
+trap 'rm -rf "$ssh_tmpdir"; exit' INT TERM EXIT
+
+function setup_ssh() {
+    local setup_server=${1:-}
+    local key
+    if [[ -z "$ssh_tmpdir" || ! -d "$ssh_tmpdir" ]] ; then
+	echo "Unable to create temporary ssh directory!" 1>&2
+	return 1
+    fi
+
+    trap 'rm -rf "$ssh_tmpdir"; exit' INT TERM
+    for key in "${ssh_authorized_key_file[@]}" ; do
+	if [[ -f "$key" ]] ; then
+	    cat "$key" >> "$HOME/.ssh/authorized_keys"
+	fi
+    done
+    if [[ -n "$setup_server" ]] ; then
+	mkdir -p "$ssh_tmpdir/etc/ssh"
+	/sbin/sshd -D -p "$sshd_listen_port" 1>&2 &
+	sshd_pid=$!
+	echo "$sshd_pid"
+	trap 'kill -9 "$sshd_pid"; rm -rf "$ssh_tmpdir"; exit' INT TERM
+    fi
+}
+
+function ping_agents() {
+    local -A agents_remaining=()
+    local agent
+    local -i i=0
+    for agent in "$@" ; do
+	agents_remaining[$agent]=1
+    done
+    echo "Looking for remaining agents" 1>&2
+    # shellcheck disable=2155
+    local start_time=$(printf '%(%s)T' -1)
+    while [[ -n "${agents_remaining[*]}" ]] ; do
+	echo "Pass $((i++)): ${#agents_remaining[@]} left" 1>&2
+	local -a agents_found=()
+	for agent in "${!agents_remaining[@]}" ; do
+	    echo -n "$agent: " 1>&2
+	    if ssh -n "$agent" true ; then
+		echo -n "OK!" 1>&2
+		agents_found+=("$agent")
+	    fi
+	    echo 1>&2
+	done
+	for agent in "${agents_found[@]}" ; do
+	    unset "agents_remaining[$agent]"
+	done
+	if (( ${#agents_remaining[@]} )) ; then
+	    # shellcheck disable=2155
+	    local now=$(printf '%(%s)T' -1)
+	    if (( now - start_time >= max_wait_for_ssh_tunnel )) ; then
+		echo "Timed out!" 1>&2
+		return 1
+	    fi
+	    sleep 1
+	fi
+    done
+    return 0
+}
 
 if (( passive )) ; then
-    readarray -t local_ports <<< "$(find-free-ports -n "$expected_agents")"
-    for port in "${local_ports[@]}" ; do
-	port_data+=("PASV $ssh_port $port $(whoami)")
+    for f in ssh scp sftp ; do
+	cat > "$ssh_tmpdir/$f" <<EOF
+#!/bin/sh
+"$(type -p $f)" $verbose -F "$ssh_tmpdir/ssh_config" "\$@"
+EOF
+	chmod +x "$ssh_tmpdir/$f"
     done
-    declare -a hostkeys=(/etc/ssh/ssh_host*)
-    [[ -z "${hostkeys[*]}" ]] && ssh-keygen -A
-    /usr/sbin/sshd -D -p "$ssh_listen_port" 1>&2 &
-    sshd_pid=$!
-    trap "kill -9 $sshd_pid; exit" TERM INT EXIT
+    [[ -f /etc/ssh/ssh_config ]] && cat /etc/ssh/ssh_config > "$ssh_tmpdir/ssh_config"
+    [[ -f "$HOME/.ssh/config" ]] && cat /etc/ssh/ssh_config >> "$ssh_tmpdir/ssh_config"
+
+    readarray -t local_ports <<< "$(find-free-ports -n "$expected_agents" -p 18000)"
+    for port in "${local_ports[@]}" ; do
+	port_data+=("PASV $ssh_ext_port $port $(whoami)")
+    done
+    sshd_pid=$(setup_ssh true)
+    echo ">>>> sshd_pid is $sshd_pid" 1>&2
+    [[ -n "$sshd_pid" ]] && trap 'kill -9 "$sshd_pid"; rm -rf "$ssh_tmpdir"; exit' INT TERM EXIT
     i=0
     while read -r agent token ; do
 	[[ -n "$agent" ]] || continue
 	agents+=("$agent")
-	echo "Agent $agent" 1>&2
-	cat >> "$HOME/.ssh/config" <<EOF
+	cat >> "$ssh_tmpdir/ssh_config" <<EOF
 Host $agent
 HostName localhost
 StrictHostKeyChecking no
@@ -77,33 +234,44 @@ LogLevel ERROR
 
 EOF
 	i=$((i+1))
-    done <<< "$(sync.pl -v "$controller_sync_port" "$expected_agents" 1 "${port_data[@]}")"
+    done <<< "$(sync.pl -v "$agent_sync_port" "$expected_agents" 1 "${port_data[@]}")"
+    PATH="$ssh_tmpdir${PATH:+:$PATH}"
     # Wait until clients have their tunnels up
-    sync.pl "$controller_sync_port" "$expected_agents" 1
+    echo "Pinging agents..."
+    if ! ping_agents "${agents[@]}" ; then
+	echo "Wait for agents to come up failed!" 1>&2
+	exit 1
+    fi
 else
-    while read -r agent token ; do
+    setup_ssh
+    # shellcheck disable=2034
+    while read -r agent remote_port token ; do
 	[[ -n "$agent" ]] || continue
 	agents+=("$agent")
 	echo "Agent $agent" 1>&2
-	cat >> "$HOME/.ssh/config" <<EOF
+	cat >> "$ssh_tmpdir/ssh_config" <<EOF
 Host $agent
 StrictHostKeyChecking no
 UserKnownHostsFile /dev/null
-Port $token
+Port $remote_port
 LogLevel ERROR
 
 EOF
-    done <<< "$(sync.pl -v "$controller_sync_port" "$expected_agents" 1)"
+    done <<< "$(sync.pl -v "$agent_sync_port" "$expected_agents" 1)"
 fi
 
 # Special case agent ports; everything else should use defaults.
-for agent in "${agents[@]}" ; do
-    pbench-register-tool-set --remote="$agent"
-done
+pbench-register-tool-set --remote="$(IFS=,; echo "${agents[*]}")"
 
 echo "Waiting for benchmark to complete" 1>&2
-/opt/pbench-agent/bench-scripts/pbench-user-benchmark --config="$config" -- sync.pl "$worker_sync_port" "$expected_clients" "$client_sync_count"
+if [[ -z "$*" ]] ; then
+    command=("sync.pl" "$worker_sync_port" "$expected_clients" "$worker_sync_count")
+fi
+/opt/pbench-agent/bench-scripts/pbench-user-benchmark --config="$configname" -- "${command[@]}"
 echo "Moving results" 1>&2
 pbench-move-results
 echo "Final sync" 1>&2
-sync.pl "$controller_sync_port" "$expected_agents" 1
+sync.pl "$agent_sync_port" "$expected_agents" 1
+echo "*** Complete!"
+(( waitforever )) && sleep infinity
+exit 0

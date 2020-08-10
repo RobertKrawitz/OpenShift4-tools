@@ -58,7 +58,6 @@ while ($syncCount < 0 || $syncCount-- > 0) {
 	}
 	foreach my $i (0..$#clients) {
 	    if ($ssh_ports[$i]) {
-		timestamp("Sending $ssh_ports[$i]" . length $ssh_ports[$i]);
 		syswrite($clients[$i], $ssh_ports[$i], length $ssh_ports[$i]);
 	    }
 	}

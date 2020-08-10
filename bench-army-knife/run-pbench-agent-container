@@ -1,0 +1,114 @@
+#!/bin/bash
+
+exec 1>&2
+export LANG=en_US.UTF-8
+export LANGUAGE=en_UT.UTF-8
+export LC_ALL=C
+
+set -u
+
+declare sshd_port=2222
+declare dns_server
+declare -i run_forever=0
+declare keyfile="$HOME/.ssh/id_rsa"
+declare -a verbose=()
+
+function usage() {
+    cat 1>&2 <<EOF
+Usage: $0 [options] controller_port [controller_host]
+       -D dns_server
+       -S sshd_port
+       -K public/private key file
+       -d      Run forever (daemon)
+       -v      Increase ssh verbosity
+EOF
+    sleep infinity
+    exit 1
+}
+
+while getopts ":D:S:K:C:dv" arg ; do
+    case "$arg" in
+	D) dns_server=$OPTARG ;;
+	S) sshd_port=$OPTARG  ;;
+	K) keyfile=$OPTARG    ;;
+	d) run_forever=1      ;;
+	v) verbose+=("-v")    ;;
+	*) usage
+    esac
+done
+
+shift $((OPTIND - 1))
+
+(( $# == 1 || $# == 2 )) || usage
+
+declare controller_port=$1
+declare controller_host=${2:-$(ip route get 1 |awk '{print $(NF-2); exit}')}
+
+if [[ ! -r "$keyfile" || ! -r "${keyfile}.pub" ]] ; then
+    echo "Can't find key files $keyfile or $keyfile.pub" 1>&2
+    usage
+fi
+
+PATH=/usr/local/bin:$PATH
+
+set +u
+# shellcheck disable=1091
+. /etc/profile.d/pbench-agent.sh
+set -u
+
+sudo mount -t debugfs none /sys/kernel/debug
+
+ssh-keygen -A
+
+# Make sure ssh authorized keys are set up correctly
+
+cat "${keyfile}.pub" >> "$HOME/.ssh/authorized_keys"
+chown root "$HOME/.ssh/authorized_keys"
+chgrp root "$HOME/.ssh/authorized_keys"
+/usr/sbin/sshd -p "$sshd_port" -o ListenAddress=127.0.0.1
+
+function run_pbench_agent_once() {
+    echo "Running pbench agent" 1>&2
+    if [[ -n "${dns_server:-}" && $controller_host =~ ^[[:alnum:]][-[:alnum:]]*[[:alnum:]]\.[[:alnum:]][-[:alnum:]]*[[:alnum:]]$ ]] ; then
+	echo "Looking for IP address for $controller_host from $dns_server" 1>&2
+	while read -r line ; do
+	    echo "$line" 1>&2
+	    if [[ $line =~ ^$controller_host(\.svc.cluster.local)?\ has\ address\ (.*)$ ||
+		      $line =~ (.*)\ has\ address\ (($controller_host)(\.svc.cluster.local)?)$ ]] ; then
+		controller_host=${BASH_REMATCH[2]}
+		break
+	    fi
+	done <<< "$(host "$controller_host.svc.cluster.local" "$dns_server")"
+    fi
+
+    # Let the controller know that we're ready to go
+    # shellcheck disable=2155
+    token=$(printf '%d %s %s' "$sshd_port" "$(perl -e 'print int rand() * 999999999')" "$(hostname)")
+    # shellcheck disable=2155
+    declare sync_data=$(sync_to.pl "$controller_host" "$controller_port" "$token")
+    echo "Got sync, data $sync_data" 1>&2
+    declare ssh_tunnel_pid
+
+    if [[ $sync_data = "PASV "* ]] ; then
+	# shellcheck disable=2034
+	read -r passive remote_ssh_port tunnel_port login <<< "$sync_data"
+	ssh "${verbose[@]}" -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -i "$keyfile" -n -R "$tunnel_port:localhost:$sshd_port" -p "$remote_ssh_port" "${login:+$login@}$controller_host" sleep infinity 1>&2 &
+	ssh_tunnel_pid=$!
+	# Controller will ping us to make sure we're up.
+	# shellcheck disable=2064
+	trap "kill -9 $ssh_tunnel_pid; exit" TERM INT EXIT
+    fi
+
+    # And wait around to be released after pbench-move-results
+    sync_to.pl "$controller_host" "$controller_port"
+}
+
+while : ; do
+    (run_pbench_agent_once) || {
+	echo "Run pbench agent failed!"
+	# So we don't "helpfully" get restarted by the controller and messing up
+	# the synchronization
+	sleep infinity
+    }
+    (( run_forever )) || break
+done

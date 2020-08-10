@@ -97,7 +97,8 @@ declare systemConfigmapMountDir=/etc/bootstrap
 declare -i hasSystemConfigMap=0
 declare nodeSelector='node-role.kubernetes.io/worker'
 declare get_logs_pid
-declare -i pbenchNodePort=0
+declare -i pbenchControllerPort=0
+declare pbenchControllerAddress=
 
 declare accumulateddata=
 
@@ -203,9 +204,11 @@ Extended Options:
        --timeout=N      Time out reporting
 
     Using PBench:
-       --pbench_node_port=port
+       If pbench is to be used, both arguments below must be provided.
+       --pbench_controller_address=address
+			Use the specified address to connect to the controller.
+       --pbench_controller_port=port
 			Use the specified port to connect to the controller.
-                        Indicates that pbench will be used.
 
     Tuning object creation (short equivalents):
        --scale-ns=[0,1] Scale up the number of namespaces.
@@ -566,7 +569,8 @@ function process_option() {
 	baseoffset|base_offset)     baseoffset=$optvalue			;;
 	configmapfile)		    configMapFiles+=("$optvalue")		;;
 	tolerate|toleration)	    tolerations+=("$optvalue")			;;
-	pbench_node_port)	    pbenchNodePort=$optvalue			;;
+	pbench_controller_port)	    pbenchControllerPort=$optvalue		;;
+	pbench_controller_address)  pbenchControllerAddress=$optvalue		;;
 	sysbench_general_options)   sysbench_generic_options+=(${optvalue//,/ });;
 	sysbench_generic_options)   sysbench_generic_options+=(${optvalue//,/ });;
 	sysbench_fileio_options)    sysbench_fileio_options+=(${optvalue//,/ }) ;;
@@ -690,6 +694,16 @@ fi
 
 if (( msgSize <= 0 )) ; then
     echo "Message size must be positive, exiting!"
+    exit 1
+fi
+
+if [[ -z "$pbenchControllerAddress" && $pbenchControllerPort -ne 0 ]] ; then
+    echo "Both pbench_controller_address and pbench_controller_port must be specified"
+    exit 1
+fi
+
+if [[ -n "$pbenchControllerAddress" && $pbenchControllerPort -eq 0 ]] ; then
+    echo "Both pbench_controller_address and pbench_controller_port must be specified"
     exit 1
 fi
 
@@ -945,7 +959,7 @@ EOF
 }
 
 function createPbenchAgentYAML() {
-    if (( pbenchNodePort > 0 )) ; then
+    if (( pbenchControllerPort > 0 )) ; then
 	# This isn't ideal, as there still can be collisions.
 	# Without a port server, this is certainly the most
 	# expeditious.
@@ -958,27 +972,26 @@ function createPbenchAgentYAML() {
   image: "quay.io/rkrawitz/bench-army-knife:latest"
   imagePullPolicy: Always
   securityContext:
-    privileged: true
-  ports:
-  - containerPort: $sshPort
-    protocol: TCP
+    privileged: false
+    capabilities:
+      add:
+      - AUDIT_WRITE
   env:
   - name: VERBOSE
     value: "0"
   command:
-  - "/usr/local/bin/run-pbench-agent"
+  - "/usr/local/bin/run-pbench-agent-container"
   args:
-  - "$pbenchNodePort"
-  - "$sshPort"
-hostPID: true
-hostNetwork: true
+  - "$pbenchControllerPort"
+  - "$pbenchControllerAddress"
+#hostPID: true
 serviceAccount: pbench
 EOF
     fi
 }
 
 function createPrivilegeYAML() {
-    if (( pbenchNodePort > 0)) ; then
+    if (( pbenchControllerPort > 0)) ; then
 	cat <<EOF
 openshift.io/scc: privileged
 EOF

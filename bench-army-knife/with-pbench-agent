@@ -1,0 +1,105 @@
+#!/bin/bash
+
+declare server_private_key=
+declare server_config=
+declare user_public_key=$HOME/.ssh/id_rsa.pub
+declare user_private_key=$HOME/.ssh/id_rsa
+
+while getopts "C:k:" arg ; do
+    case "$arg" in
+	C) server_config=$OPTARG ;;
+	k) server_private_key=$OPTARG ;;
+	u) user_public_key=$OPTARG ;;
+	U) user_private_key=$OPTARG ;;
+    esac
+done
+
+shift $((OPTIND - 1))
+
+function die() {
+    echo "$*" 1>&2
+    exit 1
+}
+
+[[ -n "$server_private_key" ]] || die "Server private key not specified"
+[[ -r "$server_private_key" ]] || die "Can't read server key $server_private_key"
+    
+[[ -n "$server_config" ]] || die "Server config not specified"
+[[ -r "$server_config" ]] || die "Can't read server config $server_config"
+
+[[ -r "$user_public_key" ]] || die "Can't read user public key $user_public_key"
+[[ -r "$user_private_key" ]] || die "Can't read user public key $user_private_key"
+
+oc get ns pbench >/dev/null 2>&1 && oc delete ns pbench
+oc adm new-project pbench
+oc project pbench
+oc create serviceaccount pbench
+oc adm policy add-cluster-role-to-user cluster-admin pbench
+oc adm policy add-scc-to-user privileged -z pbench
+#oc create secret generic server-credentials --from-file=id_rsa="$server_private_key" --from-file=pbench-agent.cfg="$server_config"
+oc create secret generic user-credentials --from-file=id_rsa="$user_private_key" --from-file=id_rsa.pub="$user_public_key"
+declare -a ports
+readarray -t ports <<< "$(~/OpenShift4-tools/bench-army-knife/find-free-ports -n 2 -p 17000)"
+
+export BAK_AGENT_SYNC_PORT=${ports[0]}
+export BAK_SSH_PORT=${ports[1]}
+export BAK_SERVER_CONFIG=$server_config
+export BAK_SERVER_PRIVATE_KEY=$server_private_key
+export BAK_USER_PRIVATE_KEY=$user_private_key
+export BAK_USER_PUBLIC_KEY=$user_public_key
+
+oc apply -f - <<EOF
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: agent
+  namespace: "pbench"
+  annotations:
+spec:
+  selector:
+    matchLabels:
+      name: pbench-agent
+  template:
+    metadata:
+      labels:
+        name: pbench-agent
+        app: pbench-agent
+        pbench-agent: "true"
+    spec:
+      nodeSelector: 
+        node-role.kubernetes.io/worker: ""
+      hostPID: true
+      hostNetwork: true
+      serviceAccount: pbench
+      containers:
+      - name: "pbench-agent"
+        env:
+        - name: "PBENCH_AGENT_RUN_FOREVER"
+          value: "1"
+        image: "quay.io/rkrawitz/bench-army-knife:latest"
+        imagePullPolicy: Always
+        securityContext:
+          privileged: true
+        command:
+        - "/usr/local/bin/run-pbench-agent"
+        args:
+        - "-K"
+        - "/etc/user-credentials/id_rsa"
+        - "$BAK_AGENT_SYNC_PORT"
+        - "$(hostname)"
+        terminationGracePeriodSeconds: 1
+        volumeMounts:
+        - name: user-credentials
+          mountPath: "/etc/user-credentials"
+          readOnly: true
+          defaultMode: 0400
+      volumes:
+      - name: user-credentials
+        secret:
+          secretName: user-credentials
+          defaultMode: 0400
+EOF
+
+PS1=">>> $PS1" "${SHELL:-/bin/bash}" -i
+oc delete ns pbench
