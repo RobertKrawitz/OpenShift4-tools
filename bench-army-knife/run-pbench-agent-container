@@ -85,6 +85,7 @@ function run_pbench_agent_once() {
     # shellcheck disable=2155
     token=$(printf '%d %s %s' "$sshd_port" "$(perl -e 'print int rand() * 999999999')" "$(hostname)")
     # shellcheck disable=2155
+    echo "Waiting for contact from controller" 1>&2
     declare sync_data=$(sync_to.pl "$controller_host" "$controller_port" "$token")
     echo "Got sync, data $sync_data" 1>&2
     declare ssh_tunnel_pid
@@ -92,6 +93,8 @@ function run_pbench_agent_once() {
     if [[ $sync_data = "PASV "* ]] ; then
 	# shellcheck disable=2034
 	read -r passive remote_ssh_port tunnel_port login <<< "$sync_data"
+	echo "Start ssh tunnel" 1>&2
+	echo ssh "${verbose[@]}" -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -i "$keyfile" -n -R "$tunnel_port:localhost:$sshd_port" -p "$remote_ssh_port" "${login:+$login@}$controller_host" sleep infinity 1>&2
 	ssh "${verbose[@]}" -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -i "$keyfile" -n -R "$tunnel_port:localhost:$sshd_port" -p "$remote_ssh_port" "${login:+$login@}$controller_host" sleep infinity 1>&2 &
 	ssh_tunnel_pid=$!
 	# Controller will ping us to make sure we're up.
@@ -100,6 +103,7 @@ function run_pbench_agent_once() {
     fi
 
     # And wait around to be released after pbench-move-results
+    echo "Waiting for release from controller" 1>&2
     sync_to.pl "$controller_host" "$controller_port"
 }
 
