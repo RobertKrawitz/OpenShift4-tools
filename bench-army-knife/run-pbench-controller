@@ -13,7 +13,7 @@ PATH=/usr/local/bin::$PATH
 declare -a local_ports=()
 declare sshd_listen_port=${BAK_SSH_PORT:-}
 declare passive=0
-declare tools=()
+declare tool_script=
 declare -a ssh_authorized_key_file=()
 declare expected_agents=
 declare -i worker_sync_count=2
@@ -34,7 +34,7 @@ function usage() {
 	(IFS=$'\n'; echo "$*" 1>&2)
     fi
     cat 1>&2 <<EOF
-Usage: $0 [options] [command]
+Usage: $0 [options] [command args...]
        -A expected_agents             Number of expected agents.  Default $expected_agents.
        -C worker_sync_count           Number of times worker benchmark is
                                       expected to sync with the controller.
@@ -60,9 +60,14 @@ Usage: $0 [options] [command]
                                       sync.  NO DEFAULT.
        -s agent_sync_port             Port on which agents should sync.
                                       NO DEFAULT.
-       -t tool                        Additional tool(s) to register.  May be
-                                      repeated.
-       -v                             Increase verbosy.  May be repeated.
+       -t tool_script                 Script to execute pbench-register-tool 
+                                      and pbench-register-tool-set commands.
+                                      This script will be sourced in an
+                                      envronment that wraps 
+                                      pbench-register-tool* commands.
+                                      These commands should not include
+                                      --remote options.
+       -v                             Increase verbosity.  May be repeated.
        -W max_wait_time               Maximum time to wait for remote ssh
                                       tunnels to come up.  Default $max_wait_for_ssh_tunnel.
                                       -1 means wait forever.
@@ -85,7 +90,7 @@ while getopts "P:L:K:k:t:N:D:A:S:s:C:c:vW:w" arg ; do
 	P) ssh_ext_port="$OPTARG"	       ;;
 	S) worker_sync_port="$OPTARG"          ;;
 	s) agent_sync_port="$OPTARG"           ;;
-	t) tools+=("$OPTARG")                  ;;
+	t) tool_script="$OPTARG"	       ;;
 	v) verbose+=" -v"                      ;;
 	W) max_wait_for_ssh_tunnel=$OPTARG     ;;
 	w) waitforever=1                       ;;
@@ -202,6 +207,18 @@ function ping_agents() {
     return 0
 }
 
+# shellcheck disable=2120
+function pbench-register-tool-set() {
+    echo "$(type -P pbench-register-tool-set) --remote=$(IFS=,; echo "${agents[*]}") $*"
+    "$(type -P pbench-register-tool-set)" --remote="$(IFS=,; echo "${agents[*]}")" "$@"
+}
+
+# shellcheck disable=2120
+function pbench-register-tool() {
+    echo "$(type -P pbench-register-tool) --remote=$(IFS=,; echo "${agents[*]}") $*"
+    "$(type -P pbench-register-tool)" --remote="$(IFS=,; echo "${agents[*]}")" "$@"
+}
+
 if (( passive )) ; then
     for f in ssh scp sftp ; do
 	cat > "$ssh_tmpdir/$f" <<EOF
@@ -260,14 +277,29 @@ EOF
     done <<< "$(sync.pl -v "$agent_sync_port" "$expected_agents" 1)"
 fi
 
-# Special case agent ports; everything else should use defaults.
-pbench-register-tool-set --remote="$(IFS=,; echo "${agents[*]}")"
+if [[ -z "${tool_script:-}" ]] ; then
+    # shellcheck disable=2119
+    pbench-register-tool-set
+else
+    if [[ -r "$tool_script" ]] ; then
+	# shellcheck disable=1090
+	. "$tool_script"
+    elif [[ -n "${configdir:-}" && -r "$configdir/$tool_script" ]] ; then
+	# shellcheck disable=1090
+	. "$configdir/$tool_script"
+    else
+	echo "Can't find or execute tool script $tool_script" 1>&2
+	exit 1
+    fi
+fi
 
 echo "Waiting for benchmark to complete" 1>&2
-if [[ -z "$*" ]] ; then
+if [[ -n "$*" ]] ; then
+    "$@"
+else
     command=("sync.pl" "$worker_sync_port" "$expected_clients" "$worker_sync_count")
+    /opt/pbench-agent/bench-scripts/pbench-user-benchmark --config="$configname" -- "${command[@]}"
 fi
-/opt/pbench-agent/bench-scripts/pbench-user-benchmark --config="$configname" -- "${command[@]}"
 echo "Moving results" 1>&2
 pbench-move-results
 echo "Final sync" 1>&2
