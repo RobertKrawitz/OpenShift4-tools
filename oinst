@@ -540,11 +540,14 @@ function validate_instance_type() {
     local split_instance_func=$5
     shift 5
     if [[ $master_type = list-all || $worker_type = list-all ||
-	      $master_type = list_all || $worker_type = list_all ]] ; then
+	      $platform_type = list-all ||
+	      $master_type = list_all || $worker_type = list_all ||
+	      $platform_type = list_all ]] ; then
 	list_instance_types list_all "$list_option_name" "$split_instance_func" "$@"
 	exit
     fi
-    if [[ $master_type = list || $worker_type = list ]] ; then
+    if [[ $master_type = list || $worker_type = list ||
+	      $platform_type = list ]] ; then
 	list_instance_types list "$list_option_name" "$split_instance_func" "$@"
 	exit
     fi

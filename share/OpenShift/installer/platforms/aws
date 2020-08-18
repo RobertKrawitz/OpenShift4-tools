@@ -37,6 +37,7 @@ declare -arg _____aws_known_instance_types=(" X.General Purpose"
 					    " X.Compute Optimized"
 					    c4.{,{,2,4,8}x}large
 					    c5.{{,{,2,4,9,12,18,24}x}large,metal}
+					    c5a{,d}.{,{,2,4,8,12,16,24}x}large
 					    c5d.{,{,2,4,9,18}x}large
 					    c5n.{{,{,2,4,9,18}x}large,metal}
 					    " X.Memory Optimized"
@@ -63,7 +64,8 @@ declare -arg _____aws_known_instance_types=(" X.General Purpose"
 					    p2.{,8,16}xlarge
 					    inf1.{,2,6,24}xlarge
 					    g4dn.{{,2,4,8,12,16}xlarge,metal}
-					    g3s.xlarge g3.{4,8,16}xlarge
+					    g3s.xlarge
+					    g3.{4,8,16}xlarge
 					    # FPGA instances are of no use for
 					    # running OpenShift
 					    # f1.{2,4,16}xlarge
