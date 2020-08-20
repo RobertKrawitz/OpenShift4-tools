@@ -11,7 +11,7 @@ set -u
 PATH=/usr/local/bin::$PATH
 
 declare -a local_ports=()
-declare sshd_listen_port=${BAK_SSH_PORT:-}
+declare sshd_listen_port=${BAK_SSH_PORT:-22}
 declare passive=0
 declare tool_script=
 declare -a ssh_authorized_key_file=()
@@ -28,6 +28,8 @@ declare keyfile=${BAK_USER_PRIVATE_KEY:-$HOME/.ssh/id_rsa}
 declare verbose=
 declare -i waitforever=0
 declare -i max_wait_for_ssh_tunnel=60
+declare -i dont_start_sshd=0
+declare -i tunnel_port_start=18000
 
 function usage() {
     if [[ -n "$*" ]] ; then
@@ -41,8 +43,9 @@ Usage: $0 [options] [command args...]
                                       Should be at least 2 (start and end
                                       of run).  Default $worker_sync_count.
        -D configdir                   Directory containing pbench configuration
-                                      and public and private key for communication
-                                      with pbench server.  NO DEFAULT.
+                                      and public and private key for
+                                      communication with pbench server.
+                                      NO DEFAULT.
        -K authorized_keyfile          File(s) containing authorized keys that
                                       will be allowed to connect to us.
                                       May be repeated.
@@ -54,16 +57,19 @@ Usage: $0 [options] [command args...]
                                       connect to the agents.  NO DEFAULT.
        -N configuration_name          Configuration name for pbench logging.
                                       Default to <whoami><hostname><timestamp>.
+       -p                             Don't attempt to start a separate sshd.
        -P external_ssh_port           Port that agents should attempt to connect
                                       on, if different from -L.
        -S worker_sync_port            Port on which benchmark workers should
                                       sync.  NO DEFAULT.
        -s agent_sync_port             Port on which agents should sync.
                                       NO DEFAULT.
-       -t tool_script                 Script to execute pbench-register-tool 
+       -T tunnel_port_start           Start ssh tunnel ports at the specified
+                                      number.  Default $tunnel_port_start.
+       -t tool_script                 Script to execute pbench-register-tool
                                       and pbench-register-tool-set commands.
                                       This script will be sourced in an
-                                      envronment that wraps 
+                                      envronment that wraps
                                       pbench-register-tool* commands.
                                       These commands should not include
                                       --remote options.
@@ -77,24 +83,26 @@ EOF
     exit 1
 }
 
-while getopts "P:L:K:k:t:N:D:A:S:s:C:c:vW:w" arg ; do
+while getopts "pP:L:K:k:T:t:N:D:A:S:s:C:c:vW:w" arg ; do
     case "$arg" in
-	A) expected_agents="$OPTARG"           ;;
-	C) worker_sync_count="$OPTARG"         ;;
-	c) expected_clients="$OPTARG"          ;;
-	D) configdir="$OPTARG"                 ;;
-	K) ssh_authorized_key_file+=("$OPTARG");;
-	k) keyfile="$OPTARG"                   ;;
-	L) sshd_listen_port="$OPTARG"          ;;
-	N) configname="$OPTARG"                ;;
-	P) ssh_ext_port="$OPTARG"	       ;;
-	S) worker_sync_port="$OPTARG"          ;;
-	s) agent_sync_port="$OPTARG"           ;;
-	t) tool_script="$OPTARG"	       ;;
-	v) verbose+=" -v"                      ;;
-	W) max_wait_for_ssh_tunnel=$OPTARG     ;;
-	w) waitforever=1                       ;;
-	*)                           	       ;;
+	A) expected_agents="$OPTARG"             ;;
+	C) worker_sync_count="$OPTARG"           ;;
+	c) expected_clients="$OPTARG"            ;;
+	D) configdir="$OPTARG"                   ;;
+	K) ssh_authorized_key_file+=("$OPTARG")  ;;
+	k) keyfile="$OPTARG"                     ;;
+	L) sshd_listen_port="$OPTARG"; passive=1 ;;
+	N) configname="$OPTARG"                  ;;
+	P) ssh_ext_port="$OPTARG"	         ;;
+	p) dont_start_sshd=1; passive=1	         ;;
+	S) worker_sync_port="$OPTARG"            ;;
+	s) agent_sync_port="$OPTARG"             ;;
+	T) tunnel_port_start="$OPTARG"		 ;;
+	t) tool_script="$OPTARG"	         ;;
+	v) verbose+=" -v"                        ;;
+	W) max_wait_for_ssh_tunnel=$OPTARG       ;;
+	w) waitforever=1                         ;;
+	*)                           	         ;;
     esac
 done
 
@@ -112,7 +120,7 @@ if [[ -z "$expected_agents" && $(type -t oc) = file ]] ; then
     expected_agents=$(oc get pods -n pbench -l pbench-agent --no-headers |wc -l)
 fi
 if [[ -z "${BAK_SERVER_CONFIG:-}" || -z "${BAK_SERVER_PRIVATE_KEY:-}" ]] ; then
-    [[ -z "$configdir" ]] && usage "-D must be specified."
+    [[ -z "${configdir:-}" ]] && usage "-D must be specified."
     [[ -d "$configdir" ]] || usage "-D $configdir does not exist."
     [[ -r "$configdir"/pbench-agent.cfg ]] || usage "Expected configuration file $configdir/pbench-agent.cfg does not exist"
     [[ -r "$configdir"/id_rsa ]] || usage "Expected private key $configdir/pbench-agent.cfg does not exist"
@@ -126,6 +134,8 @@ valid_port "$ssh_ext_port" || usage "Invalid -P ssh port $ssh_ext_port"
 if [[ -z "$*" ]] && ! valid_port "$worker_sync_port" ; then
     usage "Invalid -S worker sync port $worker_sync_port"
 fi
+[[ -z "${KUBECONFIG:-}" && -r "$configdir/kubeconfig" ]] && export KUBECONFIG="$configdir/kubeconfig"
+
 valid_port "$agent_sync_port" || usage "Invalid -s agent sync port $agent_sync_port"
 
 declare sshd_pid=
@@ -140,6 +150,9 @@ set +u				# Until the script is fixed.
 # shellcheck disable=1091
 . /etc/profile.d/pbench-agent.sh
 set -u
+
+echo "Environment:" 1>&2
+env | sort 1>&2
 
 declare -a agents=()
 declare -a port_data=()
@@ -159,14 +172,20 @@ function setup_ssh() {
     for key in "${ssh_authorized_key_file[@]}" ; do
 	if [[ -f "$key" ]] ; then
 	    cat "$key" >> "$HOME/.ssh/authorized_keys"
+	elif [[ -f "$configdir/$key" ]] ; then
+	    cat "$configdir/$key" >> "$HOME/.ssh/authorized_keys"
 	fi
     done
     if [[ -n "$setup_server" ]] ; then
 	mkdir -p "$ssh_tmpdir/etc/ssh"
-	/sbin/sshd -D -p "$sshd_listen_port" 1>&2 &
-	sshd_pid=$!
-	echo "$sshd_pid"
-	trap 'kill -9 "$sshd_pid"; rm -rf "$ssh_tmpdir"; exit' INT TERM
+	if (( ! dont_start_sshd )) ; then
+	    /sbin/sshd -D -p "$sshd_listen_port" 1>&2 &
+	    sshd_pid=$!
+	    echo "$sshd_pid"
+	    trap 'kill -9 "$sshd_pid"; rm -rf "$ssh_tmpdir"; exit' INT TERM
+	else
+	    trap 'rm -rf "$ssh_tmpdir"; exit' INT TERM
+	fi
     fi
 }
 
@@ -228,7 +247,7 @@ EOF
 	chmod +x "$ssh_tmpdir/$f"
     done
     [[ -f /etc/ssh/ssh_config ]] && cat /etc/ssh/ssh_config > "$ssh_tmpdir/ssh_config"
-    [[ -f "$HOME/.ssh/config" ]] && cat /etc/ssh/ssh_config >> "$ssh_tmpdir/ssh_config"
+    [[ -f "$HOME/.ssh/config" ]] && cat "$HOME/.ssh/config" >> "$ssh_tmpdir/ssh_config"
 
     readarray -t local_ports <<< "$(find-free-ports -n "$expected_agents" -p 18000)"
     for port in "${local_ports[@]}" ; do
@@ -238,7 +257,7 @@ EOF
     echo ">>>> sshd_pid is $sshd_pid" 1>&2
     [[ -n "$sshd_pid" ]] && trap 'kill -9 "$sshd_pid"; rm -rf "$ssh_tmpdir"; exit' INT TERM EXIT
     i=0
-    while read -r agent token ; do
+    while read -r addr1 remote_port key addr agent ; do
 	[[ -n "$agent" ]] || continue
 	agents+=("$agent")
 	cat >> "$ssh_tmpdir/ssh_config" <<EOF
@@ -257,12 +276,13 @@ EOF
     echo "Pinging agents..."
     if ! ping_agents "${agents[@]}" ; then
 	echo "Wait for agents to come up failed!" 1>&2
+	sleep infinity
 	exit 1
     fi
 else
     setup_ssh
     # shellcheck disable=2034
-    while read -r agent remote_port token ; do
+    while read -r addr1 remote_port key agent addr ; do
 	[[ -n "$agent" ]] || continue
 	agents+=("$agent")
 	echo "Agent $agent" 1>&2
@@ -292,6 +312,8 @@ else
 	exit 1
     fi
 fi
+
+echo "************** PATH: $PATH ******************"
 
 echo "Waiting for benchmark to complete" 1>&2
 if [[ -n "$*" ]] ; then

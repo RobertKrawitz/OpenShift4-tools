@@ -10,25 +10,38 @@ set -u
 declare sshd_port=2222
 declare dns_server
 declare -i run_forever=0
-declare keyfile="$HOME/.ssh/id_rsa"
+declare keyfile=
 declare -a verbose=()
+declare alias=
+declare configdir= # Secret containing pbench config and public and private key
+trap exit TERM INT
 
 function usage() {
     cat 1>&2 <<EOF
 Usage: $0 [options] controller_port [controller_host]
-       -D dns_server
-       -S sshd_port
-       -K public/private key file
-       -d      Run forever (daemon)
-       -v      Increase ssh verbosity
+       -a alias                       Alias to use.  Defaults to hostname
+       -D configdir                   Directory containing pbench configuration
+                                      and public and private key for
+                                      communication with pbench server.
+                                      NO DEFAULT.
+       -n dns_server                  DNS server used to look up the
+                                      controller host name, if needed.
+       -S sshd_port                   Port to listen for ssh connections
+                                      if needed.
+       -K keyfile                     Public and private key files used to
+                                      communicate with the controller.
+       -d                             Run forever (daemon)
+       -v                             Increase ssh verbosity
 EOF
     sleep infinity
     exit 1
 }
 
-while getopts ":D:S:K:C:dv" arg ; do
+while getopts ":a:D:n:S:K:C:dv" arg ; do
     case "$arg" in
-	D) dns_server=$OPTARG ;;
+	a) alias=$OPTARG      ;;
+	D) configdir=$OPTARG  ;;
+	n) dns_server=$OPTARG ;;
 	S) sshd_port=$OPTARG  ;;
 	K) keyfile=$OPTARG    ;;
 	d) run_forever=1      ;;
@@ -41,13 +54,26 @@ shift $((OPTIND - 1))
 
 (( $# == 1 || $# == 2 )) || usage
 
+declare myhostname=$(ip route get 1 |awk '{print $(NF-2); exit}')
 declare controller_port=$1
-declare controller_host=${2:-$(ip route get 1 |awk '{print $(NF-2); exit}')}
+declare controller_host=${2:-$myhostname}
+if [[ -z "${BAK_SERVER_CONFIG:-}" || -z "${BAK_SERVER_PRIVATE_KEY:-}" ]] ; then
+    [[ -z "$configdir" ]] && usage "-D must be specified."
+    [[ -d "$configdir" ]] || usage "-D $configdir does not exist."
+    [[ -r "$configdir"/pbench-agent.cfg ]] || usage "Expected configuration file $configdir/pbench-agent.cfg does not exist"
+    [[ -r "$configdir"/id_rsa ]] || usage "Expected private key $configdir/pbench-agent.cfg does not exist"
+fi
+[[ -z "$keyfile" && -r "$configdir/id_rsa" ]] && keyfile="$configdir/id_rsa"
+[[ $keyfile == '/'* ]] || keyfile="$configdir/$keyfile"
+[[ -r "$keyfile" ]] || usage "Private key file $keyfile does not exist."
+[[ -r "${keyfile}.pub" ]] || usage "Public key file ${keyfile}.pub does not exist."
 
 if [[ ! -r "$keyfile" || ! -r "${keyfile}.pub" ]] ; then
     echo "Can't find key files $keyfile or $keyfile.pub" 1>&2
     usage
 fi
+declare server_config=${BAK_SERVER_CONFIG:-$configdir/pbench-agent.cfg}
+(umask 0333 && cp "$server_config" /opt/pbench-agent/config/pbench-agent.cfg && chown pbench:pbench /opt/pbench-agent/config/pbench-agent.cfg)
 
 PATH=/usr/local/bin:$PATH
 
@@ -56,19 +82,25 @@ set +u
 . /etc/profile.d/pbench-agent.sh
 set -u
 
-sudo mount -t debugfs none /sys/kernel/debug
+echo "Environment:" 1>&2
+env | sort 1>&2
 
-ssh-keygen -A
+(mount |grep -q debugfs) || sudo mount -t debugfs none /sys/kernel/debug
+
+[[ -z "$(shopt -s nullglob; echo "/etc/ssh/ssh_host"*)" ]] && ssh-keygen -A
 
 # Make sure ssh authorized keys are set up correctly
 
 cat "${keyfile}.pub" >> "$HOME/.ssh/authorized_keys"
 chown root "$HOME/.ssh/authorized_keys"
 chgrp root "$HOME/.ssh/authorized_keys"
+# XXXXXX Careful about this...
+rm -f /run/nologin
 /usr/sbin/sshd -p "$sshd_port" -o ListenAddress=127.0.0.1
 
 function run_pbench_agent_once() {
     echo "Running pbench agent" 1>&2
+    ip addr 1>&2
     if [[ -n "${dns_server:-}" && $controller_host =~ ^[[:alnum:]][-[:alnum:]]*[[:alnum:]]\.[[:alnum:]][-[:alnum:]]*[[:alnum:]]$ ]] ; then
 	echo "Looking for IP address for $controller_host from $dns_server" 1>&2
 	while read -r line ; do
@@ -83,7 +115,7 @@ function run_pbench_agent_once() {
 
     # Let the controller know that we're ready to go
     # shellcheck disable=2155
-    token=$(printf '%d %s %s' "$sshd_port" "$(perl -e 'print int rand() * 999999999')" "$(hostname)")
+    token=$(printf '%d %s %s' "$sshd_port" "$(perl -e 'print int rand() * 999999999')" "$(hostname) ${alias:-$myhostname}")
     # shellcheck disable=2155
     echo "Waiting for contact from controller" 1>&2
     declare sync_data=$(sync_to.pl "$controller_host" "$controller_port" "$token")

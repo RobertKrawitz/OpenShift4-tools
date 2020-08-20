@@ -22,4 +22,6 @@ else
     echo "Can't find $payload!" 1>&2
 fi
 
+echo "*** Bootstrap running payload: $inplace $*"
+
 exec "$inplace" "$@"
