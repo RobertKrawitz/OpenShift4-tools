@@ -99,6 +99,11 @@ declare nodeSelector='node-role.kubernetes.io/worker'
 declare get_logs_pid
 declare -i pbenchControllerPort=0
 declare pbenchControllerAddress=
+declare -i file_blocks=1
+declare -i file_block_size=1
+declare -i file_volumes=1
+declare -i file_dirs_per_volume=1
+declare -i files_per_dir=1
 
 declare accumulateddata=
 
@@ -142,7 +147,8 @@ Usage: $0 [options] [name]
        -N namespaces   Number of namespaces to create (default 1)
                        If 0 is specified, then no namespaces are created
                        and the current namespace is used.
-       -P podtype      Pod type (classic, pause, server, cpu, fio, sysbench)
+       -P podtype      Pod type (classic, pause, server, cpu, fio, sysbench,
+                       files)
        -p parallel     Number of operations to perform in parallel (default 1)
        -r replicas     Number of replicas per deployment (default 1)
                        For client/server, this refers to client pods.
@@ -209,6 +215,18 @@ Extended Options:
 			Use the specified address to connect to the controller.
        --pbench_controller_port=port
 			Use the specified port to connect to the controller.
+
+    Using Files:
+       --volumes=N      Use the specified number of volumes.
+       			If not provided, /tmp (writable layer) is used.
+       --dirs-per-volume=N
+			Create the specified number of directories per volume.
+			Default 1.
+       --files-per-dir=N
+			Create the specified number of files per directory.
+       --file-size=N
+			Each file should be of the specified size.
+			Sizes may be in bytes, [KMGT]iB, or [KMGT]B.
 
     Tuning object creation (short equivalents):
        --scale-ns=[0,1] Scale up the number of namespaces.
@@ -558,7 +576,29 @@ function process_option() {
 	deployment_type)            deploymentType=$optvalue			;;
 	runtimeclass|runtime_class) runtimeClass=$optvalue			;;
 	report_object_creation)	    reportObjectCreation=$optvalue		;;
-	kata)			    runtimeClass=kata				;;
+	kata)			    runtimeClass=kata-oc			;;
+	volumes)		    file_volumes=$optvalue			;;
+	dirs_per_volume)	    file_dirs_per_volume=$optvalue		;;
+	files_per_dir)		    files_per_dir=$optvalue			;;
+	file_size)
+	    if [[ $optvalue =~ ([[:digit:]]+)([[:alpha:]]*) ]] ; then
+		file_blocks=${BASH_REMATCH[1]}
+		local size_modifier=${BASH_REMATCH[2],,}
+		case "$size_modifier" in
+		    ''|b)          file_block_size=1             ;;
+		    kb|kilobytes)  file_block_size=1000          ;;
+		    ki|kib|kibibytes) file_block_size=1024       ;;
+		    mb|megabytes)  file_block_size=1000000       ;;
+		    mi|mib|mebibytes) file_block_size=1048576    ;;
+		    gb|gigabytes)  file_block_size=1000000000    ;;
+		    gi|gib|gibibytes) file_block_size=1073741824 ;;
+		    *) fatal "Cannot parse filesize $optvalue"   ;;
+		esac
+	    else
+		fatal "Cannot parse filesize $optvalue"
+	    fi
+	    ;;
+
 	report)	    		    report=$optvalue				;;
 	precleanup)		    precleanup=$optvalue			;;
 	cleanup)		    cleanup=$optvalue				;;
@@ -707,18 +747,23 @@ if [[ -n "$pbenchControllerAddress" && $pbenchControllerPort -eq 0 ]] ; then
     exit 1
 fi
 
+for i in $(seq 0 $((file_volumes-1)) ) ; do
+    emptydirs+=("/mnt/volume-$i")
+done
+
 if [[ $dataRate != 0 && $dataRate != '' && $xferTimeMax -eq 0 && bytesMax -eq 0 ]] ; then
     bytes=$defaultBytes
     bytesMax=$defaultBytes
 fi
 
-case "$podType" in
-    classic|ClusterBuster) podType=ClusterBuster ;;
+case "${podType,,}" in
+    classic|clusterbuster) podType=ClusterBuster ;;
     server)                podType=Server        ;;
-    cpu*|CPU*|soaker)      podType=CPUSoaker     ;;
-    sysbench|Sysbench)     podType=Sysbench      ;;
-    fio|Fio)		   podType=Fio           ;;
-    pause|PausePod)        podType=PausePod      ;;
+    cpu*|soaker)           podType=CPUSoaker     ;;
+    sysbench)              podType=Sysbench      ;;
+    fio)		   podType=Fio           ;;
+    pause|pausepod)        podType=PausePod      ;;
+    file|files)            podType=Files         ;;
     *)			   help_all		 ;;
 esac
 
@@ -1257,6 +1302,130 @@ EOF
     fi
 }
 
+function createContainersFilesYAML() {
+    local namespace=$1
+    local i=$2
+    local secretCount=$3
+    local -i containers=$4
+    local -i j
+    local syncService=
+    local syncPortNum=
+    if (( syncStart )) ; then
+	syncService="${syncHost:-service-${namespace}-sync}"
+	syncPortNum=$syncPort
+    fi
+    # shellcheck disable=1340
+    for j in $(seq 0 $((containers - 1))) ; do
+	# shellcheck disable=2030
+	cat <<EOF
+- name: "c${j}"
+  imagePullPolicy: Always
+  image: "quay.io/rkrawitz/bench-army-knife"
+$(indent 2 createContainerResources)
+  env:
+  - name: VERBOSE
+    value: "$verbose"
+$(indent 2 genericCommand files.pl)
+  - "$namespace"
+  - "${namespace}-sysbench-${i}"
+  - "c${j}"
+  - "$basetime"
+  - "$baseoffset"
+  - "$(ts)"
+  - "$poddelay"
+  - "86400"
+  - "$syncService"
+  - "$syncPortNum"
+  - "$file_dirs_per_volume"
+  - "$files_per_dir"
+  - "$file_block_size"
+  - "$file_blocks"
+$(emptydirs=("${emptydirs[@]/%/\"}"); IFS=$'\n'; echo "${emptydirs[*]/#/  - \"}")
+$(indent 2 createVolumeMountsYAML "$namespace" "$i" "$secretCount")
+EOF
+    done
+}
+
+function createFilesSpec() {
+    local namespace=$1
+    local i=$2
+    local secretCount=$3
+    local -i containers=$4
+    cat <<EOF
+spec:
+$(indent 2 node_selector)
+  terminationGracePeriodSeconds: 1
+  restartPolicy: Always
+$(indent 2 createPodResources)
+$(indent 2 <<< "$runtimeClass")
+  containers:
+$(indent 2 createContainersFilesYAML "$@")
+$(indent 2 createPbenchAgentYAML)
+$(indent 2 createVolumesYAML "$namespace" "$i" "$secretCount")
+EOF
+}
+
+function createFilesDeployment() {
+    local namespace=$1
+    local i=$2
+    local secretCount=$3
+    local -i containers=$4
+    local nsline=${useNamespaces:+  namespace: "$namespace"}
+    if [[ $deploymentType = pod ]] ; then
+	createObject <<EOF
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ${namespace}-files-${i}
+$nsline
+$(indent 2 createPrivilegeYAML)
+$(indent 2 node_selector)
+  selector:
+    matchLabels:
+      app: ${namespace}-files-${i}
+  labels:
+    ${basename}: "true"
+    clusterbusterbase: "true"
+    name: ${namespace}-files-${i}
+    app: ${namespace}-files-${i}
+    ${basename}-files: "true"
+    ${basename}-client: "true"
+$(createFilesSpec "$@")
+  restartPolicy: Never
+EOF
+    else
+	createObject <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ${namespace}-files-$i
+$nsline
+$(indent 2 createPrivilegeYAML)
+  labels:
+    ${basename}: "true"
+    clusterbusterbase: "true"
+spec:
+  replicas: 1
+$(indent 2 node_selector)
+  selector:
+    matchLabels:
+      app: ${namespace}-files-$i
+  strategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        ${basename}: "true"
+        clusterbusterbase: "true"
+        name: ${namespace}-files-$i
+        app: ${namespace}-files-$i
+        ${basename}-files: "true"
+        ${basename}-client: "true"
+$(indent 4 createFilesSpec "$@")
+EOF
+    fi
+}
+
 function createContainersSysbenchYAML() {
     local namespace=$1
     local i=$2
@@ -1273,6 +1442,7 @@ function createContainersSysbenchYAML() {
 	syncPortNum=$syncPort
     fi
     # For prototype, just use /tmp.
+    # shellcheck disable=2031
     local workdir=${emptydirs[0]:-/tmp}
     for j in $(seq 0 $((containers - 1))) ; do
 	cat <<EOF
@@ -1406,6 +1576,7 @@ function createContainersFioYAML() {
 	syncPortNum=$syncPort
     fi
     # For prototype, just use /tmp.
+    # shellcheck disable=2031
     local workdir=${emptydirs[0]:-/tmp}
     for j in $(seq 0 $((containers - 1))) ; do
 	cat <<EOF
@@ -1997,6 +2168,28 @@ function createDeploymentPausePod() {
 
 function createDeploymentClusterBuster() {
     createDeploymentSimple "$@"
+}
+
+function createDeploymentFiles() {
+    local namespace=$1
+    local count=${2:-1}
+    local secretCount=${3:-1}
+    local containers=${4:-1}
+    local -i i
+    if [[ syncStart -gt 0 && -z "$syncHost" ]] ; then
+	createService "$namespace" "${namespace}-sync" "$syncPort"
+	createSyncDeployment 3 "$namespace" "$((containers * replicas * count))"
+    fi
+    for i in $(seq $firstDeployment $((count + firstDeployment - 1))) ; do
+	createFilesDeployment "$namespace" "$i" "$secretCount"  "$replicas" "$containers" "$log_host" "$log_port"
+    done
+}
+
+function listConfigMapsFiles() {
+    cat <<EOF
+${__libdir__}/files.pl
+${__libdir__}/sync.pl
+EOF
 }
 
 function createDeploymentSysbench() {
