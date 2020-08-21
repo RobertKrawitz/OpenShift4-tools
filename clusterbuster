@@ -101,7 +101,7 @@ declare -i pbenchControllerPort=0
 declare pbenchControllerAddress=
 declare -i file_blocks=1
 declare -i file_block_size=1
-declare -i file_volumes=1
+declare -i file_volumes=0
 declare -i file_dirs_per_volume=1
 declare -i files_per_dir=1
 
