@@ -107,7 +107,7 @@ vec($buffer, $blocksize - 1, 8) = "A";
 
 foreach my $dir (@dirs) {
     $dir="$dir/$container";
-    mkdir("$dir") || die("Can't create directory $dirname: $!\n");
+    mkdir("$dir") || die("Can't create directory $dir: $!\n");
     foreach my $subdir (0..$dirs-1) {
 	my ($dirname) = "$dir/d$subdir";
 	mkdir("$dirname") || die("Can't create directory $dirname: $!\n");
