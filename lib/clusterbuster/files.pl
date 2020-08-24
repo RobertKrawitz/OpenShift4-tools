@@ -124,3 +124,5 @@ foreach my $dir (@dirs) {
 }
 
 sleep($exit_delay);
+
+do_sync($synchost, $syncport, "files test complete");
