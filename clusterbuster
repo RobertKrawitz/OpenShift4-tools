@@ -1334,7 +1334,7 @@ $(indent 2 genericCommand files.pl)
   - "$baseoffset"
   - "$(ts)"
   - "$poddelay"
-  - "86400"
+  - "$podsleeptime"
   - "$syncService"
   - "$syncPortNum"
   - "$file_dirs_per_volume"
@@ -1382,7 +1382,7 @@ function createFilesDeployment() {
 apiVersion: v1
 kind: Pod
 metadata:
-  name: ${namespace}-files-${i}
+  name: ${namespace}-files-${i}-${j}
 $nsline
 $(indent 2 createPrivilegeYAML)
 $(indent 2 node_selector)
@@ -1392,7 +1392,7 @@ $(indent 2 node_selector)
   labels:
     ${basename}: "true"
     clusterbusterbase: "true"
-    name: ${namespace}-files-${i}
+    name: ${namespace}-files-${i}-${j}
     app: ${namespace}-files-${i}
     ${basename}-files: "true"
     ${basename}-client: "true"
