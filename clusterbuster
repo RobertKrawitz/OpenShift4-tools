@@ -2182,7 +2182,8 @@ function createDeploymentFiles() {
     local namespace=$1
     local count=${2:-1}
     local secretCount=${3:-1}
-    local containers=${4:-1}
+    local replicas=${4:-1}
+    local containers=${5:-1}
     local -i i
     if [[ syncStart -gt 0 && -z "$syncHost" ]] ; then
 	createService "$namespace" "${namespace}-sync" "$syncPort"
