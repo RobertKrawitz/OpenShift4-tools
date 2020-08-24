@@ -1328,7 +1328,7 @@ $(indent 2 createContainerResources)
     value: "$verbose"
 $(indent 2 genericCommand files.pl)
   - "$namespace"
-  - "${namespace}-sysbench-${i}"
+  - "${namespace}-files-${i}"
   - "c${j}"
   - "$basetime"
   - "$baseoffset"
