@@ -42,6 +42,7 @@ Usage: $0 [options] [command args...]
                                       expected to sync with the controller.
                                       Should be at least 2 (start and end
                                       of run).  Default $worker_sync_count.
+       -c expected_clients            Number of workers that will sync.
        -D configdir                   Directory containing pbench configuration
                                       and public and private key for
                                       communication with pbench server.
