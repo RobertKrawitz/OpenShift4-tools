@@ -91,7 +91,7 @@ declare install_type=
 declare install_domain=${OPENSHIFT_INSTALL_DOMAIN:-}
 declare install_dir=${OPENSHIFT_INSTALL_DIR:-$install_domain}
 declare install_version=latest_default
-declare pull_secret=${OPENSHIFT_INSTALL_PULL_SECRET_PATH:-$HOME/Downloads/pull-secret}
+declare pull_secret=${OPENSHIFT_INSTALL_PULL_SECRET_PATH:-$HOME/.docker/config.json}
 declare pubkey_file=${OPENSHIFT_INSTALL_SSH_PUB_KEY_PATH:-$HOME/.ssh/id_rsa.pub}
 declare installer_src=${GOPATH:-$HOME/go}/src/github.com/openshift/installer
 declare install=$installer_src/bin/openshift-install
@@ -755,7 +755,7 @@ cat <<\EOF
 
   Get the required key from
   https://access.redhat.com/solutions/3533201.  Add the auth for
-  quay.io to your ~/.docker/config.json and ~/Downloads/pull-secret.
+  quay.io to your ~/.docker/config.json.
 
 * [auth] You need to oc login (or periodically refresh your login).  All
   three steps must be performed.  Not doing this can lead to very
@@ -768,8 +768,7 @@ cat <<\EOF
   + Run 'oc registry login'.
 
   + This will generate or update additional secrets in
-    ~/.docker/config.json; these need to be copied into
-    ~/Downloads/pull-secret.  In particular, the secret for
+    ~/.docker/config.json.  In particular, the secret for
     registry.svc.ci.openshift.org will change.
 
 * [auth] Ensure that you have correct credentials for your cloud platform,
