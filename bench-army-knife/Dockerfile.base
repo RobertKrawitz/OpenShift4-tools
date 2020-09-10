@@ -5,6 +5,8 @@ RUN dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-8.n
     dnf install -y --enablerepo PowerTools --enablerepo copr-pbench \
     bind-utils \
     fio \
+    git \
+    gcc \
     hostname \
     iproute \
     iputils \
