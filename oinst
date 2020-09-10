@@ -749,7 +749,8 @@ cat <<\EOF
   Cluster/Self-Installed Cluster
   (https://cloud.redhat.com/openshift/install) and select your
   appropriate cloud platform.  From there, select User-Provisioned
-  Infrastructure.  Download your pull secret and place it in ~/Downloads.
+  Infrastructure.  Download your pull secret and place it in
+  or merge it into ~/.docker/config.json
 
 * [auth] You need an appropriate quay.io credential.
 
