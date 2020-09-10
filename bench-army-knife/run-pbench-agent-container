@@ -13,39 +13,52 @@ declare -i run_forever=0
 declare keyfile=
 declare -a verbose=()
 declare alias=
+declare sshd_args='-o ListenAddress=127.0.0.1'
 declare configdir= # Secret containing pbench config and public and private key
+declare -i log_environment=0
+declare -i unique_hostname=0
 trap exit TERM INT
 
 function usage() {
     cat 1>&2 <<EOF
 Usage: $0 [options] controller_port [controller_host]
-       -a alias                       Alias to use.  Defaults to hostname
-       -D configdir                   Directory containing pbench configuration
-                                      and public and private key for
-                                      communication with pbench server.
-                                      NO DEFAULT.
-       -n dns_server                  DNS server used to look up the
-                                      controller host name, if needed.
-       -S sshd_port                   Port to listen for ssh connections
-                                      if needed.
-       -K keyfile                     Public and private key files used to
-                                      communicate with the controller.
-       -d                             Run forever (daemon)
-       -v                             Increase ssh verbosity
+       -a alias       Alias to use.  Defaults to hostname.
+       -D configdir   Directory containing pbench configuration and public
+                      and private key for communication with pbench server.
+                      NO DEFAULT.
+       -n dns_server  DNS server used to look up the controller host name,
+                      if needed.
+       -S sshd_port   Port to listen for ssh connections if needed.
+       -K keyfile     Public and private key files used to
+                      communicate with the controller.
+       -d             Run forever (daemon)
+       -v             Increase ssh verbosity
+       -L             Run sshd with global listener
+       -q             Log stderr to /tmp/container.log on the pod
+                      rather than to the container log stream if there
+                      are problems with container logging.
+       -u             Provide unique hostname to controller.
+                      Useful for running standalone agents as
+                      a daemonset or other replica set.
+       -e             Log the environment.
 EOF
     sleep infinity
     exit 1
 }
 
-while getopts ":a:D:n:S:K:C:dv" arg ; do
+while getopts ":a:D:n:S:K:C:dvLqeu" arg ; do
     case "$arg" in
-	a) alias=$OPTARG      ;;
-	D) configdir=$OPTARG  ;;
-	n) dns_server=$OPTARG ;;
-	S) sshd_port=$OPTARG  ;;
-	K) keyfile=$OPTARG    ;;
-	d) run_forever=1      ;;
-	v) verbose+=("-v")    ;;
+	a) alias=$OPTARG	     ;;
+	e) log_environment=1	     ;;
+	D) configdir=$OPTARG	     ;;
+	n) dns_server=$OPTARG	     ;;
+	S) sshd_port=$OPTARG	     ;;
+	K) keyfile=$OPTARG	     ;;
+	d) run_forever=1	     ;;
+	v) verbose+=("-v")	     ;;
+	L) sshd_args=		     ;;
+	q) exec 2>/tmp/container.log ;;
+	u) unique_hostname=1	     ;;
 	*) usage
     esac
 done
@@ -77,13 +90,17 @@ declare server_config=${BAK_SERVER_CONFIG:-$configdir/pbench-agent.cfg}
 
 PATH=/usr/local/bin:$PATH
 
+# Need -u disabled for this pending
+# https://github.com/distributed-system-analysis/pbench/pull/1746
 set +u
 # shellcheck disable=1091
 . /etc/profile.d/pbench-agent.sh
 set -u
 
-echo "Environment:" 1>&2
-env | sort 1>&2
+if (( log_environment )) ; then
+    echo "Environment:" 1>&2
+    env | sort 1>&2
+fi
 
 (mount |grep -q debugfs) || sudo mount -t debugfs none /sys/kernel/debug
 
@@ -96,7 +113,7 @@ chown root "$HOME/.ssh/authorized_keys"
 chgrp root "$HOME/.ssh/authorized_keys"
 # XXXXXX Careful about this...
 rm -f /run/nologin
-/usr/sbin/sshd -p "$sshd_port" -o ListenAddress=127.0.0.1
+/usr/sbin/sshd -p "$sshd_port" $sshd_args
 
 function run_pbench_agent_once() {
     echo "Running pbench agent" 1>&2
@@ -115,7 +132,11 @@ function run_pbench_agent_once() {
 
     # Let the controller know that we're ready to go
     # shellcheck disable=2155
-    token=$(printf '%d %s %s' "$sshd_port" "$(perl -e 'print int rand() * 999999999')" "$(hostname) ${alias:-$myhostname}")
+    if (( unique_hostname )) ; then
+	token=$(printf '%d %s %s %s-%09d.%s' "$sshd_port" "$(perl -e 'print int rand() * 999999999')" "$(hostname)" "$(hostname)" "$(perl -e 'print int rand() * 999999999')" "${alias:-$myhostname}")
+    else
+	token=$(printf '%d %s %s %s' "$sshd_port" "$(perl -e 'print int rand() * 999999999')" "$(hostname)" "${alias:-$myhostname}")
+    fi
     # shellcheck disable=2155
     echo "Waiting for contact from controller" 1>&2
     declare sync_data=$(sync_to.pl "$controller_host" "$controller_port" "$token")
