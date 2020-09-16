@@ -97,7 +97,7 @@ EOF
     exit 1
 }
 
-while getopts "pP:L:K:k:T:t:n:D:A:S:s:C:c:vW:weh" arg ; do
+while getopts "pP:L:K:k:T:t:n:D:A:S:s:C:c:vW:wehu:" arg ; do
     case "$arg" in
 	A) expected_agents="$OPTARG"             ;;
 	C) expected_clients="$OPTARG"            ;;
@@ -115,6 +115,7 @@ while getopts "pP:L:K:k:T:t:n:D:A:S:s:C:c:vW:weh" arg ; do
 	s) agent_sync_port="$OPTARG"             ;;
 	T) tunnel_port_start="$OPTARG"		 ;;
 	t) tool_script="$OPTARG"	         ;;
+	u) username="$OPTARG"			 ;;
 	v) verbose+=" -v"                        ;;
 	W) max_wait_for_ssh_tunnel=$OPTARG       ;;
 	w) waitforever=1                         ;;
