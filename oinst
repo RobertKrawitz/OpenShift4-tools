@@ -55,7 +55,7 @@ function clean_startup() {
 # It's fine for the running script to be removed, since the shell still
 # has its open file descriptor.
 if [[ $# = 0 || $1 != "--DoIt=$0" ]] ; then
-    tmpsc=$(mktemp -t oinst.XXXXXXXXXX)
+    tmpsc=$(mktemp -t "${___topsc}.XXXXXXXXXX")
     [[ -z $tmpsc || ! -f $tmpsc || -L $tmpsc ]] && fatal "Can't create temporary script file"
     trap clean_startup EXIT SIGHUP SIGINT SIGQUIT SIGTERM
     PATH+=${PATH:+:}$___topdir
