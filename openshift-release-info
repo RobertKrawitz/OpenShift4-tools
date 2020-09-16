@@ -20,14 +20,8 @@ my %upgrades_from;
 my %upgrades_to;
 my %release_idx;
 
-my $opt_list_channels;
-my $opt_list_releases;
-my $opt_list_upgrades;
-my $opt_payload;
-my $opt_url;
 my $opt_channel;
 my $opt_all_upgrades;
-my $opt_os;
 my $opt_print_color;
 my $opt_print_only_validated;
 my $opt_match_pattern;
