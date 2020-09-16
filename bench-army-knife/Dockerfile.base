@@ -19,6 +19,7 @@ RUN dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-8.n
     perl \
     perl-Time-HiRes \
     procps-ng \
+    redis \
     rsync \
     strace \
     sudo \
