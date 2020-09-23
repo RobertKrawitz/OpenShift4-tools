@@ -21,13 +21,11 @@ export LC_ALL=C
 
 set -u
 
-declare sshd_port=2222
 declare dns_server
 declare -i run_forever=0
 declare keyfile=
 declare -a verbose=()
 declare alias=
-declare sshd_args='-o ListenAddress=127.0.0.1'
 declare configdir= # Secret containing pbench config and public and private key
 declare -i log_environment=0
 declare -i unique_hostname=0
@@ -42,7 +40,6 @@ Usage: $0 [options] controller_port [controller_host]
                       NO DEFAULT.
        -n dns_server  DNS server used to look up the controller host name,
                       if needed.
-       -S sshd_port   Port to listen for ssh connections if needed.
        -K keyfile     Public and private key files used to
                       communicate with the controller.
        -d             Run forever (daemon)
@@ -60,13 +57,12 @@ EOF
     exit 1
 }
 
-while getopts ":a:D:n:S:K:C:dvLqeu" arg ; do
+while getopts ":a:D:n:K:C:dvLqeu" arg ; do
     case "$arg" in
 	a) alias=$OPTARG	     ;;
 	e) log_environment=1	     ;;
 	D) configdir=$OPTARG	     ;;
 	n) dns_server=$OPTARG	     ;;
-	S) sshd_port=$OPTARG	     ;;
 	K) keyfile=$OPTARG	     ;;
 	d) run_forever=1	     ;;
 	v) verbose+=("-v")	     ;;
@@ -127,7 +123,67 @@ chown root "$HOME/.ssh/authorized_keys"
 chgrp root "$HOME/.ssh/authorized_keys"
 # XXXXXX Careful about this...
 rm -f /run/nologin
-/usr/sbin/sshd -p "$sshd_port" $sshd_args
+
+sshd_tmp=$(mktemp "/var/tmp/ssh_server_tmpXXXXXXXXX")
+
+chmod 700 "$sshd_tmp"
+cat > "$sshd_tmp" << 'EOF'
+#!/usr/bin/perl
+use Socket;
+use POSIX;
+use strict;
+
+my @sshd_args=@_;
+my $listen_port = 0;
+my $sockaddr = "S n a4 x8";
+socket(SOCK, AF_INET, SOCK_STREAM, getprotobyname('tcp')) || die "socket: $!";
+$SIG{TERM} = sub { close SOCK; kill 'KILL', -1; POSIX::_exit(0); };
+setsockopt(SOCK,SOL_SOCKET, SO_REUSEADDR, pack("l",1)) || die "setsockopt reuseaddr: $!\n";
+setsockopt(SOCK,SOL_SOCKET, SO_KEEPALIVE, pack("l",1)) || die "setsockopt keepalive: $!\n";
+bind(SOCK, sockaddr_in(0, scalar gethostbyname("127.0.0.1"))) || die "bind: $!\n";
+listen(SOCK, 5) || die "listen: $!";
+my $mysockaddr = getsockname(SOCK);
+my ($port, $addr) = sockaddr_in($mysockaddr);
+
+my $server_pid;
+if (($server_pid = fork()) == 0) {
+    POSIX::setsid();
+    close(STDIN);
+    close(STDOUT);
+    close(STDERR);
+    chdir("/");
+    $SIG{'TERM'} = sub { exit; };
+    $SIG{'INT'} = sub { exit; };
+    while (1) {
+	accept(CLIENT, SOCK) || next;
+	if ((my $child = fork()) == 0) {
+	    close(SOCK);
+	    $SIG{TERM} = sub { close CLIENT; POSIX::_exit(0); };
+	    my $peeraddr = getpeername(CLIENT);
+	    my ($port, $addr) = sockaddr_in($peeraddr);
+	    my $peerhost = gethostbyaddr($addr, AF_INET);
+	    my $peeraddr = inet_ntoa($addr);
+	    select STDOUT;
+	    $| = 1;
+	    select STDIN;
+	    $| = 1;
+	    
+	    open(STDIN, "<&", "CLIENT");
+	    open(STDOUT, ">&", "CLIENT");
+	    exec("/usr/sbin/sshd", "-i", @sshd_args);
+	} else {
+	    close(CLIENT);
+	}
+    }
+} else {
+    close(SOCK);
+    print "$port\n";
+}
+EOF
+chmod +x "$sshd_tmp"
+
+declare sshd_port=$("$sshd_tmp")
+rm -f "$sshd_tmp"
 
 function run_pbench_agent_once() {
     echo "Running pbench agent" 1>&2
