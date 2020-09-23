@@ -1,0 +1,66 @@
+#!/usr/bin/perl
+use Socket;
+use POSIX;
+use strict;
+
+use Getopt::Long;
+Getopt::Long::Configure("bundling", "no_ignore_case", "pass_through");
+
+if (! -x "/usr/sbin/sshd") {
+    die "Can't find /usr/sbin/sshd!\n";
+}
+
+my $allow_remote_ssh = 0;
+
+GetOptions("R!" => \$allow_remote_ssh);
+
+my @sshd_args=@_;
+my $listen_port = 0;
+my $sockaddr = "S n a4 x8";
+socket(SOCK, AF_INET, SOCK_STREAM, getprotobyname('tcp')) || die "socket: $!";
+$SIG{TERM} = sub { close SOCK; kill 'KILL', -1; POSIX::_exit(0); };
+setsockopt(SOCK,SOL_SOCKET, SO_REUSEADDR, pack("l",1)) || die "setsockopt reuseaddr: $!\n";
+setsockopt(SOCK,SOL_SOCKET, SO_KEEPALIVE, pack("l",1)) || die "setsockopt keepalive: $!\n";
+if ($allow_remote_ssh) {
+    bind(SOCK, sockaddr_in(0, INADDR_ANY)) || die "bind: $!\n";
+} else {
+    bind(SOCK, sockaddr_in(0, scalar gethostbyname("127.0.0.1"))) || die "bind: $!\n";
+}
+listen(SOCK, 5) || die "listen: $!";
+my $mysockaddr = getsockname(SOCK);
+my ($port, $addr) = sockaddr_in($mysockaddr);
+
+my $server_pid;
+if (($server_pid = fork()) == 0) {
+    POSIX::setsid();
+    close(STDIN);
+    close(STDOUT);
+    close(STDERR);
+    chdir("/");
+    $SIG{'TERM'} = sub { exit; };
+    $SIG{'INT'} = sub { exit; };
+    while (1) {
+	accept(CLIENT, SOCK) || next;
+	if ((my $child = fork()) == 0) {
+	    close(SOCK);
+	    $SIG{TERM} = sub { close CLIENT; POSIX::_exit(0); };
+	    my $peeraddr = getpeername(CLIENT);
+	    my ($port, $addr) = sockaddr_in($peeraddr);
+	    my $peerhost = gethostbyaddr($addr, AF_INET);
+	    my $peeraddr = inet_ntoa($addr);
+	    select STDOUT;
+	    $| = 1;
+	    select STDIN;
+	    $| = 1;
+
+	    open(STDIN, "<&", "CLIENT");
+	    open(STDOUT, ">&", "CLIENT");
+	    exec("/usr/sbin/sshd", "-i", @sshd_args);
+	} else {
+	    close(CLIENT);
+	}
+    }
+} else {
+    close(SOCK);
+    print "$port $server_pid\n";
+}

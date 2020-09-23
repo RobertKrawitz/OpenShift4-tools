@@ -139,7 +139,7 @@ fi
 [[ $keyfile == '/'* ]] || keyfile="$configdir/$keyfile"
 [[ -r "$keyfile" ]] || usage "Private key file $keyfile does not exist."
 [[ -r "${keyfile}.pub" ]] || usage "Public key file ${keyfile}.pub does not exist."
-ssh_ext_port=${ssh_ext_port:=$sshd_listen_port}
+ssh_ext_port=${ssh_ext_port:-$sshd_listen_port}
 valid_port "$sshd_listen_port" || usage "Invalid -L sshd listen port $sshd_listen_port"
 valid_port "$ssh_ext_port" || usage "Invalid -P ssh port $ssh_ext_port"
 if [[ -z "$*" ]] && ! valid_port "$worker_sync_port" ; then

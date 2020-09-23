@@ -29,6 +29,7 @@ declare alias=
 declare configdir= # Secret containing pbench config and public and private key
 declare -i log_environment=0
 declare -i unique_hostname=0
+declare sshd_args=
 trap exit TERM INT
 
 function usage() {
@@ -66,7 +67,7 @@ while getopts ":a:D:n:K:C:dvLqeu" arg ; do
 	K) keyfile=$OPTARG	     ;;
 	d) run_forever=1	     ;;
 	v) verbose+=("-v")	     ;;
-	L) sshd_args=		     ;;
+	L) sshd_args=-R		     ;;
 	q) exec 2>/tmp/container.log ;;
 	u) unique_hostname=1	     ;;
 	*) usage
@@ -124,66 +125,15 @@ chgrp root "$HOME/.ssh/authorized_keys"
 # XXXXXX Careful about this...
 rm -f /run/nologin
 
-sshd_tmp=$(mktemp "/var/tmp/ssh_server_tmpXXXXXXXXX")
+declare -i sshd_port
+declare -i ssh_server_pid
 
-chmod 700 "$sshd_tmp"
-cat > "$sshd_tmp" << 'EOF'
-#!/usr/bin/perl
-use Socket;
-use POSIX;
-use strict;
+read -r sshd_port ssh_server_pid <<< "$(mini-sshd)"
 
-my @sshd_args=@_;
-my $listen_port = 0;
-my $sockaddr = "S n a4 x8";
-socket(SOCK, AF_INET, SOCK_STREAM, getprotobyname('tcp')) || die "socket: $!";
-$SIG{TERM} = sub { close SOCK; kill 'KILL', -1; POSIX::_exit(0); };
-setsockopt(SOCK,SOL_SOCKET, SO_REUSEADDR, pack("l",1)) || die "setsockopt reuseaddr: $!\n";
-setsockopt(SOCK,SOL_SOCKET, SO_KEEPALIVE, pack("l",1)) || die "setsockopt keepalive: $!\n";
-bind(SOCK, sockaddr_in(0, scalar gethostbyname("127.0.0.1"))) || die "bind: $!\n";
-listen(SOCK, 5) || die "listen: $!";
-my $mysockaddr = getsockname(SOCK);
-my ($port, $addr) = sockaddr_in($mysockaddr);
-
-my $server_pid;
-if (($server_pid = fork()) == 0) {
-    POSIX::setsid();
-    close(STDIN);
-    close(STDOUT);
-    close(STDERR);
-    chdir("/");
-    $SIG{'TERM'} = sub { exit; };
-    $SIG{'INT'} = sub { exit; };
-    while (1) {
-	accept(CLIENT, SOCK) || next;
-	if ((my $child = fork()) == 0) {
-	    close(SOCK);
-	    $SIG{TERM} = sub { close CLIENT; POSIX::_exit(0); };
-	    my $peeraddr = getpeername(CLIENT);
-	    my ($port, $addr) = sockaddr_in($peeraddr);
-	    my $peerhost = gethostbyaddr($addr, AF_INET);
-	    my $peeraddr = inet_ntoa($addr);
-	    select STDOUT;
-	    $| = 1;
-	    select STDIN;
-	    $| = 1;
-	    
-	    open(STDIN, "<&", "CLIENT");
-	    open(STDOUT, ">&", "CLIENT");
-	    exec("/usr/sbin/sshd", "-i", @sshd_args);
-	} else {
-	    close(CLIENT);
-	}
-    }
-} else {
-    close(SOCK);
-    print "$port\n";
-}
-EOF
-chmod +x "$sshd_tmp"
-
-declare sshd_port=$("$sshd_tmp")
-rm -f "$sshd_tmp"
+if (( !sshd_port )) ; then
+    echo "Can't run mini ssh server!"
+    exit 1
+fi
 
 function run_pbench_agent_once() {
     echo "Running pbench agent" 1>&2
@@ -239,3 +189,4 @@ while : ; do
     }
     (( run_forever )) || break
 done
+kill "$ssh_server_pid";

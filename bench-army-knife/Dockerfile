@@ -14,6 +14,7 @@ RUN sed -i -e "s/.*PermitRootLogin.*/PermitRootLogin yes ##/" \
     useradd -d /var/tmp -g pbench pbench
 COPY bootstrap.sh \
      find-free-ports \
+     mini-sshd \
      run-pbench-agent-container \
      run-pbench-controller \
      sync.pl \
