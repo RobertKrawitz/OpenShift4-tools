@@ -33,12 +33,16 @@ declare sshd_args=
 trap exit TERM INT
 
 function usage() {
+    if [[ -n "$*" ]] ; then
+	echo "Unknown option $*"
+    fi
     cat 1>&2 <<EOF
 Usage: $0 [options] controller_port [controller_host]
        -a alias       Alias to use.  Defaults to hostname.
        -D configdir   Directory containing pbench configuration and public
                       and private key for communication with pbench server.
                       NO DEFAULT.
+       -H addr=host   Add <host> with the specified <addr> to /etc/hosts.
        -n dns_server  DNS server used to look up the controller host name,
                       if needed.
        -K keyfile     Public and private key files used to
@@ -58,26 +62,47 @@ EOF
     exit 1
 }
 
-while getopts ":a:D:n:K:C:dvLqeu" arg ; do
+declare -a etchosts_addons=()
+declare -A extra_hosts=()
+
+while getopts ":a:D:deH:hK:Ln:quv" arg ; do
     case "$arg" in
-	a) alias=$OPTARG	     ;;
-	e) log_environment=1	     ;;
-	D) configdir=$OPTARG	     ;;
-	n) dns_server=$OPTARG	     ;;
-	K) keyfile=$OPTARG	     ;;
-	d) run_forever=1	     ;;
-	v) verbose+=("-v")	     ;;
-	L) sshd_args=-R		     ;;
-	q) exec 2>/tmp/container.log ;;
-	u) unique_hostname=1	     ;;
-	*) usage
+	a) alias=$OPTARG	        ;;
+	D) configdir=$OPTARG	        ;;
+	d) run_forever=1	        ;;
+	e) log_environment=1	        ;;
+	H) etchosts_addons+=("$OPTARG") ;;
+	h) usage			;;
+	K) keyfile=$OPTARG	        ;;
+	L) sshd_args=-R		        ;;
+	n) dns_server=$OPTARG	        ;;
+	q) exec 2>/tmp/container.log    ;;
+	u) unique_hostname=1	        ;;
+	v) verbose+=("-v")	        ;;
+	*) usage "$arg"			;;
     esac
+done
+
+declare datum
+declare host
+
+for datum in "${etchosts_addons[@]}" ; do
+    if [[ $datum =~ ^([^=]+)=(.+) ]] ; then
+	ipaddr=${BASH_REMATCH[1]}
+	host=${BASH_REMATCH[2]}
+	extra_hosts[$ipaddr]="${extra_hosts[$ipaddr]:-} $host"
+    fi
+done
+
+for host in "${!extra_hosts[@]}" ; do
+    echo "$host ${extra_hosts[$host]}" >> /etc/hosts
 done
 
 shift $((OPTIND - 1))
 
 (( $# == 1 || $# == 2 )) || usage
 
+# shellcheck disable=2155
 declare myhostname=$(ip route get 1 |awk '{print $(NF-2); exit}')
 declare controller_port=$1
 declare controller_host=${2:-$myhostname}
@@ -128,7 +153,7 @@ rm -f /run/nologin
 declare -i sshd_port
 declare -i ssh_server_pid
 
-read -r sshd_port ssh_server_pid <<< "$(mini-sshd)"
+read -r sshd_port ssh_server_pid <<< "$(mini-sshd $sshd_args)"
 
 if (( !sshd_port )) ; then
     echo "Can't run mini ssh server!"
@@ -157,11 +182,11 @@ function run_pbench_agent_once() {
     else
 	token=$(printf '%d %s %s %s' "$sshd_port" "$(perl -e 'print int rand() * 999999999')" "$(hostname)" "${alias:-$myhostname}")
     fi
-    # shellcheck disable=2155
     echo "Waiting for contact from controller" 1>&2
-    declare sync_data=$(sync_to.pl "$controller_host" "$controller_port" "$token")
+    # shellcheck disable=2155
+    local sync_data=$(sync_to.pl "$controller_host" "$controller_port" "$token")
     echo "Got sync, data $sync_data" 1>&2
-    declare ssh_tunnel_pid
+    local ssh_tunnel_pid
 
     if [[ $sync_data = "PASV "* ]] ; then
 	# shellcheck disable=2034
@@ -170,7 +195,8 @@ function run_pbench_agent_once() {
 	echo ssh "${verbose[@]}" -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -i "$keyfile" -n -R "$tunnel_port:localhost:$sshd_port" -p "$remote_ssh_port" "${login:+$login@}$controller_host" sleep infinity 1>&2
 	ssh "${verbose[@]}" -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -i "$keyfile" -n -R "$tunnel_port:localhost:$sshd_port" -p "$remote_ssh_port" "${login:+$login@}$controller_host" sleep infinity 1>&2 &
 	ssh_tunnel_pid=$!
-	# Controller will ping us to make sure we're up.
+	# Controller will ping us to make sure we're up so we don't need to
+	# sync ourselves.
 	# shellcheck disable=2064
 	trap "kill -9 $ssh_tunnel_pid; exit" TERM INT EXIT
     fi
