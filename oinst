@@ -22,7 +22,7 @@ function fatal() {
 set -u
 
 # Find our helpers
-function finddir() {
+function ___find_topdir() {
     local path_to_file
     path_to_file=$(readlink -f "$0")
     if [[ -z $path_to_file ]] ; then
@@ -38,15 +38,15 @@ function finddir() {
 }
 
 declare ___realsc=
-declare ___topsc
+declare ___topsc=
 if [[ -z ${___topsc:-} ]] ; then
     export ___topsc="${0##*/}"
     # shellcheck disable=SC2155
-    export ___topdir="$(finddir "$0")"
+    export ___topdir="$(___find_topdir "$0")"
     [[ -z $___topdir ]] && fatal "Can't find directory for $0"
 fi
 
-function clean_startup() {
+function ___clean_startup() {
     [[ -f $___realsc ]] && rm -f "$___realsc"
 }
 
@@ -54,17 +54,17 @@ function clean_startup() {
 # since this script sticks around until the user exits the spawned shell.
 # It's fine for the running script to be removed, since the shell still
 # has its open file descriptor.
-if [[ $# = 0 || $1 != "--DoIt=$0" ]] ; then
-    tmpsc=$(mktemp -t "${___topsc}.XXXXXXXXXX")
-    [[ -z $tmpsc || ! -f $tmpsc || -L $tmpsc ]] && fatal "Can't create temporary script file"
-    trap clean_startup EXIT SIGHUP SIGINT SIGQUIT SIGTERM
+if [[ $# = 0 || $1 != "---DoIt=$0" ]] ; then
+    ___tmpsc=$(mktemp -t "${___topsc}.XXXXXXXXXX")
+    [[ -z $___tmpsc || ! -f $___tmpsc || -L $___tmpsc ]] && fatal "Can't create temporary script file"
+    trap ___clean_startup EXIT SIGHUP SIGINT SIGQUIT SIGTERM
     PATH+=${PATH:+:}$___topdir
-    cat "$0" > "$tmpsc"
-    chmod +x "$tmpsc"
-    exec "$tmpsc" "--DoIt=$tmpsc" "$@"
+    cat "$0" > "$___tmpsc"
+    chmod +x "$___tmpsc"
+    exec "$___tmpsc" "---DoIt=$___tmpsc" "$@"
 else
-    ___realsc=${1#--DoIt=}
-    clean_startup
+    ___realsc=${1#---DoIt=}
+    ___clean_startup
     shift
 fi
 
