@@ -39,6 +39,7 @@ if (($server_pid = fork()) == 0) {
     chdir("/");
     $SIG{'TERM'} = sub { exit; };
     $SIG{'INT'} = sub { exit; };
+    $SIG{'CHLD'} = 'IGNORE';
     while (1) {
 	accept(CLIENT, SOCK) || next;
 	if ((my $child = fork()) == 0) {
