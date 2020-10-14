@@ -91,6 +91,10 @@ EOF
     exit 1
 }
 
+function warn() {
+    echo "WARNING: $*" 1>&2
+}
+
 while getopts "pP:L:K:k:T:t:N:D:A:S:s:C:c:vW:weu:H:" arg ; do
     case "$arg" in
 	A) expected_agents="$OPTARG"             ;;
@@ -133,7 +137,13 @@ fi
 if [[ -z "${BAK_SERVER_CONFIG:-}" || -z "${BAK_SERVER_PRIVATE_KEY:-}" ]] ; then
     [[ -z "${configdir:-}" ]] && usage "-D must be specified."
     [[ -d "$configdir" ]] || usage "-D $configdir does not exist."
-    [[ -r "$configdir"/pbench-agent.cfg ]] || usage "Expected configuration file $configdir/pbench-agent.cfg does not exist"
+    if [[ ! -r "$configdir/pbench-agent.cfg" ]] ; then
+	if [[ -n "${BAK_INSDIR}" || ! -r /opt/pbench-agent/config/pbench-agent.cfg ]] ; then
+	    usage "Expected configuration file $configdir/pbench-agent.cfg does not exist"
+	else
+	    warn "No configuration file $configdir/pbench-agent.cfg provided; using existing default."
+	fi
+    fi
     [[ -r "$configdir"/id_rsa ]] || usage "Expected private key $configdir/pbench-agent.cfg does not exist"
 fi
 [[ $keyfile == '/'* ]] || keyfile="$configdir/$keyfile"
@@ -151,11 +161,15 @@ valid_port "$agent_sync_port" || usage "Invalid -s agent sync port $agent_sync_p
 
 declare sshd_pid=
 
-declare server_key=${BAK_SERVER_PRIVATE_KEY:-$configdir/id_rsa}
-declare server_config=${BAK_SERVER_CONFIG:-$configdir/pbench-agent.cfg}
-(umask 077 && cp "$server_key" /opt/pbench-agent/id_rsa && chown pbench:pbench /opt/pbench-agent/id_rsa)
+if [[ ! -f /opt/pbench-agent/id_rsa ]] ; then
+    declare server_key=${BAK_SERVER_PRIVATE_KEY:-$configdir/id_rsa}
+    (umask 077 && cp "$server_key" /opt/pbench-agent/id_rsa && chown pbench:pbench /opt/pbench-agent/id_rsa)
+fi
 
-(umask 0333 && cp "$server_config" /opt/pbench-agent/config/pbench-agent.cfg && chown pbench:pbench /opt/pbench-agent/config/pbench-agent.cfg)
+declare server_config=${BAK_SERVER_CONFIG:-$configdir/pbench-agent.cfg}
+if [[ -r "$server_config" ]] ; then
+    (umask 0333 && cp "$server_config" /opt/pbench-agent/config/pbench-agent.cfg && chown pbench:pbench /opt/pbench-agent/config/pbench-agent.cfg)
+fi
 
 set +u				# Until the script is fixed.
 # shellcheck disable=1091
@@ -183,10 +197,14 @@ function setup_ssh() {
 
     trap 'rm -rf "$ssh_tmpdir"; exit' INT TERM
     for key in "${ssh_authorized_key_file[@]}" ; do
+	local key_data;
 	if [[ -f "$key" ]] ; then
-	    cat "$key" >> "$HOME/.ssh/authorized_keys"
+	    key_data="$(head -1 "$key")"
 	elif [[ -f "$configdir/$key" ]] ; then
-	    cat "$configdir/$key" >> "$HOME/.ssh/authorized_keys"
+	    key_data="$(head -1 "$configdir/$key")"
+	fi
+	if ! grep -x -q "$key_data" "$HOME/.ssh/authorized_keys" ; then
+	    echo "$key_data" >> "$HOME/.ssh/authorized_keys"
 	fi
     done
     if [[ -n "$setup_server" ]] ; then

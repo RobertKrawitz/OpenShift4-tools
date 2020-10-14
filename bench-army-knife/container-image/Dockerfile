@@ -11,7 +11,8 @@ RUN sed -i -e "s/.*PermitRootLogin.*/PermitRootLogin yes ##/" \
     echo "export LANGUAGE=en_UT.UTF-8" >> /etc/environment && \
     echo "export LC_ALL=C" >> /etc/environment && \
     groupadd pbench && \
-    useradd -d /var/tmp -g pbench pbench
+    useradd -d /var/tmp -g pbench pbench && \
+    rm -f /opt/pbench-agent/config/pbench-agent.cfg
 COPY bootstrap.sh \
      find-free-ports \
      mini-sshd \
