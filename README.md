@@ -10,6 +10,7 @@ etc. OpenShift 4 clusters.
     - [Cluster utilities](#cluster-utilities)
     - [Testing tools](#testing-tools)
     - [General information tools](#general-information-tools)
+    - [PBench orchestration](#pbench-orchestration)
     - [oinst API](#oinst-api)
         - [Introduction](#introduction)
         - [API calls](#api-calls)
@@ -74,10 +75,60 @@ etc. OpenShift 4 clusters.
 
 - **get-images**: retrieve the image and version of each image used by
   the cluster.
-  
-## Container images
 
-- **bench-army-knife** -- a flexible CentOS 8 based container that
+## PBench orchestration
+
+- **bench-army-knife** -- orchestrate
+  [PBench](https://github.com/distributed-system-analysis/pbench)
+  under OpenShift or Kubernetes.
+
+  Please see [pbench/README.md](pbench/README.md) for more information.
+
+  bench-army-knife provides a way to run workloads under PBench
+  without any requirement to ssh from the pbench controller to pbench
+  agents.  The only requirement is to be able to ssh from the agents
+  to the bench-army-knife controller (which runs the pbench
+  controller).  This is done by having the agents ssh to the
+  bench-army-knife controller to open a tunnel back to the agent by
+  means of customizing the ssh configuration.  The Tool Meister
+  orchestration in PBench at present does not completely eliminate the
+  need to ssh to the agents; bench-army-knife does.
+
+  This also provides a way to run agents either within worker pods or
+  standalone on worker nodes, or both.  The latter is useful if one is
+  running a workload inside a VM under OpenShift, allowing capture of
+  information both from the node (host) and the pod (running inside
+  the guest).
+
+  The bench-army-knife controller can be run either outside the
+  cluster or in a separate pod inside the cluster, as desired.  The
+  bench-army-knife controller listens for the desired number of
+  connections from agents and runs `pbench-register-tool` and/or
+  `pbench-register-tool-set` followed by the workload, and when
+  everything is complete runs `pbench-move-results` to save away the
+  data.
+
+  Included is a container based on the PBench container image with
+  some additional tools, and the necessary pieces required for
+  bench-army-knife to operate.  These include:
+
+  - **bootstrap.sh** -- run a passed-in command within the
+    bench-army-knife container environment
+
+  - **run-pbench-agent-container** -- run the pbench agent within a
+    bench-army-knife container
+
+  - **run-pbench-controller** -- operate pbench controller functions
+    within a bench-army-knife container
+
+  - **Dockerfile.base**, **Dockerfile** -- dockerfiles for building
+    the images with just RPMs and with other files needed for
+    bench-army-knife.  The base image (bench-army-base) is not
+    sufficient for running bench-army-knife.
+
+  This is a work in progress.
+
+a flexible CentOS 8 based container that
   contains pbench, fio, uperf, and many performance tools.  The
   container using this image should usually be run with `bootstrap.sh`
   as its command.  This takes the name of a file to run, along with
@@ -85,7 +136,7 @@ etc. OpenShift 4 clusters.
   container.  Among other things, it provides a convenient way to wrap
   a benchmark (or other) run without having to either create a
   separate image or pass it in on the command line itself.
-  
+
   When using OpenShift or Kubernetes, the easiest way to pass the
   script in is via a configmap.  For example:
 
