@@ -385,7 +385,7 @@ gtime           Time when "gethostbyname" completed
 etime           Time when connection to server succeeded
 endtime         Time when client completed
 user            User CPU time
-user            System CPU time
+system          System CPU time
 interval        Duration between first attempt to connect and
                 successful connection
 data            Number of data bytes sent and received
