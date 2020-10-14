@@ -183,9 +183,32 @@ fi
 
 declare -a agents=()
 declare -a port_data=()
+# ssh_tmpdir needs to be in the home directory because /tmp is mode 777
+# and sshd will refuse to accept authorized keys located inside it even
+# if subdirectories are correctly protected.
 # shellcheck disable=2155
-declare ssh_tmpdir=$(mktemp -d -t --suffix=.pbench_ssh)
+declare ssh_tmpdir=$(mktemp -d -p "$HOME" -t --suffix=.pbench_ssh)
 trap 'rm -rf "$ssh_tmpdir"; exit' INT TERM EXIT
+
+function setup_authorized_keys() {
+    local authorized_keys_file=$1
+    local key
+    local key_data;
+    shift
+    for key in "$@" ; do
+	if [[ -f "$key" ]] ; then
+	    key_data="$(head -1 "$key")"
+	elif [[ -f "$configdir/$key" ]] ; then
+	    key_data="$(head -1 "$configdir/$key")"
+	fi
+	if [[ ! -f "$authorized_keys_file" ]] ; then
+	    (umask 77; touch "$authorized_keys_file")
+	fi
+	if ! grep -x -q "$key_data" "$authorized_keys_file" ; then
+	    echo "$key_data" >> "$authorized_keys_file"
+	fi
+    done
+}
 
 function setup_ssh() {
     local setup_server=${1:-}
@@ -196,27 +219,20 @@ function setup_ssh() {
     fi
 
     trap 'rm -rf "$ssh_tmpdir"; exit' INT TERM
-    for key in "${ssh_authorized_key_file[@]}" ; do
-	local key_data;
-	if [[ -f "$key" ]] ; then
-	    key_data="$(head -1 "$key")"
-	elif [[ -f "$configdir/$key" ]] ; then
-	    key_data="$(head -1 "$configdir/$key")"
-	fi
-	if ! grep -x -q "$key_data" "$HOME/.ssh/authorized_keys" ; then
-	    echo "$key_data" >> "$HOME/.ssh/authorized_keys"
-	fi
-    done
+
     if [[ -n "$setup_server" ]] ; then
 	mkdir -p "$ssh_tmpdir/etc/ssh"
+	setup_authorized_keys "$ssh_tmpdir/etc/ssh/authorized_keys" "${ssh_authorized_key_file[@]}"
 	if (( ! dont_start_sshd )) ; then
-	    /sbin/sshd -D -p "$sshd_listen_port" 1>&2 &
+	    /sbin/sshd -D -o AuthorizedKeysFile="$ssh_tmpdir/etc/ssh/authorized_keys" -p "$sshd_listen_port" 1>&2 &
 	    sshd_pid=$!
 	    echo "$sshd_pid"
 	    trap 'kill -9 "$sshd_pid"; rm -rf "$ssh_tmpdir"; exit' INT TERM
 	else
 	    trap 'rm -rf "$ssh_tmpdir"; exit' INT TERM
 	fi
+    else
+	setup_authorized_keys "$HOME/.ssh/authorized_keys" "${ssh_authorized_key_file[@]}"
     fi
 }
 
