@@ -38,7 +38,7 @@ function ___find_topdir() {
 }
 
 declare ___realsc=
-declare ___topsc=
+declare ___topsc=${___topsc:-}
 if [[ -z ${___topsc:-} ]] ; then
     export ___topsc="${0##*/}"
     # shellcheck disable=SC2155
