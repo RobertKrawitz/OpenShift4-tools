@@ -105,6 +105,14 @@ declare -i file_volumes=0
 declare -i file_dirs_per_volume=1
 declare -i files_per_dir=1
 
+declare -i log_bytes_per_line=1
+declare -i log_bytes_per_io=1
+declare -i log_xfer_count=1
+declare -i log_processes=1
+declare -i log_delay_usec=0
+declare -i log_xfertime=0
+declare -i log_exit_at_end=0
+
 declare accumulateddata=
 
 declare OC
@@ -148,7 +156,7 @@ Usage: $0 [options] [name]
                        If 0 is specified, then no namespaces are created
                        and the current namespace is used.
        -P podtype      Pod type (classic, pause, server, cpu, fio, sysbench,
-                       files)
+                       files, log)
        -p parallel     Number of operations to perform in parallel (default 1)
        -r replicas     Number of replicas per deployment (default 1)
                        For client/server, this refers to client pods.
@@ -310,6 +318,30 @@ Extended Options:
                         spread around.
        --sysbench-fileio-options=<options>
                         Space or comma separated fileio Sysbench options
+
+    Log Options:
+       --log-bytes-per-line=<bytes_per_line>
+                        Number of bytes per line to log.
+                        Default $log_bytes_per_line.
+       --log-bytes-per-io=<bytes_per_io>
+                        Number of bytes per message to log.
+                        Rounded up to full lines.  Default $log_bytes_per_io.
+       --log-xfer-count=<count>
+                        Number of messages to log (in I/Os)
+                        Default $log_xfer_count.  If zero, log
+                        continuously (subject to log-xfertime).
+       --log-processes=<processes>
+                        Number of processes per pod.
+                        Default $log_processes.
+       --log-delay-usec=<usecs>
+                        Time in microseconds to delay between I/O.
+       --log-xfertime=<time>
+                        Number of seconds to log.
+                        Default $log_xfertime.  If zero, log continuously
+                        (subject to log-xfer-count
+       --log-exit-at-end=<bool>
+                        Whether to exit when complete, or just stick around.
+                        Default $log_exit_at_end.
 EOF
 }
 
@@ -599,6 +631,13 @@ function process_option() {
 	    fi
 	    ;;
 
+	log_bytes_per_line)	    log_bytes_per_line=$optvalue		;;
+	log_bytes_per_io)	    log_bytes_per_io=$optvalue			;;
+	log_xfer_count)		    log_xfer_count=$optvalue			;;
+	log_processes)		    log_processes=$optvalue			;;
+	log_delay_usec)		    log_delay_usec=$optvalue			;;
+	log_xfertime)		    log_xfertime=$optvalue			;;
+	log_exit_at_end)	    log_exit_at_end=$optvalue			;;
 	report)	    		    report=$optvalue				;;
 	precleanup)		    precleanup=$optvalue			;;
 	cleanup)		    cleanup=$optvalue				;;
@@ -764,6 +803,7 @@ case "${podType,,}" in
     fio)		   podType=Fio           ;;
     pause|pausepod)        podType=PausePod      ;;
     file|files)            podType=Files         ;;
+    log|logger|logging)    podType=Log           ;;
     *)			   help_all		 ;;
 esac
 
@@ -1115,7 +1155,6 @@ function createContainersPausePodYAML() {
     local namespace=$1
     local i=$2
     local secretCount=$3
-    # shellcheck disable=SC2034
     local -i pods=$4
     local -i containers=$5
     local -i j
@@ -1128,6 +1167,44 @@ $(indent 2 createContainerResources)
 $(indent 2 createVolumeMountsYAML "$namespace" "$i" "$secretCount")
 EOF
     done
+}
+
+function createContainersLogYAML() {
+    local namespace=$1
+    local i=$2
+    local secretCount=$3
+    local -i pods=$4
+    local -i containers=$5
+    local -i j
+    for j in $(seq 0 $((containers - 1))) ; do
+	cat <<EOF
+- name: ${namespace}-$i-$j
+  imagePullPolicy: Always
+  image: "quay.io/rkrawitz/bench-army-knife"
+$(indent 2 createContainerResources)
+  env:
+  - name: VERBOSE
+    value: "$verbose"
+$(indent 2 genericCommand logger.pl)
+  - "$namespace"
+  - "${namespace}-sysbench-${i}"
+  - "c${j}"
+  - "$log_bytes_per_line"
+  - "$log_bytes_per_io"
+  - "$log_xfer_count"
+  - "$log_processes"
+  - "$log_delay_usec"
+  - "$log_xfertime"
+  - "$log_exit_at_end"
+$(indent 2 createVolumeMountsYAML "$namespace" "$i" "$secretCount")
+EOF
+    done
+}
+
+function listConfigMapsLog() {
+    cat <<EOF
+${__libdir__}/logger.pl
+EOF
 }
 
 function createClassicSpec() {
@@ -2175,6 +2252,10 @@ function createDeploymentPausePod() {
 }
 
 function createDeploymentClusterBuster() {
+    createDeploymentSimple "$@"
+}
+
+function createDeploymentLog() {
     createDeploymentSimple "$@"
 }
 
