@@ -98,6 +98,7 @@ declare pod_cpu_request=
 declare pod_cpu_limit=
 declare pod_memory_request=
 declare pod_memory_limit=
+declare -i force_external_agents=-1
 declare interface=
 
 function usage() {
@@ -109,6 +110,10 @@ Usage: ${___topsc:-$0} [options] [-- pbench-uperf args]
                       be generated if not provided.
        -C name        Use the specified name for the controller's hostname
        -c configname  Record the specified configuration name
+       -E             Don't use external agents on worker nodes.
+       		      Default with non-Kata pods
+       -e             Use external agents on the worker nodes.
+       		      Default yes with Kata pods
        -F file        Add the specified file to the secret passed to
                       the pods.  May be <file> or <name=file>.
        -H             Use host networking in worker pods
@@ -138,11 +143,13 @@ EOF
     exit 1
 }
 
-while getopts 'A:Cc:F:HIi:Kk:L:M:m:N:nP:p:qR:u:XxYy' opt ; do
+while getopts 'A:Cc:EeF:HIi:Kk:L:M:m:N:nP:p:qR:u:XxYy' opt ; do
     case "$opt" in
 	A) pbench_agent_key=$OPTARG	 ;;
 	C) hostname=$OPTARG		 ;;
 	c) configname=$OPTARG		 ;;
+	E) force_external_agents=1	 ;;
+	e) force_external_agents=0	 ;;
 	F) additional_files+=("$OPTARG") ;;
 	H) host_networking=1
 	   hostnetworkname=-hostnetwork	 ;;
@@ -377,7 +384,7 @@ EOF
 
 # Until privileged containers work with Kata
 function security_context() {
-    if (( kata )) ; then
+    if (( (kata && force_external_agents != 0) || (force_external_agents == 1) )) ; then
 	clean <<'EOF'
 capabilities:
   add:
@@ -594,7 +601,7 @@ EOF
 
 # For the underlying host in the case of Kata pods.
 function agent_deployment() {
-    if (( kata )) ; then
+    if (( (kata && force_external_agents != 0) || (force_external_agents == 1) )) ; then
 	clean <<EOF
 ---
 apiVersion: apps/v1
