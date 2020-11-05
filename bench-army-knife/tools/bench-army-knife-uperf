@@ -1,0 +1,924 @@
+#!/bin/bash
+
+# Copyright 2020 Robert Krawitz/Red Hat
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+function fatal() {
+    echo "FATAL: $*" 1>&2
+    exit 1
+}
+
+# Find our helpers
+function finddir() {
+    local path_to_file
+    path_to_file=$(readlink -f "$0")
+    if [[ -z $path_to_file ]] ; then
+	return 1
+    elif [[ -d $path_to_file ]] ; then
+	echo "$path_to_file/"
+    elif [[ -e $path_to_file ]] ; then
+	echo "${path_to_file%/*}/"
+    else
+	return 1
+    fi
+    return 0
+}
+
+declare ___realsc=
+declare ___topsc
+if [[ -z ${___topsc:-} ]] ; then
+    export ___topsc="${0##*/}"
+    # shellcheck disable=SC2155
+    export ___topdir="$(finddir "$0")"
+    [[ -z $___topdir ]] && fatal "Can't find directory for $0"
+fi
+
+function clean_startup() {
+    [[ -f $___realsc ]] && rm -f "$___realsc"
+}
+
+# This allows us to edit the script while another instance is running
+# since this script sticks around until the user exits the spawned shell.
+# It's fine for the running script to be removed, since the shell still
+# has its open file descriptor.
+if [[ $# = 0 || $1 != "--DoIt=$0" ]] ; then
+    tmpsc=$(mktemp -t "${___topsc}".XXXXXXXXXX)
+    [[ -z $tmpsc || ! -f $tmpsc || -L $tmpsc ]] && fatal "Can't create temporary script file"
+    trap clean_startup EXIT SIGHUP SIGINT SIGQUIT SIGTERM
+    PATH+=${PATH:+:}$___topdir
+    cat "$0" > "$tmpsc"
+    chmod +x "$tmpsc"
+    exec "$tmpsc" "--DoIt=$tmpsc" "$@"
+else
+    ___realsc=${1#--DoIt=}
+    clean_startup
+    shift
+fi
+
+echo "Command: ${___topsc:-$0} $*"
+
+declare namespace=pbench
+declare -i kata=0
+declare -i initialize_ns=0
+declare -i port=30666
+declare -i ssh_port=30222
+declare -i redis_port=17001	# for tool-meister
+declare kataname=non_kata
+declare hostnetworkname=
+declare username=$LOGNAME
+declare configname=
+declare -i anti_affinity=1
+declare -i controller_anti_affinity=1
+declare -i host_networking=0
+declare -i print_only=0
+declare -i quiet=0
+declare -i npairs=1
+# shellcheck disable=SC2155
+declare hostname=$(hostname --fqdn)
+declare -a affinity_types=(podAffinity podAntiAffinity)
+declare pbench_agent_cfg=
+declare pbench_private_key=
+declare pbench_agent_key=
+declare pbench_controller_bin=/usr/local/bin/run-pbench-controller
+declare pbench_agent_container_bin=/usr/local/bin/run-pbench-agent-container
+declare -a additional_files=()
+declare selector_key=bench-army-knife-agent
+declare pod_cpu_request=
+declare pod_cpu_limit=
+declare pod_memory_request=
+declare pod_memory_limit=
+declare interface=
+
+function usage() {
+    [[ -n "$*" ]] && echo "Unknown option $*"
+    expand <<EOF
+Usage: ${___topsc:-$0} [options] [-- pbench-uperf args]
+       -A agent_key   Use the specified public/private key pair for
+                      communication with the agent.  Session key will
+                      be generated if not provided.
+       -C name        Use the specified name for the controller's hostname
+       -c configname  Record the specified configuration name
+       -F file        Add the specified file to the secret passed to
+                      the pods.  May be <file> or <name=file>.
+       -H             Use host networking in worker pods
+       -I             Initialize the desired namespace
+       -i interface   Use the specified network interface on each pod.
+                      Default is the default interface.
+       -K             Use kata containers
+       -k keyfile     Use the specified private key for sending results.
+                      No default; must be provided.
+       -L cpu_limit   Pod CPU limit
+       -M mem_limit   Pod memory limit
+       -m mem_request Pod memory request
+       -N namespace   Use the specified namespace (default $namespace)
+       -n             Don't actually do anything
+       -P pbench_cfg  Use the specified pbench-agent.cfg file.
+                      No default; must be provided.
+       -p pairs       Number of client/server pairs to create.
+       -q             Don't emit agent logs on stderr
+       -R cpu_request Pod CPU request
+       -u user        Record the specified username
+       -X             Affinity between uperf server and client
+       -x             Anti-affinity between uperf server and client (default).
+       -Y             Affinity between pbench controller and uperf
+       -y             Anti-affinity between pbench controller and uperf
+                      (default).
+EOF
+    exit 1
+}
+
+while getopts 'A:Cc:F:HIi:Kk:L:M:m:N:nP:p:qR:u:XxYy' opt ; do
+    case "$opt" in
+	A) pbench_agent_key=$OPTARG	 ;;
+	C) hostname=$OPTARG		 ;;
+	c) configname=$OPTARG		 ;;
+	F) additional_files+=("$OPTARG") ;;
+	H) host_networking=1
+	   hostnetworkname=-hostnetwork	 ;;
+	i) interface="$OPTARG"		 ;;
+	I) initialize_ns=1		 ;;
+	K) kata=1
+	   kataname=kata		 ;;
+	k) pbench_private_key=$OPTARG	 ;;
+	L) pod_cpu_limit=$OPTARG	 ;;
+	M) pod_memory_limit=$OPTARG	 ;;
+	m) pod_memory_request=$OPTARG	 ;;
+	N) namespace=$OPTARG		 ;;
+	n) print_only=1			 ;;
+	P) pbench_agent_cfg=$OPTARG	 ;;
+	p) npairs=$OPTARG		 ;;
+	q) quiet=1			 ;;
+	R) pod_cpu_request=$OPTARG	 ;;
+	u) username=$OPTARG		 ;;
+	x) anti_affinity=1		 ;;
+	X) anti_affinity=0		 ;;
+	y) controller_anti_affinity=1	 ;;
+	Y) controller_anti_affinity=0	 ;;
+	*) usage "$opt"			 ;;
+    esac
+done
+
+declare -i error=0
+# So we don't inadvertently do something
+if (( print_only )) ; then
+    export KUBECONFIG=/dev/null
+fi
+if [[ -z "${pbench_agent_cfg:-}" ]] ; then
+    echo "pbench_agent.cfg file not provided" 1>&2
+    error=1
+elif [[ ! -r "${pbench_agent_cfg:-}" ]] ; then
+    echo "Cannot read pbench agent config $pbench_agent_cfg" 1>&2
+    error=1
+fi
+if [[ -z "$pbench_private_key" ]] ; then
+    echo "pbench private key file not provided" 1>&2
+    error=1
+elif [[ ! -r "$pbench_private_key" ]] ; then
+    echo "Cannot read pbench private key $pbench_private_key" 1>&2
+    error=1
+fi
+if [[ -n "$pbench_agent_key" && (! -r "$pbench_agent_key" || ! -r "${pbench_agent_key}.pub") ]] ; then
+    echo "Cannot read agent key $pbench_agent_key or ${pbench_agent_key}.pub"
+    error=1
+fi
+(( error )) && usage
+
+for f in "${additional_files[@]}" ; do
+    if [[ $f = "run-pbench-controller="* || $f = "run-pbench-controller" ||
+	      $f = *"/run-pbench-controller" ]] ; then
+	pbench_controller_bin=/etc/credentials/run-pbench-controller
+    fi
+    if [[ $f = "run-pbench-agent-container="* || $f = "run-pbench-agent-container" ||
+	      $f = *"/run-pbench-agent-container" ]] ; then
+	pbench_agent_container_bin=/etc/credentials/run-pbench-agent-container
+    fi
+done
+
+configname=${configname:-uperf}-${kataname}${hostnetworkname}-${affinity_types[$anti_affinity],,}${interface:+-if-${interface}}${pod_cpu_limit:+-limit-${pod_cpu_limit}}${pod_cpu_request:+-request-${pod_cpu_request}}${pod_memory_limit:+-limit-${pod_memory_limit}}${pod_memory_request:+-request-${pod_memory_request}}
+
+shift $((OPTIND-1))
+
+declare -a uperf_args=("$@")
+
+set -e
+
+function _oc() {
+    if (( print_only )) ; then
+	echo "+++" oc "$*" 1>&2
+	if [[ ($1 = apply || $1 = create) && $2 = '-f' && $3 = '-' ]] ; then
+	    expand | grep .
+	fi
+    else
+	oc "$@"
+    fi
+}
+
+function get_ip() {
+    local netname=$1; shift
+    if oc get pod "$@" >/dev/null 2>&1 ; then
+	if [[ -n "$interface" ]] ; then
+	    # Note that because pod annotations are strings rather than JSON
+	    # objects we have to use one jq invocation to print the annotation
+	    # raw, which will look like JSON (we hope) piped into another
+	    # invocation 
+	    oc get pod -ojson "$@" | jq -r '.metadata.annotations."k8s.v1.cni.cncf.io/network-status"' | jq -j -r '[foreach .[] as $item ([[],[]];0; if ($item.name == "'"$netname"'") then $item.ips[0] else null end)] |map(select(. != null)) | if(length > 0) then .[0] else "" end'
+	    local -i i
+	    for i in "${PIPESTATUS[@]}" ; do
+		if (( i > 0 )) ; then
+		    return "$i"
+		fi
+	    done
+	else
+	    oc get pod -ojson "$@" | jq -r '.status.podIP | select(.!=null)'
+	fi
+	return 0
+    else
+	return 1
+    fi
+}
+
+if (( ! print_only )) ; then
+    if (( initialize_ns )) && oc get ns "$namespace" >/dev/null 2>&1 ; then
+	oc delete ns "$namespace"
+    fi
+
+    if ! oc get project "$namespace" >/dev/null 2>&1 ; then
+	oc adm new-project "$namespace"
+	oc project "$namespace"
+    elif [[ $(oc project -q) != "$namespace" ]] ; then
+	oc project "$namespace"
+    fi
+    
+    if ! oc get serviceaccount "$namespace" >/dev/null 2>&1; then
+	oc create serviceaccount "$namespace"
+	oc adm policy add-cluster-role-to-user cluster-admin "$namespace"
+	oc adm policy add-scc-to-user privileged -z "$namespace"
+    fi
+
+    oc delete deployment --all
+    oc delete pods --all
+
+    oc get secret credentials >/dev/null 2>&1 && oc delete secret credentials 
+    oc delete service --all
+
+    dnsserver=$(oc get service -n openshift-dns dns-default -ojson | jq -r '.spec.clusterIP')
+else
+    dnsserver=8.8.8.8
+fi
+
+function create_credentials_1() {
+    local tmpkeydir=
+    if [[ -z "$pbench_agent_key" && $print_only -eq 0 ]] ; then
+	tmpkeydir=$(umask 77; mktemp -d -t "pbench-agent-key.XXXXXX")
+	if [[ -n "$tmpkeydir" ]] ; then
+	    # shellcheck disable=SC2064
+	    trap "rm -rf $tmpkeydir" INT TERM EXIT
+	    ssh-keygen -f "$tmpkeydir/id_rsa" -C "generated pbench agent key" -N '' -q -t rsa
+	    pbench_agent_key="$tmpkeydir/id_rsa"
+	fi
+    fi
+
+    additional_files+=("id_rsa=$pbench_private_key")
+    additional_files+=("pbench-agent.cfg=$pbench_agent_cfg")
+    additional_files+=("id_rsa_agent=$pbench_agent_key")
+    additional_files+=("id_rsa_agent.pub=${pbench_agent_key}.pub")
+    _oc create secret generic credentials "${additional_files[@]/#/--from-file=}"
+    if [[ -n "$tmpkeydir" && -d "$tmpkeydir" ]] ; then
+	rm -rf "$tmpkeydir"
+    fi
+}
+
+function create_credentials() {
+    (create_credentials_1)
+}
+
+function indent_1() {
+    local -i column="$1"
+    local line
+    while IFS='' read -r 'line' ; do
+	[[ -z "$line" ]] || printf "%${column}s%s\n" ' ' "$line"
+    done
+}
+
+function indent() {
+    local -i column="$1"
+    shift
+    if [[ -n "$*" ]] ; then
+	# "$@" | indent_1 "$column" strips leading whitespace with bash 4.2
+	indent_1 "$column" <<< "$("$@")"
+    else
+	indent_1 "$column"
+    fi
+}
+
+function clean() {
+    expand |grep -v '^ *$'
+}
+
+function generate_ports() {
+    local basename=$1
+    local -i baseport=$2
+    local -i nports=$3
+    shift 3
+    local -a protocols=("$@")
+    if (( ! ${#protocols[@]})) ; then
+	protocols=(TCP UDP)
+    fi
+    local -i i
+    local prot
+    for i in $(seq "$baseport" $((baseport + nports - 1)) ) ; do
+	for prot in "${protocols[@]}" ; do
+	    [[ $prot = TCP ]] && prot=
+	    local prot1=${prot:0:1}
+	    clean <<EOF
+  - name: ${basename}${prot1,,}$i
+    port: $i
+    ${prot:+protocol: $prot}
+EOF
+	done
+    done
+}
+
+function generate_container_ports() {
+    local type=$1
+    shift
+    if [[ $type = server ]] ; then
+	echo "ports:"
+	while [[ "$*" ]] ; do
+	    local -i baseport=$1
+	    local -i nports=$2
+	    shift 2
+	    local i
+	    for i in $(seq "$baseport" $((baseport + nports)) ) ; do
+		for prot in "${protocols[@]}" ; do
+		    [[ $prot = TCP ]] && prot=
+		    local prot1=${prot:0:1}
+		    clean <<EOF
+- containerPort: $i
+  name: port${prot,,}$i
+  ${prot:+protocol: $prot}
+EOF
+		done
+	    done
+	done
+    fi
+}
+
+# Until privileged containers work with Kata
+function security_context() {
+    if (( kata )) ; then
+	clean <<'EOF'
+capabilities:
+  add:
+  - AUDIT_WRITE
+EOF
+    else
+	clean <<'EOF'
+privileged: true
+EOF
+    fi
+}
+
+function runtime_class() {
+    if (( kata )) ; then
+	clean <<'EOF'
+runtimeClassName: "kata"
+EOF
+    fi
+}
+
+function host_network() {
+    if (( host_networking )) ; then
+	clean <<'EOF'
+hostNetwork: true
+EOF
+    fi
+}
+
+function create_object() {
+    local data
+    data="$("$@" | expand)"
+    if [[ -n "$data" ]] ; then
+	echo "Creating $*"
+	_oc apply -f - <<< "$data" || {
+	    echo "Failing object:"
+	    echo "$data"
+	    return 1
+	}
+    fi
+}
+
+function create_resources() {
+    if [[ -n "${pod_cpu_request:-}" || -n "${pod_cpu_limit:-}" ||
+	      -n "${pod_memory_request:-}" || -n "${pod_memory_limit:-}" ]] ; then
+	echo "resources:"
+	if [[ -n "${pod_cpu_request:-}" || -n "${pod_memory_request}" ]] ; then
+	    clean <<EOF
+  requests:
+    ${pod_cpu_request:+cpu: "$pod_cpu_request"}
+    ${pod_memory_request:+memory: "$pod_memory_request"}
+EOF
+	fi
+	if [[ -n "${pod_cpu_limit:-}" || -n "${pod_memory_limit}" ]] ; then
+	    clean <<EOF
+  limits:
+    ${pod_cpu_limit:+cpu: "$pod_cpu_limit"}
+    ${pod_memory_limit:+memory: "$pod_memory_limit"}
+EOF
+	fi
+    fi
+}
+
+function create_affinity_terms() {
+    local term
+    for term in "$@" ; do
+	clean <<EOF
+requiredDuringSchedulingIgnoredDuringExecution:
+- labelSelector:
+    matchExpressions:
+    - key: ${term%%=*}
+      operator: In
+      values:
+      - "${term#*=}"
+  topologyKey: kubernetes.io/hostname
+EOF
+    done
+}
+
+function create_affinities() {
+    local -a affinities=()
+    local -a antiaffinities=()
+    OPTIND=0
+    while getopts 'a:A:' opt "$@" ; do
+	case "$opt" in
+	    a) affinities+=("$OPTARG")     ;;
+	    A) antiaffinities+=("$OPTARG") ;;
+	    *) ;;
+	esac
+    done
+    if (( ${#affinities[@]} + ${#antiaffinities[@]} )) ; then
+	echo "affinity:"
+	if (( ${#affinities[@]} )) ; then
+	    echo "  podAffinity:"
+	    indent 4 create_affinity_terms "${affinities[@]}"
+	fi
+	if (( ${#antiaffinities[@]} )) ; then
+	    echo "  podAntiAffinity:"
+	    indent 4 create_affinity_terms "${antiaffinities[@]}"
+	fi
+    fi
+}
+
+function create_network_annotation() {
+    if [[ -n "$interface" ]] ; then
+	clean <<EOF
+annotations:
+  k8s.v1.cni.cncf.io/networks: "$interface"
+EOF
+    fi
+}
+
+function pbench-uperf-pod() {
+    local -a etchosts_addons=()
+    local -A extra_hosts=()
+    local affinity_string=
+    local -a affinities=()
+    local -a antiaffinities=()
+    local ipaddr
+    local host
+    local suffix=
+
+    OPTIND=0
+    while getopts 'H:s:a:A:' opt "$@" ; do
+	case "$opt" in
+	    a) affinity_string+=" -a $OPTARG" ;;
+	    A) affinity_string+=" -A $OPTARG" ;;
+	    H) etchosts_addons+=("$OPTARG")   ;;
+	    s) suffix="-${OPTARG}"	      ;;
+	    *) ;;
+	esac
+    done
+    shift $((OPTIND-1))
+
+    for datum in "${etchosts_addons[@]}" ; do
+	if [[ $datum =~ ^([^=]+)=(.+) ]] ; then
+	    ipaddr="${BASH_REMATCH[1]}"
+	    host="${BASH_REMATCH[2]}"
+	    extra_hosts[$ipaddr]+=" $host"
+	fi
+    done
+
+    local type=$1
+    affinity_string+=" -a app-subtype=uperf-${type}"
+# shellcheck disable=SC2086
+    clean <<EOF
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ${namespace}-${type}${suffix}
+  namespace: "$namespace"
+$(indent 2 create_network_annotation)
+  labels:
+    k8s-app: ${namespace}-uperf-${type}
+    app: uperf
+    app-subtype: uperf-${type}
+    name: ${namespace}-${type}
+    ${selector_key}: "true"
+    bench-army-knife-sync: "12"
+  selector:
+    matchLabels:
+      app: ${namespace}-$type
+      name: ${namespace}-$type
+      app-subtype: uperf-${type}
+      ${selector_key}: "true"
+spec:
+  nodeSelector:
+    node-role.kubernetes.io/worker: ""
+  serviceAccount: ${namespace}
+$(indent 2 runtime_class)
+  restartPolicy: Never
+$(indent 2 create_affinities $affinity_string)
+  setHostnameAsFQDN: true
+$(indent 2 host_network)
+  containers:
+  - name: "${namespace}-agent"
+    securityContext:
+$(indent 6 security_context)
+$(indent 4 create_resources)
+    image: "quay.io/rkrawitz/bench-army-knife:latest"
+    command:
+    - "/usr/local/bin/bootstrap.sh"
+    args:
+    - "$pbench_agent_container_bin"
+$(for host in "${!extra_hosts[@]}" ; do
+    echo "    - -H"
+    echo "    - \"$host=${extra_hosts[$host]// /}\""
+done)
+    $( ((quiet)) && echo '- "-q"')
+    - "-L"
+    - "-a"
+    - "${namespace}-${type}${suffix}"
+    - "-D"
+    - "/etc/credentials/"
+    - "-n"
+    - "$dnsserver"
+    - "-K"
+    - "id_rsa_agent"
+    - "$port"
+    - "${namespace}-controller.$namespace"
+    terminationGracePeriodSeconds: 1
+    volumeMounts:
+    - name: credentials
+      mountPath: "/etc/credentials"
+      readOnly: true
+  volumes:
+  - name: credentials
+    secret:
+      defaultMode: 0400
+      secretName: credentials
+EOF
+}
+
+# For the underlying host in the case of Kata pods.
+function agent_deployment() {
+    if (( kata )) ; then
+	clean <<EOF
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ${namespace}-agent-host
+  namespace: "$namespace"
+  labels:
+    k8s-app: uperf-agent-deployment
+spec:
+  replicas: $((1 + anti_affinity))
+  selector:
+    matchLabels:
+      k8s-app: uperf-agent
+      ${selector_key}: "true"
+  template:
+    metadata:
+      name: ${namespace}-agent-host
+      namespace: "$namespace"
+      labels:
+        ${selector_key}: "true"
+        k8s-app: uperf-agent
+        bench-army-knife-sync: "12"
+    spec:
+      nodeSelector:
+        node-role.kubernetes.io/worker: ""
+      hostPID: true
+      hostNetwork: true
+      serviceAccount: ${namespace}
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+              - key: k8s-app
+                operator: In
+                values:
+                - "uperf-agent"
+            topologyKey: kubernetes.io/hostname
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+              - key: app
+                operator: In
+                values:
+                - "uperf"
+            topologyKey: kubernetes.io/hostname
+      setHostnameAsFQDN: true
+      containers:
+      - name: "${namespace}-agent"
+        image: "quay.io/rkrawitz/bench-army-knife:latest"
+        securityContext:
+          privileged: true
+        command:
+        - "/usr/local/bin/bootstrap.sh"
+        args:
+        - "$pbench_agent_container_bin"
+        - "-u"
+        - "-d"
+        - "-a"
+        - "${namespace}-agent"
+        - "-D"
+        - "/etc/credentials/"
+        - "-n"
+        - "$dnsserver"
+        - "-K"
+        - "id_rsa_agent"
+        - "$port"
+        - "${namespace}-controller.$namespace"
+        terminationGracePeriodSeconds: 1
+        volumeMounts:
+        - name: credentials
+          mountPath: "/etc/credentials"
+          defaultMode: 0400
+          readOnly: true
+      volumes:
+      - name: credentials
+        secret:
+          defaultMode: 0400
+          secretName: credentials
+EOF
+    fi
+}
+
+function controller_port() {
+    clean <<EOF
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: "${namespace}-controller"
+  namespace: "$namespace"
+  labels:
+    name: ${namespace}-controller
+    ${namespace}-controller: "true"
+    app: ${namespace}-controller
+spec:
+  ports:
+  - name: ${namespace}-controller
+    port: $port
+    targetPort: $port
+  - name: ssh
+    port: $ssh_port
+    targetPort: $ssh_port
+  - name: redis
+    port: $redis_port
+    targetPort: $redis_port
+  type: ClusterIP
+  selector:
+    name: ${namespace}-controller
+EOF
+}
+
+function set_controller_hostname() {
+    if [[ -n "$hostname" ]] ; then
+	clean <<EOF
+- "-H"
+- "$hostname"
+EOF
+    fi
+}
+
+function controller_affinity() {
+    if (( ! controller_anti_affinity )) ; then
+	clean <<EOF
+affinity:
+  podAntiAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+    - labelSelector:
+        matchExpressions:
+        - key: app
+          operator: In
+          values:
+          - "uperf"
+      topologyKey: kubernetes.io/hostname
+EOF
+    fi
+}
+
+function mk_pairs() {
+    local basename=$1
+    local -i pairs=${2:-1};
+    local -a podnames=()
+    local -i i
+    for i in $(seq 1 "$pairs") ; do
+	podnames+=("${basename}-$i")
+    done
+    (IFS=, ; echo "${podnames[*]}")
+}
+
+function controller_pod() {
+    #shellcheck disable=SC2155
+    local agents=$(oc get pods -l "$selector_key" -A --no-headers 2>/dev/null | wc -l)
+    echo "Expect $agents agents" 1>&2
+    clean <<EOF
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "${namespace}-controller"
+  namespace: "$namespace"
+  nodeSelector:
+    node-role.kubernetes.io/worker: ""
+  selector:
+    matchLabels:
+      app: ${namespace}-controller
+      name: ${namespace}-controller
+  labels:
+    name: ${namespace}-controller
+    app: ${namespace}-controller
+    ${namespace}-controller: "true"
+    sync: "true"
+  openshift.io/scc: privileged
+spec:
+  nodeSelector:
+    node-role.kubernetes.io/worker: ""
+  terminationGracePeriodSeconds: 1
+  restartPolicy: Never
+$(indent 2 controller_affinity)
+  setHostnameAsFQDN: true
+  containers:
+  - name: "controller"
+    imagePullPolicy: Always
+    image: "quay.io/rkrawitz/bench-army-knife:latest"
+    securityContext:
+      privileged: true
+    ports:
+    - containerPort: $port
+      name: controller
+    - containerPort: $ssh_port
+      name: ssh
+    command:
+    - "/usr/local/bin/bootstrap.sh"
+    args:
+    - "$pbench_controller_bin"
+$(indent 4 set_controller_hostname)
+    - "-L"
+    - "$ssh_port"
+    - "-D"
+    - "/etc/credentials/"
+    - "-K"
+    - "id_rsa_agent.pub"
+    - "-A"
+    - "$agents"
+    - "-s"
+    - "$port"
+    - "-u"
+    - "$username"
+    - "--"
+    - "${namespace}-uperf"
+    - "-c"
+    - "$configname"
+    - "-C"
+    - "$(mk_pairs "${namespace}-client" "$npairs")"
+    - "-S"
+    - "$(mk_pairs "${namespace}-server" "$npairs")"
+$(IFS=$'\n'; echo "${uperf_args[*]/#/    - \"}" |grep '"' | sed -e 's/$/"/')
+    volumeMounts:
+    - name: credentials
+      mountPath: "/etc/credentials"
+      readOnly: true
+  volumes:
+  - name: credentials
+    secret:
+      secretName: credentials
+EOF
+}
+
+create_credentials
+
+function create_uperf_objects() {
+    create_object controller_port
+    local -i i
+    local -a serverClusterIPs=()
+    local -i missing_servers=$npairs
+    local affinity_term=-a
+    if (( anti_affinity )) ; then affinity_term=-A; fi
+    for i in $(seq 1 "$npairs") ; do
+	create_object pbench-uperf-pod -s "$i" server
+	serverClusterIPs[$i]=
+    done
+    if (( print_only )) ; then
+	for i in $(seq 1 "$npairs") ; do
+	    serverClusterIPs[$i]="$i.$i.$i.$i"
+	    create_object pbench-uperf-pod -H "${serverClusterIPs[$i]}=${namespace}-server-${i}" -s "$i" "$affinity_term" app-subtype=uperf-server client
+	done
+    else
+	while ((missing_servers)) ; do
+	    for i in $(seq 1 "$npairs") ; do
+		if [[ -z "${serverClusterIPs[$i]:-}" ]] ; then
+		    serverClusterIPs[$i]="$(get_ip "$interface" "-n" "$namespace" "${namespace}-server-${i}")"
+		    if [[ -n "${serverClusterIPs[$i]}" ]] ; then
+			missing_servers=$((missing_servers-1));
+			create_object pbench-uperf-pod -H "${serverClusterIPs[$i]}=${namespace}-server-${i}" -s "$i" "$affinity_term" app-subtype=uperf-server client
+		    fi
+		fi
+	    done
+	    ((missing_servers)) && sleep 1
+	done
+    fi
+    create_object agent_deployment
+    if (( ! print_only )) ; then
+	# Servers must already exist, since we have their IPs above
+	while (( $(oc get pods --no-headers -n "$namespace" -l k8s-app="${namespace}-uperf-client" | wc -l) != npairs )) ; do
+	    sleep 1
+	done
+    fi
+}
+
+create_uperf_objects
+
+create_object controller_pod
+
+function monitor_logs() {
+    declare -i max_line=0
+    local -i lineno=0
+    while read -r LINE ; do
+	if [[ $LINE =~ ^\.L\.([[:digit:]]{12})(\ .*)?$ ]] ; then
+	    lineno=${BASH_REMATCH[1]}
+	    if (( lineno > max_line )) ; then
+		echo "${BASH_REMATCH[2]}"
+		max_line=$lineno
+	    fi
+	else
+	    echo "$LINE"
+	fi
+    done
+}
+
+function monitor_pod() {
+    local pod=$1
+    local ns=${2:+-n $2}
+    local container=${3:+-c $3}
+    local -i lines_printed=0
+
+    while : ; do
+	# shellcheck disable=SC2086
+	status=$(oc get pod $ns $pod --no-headers -o custom-columns='status:.status.phase')
+	case "${status,,}" in
+	    pending|unknown)
+		echo "Waiting for $pod to start ($status)..."
+		sleep 10
+		;;
+	    failed)
+		echo "Controller pod failed"
+		return 1
+		;;
+	    succeeded|running)
+		# shellcheck disable=SC2086
+		oc logs -f $ns $pod $container | while read -r LINE ; do
+		    printf ".L.%012o %s\n" $((++lines_printed)) "$LINE"
+		done
+		if [[ ${status,,} = succeeded ]] ; then
+		    echo "Run completed successfully"
+		    return 0
+		fi
+		sleep 5
+		;;
+	    *)
+		echo "Unknown status $status"
+		sleep 30
+		;;
+	esac
+    done
+}
+
+(( print_only )) || monitor_pod "${namespace}-controller" "$namespace" 2>&1 | monitor_logs
