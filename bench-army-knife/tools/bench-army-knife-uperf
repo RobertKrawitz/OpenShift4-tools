@@ -382,6 +382,7 @@ function security_context() {
 capabilities:
   add:
   - AUDIT_WRITE
+  - SYS_CHROOT
 EOF
     else
 	clean <<'EOF'
