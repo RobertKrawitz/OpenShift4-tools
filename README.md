@@ -58,6 +58,8 @@ etc. OpenShift 4 clusters.
 
 - **clusterbuster** -- generate pods, namespaces, and secrets to stress
   test a cluster.  Also optionally do client/server data transfer.
+  Documentation is via `-h` or `--help`, `-H` or `--help-all`, or
+  `--help-everything` in increasing degree of completeness.
 
 - **clusterbuster-connstat** -- retrieve information about
   client/server clusterbuster run.
@@ -126,7 +128,7 @@ etc. OpenShift 4 clusters.
     bench-army-knife.  The base image (bench-army-base) is not
     sufficient for running bench-army-knife.
 
-  This is a work in progress.
+  The container image can be used to run benchmarks without PBench, too.
 
 a flexible CentOS 8 based container that
   contains pbench, fio, uperf, and many performance tools.  The
