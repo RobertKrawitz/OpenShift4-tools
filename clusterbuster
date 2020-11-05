@@ -288,7 +288,7 @@ Extended Options:
        --anti-affinity  Force anti-affinity between client and server pods
                         in a deployment.
        --bytes=N[,M]    Number of bytes to transfer
-                        Also --kb, --kib, --mb, --mib, --gb, --gib
+                        Also --kb, --kib, --mb, --mib, --gb, --gib, --tb, --tib
                         (-M is equivalent to --mb)
        --create_routes  Create routes for services (default 0)
        --datarate=N     Data transfer rate (-D)
@@ -566,11 +566,13 @@ function process_option() {
 	datarate)		    dataRate=$optvalue				;;
 	bytes)			    set_xfer "$optvalue"			;;
 	kb|kilobytes)		    set_xfer "$optvalue" 1000			;;
-	kib|kibibytes)		    set_xfer "$optvalue" 1024			;;
+	ki|kib|kibibytes)	    set_xfer "$optvalue" 1024			;;
 	mb|megabytes)		    set_xfer "$optvalue" 1000000		;;
-	mib|mebibytes)		    set_xfer "$optvalue" 1048576		;;
+	mi|mib|mebibytes)	    set_xfer "$optvalue" 1048576		;;
 	gb|gigabytes)		    set_xfer "$optvalue" 1000000000		;;
-	gib|gibibytes)		    set_xfer "$optvalue" 1073741824		;;
+	gi|gib|gibibytes)	    set_xfer "$optvalue" 1073741824		;;
+	tb|terabytes)		    set_xfer "$optvalue" 1000000000		;;
+	ti|tib|tebibytes)	    set_xfer "$optvalue" 1099511627776		;;
 	msgsize)		    msgSize=$optvalue				;;
 	secrets)		    secrets=$optvalue				;;
 	verbose)		    verbose=$optvalue				;;
@@ -617,14 +619,16 @@ function process_option() {
 		file_blocks=${BASH_REMATCH[1]}
 		local size_modifier=${BASH_REMATCH[2],,}
 		case "$size_modifier" in
-		    ''|b)          file_block_size=1             ;;
-		    kb|kilobytes)  file_block_size=1000          ;;
-		    ki|kib|kibibytes) file_block_size=1024       ;;
-		    mb|megabytes)  file_block_size=1000000       ;;
-		    mi|mib|mebibytes) file_block_size=1048576    ;;
-		    gb|gigabytes)  file_block_size=1000000000    ;;
-		    gi|gib|gibibytes) file_block_size=1073741824 ;;
-		    *) fatal "Cannot parse filesize $optvalue"   ;;
+		    ''|b)          file_block_size=1                ;;
+		    kb|kilobytes)  file_block_size=1000             ;;
+		    ki|kib|kibibytes) file_block_size=1024          ;;
+		    mb|megabytes)  file_block_size=1000000          ;;
+		    mi|mib|mebibytes) file_block_size=1048576       ;;
+		    gb|gigabytes)  file_block_size=1000000000       ;;
+		    gi|gib|gibibytes) file_block_size=1073741824    ;;
+		    tb|terabytes)  file_block_size=1000000000000    ;;
+		    ti|tib|tebibytes) file_block_size=1099511627776 ;;
+		    *) fatal "Cannot parse filesize $optvalue"      ;;
 		esac
 	    else
 		fatal "Cannot parse filesize $optvalue"
