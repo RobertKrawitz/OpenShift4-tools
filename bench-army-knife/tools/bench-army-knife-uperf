@@ -389,7 +389,12 @@ function security_context() {
 capabilities:
   add:
   - AUDIT_WRITE
+  - IPC_LOCK
+  - NET_ADMIN
+  - NET_RAW
+  - SYS_ADMIN
   - SYS_CHROOT
+  - SYS_MODULE
 EOF
     else
 	clean <<'EOF'
@@ -726,7 +731,7 @@ EOF
 }
 
 function controller_affinity() {
-    if (( ! controller_anti_affinity )) ; then
+    if (( controller_anti_affinity )) ; then
 	clean <<EOF
 affinity:
   podAntiAffinity:
