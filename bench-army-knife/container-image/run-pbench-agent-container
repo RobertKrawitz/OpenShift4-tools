@@ -71,6 +71,7 @@ set +u
 . /etc/profile.d/pbench-agent.sh
 set -u
 
+export BENCH_ARMY_KNIFE_ROLE=agent
 declare -a etchosts_addons=()
 declare -A extra_hosts=()
 
