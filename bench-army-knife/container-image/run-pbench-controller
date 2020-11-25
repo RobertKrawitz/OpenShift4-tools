@@ -40,53 +40,51 @@ function usage() {
     fi
     cat 1>&2 <<EOF
 Usage: $0 [options] [command args...]
-       -A expected_agents             Number of expected agents.  Default $expected_agents.
-       -C worker_sync_count           Number of times worker benchmark is
-                                      expected to sync with the controller.
-                                      Should be at least 2 (start and end
-                                      of run).  Default $worker_sync_count.
-       -c expected_clients            Number of workers that will sync.
-       -D configdir                   Directory containing pbench configuration
-                                      and public and private key for
-                                      communication with pbench server.
-                                      NO DEFAULT.
-       -e                             Log the environment.
-       -H hostname                    Use the specified hostname
-                                      for saving results.
-       -K authorized_keyfile          File(s) containing authorized keys that
-                                      will be allowed to connect to us.
-                                      May be repeated.
-                                      Default is the public keyfile (-k).
-       -k keyfile                     Public and private key files used to
-                                      communicate with the agents.
-       -L sshd_listen_port            Port on which sshd should listen.
-                                      If not specified, controller will
-                                      connect to the agents.  NO DEFAULT.
-       -N configuration_name          Configuration name for pbench logging.
-                                      Default to <whoami><hostname><timestamp>.
-       -p                             Don't attempt to start a separate sshd.
-       -P external_ssh_port           Port that agents should attempt to connect
-                                      on, if different from -L.
-       -S worker_sync_port            Port on which benchmark workers should
-                                      sync.  NO DEFAULT.
-       -s agent_sync_port             Port on which agents should sync.
-                                      NO DEFAULT.
-       -T tunnel_port_start           Start ssh tunnel ports at the specified
-                                      number.  Default $tunnel_port_start.
-       -t tool_script                 Script to execute pbench-register-tool
-                                      and pbench-register-tool-set commands.
-                                      This script will be sourced in an
-                                      envronment that wraps
-                                      pbench-register-tool* commands.
-                                      These commands should not include
-                                      --remote options.
-       -u username                    Username for storing results
-       -v                             Increase verbosity.  May be repeated.
-       -W max_wait_time               Maximum time to wait for remote ssh
-                                      tunnels to come up.  Default $max_wait_for_ssh_tunnel.
-                                      -1 means wait forever.
-       -w                             Wait forever rather than exiting at the
-                                      end.
+       -A expected_agents     Number of expected agents.  Default $expected_agents.
+       -C worker_sync_count   Number of times worker benchmark is expected
+       	  		      to sync with the controller.  Should be at
+			      least 2 (start and end of run).  Only applies
+			      if a user benchmark is being run.
+			      Default $worker_sync_count.
+       -c expected_clients    Number of workers that will sync.
+       -D configdir           Directory containing pbench configuration
+                              and public and private key for communication
+			      with pbench server.
+			      Any files named [nn]-[name] will be sourced in
+			      order of name immediately following 
+			      pbench-agent.sh.
+                              NO DEFAULT.
+       -e                     Log the environment.
+       -H hostname            Use the specified hostname for saving results.
+       -K authorized_keyfile  File(s) containing authorized keys that will be
+       	  		      allowed to connect to us.  May be repeated.
+                              Default is the public keyfile (-k).
+       -k keyfile             Public and private key files used to communicate
+       	  		      with the agents.
+       -L sshd_listen_port    Port on which sshd should listen.  If not
+       	  		      specified, controller will connect to the agents.
+			      NO DEFAULT.
+       -N configuration_name  Configuration name for pbench logging.
+                              Default to <whoami><hostname><timestamp>.
+       -p                     Don't attempt to start a separate sshd.
+       -P external_ssh_port   Port that agents should attempt to connect on,
+       	  		      if different from -L.
+       -S worker_sync_port    Port on which benchmark workers should sync.
+       	  		      NO DEFAULT.
+       -s agent_sync_port     Port on which agents should sync.  NO DEFAULT.
+       -T tunnel_port_start   Start ssh tunnel ports at the specified number.
+       	  		      Default $tunnel_port_start.
+       -t tool_script         Script to execute pbench-register-tool and
+       	  		      pbench-register-tool-set commands.  This script
+			      will be sourced in an envronment that wraps
+                              pbench-register-tool* commands.  These commands
+			      should not include --remote options.
+       -u username            Username for storing results
+       -v                     Increase verbosity.  May be repeated.
+       -W max_wait_time       Maximum time to wait for remote ssh
+                              tunnels to come up.  Default $max_wait_for_ssh_tunnel.
+                              -1 means wait forever.
+       -w                     Do not exit when run is complete.
 EOF
     exit 1
 }
@@ -94,6 +92,10 @@ EOF
 function warn() {
     echo "WARNING: $*" 1>&2
 }
+
+set +u				# Until the script is fixed.
+# shellcheck disable=1091
+. /etc/profile.d/pbench-agent.sh
 
 while getopts "pP:L:K:k:T:t:N:D:A:S:s:C:c:vW:weu:H:" arg ; do
     case "$arg" in
@@ -171,9 +173,13 @@ if [[ -r "$server_config" ]] ; then
     (umask 0333 && cp "$server_config" /opt/pbench-agent/config/pbench-agent.cfg && chown pbench:pbench /opt/pbench-agent/config/pbench-agent.cfg)
 fi
 
-set +u				# Until the script is fixed.
-# shellcheck disable=1091
-. /etc/profile.d/pbench-agent.sh
+for f in "$configdir/"* ; do
+    if [[ $f =~ ^[[:digit:]]{2}- ]] ; then
+	echo "Sourcing $f"
+	# shellcheck disable=1090
+	. "$f"
+    fi
+done
 set -u
 
 if (( log_environment )) ; then

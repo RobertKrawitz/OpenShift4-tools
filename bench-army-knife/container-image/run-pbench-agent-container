@@ -41,6 +41,8 @@ Usage: $0 [options] controller_port [controller_host]
        -a alias       Alias to use.  Defaults to hostname.
        -D configdir   Directory containing pbench configuration and public
                       and private key for communication with pbench server.
+                      Any files named [nn]-[name] will be sourced in
+                      order of name immediately following pbench-agent.sh.
                       NO DEFAULT.
        -H addr=host   Add <host> with the specified <addr> to /etc/hosts.
        -n dns_server  DNS server used to look up the controller host name,
@@ -61,6 +63,12 @@ EOF
     sleep infinity
     exit 1
 }
+
+# Need -u disabled for this pending
+# https://github.com/distributed-system-analysis/pbench/pull/1746
+set +u
+# shellcheck disable=1091
+. /etc/profile.d/pbench-agent.sh
 
 declare -a etchosts_addons=()
 declare -A extra_hosts=()
@@ -125,12 +133,13 @@ declare server_config=${BAK_SERVER_CONFIG:-$configdir/pbench-agent.cfg}
 (umask 0333 && cp "$server_config" /opt/pbench-agent/config/pbench-agent.cfg && chown pbench:pbench /opt/pbench-agent/config/pbench-agent.cfg)
 
 PATH=/usr/local/bin:$PATH
-
-# Need -u disabled for this pending
-# https://github.com/distributed-system-analysis/pbench/pull/1746
-set +u
-# shellcheck disable=1091
-. /etc/profile.d/pbench-agent.sh
+for f in "$configdir/"* ; do
+    if [[ $f =~ ^[[:digit:]]{2}- ]] ; then
+	echo "Sourcing $f"
+	# shellcheck disable=1090
+	. "$f"
+    fi
+done
 set -u
 
 if (( log_environment )) ; then
