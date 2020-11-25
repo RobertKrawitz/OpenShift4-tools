@@ -96,6 +96,7 @@ function warn() {
 set +u				# Until the script is fixed.
 # shellcheck disable=1091
 . /etc/profile.d/pbench-agent.sh
+set -u
 
 while getopts "pP:L:K:k:T:t:N:D:A:S:s:C:c:vW:weu:H:" arg ; do
     case "$arg" in
@@ -173,6 +174,7 @@ if [[ -r "$server_config" ]] ; then
     (umask 0333 && cp "$server_config" /opt/pbench-agent/config/pbench-agent.cfg && chown pbench:pbench /opt/pbench-agent/config/pbench-agent.cfg)
 fi
 
+set +u
 for f in "$configdir/"* ; do
     if [[ $f =~ ^[[:digit:]]{2}- ]] ; then
 	echo "Sourcing $f"

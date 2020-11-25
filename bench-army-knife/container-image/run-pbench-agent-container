@@ -69,6 +69,7 @@ EOF
 set +u
 # shellcheck disable=1091
 . /etc/profile.d/pbench-agent.sh
+set -u
 
 declare -a etchosts_addons=()
 declare -A extra_hosts=()
@@ -133,6 +134,7 @@ declare server_config=${BAK_SERVER_CONFIG:-$configdir/pbench-agent.cfg}
 (umask 0333 && cp "$server_config" /opt/pbench-agent/config/pbench-agent.cfg && chown pbench:pbench /opt/pbench-agent/config/pbench-agent.cfg)
 
 PATH=/usr/local/bin:$PATH
+set +u
 for f in "$configdir/"* ; do
     if [[ $f =~ ^[[:digit:]]{2}- ]] ; then
 	echo "Sourcing $f"
