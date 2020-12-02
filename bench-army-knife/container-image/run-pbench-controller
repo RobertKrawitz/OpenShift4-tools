@@ -31,8 +31,11 @@ declare -i log_environment=0
 declare -i waitforever=0
 declare -i max_wait_for_ssh_tunnel=60
 declare -i dont_start_sshd=0
+declare -i use_ip_for_controller_addr=0
 declare -i tunnel_port_start=18000
 declare username=${LOGNAME:-$(id -un)}
+declare controller_hostname=
+declare -A host_aliases=()
 
 function usage() {
     if [[ -n "$*" ]] ; then
@@ -40,6 +43,8 @@ function usage() {
     fi
     cat 1>&2 <<EOF
 Usage: $0 [options] [command args...]
+       -a hostname=alias[,alias...]
+                              Create alias hostnames in the ssh config.
        -A expected_agents     Number of expected agents.  Default $expected_agents.
        -C worker_sync_count   Number of times worker benchmark is expected
        	  		      to sync with the controller.  Should be at
@@ -56,6 +61,10 @@ Usage: $0 [options] [command args...]
                               NO DEFAULT.
        -e                     Log the environment.
        -H hostname            Use the specified hostname for saving results.
+       -I                     Use the IP address internally as the controller
+                              hostname.  Only applies if tool-meister is in use.
+                              IP address is looked up rather than assumed from
+                              ip addr.
        -K authorized_keyfile  File(s) containing authorized keys that will be
        	  		      allowed to connect to us.  May be repeated.
                               Default is the public keyfile (-k).
@@ -99,14 +108,24 @@ set +u				# Until the script is fixed.
 . /etc/profile.d/pbench-agent.sh
 set -u
 
-while getopts "pP:L:K:k:T:t:N:D:A:S:s:C:c:vW:weu:H:" arg ; do
+function add_host_alias() {
+    local host
+    local aliases
+    host=${1%%=*}
+    aliases=${1#*=}
+    host_aliases[$host]=$aliases
+}
+
+while getopts "A:a:C:c:D:eH:Ik:K:L:N:P:pS:s:T:t:u:vW:w" arg ; do
     case "$arg" in
 	A) expected_agents="$OPTARG"             ;;
+	a) add_host_alias "$OPTARG"		 ;;
 	C) worker_sync_count="$OPTARG"           ;;
 	c) expected_clients="$OPTARG"            ;;
 	D) configdir="$OPTARG"                   ;;
 	e) log_environment=1	                 ;;
-	H) export full_hostname="$OPTARG"	 ;;
+	H) controller_hostname="$OPTARG"	 ;;
+	I) use_ip_for_controller_addr=1		 ;;
 	K) ssh_authorized_key_file+=("$OPTARG")  ;;
 	k) keyfile="$OPTARG"                     ;;
 	L) sshd_listen_port="$OPTARG"; passive=1 ;;
@@ -126,6 +145,37 @@ while getopts "pP:L:K:k:T:t:N:D:A:S:s:C:c:vW:weu:H:" arg ; do
 done
 
 shift $((OPTIND-1))
+
+function supports_pbench_move_results_controller() {
+    if [[ ! -r /opt/pbench-agent/VERSION ]] ; then
+	return 1
+    fi
+    local -a v
+    IFS=. read -r -a v < /opt/pbench-agent/VERSION
+    if (( ${v[0]:-0} > 0 ||
+	      ${v[1]:-0} > 70 ||
+	      (${v[1]:-0} == 70 && ${v[2]:-0} >= 1) )) ; then
+	return 0
+    else
+	return 1
+    fi
+}
+
+if ! supports_pbench_move_results_controller ; then
+    echo "Using pre-toolmeister strategy" 1>&2
+    if [[ -n "$controller_hostname" ]] ; then
+	export full_hostname=$controller_hostname
+    fi
+else
+    echo "Using toolmeister strategy" 1>&2
+    if (( use_ip_for_controller_addr )) ; then
+	# shellcheck disable=2155
+	export _pbench_full_hostname=$(host "$(hostname)" |awk '{print $NF}' | head -1)
+	export PBENCH_TM_BIND_HOSTNAME=$_pbench_full_hostname
+	sed -i -e 's,bind {hostnames},protected-mode no,' /opt/pbench-agent/util-scripts/pbench-tool-meister-start
+	echo "Setting controller to $_pbench_full_hostname" 1>&2
+    fi
+fi
 
 declare -a command=("$@")
 
@@ -177,10 +227,12 @@ fi
 
 set +u
 for f in "$configdir/"* ; do
-    if [[ $f =~ ^[[:digit:]]{2}- ]] ; then
-	echo "Sourcing $f"
+    if [[ $f =~ /[0-4][[:digit:]]-[^/]* ]] ; then
+	echo "Sourcing $f" 1>&2
 	# shellcheck disable=1090
 	. "$f"
+    else
+	echo "Not sourcing $f" 1>&2
     fi
 done
 set -u
@@ -315,8 +367,9 @@ EOF
     while read -r addr1 remote_port key addr agent ; do
 	[[ -n "$agent" ]] || continue
 	agents+=("$agent")
-	cat >> "$ssh_tmpdir/ssh_config" <<EOF
-Host $agent
+	for agent_name in "$agent" ${host_aliases[$agent]:+${host_aliases[$agent]}} ; do
+	    cat >> "$ssh_tmpdir/ssh_config" <<EOF
+Host $agent_name
 HostName localhost
 StrictHostKeyChecking no
 UserKnownHostsFile /dev/null
@@ -324,6 +377,7 @@ Port ${local_ports[$i]}
 LogLevel ERROR
 
 EOF
+	done
 	i=$((i+1))
     done <<< "$(sync.pl -v "$agent_sync_port" "$expected_agents" 1 "${port_data[@]}")"
     PATH="$ssh_tmpdir${PATH:+:$PATH}"
@@ -341,14 +395,16 @@ else
 	[[ -n "$agent" ]] || continue
 	agents+=("$agent")
 	echo "Agent $agent" 1>&2
-	cat >> "$ssh_tmpdir/ssh_config" <<EOF
-Host $agent
+	for agent_name in "$agent" ${host_aliases[$agent]:+${host_aliases[$agent]}} ; do
+	    cat >> "$ssh_tmpdir/ssh_config" <<EOF
+Host $agent_name
 StrictHostKeyChecking no
 UserKnownHostsFile /dev/null
 Port $remote_port
 LogLevel ERROR
 
 EOF
+	done
     done <<< "$(sync.pl -v "$agent_sync_port" "$expected_agents" 1)"
 fi
 
@@ -376,9 +432,20 @@ else
     /opt/pbench-agent/bench-scripts/pbench-user-benchmark --config="$configname" -- "${command[@]}"
 fi
 echo "Moving results" 1>&2
-pbench-move-results --user="$username"
+declare controller_arg=
+if supports_pbench_move_results_controller ; then
+    if [[ -n "$controller_hostname" ]] ; then
+	controller_arg="--controller=$controller_hostname"
+    fi
+fi
+pbench-move-results --user="$username" ${controller_arg:+$controller_arg}
+declare -i move_status=$?
 echo "Final sync" 1>&2
 sync.pl "$agent_sync_port" "$expected_agents" 1
-echo "*** Complete!"
+if (( move_status )) ; then
+    echo "*** Failed!"
+else
+    echo "*** Complete!"
+fi
 (( waitforever )) && sleep infinity
-exit 0
+exit $move_status

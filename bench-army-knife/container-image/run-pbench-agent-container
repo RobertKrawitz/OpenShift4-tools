@@ -59,6 +59,7 @@ Usage: $0 [options] controller_port [controller_host]
                       Useful for running standalone agents as
                       a daemonset or other replica set.
        -e             Log the environment.
+       -w	      Do not exit when run is complete.
 EOF
     sleep infinity
     exit 1
@@ -75,7 +76,7 @@ export BENCH_ARMY_KNIFE_ROLE=agent
 declare -a etchosts_addons=()
 declare -A extra_hosts=()
 
-while getopts ":a:D:deH:hK:Ln:quv" arg ; do
+while getopts ":a:D:deH:hK:Ln:quvw" arg ; do
     case "$arg" in
 	a) alias=$OPTARG	        ;;
 	D) configdir=$OPTARG	        ;;
@@ -89,6 +90,7 @@ while getopts ":a:D:deH:hK:Ln:quv" arg ; do
 	q) exec 2>/tmp/container.log    ;;
 	u) unique_hostname=1	        ;;
 	v) verbose+=("-v")	        ;;
+	w) waitforever=1		;;
 	*) usage "$arg"			;;
     esac
 done
@@ -137,7 +139,7 @@ declare server_config=${BAK_SERVER_CONFIG:-$configdir/pbench-agent.cfg}
 PATH=/usr/local/bin:$PATH
 set +u
 for f in "$configdir/"* ; do
-    if [[ $f =~ ^[[:digit:]]{2}- ]] ; then
+    if [[ $f =~ /[0-4][[:digit:]]-[^/]* ]] ; then
 	echo "Sourcing $f"
 	# shellcheck disable=1090
 	. "$f"
@@ -221,10 +223,30 @@ function run_pbench_agent_once() {
 while : ; do
     (run_pbench_agent_once) || {
 	echo "Run pbench agent failed!"
+	set +u
+	for f in "$configdir/"* ; do
+	    if [[ $f =~ /[5-9][[:digit:]]-[^/]* ]] ; then
+		echo "Sourcing $f"
+		# shellcheck disable=1090
+		. "$f"
+	    fi
+	done
+	set -u
 	# So we don't "helpfully" get restarted by the controller and messing up
 	# the synchronization
 	sleep infinity
     }
+    set +u
+    for f in "$configdir/"* ; do
+	if [[ $f =~ /[5-9][[:digit:]]-[^/]* ]] ; then
+	    echo "Sourcing $f"
+	    # shellcheck disable=1090
+	    . "$f"
+	fi
+    done
+    set -u
+    echo "*** Agent run complete" 1>&2
+    (( waitforever )) && sleep infinity
     (( run_forever )) || break
 done
 kill "$ssh_server_pid";
