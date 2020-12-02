@@ -74,6 +74,7 @@ declare -i initialize_ns=0
 declare -i port=30666
 declare -i ssh_port=30222
 declare -i redis_port=17001	# for tool-meister
+declare -i datasink_port=8080	# For tool data sink
 declare kataname=non_kata
 declare hostnetworkname=
 declare username=$LOGNAME
@@ -100,6 +101,11 @@ declare pod_memory_request=
 declare pod_memory_limit=
 declare -i force_external_agents=-1
 declare interface=
+declare interface_network=
+declare -i current_hostaddr=1
+declare -i waitforever=0
+declare -A extra_hosts=()
+declare -A host_aliases=()
 
 function usage() {
     [[ -n "$*" ]] && echo "Unknown option $*"
@@ -111,9 +117,9 @@ Usage: ${___topsc:-$0} [options] [-- pbench-uperf args]
        -C name        Use the specified name for the controller's hostname
        -c configname  Record the specified configuration name
        -E             Don't use external agents on worker nodes.
-       		      Default with non-Kata pods
+                      Default with non-Kata pods
        -e             Use external agents on the worker nodes.
-       		      Default yes with Kata pods
+                      Default yes with Kata pods
        -F file        Add the specified file to the secret passed to
                       the pods.  May be <file> or <name=file>.
        -H             Use host networking in worker pods
@@ -134,6 +140,7 @@ Usage: ${___topsc:-$0} [options] [-- pbench-uperf args]
        -q             Don't emit agent logs on stderr
        -R cpu_request Pod CPU request
        -u user        Record the specified username
+       -w             Agent and client wait forever at end
        -X             Affinity between uperf server and client
        -x             Anti-affinity between uperf server and client (default).
        -Y             Affinity between pbench controller and uperf
@@ -143,7 +150,7 @@ EOF
     exit 1
 }
 
-while getopts 'A:Cc:EeF:HIi:Kk:L:M:m:N:nP:p:qR:u:XxYy' opt ; do
+while getopts 'A:C:c:EeF:HIi:Kk:L:M:m:N:nP:p:qR:u:wXxYy' opt ; do
     case "$opt" in
 	A) pbench_agent_key=$OPTARG	 ;;
 	C) hostname=$OPTARG		 ;;
@@ -168,6 +175,7 @@ while getopts 'A:Cc:EeF:HIi:Kk:L:M:m:N:nP:p:qR:u:XxYy' opt ; do
 	q) quiet=1			 ;;
 	R) pod_cpu_request=$OPTARG	 ;;
 	u) username=$OPTARG		 ;;
+	w) waitforever=1		 ;;
 	x) anti_affinity=1		 ;;
 	X) anti_affinity=0		 ;;
 	y) controller_anti_affinity=1	 ;;
@@ -175,6 +183,11 @@ while getopts 'A:Cc:EeF:HIi:Kk:L:M:m:N:nP:p:qR:u:XxYy' opt ; do
 	*) usage "$opt"			 ;;
     esac
 done
+
+if [[ $interface = *'='* ]] ; then
+    interface_net=${interface#*=}
+    interface=${interface%%=*}
+fi
 
 declare -i error=0
 # So we don't inadvertently do something
@@ -494,11 +507,43 @@ function create_affinities() {
 }
 
 function create_network_annotation() {
-    if [[ -n "$interface" ]] ; then
+    if [[ -n "$interface_net" ]] ; then
+	clean <<EOF
+annotations:
+  k8s.v1.cni.cncf.io/networks: |-
+    [
+      {
+        "name": "$interface_net",
+        "interface": "$interface"
+      }
+    ]
+EOF
+    elif [[ -n "$interface" ]] ; then
 	clean <<EOF
 annotations:
   k8s.v1.cni.cncf.io/networks: "$interface"
 EOF
+    fi
+}
+
+function pbench-uperf-podname-base() {
+    local type=$1
+    echo "${namespace}-${type}"
+}
+
+function pbench-uperf-environment() {
+    if [[ -n "$*" ]] ; then
+	echo "env:"
+	local var
+	local value
+	for var in "$@" ; do
+	    value=${var#*=}
+	    var=${var%%=*}
+	    clean <<EOF
+- name: "$var"
+  value: "$value"
+EOF
+	done
     fi
 }
 
@@ -508,16 +553,18 @@ function pbench-uperf-pod() {
     local affinity_string=
     local -a affinities=()
     local -a antiaffinities=()
+    local -a eenvironment=()
     local ipaddr
     local host
     local suffix=
 
     OPTIND=0
-    while getopts 'H:s:a:A:' opt "$@" ; do
+    while getopts 'E:H:s:a:A:' opt "$@" ; do
 	case "$opt" in
 	    a) affinity_string+=" -a $OPTARG" ;;
 	    A) affinity_string+=" -A $OPTARG" ;;
 	    H) etchosts_addons+=("$OPTARG")   ;;
+	    E) environment+=("$OPTARG")	      ;;
 	    s) suffix="-${OPTARG}"	      ;;
 	    *) ;;
 	esac
@@ -528,7 +575,7 @@ function pbench-uperf-pod() {
 	if [[ $datum =~ ^([^=]+)=(.+) ]] ; then
 	    ipaddr="${BASH_REMATCH[1]}"
 	    host="${BASH_REMATCH[2]}"
-	    extra_hosts[$ipaddr]+=" $host"
+	    extra_hosts[$host]+=" $ipaddr"
 	fi
     done
 
@@ -540,7 +587,7 @@ function pbench-uperf-pod() {
 apiVersion: v1
 kind: Pod
 metadata:
-  name: ${namespace}-${type}${suffix}
+  name: $(pbench-uperf-podname-base "$type")${suffix}
   namespace: "$namespace"
 $(indent 2 create_network_annotation)
   labels:
@@ -575,11 +622,12 @@ $(indent 4 create_resources)
     - "/usr/local/bin/bootstrap.sh"
     args:
     - "$pbench_agent_container_bin"
+    $( ((quiet)) && echo '- "-q"')
 $(for host in "${!extra_hosts[@]}" ; do
     echo "    - -H"
     echo "    - \"$host=${extra_hosts[$host]// /}\""
 done)
-    $( ((quiet)) && echo '- "-q"')
+$( (( waitforever )) && echo "    - -w")
     - "-L"
     - "-a"
     - "${namespace}-${type}${suffix}"
@@ -591,6 +639,7 @@ done)
     - "id_rsa_agent"
     - "$port"
     - "${namespace}-controller.$namespace"
+$(indent 4 pbench-uperf-environment "${environment[@]}")
     terminationGracePeriodSeconds: 1
     volumeMounts:
     - name: credentials
@@ -715,6 +764,9 @@ spec:
   - name: redis
     port: $redis_port
     targetPort: $redis_port
+  - name: data-sink
+    port: $datasink_port
+    targetPort: $datasink_port  
   type: ClusterIP
   selector:
     name: ${namespace}-controller
@@ -752,10 +804,21 @@ function mk_pairs() {
     local -i pairs=${2:-1};
     local -a podnames=()
     local -i i
+    local suffix=${interface:+-$interface}
     for i in $(seq 1 "$pairs") ; do
-	podnames+=("${basename}-$i")
+	podnames+=("${basename}-$i${suffix}")
     done
     (IFS=, ; echo "${podnames[*]}")
+}
+
+function set_host_aliases() {
+    local host
+    for host in "${!host_aliases[@]}" ; do
+	clean <<EOF
+- "-a"
+- "${host}=${host_aliases[$host]}"
+EOF
+    done
 }
 
 function controller_pod() {
@@ -790,7 +853,6 @@ $(indent 2 controller_affinity)
   setHostnameAsFQDN: true
   containers:
   - name: "controller"
-    imagePullPolicy: Always
     image: "quay.io/rkrawitz/bench-army-knife:latest"
     securityContext:
       privileged: true
@@ -804,6 +866,9 @@ $(indent 2 controller_affinity)
     args:
     - "$pbench_controller_bin"
 $(indent 4 set_controller_hostname)
+$(indent 4 set_host_aliases)
+    - "-I"
+$( (( waitforever )) && echo "    - -w")
     - "-L"
     - "$ssh_port"
     - "-D"
@@ -838,6 +903,13 @@ EOF
 
 create_credentials
 
+function create_host_addons() {
+    local hostname
+    for hostname in "${!extra_hosts[@]}" ; do
+	echo "-H $hostname=${extra_hosts[$hostname]}"
+    done
+}
+
 function create_uperf_objects() {
     create_object controller_port
     local -i i
@@ -845,28 +917,57 @@ function create_uperf_objects() {
     local -i missing_servers=$npairs
     local affinity_term=-a
     if (( anti_affinity )) ; then affinity_term=-A; fi
-    for i in $(seq 1 "$npairs") ; do
-	create_object pbench-uperf-pod -s "$i" server
-	serverClusterIPs[$i]=
-    done
-    if (( print_only )) ; then
+    if [[ -n "$interface" ]] ; then
+	local extra=
+	local -A ips_to_setup=()
 	for i in $(seq 1 "$npairs") ; do
-	    serverClusterIPs[$i]="$i.$i.$i.$i"
-	    create_object pbench-uperf-pod -H "${serverClusterIPs[$i]}=${namespace}-server-${i}" -s "$i" "$affinity_term" app-subtype=uperf-server client
+	    # A VFIO device won't have IP addresses configured, so
+	    # we have to create them here.
+	    local extra_ip="192.179.128.$((current_hostaddr++))"
+	    local hostname_base=$(pbench-uperf-podname-base server)-${i}
+	    local if_hostname=${hostname_base}-${interface}
+	    serverClusterIPs[$i]=$extra_ip
+	    extra_hosts[$if_hostname]=$extra_ip
+	    extra="-H ${if_hostname}=${extra_ip}"
+	    host_aliases[$hostname_base]=${host_aliases[$hostname_base]:+${hostaliases[$hostname_base]},}$if_hostname
+	    create_object pbench-uperf-pod -s "$i" $extra -E "_BENCH_ARMY_KNIFE_IP=${interface}=${extra_ip}" server
+	done
+	# Get all of the client hosts before creating the objects
+	for i in $(seq 1 "$npairs") ; do
+	    local extra_ip="192.179.128.$((current_hostaddr++))"
+	    local hostname_base=$(pbench-uperf-podname-base client)-${i}
+	    ips_to_setup[$i]=$extra_ip
+	    local if_hostname=${hostname_base}-${interface}
+	    extra_hosts[$if_hostname]=$extra_ip
+	    host_aliases[$hostname_base]=${host_aliases[$hostname_base]:+${hostaliases[$hostname_base]},}$if_hostname
+	done
+	for i in $(seq 1 "$npairs") ; do
+	    create_object pbench-uperf-pod $(create_host_addons) -E "_BENCH_ARMY_KNIFE_IP=${interface}=${ips_to_setup[$i]}" -s "$i" "$affinity_term" app-subtype=uperf-server client
 	done
     else
-	while ((missing_servers)) ; do
-	    for i in $(seq 1 "$npairs") ; do
-		if [[ -z "${serverClusterIPs[$i]:-}" ]] ; then
-		    serverClusterIPs[$i]="$(get_ip "$interface" "-n" "$namespace" "${namespace}-server-${i}")"
-		    if [[ -n "${serverClusterIPs[$i]}" ]] ; then
-			missing_servers=$((missing_servers-1));
-			create_object pbench-uperf-pod -H "${serverClusterIPs[$i]}=${namespace}-server-${i}" -s "$i" "$affinity_term" app-subtype=uperf-server client
-		    fi
-		fi
-	    done
-	    ((missing_servers)) && sleep 1
+	for i in $(seq 1 "$npairs") ; do
+	    create_object pbench-uperf-pod -s "$i" server
+	    serverClusterIPs[$i]=
 	done
+	if (( print_only )) ; then
+	    for i in $(seq 1 "$npairs") ; do
+		serverClusterIPs[$i]="$i.$i.$i.$i"
+		create_object pbench-uperf-pod -H "${namespace}-server-${i}=${serverClusterIPs[$i]}" -s "$i" "$affinity_term" app-subtype=uperf-server client
+	    done
+	else
+	    while ((missing_servers)) ; do
+		for i in $(seq 1 "$npairs") ; do
+		    if [[ -z "${serverClusterIPs[$i]:-}" ]] ; then
+			serverClusterIPs[$i]="$(get_ip "$interface" "-n" "$namespace" "${namespace}-server-${i}")"
+			if [[ -n "${serverClusterIPs[$i]}" ]] ; then
+			    missing_servers=$((missing_servers-1));
+			    create_object pbench-uperf-pod -H "${namespace}-server-${i}=${serverClusterIPs[$i]}" -s "$i" "$affinity_term" app-subtype=uperf-server client
+			fi
+		    fi
+		done
+		((missing_servers)) && sleep 1
+	    done
+	fi
     fi
     create_object agent_deployment
     if (( ! print_only )) ; then
