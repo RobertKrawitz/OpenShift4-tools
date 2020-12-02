@@ -29,6 +29,7 @@ declare alias=
 declare configdir= # Secret containing pbench config and public and private key
 declare -i log_environment=0
 declare -i unique_hostname=0
+declare -i waitforever=0
 declare sshd_args=
 trap exit TERM INT
 
