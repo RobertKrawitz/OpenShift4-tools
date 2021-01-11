@@ -5,8 +5,30 @@ use POSIX;
 use strict;
 use Time::Piece;
 use Time::HiRes qw(gettimeofday);
+use File::Path qw(make_path remove_tree);
+use Sys::Hostname;
 our ($namespace, $pod, $container, $basetime, $baseoffset, $crtime, $poddelay, $processes, $rundir, $runtime, $exit_at_end, $synchost, $syncport, $loghost, $logport, $sysbench_generic_args, $sysbench_cmd, $sysbench_fileio_args, $sysbench_modes) = @ARGV;
-$SIG{TERM} = sub { kill 'KILL', -1; POSIX::_exit(0); };
+my ($local_hostname) = hostname;
+my ($localrundir) = "$rundir/$local_hostname/$$";
+
+sub removeRundir() {
+    if (-d "$localrundir") {
+	open(CLEANUP, "-|", "rm -rf '$localrundir'");
+	while (<CLEANUP>) {
+	    1;
+	}
+	close(CLEANUP);
+    }
+}
+
+sub docleanup()  {
+    print STDERR "CLEANUP\n";
+    removeRundir();
+    kill 'KILL', -1;
+    POSIX::_exit(0);
+}
+$SIG{TERM} = sub() { docleanup() };
+print STDERR "HERE!\n";
 $basetime += $baseoffset;
 $crtime += $baseoffset;
 
@@ -114,17 +136,13 @@ sub runit() {
     }
     timestamp(join("|", @known_sysbench_fileio_modes));
     my ($mode) = $known_sysbench_fileio_modes[int(rand() * ($#known_sysbench_fileio_modes + 1.0))];
-    if (! -d $rundir) {
-        timestamp("No run directory $rundir!");
+    removeRundir();
+    if (! make_path($localrundir)) {
+        timestamp("Cannot create run directory $localrundir: $!");
 	exit(1);
     }
-    $rundir .= "/$$";
-    if (! mkdir($rundir)) {
-        timestamp("Cannot create run directory $rundir: $!");
-	exit(1);
-    }
-    if (! chdir($rundir)) {
-        timestamp("Cannot cd $rundir: $!");
+    if (! chdir($localrundir)) {
+        timestamp("Cannot cd $localrundir: $!");
 	exit(1);
     }
     do_sync($synchost, $syncport);
@@ -208,6 +226,7 @@ sub runit() {
 	    $$, $crtime - $basetime, $dstime - $basetime, $stime1 - $basetime,
 	    $readops, $writeops, $fsyncops, $readrate, $writerate, $et, $min_lat, $avg_lat, $max_lat, $p95_lat);
     print STDERR "$answer\n";
+    docleanup();
     do_sync($synchost, $syncport, $answer);
     do_sync($loghost, $logport, "-n $namespace $pod -c $container terminated 0 0 0 $answer");
 }
