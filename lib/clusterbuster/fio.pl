@@ -7,12 +7,12 @@ use Time::Piece;
 use Time::HiRes qw(gettimeofday);
 use File::Path qw(make_path remove_tree);
 use Sys::Hostname;
-our ($namespace, $pod, $container, $basetime, $baseoffset, $crtime, $poddelay, $processes, $rundir, $runtime, $exit_at_end, $synchost, $syncport, $loghost, $logport, $sysbench_generic_args, $sysbench_cmd, $sysbench_fileio_args, $sysbench_modes) = @ARGV;
+our ($namespace, $pod, $container, $basetime, $baseoffset, $crtime, $poddelay, $processes, $rundir, $runtime, $exit_at_end, $synchost, $syncport, $loghost, $logport, $jobfiles_dir, $fio_generic_args) = @ARGV;
+
 my ($local_hostname) = hostname;
 my ($localrundir) = "$rundir/$local_hostname/$$";
 
-sub docleanup()  {
-    print STDERR "CLEANUP\n";
+sub removeRundir() {
     if (-d "$localrundir") {
 	open(CLEANUP, "-|", "rm -rf '$localrundir'");
 	while (<CLEANUP>) {
@@ -20,13 +20,26 @@ sub docleanup()  {
 	}
 	close(CLEANUP);
     }
+}
+
+sub docleanup()  {
+    removeRundir()
     kill 'KILL', -1;
     POSIX::_exit(0);
 }
 $SIG{TERM} = sub() { docleanup() };
-print STDERR "HERE!\n";
 $basetime += $baseoffset;
 $crtime += $baseoffset;
+
+removeRundir();
+
+if (! make_path($localrundir)) {
+    timestamp("Cannot create run directory $localrundir: $!");
+}
+if (! chdir($localrundir)) {
+    timestamp("Cannot cd $localrundir: $!");
+    exit(1);
+}
 
 sub cputime() {
     my (@times) = times();
@@ -109,57 +122,8 @@ sub do_sync($$;$) {
     }
 }
 
-sub runit() {
-    my ($files) = 0;
-    my ($totalbytes) = 0;
-    my ($seconds) = 0;
-    my ($rate) = 0;
-    my ($readops) = 0;
-    my ($writeops) = 0;
-    my ($fsyncops) = 0;
-    my ($readrate) = 0;
-    my ($writerate) = 0;
-    my ($et) = 0;
-    my ($min_lat) = 0;
-    my ($avg_lat) = 0;
-    my ($max_lat) = 0;
-    my ($p95_lat) = 0;
-    my (@known_sysbench_fileio_modes) = qw(seqwr seqrewr seqrd rndrd rndwr rndrw);
-    my ($iterations) = 0;
-    my ($loops_per_iteration) = 10000;
-    if ($sysbench_modes) {
-        @known_sysbench_fileio_modes = split(/ +/, $sysbench_modes);
-    }
-    timestamp(join("|", @known_sysbench_fileio_modes));
-    my ($mode) = $known_sysbench_fileio_modes[int(rand() * ($#known_sysbench_fileio_modes + 1.0))];
-    if (! make_path($localrundir)) {
-        timestamp("Cannot create run directory $localrundir: $!");
-	exit(1);
-    }
-    if (! chdir($localrundir)) {
-        timestamp("Cannot cd $localrundir: $!");
-	exit(1);
-    }
-    do_sync($synchost, $syncport);
-    timestamp("Preparing...");
-    timestamp("sysbench --time=$runtime $sysbench_generic_args $sysbench_cmd prepare --file-test-mode=$mode $sysbench_fileio_args");
-    open(PREPARE, "-|", "sysbench --time=$runtime $sysbench_generic_args $sysbench_cmd prepare --file-test-mode=$mode $sysbench_fileio_args") || die "Can't run sysbench: $!\n";
-    while (<PREPARE>) {
-	if ($_ =~ /^([[:digit:]]+) bytes written in ([[:digit:].]+) seconds/) {
-	    $totalbytes = $1;
-	    $seconds = $2;
-	    $rate = $1 / $2;
-	} elsif ($_ =~ /^Creating file /) {
-	    $files++;
-	    next;
-	}
-        if ($ENV{"VERBOSE"} > 0) {
-       	    chomp;
-	    timestamp($_);
-	}
-    }
-    close PREPARE;
-
+sub runit(;$) {
+    my ($jobfile) = @_;
     my ($basecpu) = cputime();
     my ($prevcpu) = $basecpu;
     my ($firsttime) = 1;
@@ -177,64 +141,73 @@ sub runit() {
     my ($prevtime) = $stime;
     my ($scputime) = cputime();
     timestamp("Running...");
-    timestamp("sysbench --time=$runtime $sysbench_generic_args $sysbench_cmd run --file-test-mode=$mode $sysbench_fileio_args");
-    open(RUN, "-|", "sysbench --time=$runtime $sysbench_generic_args $sysbench_cmd run --file-test-mode=$mode $sysbench_fileio_args") || die "Can't run sysbench: $!\n";
-    while (<RUN>) {
-	if ($_ =~ m;^[[:space:]]*reads/s:[[:space:]]*([[:digit:].]+);) {
-	    $readops = $1;
-	} elsif ($_ =~ m;^[[:space:]]*writes/s:[[:space:]]*([[:digit:].]+);) {
-	    $writeops = $1;
-	} elsif ($_ =~ m;^[[:space:]]*fsyncs/s:[[:space:]]*([[:digit:].]+);) {
-	    $fsyncops = $1;
-	} elsif ($_ =~ m;^[[:space:]]*read, MiB/s:[[:space:]]*([[:digit:].]+);) {
-	    $readrate = $1;
-	} elsif ($_ =~ m;^[[:space:]]*written, MiB/s:[[:space:]]*([[:digit:].]+);) {
-	    $writerate = $1;
-	} elsif ($_ =~ m;^[[:space:]]*total time:[[:space:]]*([[:digit:].]+)s;) {
-	    $et = $1;
-	} elsif ($_ =~ m;^[[:space:]]*min:[[:space:]]*([[:digit:].]+);) {
-	    $min_lat = $1 / 1000.0;
-	} elsif ($_ =~ m;^[[:space:]]*avg:[[:space:]]*([[:digit:].]+);) {
-	    $avg_lat = $1 / 1000.0;
-	} elsif ($_ =~ m;^[[:space:]]*max:[[:space:]]*([[:digit:].]+);) {
-	    $max_lat = $1 / 1000.0;
-	} elsif ($_ =~ m;^[[:space:]]*95th percentile:[[:space:]]*([[:digit:].]+);) {
-	    $p95_lat = $1 / 1000.0;
+    timestamp("fio $fio_generic_args --output-format=json+ $jobfile");
+    pipe(READER, WRITER) || die "Can't create pipe: $!\n";
+    my ($pid) = fork();
+    if ($pid == -1) {
+        die "Can't fork: $!\n";
+    } elsif ($pid == 0) {
+        close READER;
+	open(STDOUT, ">&WRITER") || die "Can't dup stdout to writer: $!\n";
+	open(STDERR, ">&WRITER") || die "Can't dup stderr to writer: $!\n";
+	exec("/bin/bash", "-c", "fio $fio_generic_args --output-format=json+ $jobfile") || die "Can't run fio: $!\n";
+        # NOTREACHED
+	exit(1);
+    } else {
+        close WRITER;
+	while (<READER>) {
+	    print STDERR $_;
 	}
-        if ($ENV{"VERBOSE"} > 0) {
-       	    chomp;
-	    timestamp($_);
-	}
+	close WRITER;
     }
-    close RUN;
-    timestamp("Cleanup...");
-    timestamp("sysbench --time=$runtime $sysbench_generic_args $sysbench_cmd cleanup --file-test-mode=$mode $sysbench_fileio_args");
-    open(CLEANUP, "-|", "sysbench --time=$runtime $sysbench_generic_args $sysbench_cmd cleanup --file-test-mode=$mode $sysbench_fileio_args") || die "Can't run sysbench: $!\n";
-    while (<CLEANUP>) {
-        if ($ENV{"VERBOSE"} > 0) {
-       	    chomp;
-	    timestamp($_);
-	}
+    my ($child) = wait();
+    if ($child < 0) {
+        print STDERR "*** Can't reap child (expected $pid, got $child)!\n";
+    } else {
+        my ($status) = $? >> 8;
+        print STDERR "fio returned $status\n";
     }
-    close CLEANUP;
-    my ($answer) = sprintf("STATS %d %.3f %.3f %.3f %d %d %d %d %d %.03f %.06f %.06f %.06f %.06f",
-	    $$, $crtime - $basetime, $dstime - $basetime, $stime1 - $basetime,
-	    $readops, $writeops, $fsyncops, $readrate, $writerate, $et, $min_lat, $avg_lat, $max_lat, $p95_lat);
-    print STDERR "$answer\n";
-    docleanup();
-    do_sync($synchost, $syncport, $answer);
-    do_sync($loghost, $logport, "-n $namespace $pod -c $container terminated 0 0 0 $answer");
+#    my ($answer) = sprintf("STATS %d %.3f %.3f %.3f %d %d %d %d %d %.03f %.06f %.06f %.06f %.06f",
+#	    $$, $crtime - $basetime, $dstime - $basetime, $stime1 - $basetime,
+#	    $readops, $writeops, $fsyncops, $readrate, $writerate, $et, $min_lat, $avg_lat, $max_lat, $p95_lat);
+#    print STDERR "$answer\n";
+#    do_sync($synchost, $syncport, $answer);
+     do_sync($synchost, $syncport);
+#    do_sync($loghost, $logport, "-n $namespace $pod -c $container terminated 0 0 0 $answer");
 }
-$SIG{CHLD} = 'IGNORE';
+
+sub get_jobfiles($) {
+    my ($dir) = @_;
+    opendir DIR, $dir || die "Can't find job files in $dir: #!\n";
+    
+    my @files = map { "$dir/$_" } grep { -f "$dir/$_" } sort readdir DIR;
+    closedir DIR;
+    print STDERR "get_jobfiles($dir) => @files\n";
+    return @files;
+}
+
+my (@jobfiles) = get_jobfiles($jobfiles_dir);
+
+sub runall() {
+    if ($#jobfiles >= 0) {
+	foreach my $file (@jobfiles) {
+	    runit($file)
+	}
+    } else {
+        runit()
+    }
+}
+
 if ($processes > 1) {
     for (my $i = 0; $i < $processes; $i++) {
         if ((my $child = fork()) == 0) {
-            runit();
+            runall();
+	    docleanup();
             exit(0);
         }
     }
 } else {
-    runit();
+    runall();
 }
 if ($exit_at_end) {
     timestamp("About to exit");
@@ -246,3 +219,4 @@ if ($exit_at_end) {
     timestamp("Waiting forever");
     pause()
 }
+EOF
