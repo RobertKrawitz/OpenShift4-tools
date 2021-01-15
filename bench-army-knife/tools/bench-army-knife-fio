@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Copyright 2021 Robert Krawitz/Red Hat
+# Copyright 2020 Robert Krawitz/Red Hat
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -79,6 +79,7 @@ declare kataname=non_kata
 declare hostnetworkname=
 declare username=$LOGNAME
 declare configname=
+declare -i anti_affinity=0
 declare -i controller_anti_affinity=1
 declare -i host_networking=0
 declare -i print_only=0
@@ -86,7 +87,7 @@ declare -i quiet=0
 declare -i npods=1
 # shellcheck disable=SC2155
 declare hostname=$(hostname --fqdn)
-#declare -a affinity_types=(podAffinity podAntiAffinity)
+declare -a affinity_types=(podAffinity podAntiAffinity)
 declare pbench_agent_cfg=
 declare pbench_private_key=
 declare pbench_agent_key=
@@ -100,14 +101,17 @@ declare pod_memory_request=
 declare pod_memory_limit=
 declare -i force_external_agents=-1
 declare interface=
+declare interface_network=
 declare basedir=
 declare pvname=
 declare pvtype=
 declare pvtype_key=
 declare pvscoped_name=
 declare pvmount_path=
+declare -i current_hostaddr=1
 declare -i waitforever=0
 declare -A extra_hosts=()
+declare -A host_aliases=()
 
 function usage() {
     [[ -n "$*" ]] && echo "Unknown option $*"
@@ -154,6 +158,8 @@ Usage: ${___topsc:-$0} [options] [-- pbench-fio args]
                       mount_path is the path on which to mount the volume
                           (required).
        -w             Agent and client wait forever at end
+       -X             Affinity between fio pods (default)
+       -x             Anti-affinity between fio pods
        -Y             Affinity between pbench controller and fio
        -y             Anti-affinity between pbench controller and fio
                       (default).
@@ -161,7 +167,7 @@ EOF
     exit 1
 }
 
-while getopts 'A:C:c:d:EeF:HIi:Kk:L:M:m:N:nP:p:qR:u:V:wYy' opt ; do
+while getopts 'A:C:c:d:EeF:HIi:Kk:L:M:m:N:nP:p:qR:u:V:wXxYy' opt ; do
     case "$opt" in
 	A) pbench_agent_key=$OPTARG	 ;;
 	C) hostname=$OPTARG		 ;;
@@ -196,6 +202,8 @@ while getopts 'A:C:c:d:EeF:HIi:Kk:L:M:m:N:nP:p:qR:u:V:wYy' opt ; do
 	    fi
 	    ;;
 	w) waitforever=1		 ;;
+	x) anti_affinity=1		 ;;
+	X) anti_affinity=0		 ;;
 	y) controller_anti_affinity=1	 ;;
 	Y) controller_anti_affinity=0	 ;;
 	*) usage "$opt"			 ;;
@@ -212,12 +220,6 @@ declare -i error=0
 if (( print_only )) ; then
     export KUBECONFIG=/dev/null
 fi
-
-if (( npods > 1 )) ; then
-    echo "Pod count >1 currently is not supported" 1>&2
-    error=1
-fi
-
 if [[ -z "${pbench_agent_cfg:-}" ]] ; then
     echo "pbench_agent.cfg file not provided" 1>&2
     error=1
@@ -249,7 +251,7 @@ for f in "${additional_files[@]}" ; do
     fi
 done
 
-configname=${configname:-fio}-${kataname}${hostnetworkname}-${pod_cpu_limit:+-limit-${pod_cpu_limit}}${pod_cpu_request:+-request-${pod_cpu_request}}${pod_memory_limit:+-limit-${pod_memory_limit}}${pod_memory_request:+-request-${pod_memory_request}}
+configname=${configname:-fio}-${kataname}-${affinity_types[$anti_affinity],,}-${pod_cpu_limit:+-limit-${pod_cpu_limit}}${pod_cpu_request:+-request-${pod_cpu_request}}${pod_memory_limit:+-limit-${pod_memory_limit}}${pod_memory_request:+-request-${pod_memory_request}}
 
 shift $((OPTIND-1))
 
@@ -331,7 +333,8 @@ function create_credentials_1() {
 	    ssh-keygen -f "$tmpkeydir/id_rsa" -C "generated pbench agent key" -N '' -q -t rsa
 	    pbench_agent_key="$tmpkeydir/id_rsa"
 	fi
-	cat > "$tmpkeydir/10-fio-setup" <<'EOF'
+	if ! grep '10-fio-setup' <<< "$(IFS=$'\n'; echo 10-fio-setup)" ; then
+	    cat > "$tmpkeydir/10-fio-setup" <<'EOF'
 #!/bin/bash
 
 FIO_SOCKNAME=/tmp/fio.sock
@@ -372,6 +375,7 @@ fi
 
 EOF
 	additional_files+=("$tmpkeydir/10-fio-setup")
+	fi
     fi
 
     additional_files+=("id_rsa=$pbench_private_key")
@@ -612,10 +616,6 @@ function persistent_volume_extra_args() {
 - "--target=$pvmount_path"
 - "--job-file=/opt/pbench-agent/bench-scripts/templates/fio-shared-fs.job"
 EOF
-    elif [[ -n "$basedir" ]] ; then
-	clean <<EOF
-- "--target=$basedir"
-EOF
     fi
 }
 
@@ -626,7 +626,7 @@ function pbench-fio-pod() {
     local affinity_string=
     local -a affinities=()
     local -a antiaffinities=()
-    local -a environment=()
+    local -a eenvironment=()
     local ipaddr
     local host
     local suffix=
@@ -682,6 +682,7 @@ spec:
   serviceAccount: ${namespace}
 $(indent 2 runtime_class)
   restartPolicy: Never
+$(indent 2 create_affinities $affinity_string)
   containers:
   - name: "${namespace}-agent"
     securityContext:
@@ -734,7 +735,7 @@ metadata:
   labels:
     k8s-app: fio-agent-deployment
 spec:
-  replicas: 1
+  replicas: $((1 + anti_affinity))
   selector:
     matchLabels:
       k8s-app: fio-agent
@@ -872,18 +873,27 @@ function mk_podlist() {
     local -i pairs=${2:-1};
     local -a podnames=()
     local -i i
-    local suffix=${interface:+-$interface}
+    local suffix=
     for i in $(seq 1 "$pairs") ; do
 	podnames+=("${basename}-$i${suffix}")
     done
     (IFS=, ; echo "${podnames[*]}")
 }
 
+function mk_arglist() {
+    local basename=$1
+    local -i pairs=${2:-1};
+    local -i i
+    local suffix=
+    for i in $(seq 1 "$pairs") ; do
+	echo "- \"${basename}-$i${suffix}\""
+    done
+}
+
 function controller_pod() {
     #shellcheck disable=SC2155
     local agents=$(oc get pods -l "$selector_key" -A --no-headers 2>/dev/null | wc -l)
     echo "Expect $agents agents" 1>&2
-    # shellcheck disable=2086
     clean <<EOF
 ---
 apiVersion: v1
@@ -941,15 +951,15 @@ $( (( waitforever )) && echo "    - -w")
     - "$username"
     - "--"
     - "/usr/local/bin/create-tunnel"
-    - "$(mk_podlist ${namespace} 1)"
-    - "TCP-LISTEN:8765,fork"
-    - >-
-      EXEC:ssh $(mk_podlist "${namespace}" 1) socat - "TCP4:127.0.0.1:8765"
+    - "8765"
+$(indent 4 mk_arglist "${namespace}" $npods)
+    - "--"
     - "pbench-fio"
     - "--config=$configname"
 $(indent 4 persistent_volume_extra_args)
+    - "--unique-ports"
     - "-c"
-    - "$(mk_podlist ${namespace} 1)"
+    - "$(mk_podlist ${namespace} $npods)"
 $(IFS=$'\n'; echo "${fio_args[*]/#/    - \"}" |grep '"' | sed -e 's/$/"/')
     volumeMounts:
     - name: credentials
@@ -974,8 +984,12 @@ function create_host_addons() {
 function create_fio_objects() {
     create_object controller_port
     local -i i
+    local -a serverClusterIPs=()
+    local affinity_term=-a
+    if (( anti_affinity )) ; then affinity_term=-A; fi
     for i in $(seq 1 "$npods") ; do
-	create_object pbench-fio-pod -s "$i"
+	create_object pbench-fio-pod -s "$i" "$affinity_term" app-subtype=fio
+	serverClusterIPs[$i]=
     done
     create_object agent_deployment
     if (( ! print_only )) ; then
