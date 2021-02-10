@@ -844,7 +844,7 @@ function list_install_versions() {
     for channel in "${channels[@]}" ; do
 	local -a versions=()
 	readarray -t versions <<< "$(openshift-release-info ${valid_channels} -B "$repo" ${channel:+-c "$channel"} releases < /dev/null | sort -r)"
-	if [[ -n "${versions[*]}" ]] ; then
+	if [[ -n "${versions[*]:-}" ]] ; then
 	    releases+=(" X.$channel")
 	    releases+=("${versions[@]}")
 	fi
@@ -1391,7 +1391,7 @@ function process_extended_options() {
 }
 
 function get_platform_path() {
-    if [[ -z "${platform_path[*]}" ]] ; then
+    if [[ -z "${platform_path[*]:-}" ]] ; then
 	platform_path=()
 	if [[ -n ${OPENSHIFT_OINST_LIBDIR:-} ]] ; then
 	    readarray -t platform_path <<< "${OPENSHIFT_OINST_LIBDIR//:/$'\n'}"
