@@ -68,6 +68,7 @@ fi
 
 echo "Command: ${___topsc:-$0} $*"
 
+declare -r bm_name=uperf
 declare namespace=pbench
 declare -i kata=0
 declare -i initialize_ns=0
@@ -84,7 +85,7 @@ declare -i controller_anti_affinity=1
 declare -i host_networking=0
 declare -i print_only=0
 declare -i quiet=0
-declare -i npairs=1
+declare -i instances=1
 # shellcheck disable=SC2155
 declare hostname=$(hostname --fqdn)
 declare -a affinity_types=(podAffinity podAntiAffinity)
@@ -101,7 +102,6 @@ declare pod_memory_request=
 declare pod_memory_limit=
 declare -i force_external_agents=-1
 declare interface=
-declare interface_network=
 declare -i current_hostaddr=1
 declare -i waitforever=0
 declare -A extra_hosts=()
@@ -110,7 +110,7 @@ declare -A host_aliases=()
 function usage() {
     [[ -n "$*" ]] && echo "Unknown option $*"
     expand <<EOF
-Usage: ${___topsc:-$0} [options] [-- pbench-uperf args]
+Usage: ${___topsc:-$0} [options] [-- pbench-${bm_name} args]
        -A agent_key   Use the specified public/private key pair for
                       communication with the agent.  Session key will
                       be generated if not provided.
@@ -141,10 +141,10 @@ Usage: ${___topsc:-$0} [options] [-- pbench-uperf args]
        -R cpu_request Pod CPU request
        -u user        Record the specified username
        -w             Agent and client wait forever at end
-       -X             Affinity between uperf server and client
-       -x             Anti-affinity between uperf server and client (default).
-       -Y             Affinity between pbench controller and uperf
-       -y             Anti-affinity between pbench controller and uperf
+       -X             Affinity between ${bm_name} server and client
+       -x             Anti-affinity between ${bm_name} server and client (default).
+       -Y             Affinity between pbench controller and ${bm_name}
+       -y             Anti-affinity between pbench controller and ${bm_name}
                       (default).
 EOF
     exit 1
@@ -171,7 +171,7 @@ while getopts 'A:C:c:EeF:HIi:Kk:L:M:m:N:nP:p:qR:u:wXxYy' opt ; do
 	N) namespace=$OPTARG		 ;;
 	n) print_only=1			 ;;
 	P) pbench_agent_cfg=$OPTARG	 ;;
-	p) npairs=$OPTARG		 ;;
+	p) instances=$OPTARG		 ;;
 	q) quiet=1			 ;;
 	R) pod_cpu_request=$OPTARG	 ;;
 	u) username=$OPTARG		 ;;
@@ -225,11 +225,11 @@ for f in "${additional_files[@]}" ; do
     fi
 done
 
-configname=${configname:-uperf}-${kataname}${hostnetworkname}-${affinity_types[$anti_affinity],,}${interface:+-if-${interface}}${pod_cpu_limit:+-limit-${pod_cpu_limit}}${pod_cpu_request:+-request-${pod_cpu_request}}${pod_memory_limit:+-limit-${pod_memory_limit}}${pod_memory_request:+-request-${pod_memory_request}}
+configname=${configname:-${bm_name}}-${kataname}${hostnetworkname}-${affinity_types[$anti_affinity],,}${interface:+-if-${interface}}${pod_cpu_limit:+-limit-${pod_cpu_limit}}${pod_cpu_request:+-request-${pod_cpu_request}}${pod_memory_limit:+-limit-${pod_memory_limit}}${pod_memory_request:+-request-${pod_memory_request}}
 
 shift $((OPTIND-1))
 
-declare -a uperf_args=("$@")
+declare -a benchmark_args=("$@")
 
 set -e
 
@@ -299,14 +299,20 @@ fi
 
 function create_credentials_1() {
     local tmpkeydir=
+    tmpkeydir=$(umask 77; mktemp -d -t "pbench-agent-key.XXXXXX")
     if [[ -z "$pbench_agent_key" && $print_only -eq 0 ]] ; then
-	tmpkeydir=$(umask 77; mktemp -d -t "pbench-agent-key.XXXXXX")
 	if [[ -n "$tmpkeydir" ]] ; then
 	    # shellcheck disable=SC2064
 	    trap "rm -rf $tmpkeydir" INT TERM EXIT
 	    ssh-keygen -f "$tmpkeydir/id_rsa" -C "generated pbench agent key" -N '' -q -t rsa
 	    pbench_agent_key="$tmpkeydir/id_rsa"
 	fi
+    fi
+    if type -t create_extra_credential_benchmark >/dev/null ; then
+	local entry
+	while read -r entry ; do
+	    additional_files+=("$entry");
+	done < <(create_extra_credential_benchmark "$tmpkeydir" "${additional_files[@]}")
     fi
 
     additional_files+=("id_rsa=$pbench_private_key")
@@ -336,7 +342,7 @@ function indent() {
     shift
     if [[ -n "$*" ]] ; then
 	# "$@" | indent_1 "$column" strips leading whitespace with bash 4.2
-	indent_1 "$column" <<< "$("$@")"
+	indent_1 "$column" < <("$@")
     else
 	indent_1 "$column"
     fi
@@ -526,12 +532,12 @@ EOF
     fi
 }
 
-function pbench-uperf-podname-base() {
+function pbench-benchmark-podname-base() {
     local type=$1
-    echo "${namespace}-${type}"
+    echo "${namespace}${type:+-$type}"
 }
 
-function pbench-uperf-environment() {
+function pbench-benchmark-environment() {
     if [[ -n "$*" ]] ; then
 	echo "env:"
 	local var
@@ -547,13 +553,13 @@ EOF
     fi
 }
 
-function pbench-uperf-pod() {
+function pbench-benchmark-pod() {
     local -a etchosts_addons=()
     local -A extra_hosts=()
     local affinity_string=
     local -a affinities=()
     local -a antiaffinities=()
-    local -a eenvironment=()
+    local -a environment=()
     local ipaddr
     local host
     local suffix=
@@ -580,28 +586,28 @@ function pbench-uperf-pod() {
     done
 
     local type=$1
-    affinity_string+=" -a app-subtype=uperf-${type}"
+    affinity_string+=" -a app-subtype=${bm_name}${type:+-$type}"
 # shellcheck disable=SC2086
     clean <<EOF
 ---
 apiVersion: v1
 kind: Pod
 metadata:
-  name: $(pbench-uperf-podname-base "$type")${suffix}
+  name: $(pbench-benchmark-podname-base "$type")${suffix}
   namespace: "$namespace"
 $(indent 2 create_network_annotation)
   labels:
-    k8s-app: ${namespace}-uperf-${type}
-    app: uperf
-    app-subtype: uperf-${type}
-    name: ${namespace}-${type}
+    k8s-app: ${namespace}-${bm_name}${type:+-$type}
+    app: ${bm_name}
+    app-subtype: ${bm_name}${type:+-$type}
+    name: ${namespace}${type:+-$type}
     ${selector_key}: "true"
     bench-army-knife-sync: "12"
   selector:
     matchLabels:
-      app: ${namespace}-$type
-      name: ${namespace}-$type
-      app-subtype: uperf-${type}
+      app: ${namespace}${type:+-$type}
+      name: ${namespace}${type:+-$type}
+      app-subtype: ${bm_name}${type:+-$type}
       ${selector_key}: "true"
 spec:
   nodeSelector:
@@ -630,7 +636,7 @@ done)
 $( (( waitforever )) && echo "    - -w")
     - "-L"
     - "-a"
-    - "${namespace}-${type}${suffix}"
+    - "${namespace}${type:+-$type}${suffix}"
     - "-D"
     - "/etc/credentials/"
     - "-n"
@@ -639,7 +645,7 @@ $( (( waitforever )) && echo "    - -w")
     - "id_rsa_agent"
     - "$port"
     - "${namespace}-controller.$namespace"
-$(indent 4 pbench-uperf-environment "${environment[@]}")
+$(indent 4 pbench-benchmark-environment "${environment[@]}")
     terminationGracePeriodSeconds: 1
     volumeMounts:
     - name: credentials
@@ -664,12 +670,12 @@ metadata:
   name: ${namespace}-agent-host
   namespace: "$namespace"
   labels:
-    k8s-app: uperf-agent-deployment
+    k8s-app: bench-army-knife-agent-deployment
 spec:
   replicas: $((1 + anti_affinity))
   selector:
     matchLabels:
-      k8s-app: uperf-agent
+      k8s-app: bench-army-knife-agent
       ${selector_key}: "true"
   template:
     metadata:
@@ -677,7 +683,7 @@ spec:
       namespace: "$namespace"
       labels:
         ${selector_key}: "true"
-        k8s-app: uperf-agent
+        k8s-app: bench-army-knife-agent
         bench-army-knife-sync: "12"
     spec:
       nodeSelector:
@@ -693,7 +699,7 @@ spec:
               - key: k8s-app
                 operator: In
                 values:
-                - "uperf-agent"
+                - "bench-army-knife-agent"
             topologyKey: kubernetes.io/hostname
         podAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
@@ -702,7 +708,7 @@ spec:
               - key: app
                 operator: In
                 values:
-                - "uperf"
+                - "${bm_name}"
             topologyKey: kubernetes.io/hostname
       setHostnameAsFQDN: true
       containers:
@@ -793,13 +799,13 @@ affinity:
         - key: app
           operator: In
           values:
-          - "uperf"
+          - "${bm_name}"
       topologyKey: kubernetes.io/hostname
 EOF
     fi
 }
 
-function mk_pairs() {
+function mk_podlist() {
     local basename=$1
     local -i pairs=${2:-1};
     local -a podnames=()
@@ -882,14 +888,14 @@ $( (( waitforever )) && echo "    - -w")
     - "-u"
     - "$username"
     - "--"
-    - "${namespace}-uperf"
+    - "pbench-${bm_name}"
     - "-c"
     - "$configname"
     - "-C"
-    - "$(mk_pairs "${namespace}-client" "$npairs")"
+    - "$(mk_podlist "${namespace}-client" "$instances")"
     - "-S"
-    - "$(mk_pairs "${namespace}-server" "$npairs")"
-$(IFS=$'\n'; echo "${uperf_args[*]/#/    - \"}" |grep '"' | sed -e 's/$/"/')
+    - "$(mk_podlist "${namespace}-server" "$instances")"
+$(IFS=$'\n'; echo "${benchmark_args[*]/#/    - \"}" |grep '"' | sed -e 's/$/"/')
     volumeMounts:
     - name: credentials
       mountPath: "/etc/credentials"
@@ -910,58 +916,62 @@ function create_host_addons() {
     done
 }
 
-function create_uperf_objects() {
+function create_benchmark_objects() {
     create_object controller_port
     local -i i
     local -a serverClusterIPs=()
-    local -i missing_servers=$npairs
+    local -i missing_servers=$instances
     local affinity_term=-a
     if (( anti_affinity )) ; then affinity_term=-A; fi
     if [[ -n "$interface" ]] ; then
 	local extra=
 	local -A ips_to_setup=()
-	for i in $(seq 1 "$npairs") ; do
+	for i in $(seq 1 "$instances") ; do
 	    # A VFIO device won't have IP addresses configured, so
 	    # we have to create them here.
 	    local extra_ip="192.179.128.$((current_hostaddr++))"
-	    local hostname_base=$(pbench-uperf-podname-base server)-${i}
+	    # shellcheck disable=SC2155
+	    local hostname_base=$(pbench-benchmark-podname-base server)-${i}
 	    local if_hostname=${hostname_base}-${interface}
 	    serverClusterIPs[$i]=$extra_ip
 	    extra_hosts[$if_hostname]=$extra_ip
 	    extra="-H ${if_hostname}=${extra_ip}"
 	    host_aliases[$hostname_base]=${host_aliases[$hostname_base]:+${hostaliases[$hostname_base]},}$if_hostname
-	    create_object pbench-uperf-pod -s "$i" $extra -E "_BENCH_ARMY_KNIFE_IP=${interface}=${extra_ip}" server
+	    # shellcheck disable=SC2086
+	    create_object pbench-benchmark-pod -s "$i" $extra -E "_BENCH_ARMY_KNIFE_IP=${interface}=${extra_ip}" server
 	done
 	# Get all of the client hosts before creating the objects
-	for i in $(seq 1 "$npairs") ; do
+	for i in $(seq 1 "$instances") ; do
 	    local extra_ip="192.179.128.$((current_hostaddr++))"
-	    local hostname_base=$(pbench-uperf-podname-base client)-${i}
+	    # shellcheck disable=SC2155
+	    local hostname_base=$(pbench-benchmark-podname-base client)-${i}
 	    ips_to_setup[$i]=$extra_ip
 	    local if_hostname=${hostname_base}-${interface}
 	    extra_hosts[$if_hostname]=$extra_ip
 	    host_aliases[$hostname_base]=${host_aliases[$hostname_base]:+${hostaliases[$hostname_base]},}$if_hostname
 	done
-	for i in $(seq 1 "$npairs") ; do
-	    create_object pbench-uperf-pod $(create_host_addons) -E "_BENCH_ARMY_KNIFE_IP=${interface}=${ips_to_setup[$i]}" -s "$i" "$affinity_term" app-subtype=uperf-server client
+	for i in $(seq 1 "$instances") ; do
+	    # shellcheck disable=SC2046
+	    create_object pbench-benchmark-pod $(create_host_addons) -E "_BENCH_ARMY_KNIFE_IP=${interface}=${ips_to_setup[$i]}" -s "$i" "$affinity_term" app-subtype=${bm_name}-server client
 	done
     else
-	for i in $(seq 1 "$npairs") ; do
-	    create_object pbench-uperf-pod -s "$i" server
+	for i in $(seq 1 "$instances") ; do
+	    create_object pbench-benchmark-pod -s "$i" server
 	    serverClusterIPs[$i]=
 	done
 	if (( print_only )) ; then
-	    for i in $(seq 1 "$npairs") ; do
+	    for i in $(seq 1 "$instances") ; do
 		serverClusterIPs[$i]="$i.$i.$i.$i"
-		create_object pbench-uperf-pod -H "${namespace}-server-${i}=${serverClusterIPs[$i]}" -s "$i" "$affinity_term" app-subtype=uperf-server client
+		create_object pbench-benchmark-pod -H "${namespace}-server-${i}=${serverClusterIPs[$i]}" -s "$i" "$affinity_term" app-subtype=${bm_name}-server client
 	    done
 	else
 	    while ((missing_servers)) ; do
-		for i in $(seq 1 "$npairs") ; do
+		for i in $(seq 1 "$instances") ; do
 		    if [[ -z "${serverClusterIPs[$i]:-}" ]] ; then
 			serverClusterIPs[$i]="$(get_ip "$interface" "-n" "$namespace" "${namespace}-server-${i}")"
 			if [[ -n "${serverClusterIPs[$i]}" ]] ; then
 			    missing_servers=$((missing_servers-1));
-			    create_object pbench-uperf-pod -H "${namespace}-server-${i}=${serverClusterIPs[$i]}" -s "$i" "$affinity_term" app-subtype=uperf-server client
+			    create_object pbench-benchmark-pod -H "${namespace}-server-${i}=${serverClusterIPs[$i]}" -s "$i" "$affinity_term" app-subtype=${bm_name}-server client
 			fi
 		    fi
 		done
@@ -972,13 +982,13 @@ function create_uperf_objects() {
     create_object agent_deployment
     if (( ! print_only )) ; then
 	# Servers must already exist, since we have their IPs above
-	while (( $(oc get pods --no-headers -n "$namespace" -l k8s-app="${namespace}-uperf-client" | wc -l) != npairs )) ; do
+	while (( $(oc get pods --no-headers -n "$namespace" -l k8s-app="${namespace}-${bm_name}-client" | wc -l) != instances )) ; do
 	    sleep 1
 	done
     fi
 }
 
-create_uperf_objects
+create_benchmark_objects
 
 create_object controller_pod
 
