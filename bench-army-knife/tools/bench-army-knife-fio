@@ -315,7 +315,7 @@ fi
 function create_extra_credential_benchmark() {
     local tmpdir="$1"
     shift
-    if ! grep '10-fio-setup' < <(IFS=$'\n'; echo "$*") ; then
+    if ! grep -q '10-fio-setup' < <(IFS=$'\n'; echo "$*") ; then
 	cat > "$tmpdir/10-fio-setup" <<'EOF'
 #!/bin/bash
 
@@ -323,7 +323,7 @@ FIO_SOCKNAME=/tmp/fio.sock
 
 if [[ ${BENCH_ARMY_KNIFE_ROLE:-} = controller ]] ; then
     cat > /usr/local/bin/create-tunnel <<'EOG'
-#!/bin/sh
+#!/bin/bash
 
 function fatal() {
     echo "$*" 1>&2
@@ -331,24 +331,38 @@ function fatal() {
 }
 
 if (( $# < 4 )) ; then
-    fatal "Usage: $0 remotename local remote command args..."
+    fatal "Usage: $0 first_port remotes... -- command args..."
 fi
 
-declare remotename=$1; shift
-declare local=$1; shift
-declare remote=$1; shift
+declare -i first_port=$1; shift
+declare -a remotes=()
+declare -a pids=()
 
-cat >>/etc/hosts <<EOH
-127.0.0.1 $remotename
-EOH
+while (( $# >= 0 )) ; do
+    if [[ $1 = -- ]] ; then
+        shift
+        break
+    fi
+    remotes+=("$1")
+    shift
+done
 
-socat "$local" "$remote" &
+if (( $# == 0 )) ; then
+    fatal "$0: no command specified"
+fi
+
+for remote in "${remotes[@]}" ; do
+    echo "127.0.0.1 $remote" >> /etc/hosts
+    socat "TCP4-LISTEN:$first_port,fork" "EXEC:ssh $remote socat - \"TCP4:127.0.0.1:$first_port\"" &
+    pids+=($!)
+    first_port=$((first_port+1))
+done
 
 declare -i status
 "$@"
 status=$?
 
-kill -KILL %socat
+kill -KILL "${pids[@]}"
 exit $status
 EOG
     ls -l /usr/local/bin/create-tunnel 1>&2
@@ -595,7 +609,7 @@ function persistent_volume_extra_args() {
     local count=$2
     if [[ -n "$pvname" ]] ; then
 	local -a targets
-	readarray -r targets < <(seq -f "$pvmount_path/${basename}-${bm_name}-%.0f${suffix}" 1 "$count")
+	readarray -t targets < <(seq -f "$pvmount_path/${basename}-${bm_name}-%.0f${suffix}" 1 "$count")
 	clean <<EOF
 - "--target=$(IFS=,; echo "${targets[*]}")"
 - "--job-file=/opt/pbench-agent/bench-scripts/templates/fio-shared-fs.job"
