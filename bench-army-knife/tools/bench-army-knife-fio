@@ -351,12 +351,19 @@ if (( $# == 0 )) ; then
     fatal "$0: no command specified"
 fi
 
+echo "********************" 1>&2
+echo $PATH 1>&2
+type -p ssh 1>&2
+echo "********************" 1>&2
+
+set -x
 for remote in "${remotes[@]}" ; do
     echo "127.0.0.1 $remote" >> /etc/hosts
     socat "TCP4-LISTEN:$first_port,fork" "EXEC:ssh $remote socat - \"TCP4:127.0.0.1:$first_port\"" &
     pids+=($!)
     first_port=$((first_port+1))
 done
+set +x
 
 declare -i status
 "$@"
@@ -408,9 +415,16 @@ function create_credentials() {
 
 function indent_1() {
     local -i column="$1"
-    local line
+    local line=
     while IFS='' read -r 'line' ; do
-	[[ -z "$line" ]] || printf "%${column}s%s\n" ' ' "$line"
+	if [[ -n "$line" ]] ; then
+	    local prefix=
+	    if [[ $line = '#'* ]] ; then
+		line=${line:1}
+		prefix='#'
+	    fi
+	    printf "%s%${column}s%s\n" "$prefix" ' ' "$line"
+	fi
     done
 }
 
@@ -612,7 +626,7 @@ function persistent_volume_extra_args() {
 	readarray -t targets < <(seq -f "$pvmount_path/${basename}-${bm_name}-%.0f${suffix}" 1 "$count")
 	clean <<EOF
 - "--target=$(IFS=,; echo "${targets[*]}")"
-- "--job-file=/opt/pbench-agent/bench-scripts/templates/fio-shared-fs.job"
+#- "--job-file=/opt/pbench-agent/bench-scripts/templates/fio-shared-fs.job"
 EOF
     fi
 }
