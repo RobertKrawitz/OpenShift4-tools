@@ -369,6 +369,7 @@ function cmdline_replicas() {
 }
 
 function run_installer() {
+    # shellcheck disable=SC2086
     "${install}" $loglevel "--dir=$install_dir" "$@"
 }
 
@@ -447,7 +448,7 @@ function _list_instance_types() {
 	    " Y"*)
 		;;
 	    *)
-		readarray -t cla <<< "$("$split_instance_func" "$instance")"
+		readarray -t cla < <("$split_instance_func" "$instance")
 		(( ${#cla[0]} < c )) || c=$((${#cla[0]}+1))
 		(( ${#cla[1]} <= s )) || s=${#cla[1]}
 		;;
@@ -465,7 +466,7 @@ function _list_instance_types() {
 		echo -ne "\n  ${instance#*.}"
 		;;
 	    *)
-		readarray -t cla <<< "$("$split_instance_func" "$instance")"
+		readarray -t cla < <("$split_instance_func" "$instance")
 		if [[ ${cla[0]} = "$last_class" ]] ; then
 		    tot_cols+=$((s+1))
 		    if (( tot_cols > (term_width - s) )) ; then
@@ -492,7 +493,7 @@ function list_instance_types() {
     while IFS= read -r line ; do
 	line=${line## }
 	echo "$line"
-    done <<< "$(_list_instance_types "$@")"
+    done < <(_list_instance_types "$@")
 }
 
 function _check_instance_type() {
@@ -509,14 +510,14 @@ function _check_instance_type() {
     echo "*** WARNING: '$instance_type' is not a currently known $platform instance type!"
     local -a cla
     local -a icla
-    readarray -t cla <<< "$("$split_instance_func" "$instance_type")"
+    readarray -t cla < <("$split_instance_func" "$instance_type")
     # shellcheck disable=SC2155
     local -i term_width=$(tput cols 2>/dev/null)
     (( term_width > 0 )) || term_width=80
     local -i tot_cols=0
     local j=0
     for instance in "$@" ; do
-	readarray -t icla <<< "$("$split_instance_func" "$instance")"
+	readarray -t icla < <("$split_instance_func" "$instance")
 	if [[ ${cla[0]} = "${icla[0]}" ]] ; then
 	   (( j++ )) || echo "Possible candidates:"
 	   if (( tot_cols > (term_width - 5) )) ; then
@@ -828,7 +829,7 @@ function do_installer_setup() {
 
 function list_release_channels() {
     local -a channels=(" X.Available release channels:")
-    readarray -t -O 1 channels <<< "$(openshift-release-info -B "$repo" channels < /dev/null | sort -r)"
+    readarray -t -O 1 channels < <(openshift-release-info -B "$repo" channels < /dev/null | sort -r)
     list_instance_types list_all "release_channel" '' "${channels[@]}" < /dev/null
 }
 
@@ -839,11 +840,11 @@ function list_install_versions() {
 	channels=("$channel")
     else
 	local -a channels=()
-	readarray -t channels <<< "$(openshift-release-info -B "$repo" channels < /dev/null | sort -r)"
+	readarray -t channels < <(openshift-release-info -B "$repo" channels < /dev/null | sort -r)
     fi
     for channel in "${channels[@]}" ; do
 	local -a versions=()
-	readarray -t versions <<< "$(openshift-release-info ${valid_channels} -B "$repo" ${channel:+-c "$channel"} releases < /dev/null | sort -r)"
+	readarray -t versions < <(openshift-release-info ${valid_channels} -B "$repo" ${channel:+-c "$channel"} releases < /dev/null | sort -r)
 	if [[ -n "${versions[*]:-}" ]] ; then
 	    releases+=(" X.$channel")
 	    releases+=("${versions[@]}")
@@ -862,7 +863,7 @@ function installer_setup() {
     if (( query )) ; then
 	if [[ -z ${release_channel:-} ]] ; then
 	    local -a channels=()
-	    readarray -t channels <<< "$(echo 'all'; openshift-release-info -B "$repo" channels < /dev/null | sort -r)"
+	    readarray -t channels < <(echo 'all'; openshift-release-info -B "$repo" channels < /dev/null | sort -r)
 	    OPS3=${PS3:-}
 	    PS3="Select channel: "
 	    select release_channel in "${channels[@]}" ; do break; done
@@ -872,14 +873,14 @@ function installer_setup() {
 	    release_channel=
 	fi
 	local -a versions=()
-	readarray -t versions <<< "$(openshift-release-info ${valid_channels} -B "$repo" ${release_channel:+-c "$release_channel"} releases < /dev/null | sort -r)"
+	readarray -t versions < <(openshift-release-info ${valid_channels} -B "$repo" ${release_channel:+-c "$release_channel"} releases < /dev/null | sort -r)
 	OPS3=${PS3:-}
 	PS3="Select release: "
 	select install_version in "${versions[@]}" ; do break; done
 	PS3=$OPS3
     elif [[ -n ${release_channel:-} ]] ; then
 	local -a versions=()
-	read -r install_version <<< "$(openshift-release-info ${valid_channels} -B "$repo" ${release_channel:+-c "$release_channel"} releases < /dev/null | sort -r | head -1)"
+	read -r install_version < <(openshift-release-info ${valid_channels} -B "$repo" ${release_channel:+-c "$release_channel"} releases < /dev/null | sort -r | head -1)
     elif [[ $install_version = latest ]] ; then
 	not_latest=0
 	release_channel=${release_channel:-${release_base_map[$repo]:-}}
@@ -1182,7 +1183,7 @@ function run_install() {
     [[ -z $cleanup_only_dir ]] || return
 
     # shellcheck disable=SC2155
-    export KUBECONFIG="$(cd $install_dir && pwd)/auth/kubeconfig"
+    export KUBECONFIG="$(cd "$install_dir" && pwd)/auth/kubeconfig"
 
     # shellcheck disable=SC2155
     local start=$(tsec)
@@ -1258,7 +1259,7 @@ function read_profile() {
     fi
     local value
     if [[ $profile = *.json ]] ; then
-	while read -r key <<<"$(jq -r 'keys[]' "$profile")" ; do
+	while read -r key < <(jq -r 'keys[]' "$profile") ; do
 	    value="$(jq -r ".\"$key\"" "$profile")" || fatal "Cannot process $key"
 	    eval "key=\"$value\"" || fatal "Cannot process $key=$value"
 	done
@@ -1417,11 +1418,11 @@ function find_platforms() {
 		    ____var_map=()
 		    while read -r ____a ; do
 			____var_map[$____a]=1
-		    done <<< "$(compgen -v; compgen -c)"
+		    done < <(compgen -v; compgen -c)
 		    unset ____a
 		    # shellcheck disable=SC1090
 		    . "$____f"
-		    readarray -t ____new_vars <<< "$(compgen -v; compgen -c)"
+		    readarray -t ____new_vars < <(compgen -v; compgen -c)
 		    for ____a in "${____new_vars[@]}" ; do
 			if [[ -z ${____var_map[$____a]:-} &&
 				  $____a != "_____$____current_platform"* &&

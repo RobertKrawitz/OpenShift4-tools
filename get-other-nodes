@@ -1,8 +1,9 @@
-#!/bin/sh
+#!/bin/bash
 
-primary="$1"
+declare primary="$1"
 
-cmd='
+# shellcheck disable=SC2016
+declare cmd='
 [foreach .items[] as $item
 ([[],[]];0;
 if ($item.kind == "Node" and

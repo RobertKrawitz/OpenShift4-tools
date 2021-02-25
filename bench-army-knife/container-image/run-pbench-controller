@@ -357,7 +357,7 @@ EOF
     [[ -f /etc/ssh/ssh_config ]] && cat /etc/ssh/ssh_config > "$ssh_tmpdir/ssh_config"
     [[ -f "$HOME/.ssh/config" ]] && cat "$HOME/.ssh/config" >> "$ssh_tmpdir/ssh_config"
 
-    readarray -t local_ports <<< "$(find-free-ports -n "$expected_agents" -p 18000)"
+    readarray -t local_ports < <(find-free-ports -n "$expected_agents" -p 18000)
     for port in "${local_ports[@]}" ; do
 	port_data+=("PASV $ssh_ext_port $port $(whoami)")
     done
@@ -379,7 +379,7 @@ LogLevel ERROR
 EOF
 	done
 	i=$((i+1))
-    done <<< "$(sync.pl -v "$agent_sync_port" "$expected_agents" 1 "${port_data[@]}")"
+    done < <(sync.pl -v "$agent_sync_port" "$expected_agents" 1 "${port_data[@]}")
     PATH="$ssh_tmpdir${PATH:+:$PATH}"
     # Wait until clients have their tunnels up
     echo "Pinging agents..."
@@ -405,7 +405,7 @@ LogLevel ERROR
 
 EOF
 	done
-    done <<< "$(sync.pl -v "$agent_sync_port" "$expected_agents" 1)"
+    done < <(sync.pl -v "$agent_sync_port" "$expected_agents" 1)
 fi
 
 if [[ -z "${tool_script:-}" ]] ; then

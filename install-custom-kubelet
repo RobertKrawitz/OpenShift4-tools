@@ -115,7 +115,7 @@ else
 		  ($install_worker -eq 1 && $class == *worker*) ]] ; then
 	    all_nodes+=("$node")
 	fi
-    done <<< "$(oc get nodes --no-headers=true)"
+    done < <(oc get nodes --no-headers=true)
 fi
 
 function rcmd() {
@@ -376,5 +376,5 @@ if (( copy_kubelet && ! do_uninstall )) ; then
 fi
 
 echo "Set up kubelet"
-generate_grappling_hook <<< "$(print_node_names "$@")" | rcmd "${all_nodes[0]}" "cat > /var/tmp/kubelet-grappling-hook; chmod +x /var/tmp/kubelet-grappling-hook; /var/tmp/kubelet-grappling-hook $expected_md5 $parallel_kube" |cut "-c1-$twidth"
+generate_grappling_hook < <(print_node_names "$@") | rcmd "${all_nodes[0]}" "cat > /var/tmp/kubelet-grappling-hook; chmod +x /var/tmp/kubelet-grappling-hook; /var/tmp/kubelet-grappling-hook $expected_md5 $parallel_kube" |cut "-c1-$twidth"
 oc get nodes

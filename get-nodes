@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 
 # cmd='
 # [foreach .items[] as $item
@@ -12,6 +12,7 @@
 #   if $address.type == "InternalIP" then $address.address else null end))])] | flatten | map (select (. != null))[0]
 #  else null end)]|flatten | map(select (. != null))[]'
 
+# shellcheck disable=SC2016
 cmd='
 [foreach .items[] as $item
 ([[],[]];0;
@@ -21,9 +22,10 @@ if ($item.kind == "Node") then
   if $address.type == "ExternalIP" then $address.address else null end))])] | flatten | map (select (. != null))[0]
  else null end)]|flatten | map(select (. != null))[]'
 
-out=$(oc get nodes -o json | jq -r "$cmd")
+out="$(oc get nodes -o json | jq -r "$cmd")"
 
-[[ -z $out ]] && {
+[[ -z "$out" ]] && {
+    # shellcheck disable=SC2016
     cmd='
 [foreach .items[] as $item
 ([[],[]];0;
@@ -35,6 +37,6 @@ if ($item.kind == "Node") then
   ([[],[]];0;
   if $address.type == "InternalIP" then $address.address else null end))])] | flatten | map (select (. != null))[0]
  else null end)]|flatten | map(select (. != null))[]'
-  out=$(oc get nodes -o json | jq -r "$cmd")
+  out="$(oc get nodes -o json | jq -r "$cmd")"
 }
-echo $out
+echo "$out"

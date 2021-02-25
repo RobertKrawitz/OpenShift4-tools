@@ -124,7 +124,7 @@ start=$(tsec)
 
 while : ; do 
     # shellcheck disable=SC2034
-    IFS='|' read -r name generation status count degradedcount readycount unavailable updatedcount <<< "$(get_machine_status)"
+    IFS='|' read -r name generation status count degradedcount readycount unavailable updatedcount < <(get_machine_status)
     if [[ $status = *'Degraded' ]] ; then
 	echo "Machine config is degraded!"
 	exit 1

@@ -868,7 +868,7 @@ function indent() {
     shift
     if [[ -n "$*" ]] ; then
 	# "$@" | indent_1 "$column" strips whitespace with bash 4.2
-	indent_1 "$column" <<< "$("$@")"
+	indent_1 "$column" < <("$@")
     else
 	indent_1 "$column"
     fi
@@ -2567,7 +2567,7 @@ function allocate_namespaces() {
 	    if [[ -n "$ns" ]] ; then
 		namespaces_in_use[${ns#namespace/}]=1
 	    fi
-        done <<< "$("$OC" get ns -l "$basename" --no-headers -o name 2>/dev/null)"
+        done < <("$OC" get ns -l "$basename" --no-headers -o name 2>/dev/null)
     fi
     while (( ns_count++ < namespaces )) ; do
         while [[ -n "${namespaces_in_use[${basename}-$ns_idx]:-}" ]] ; do
@@ -2591,7 +2591,7 @@ function find_first_deployment() {
 		    firstDeployment=$((deployment + 1))
 		fi
 	    fi
-        done <<< "$("$OC" get deployments -l "$basename" -A --no-headers 2>/dev/null)"
+        done < <("$OC" get deployments -l "$basename" -A --no-headers 2>/dev/null)
     fi
 }
 
@@ -2616,7 +2616,7 @@ function createAllSecrets() {
 function createSystemConfigMap() {
     if type -t "listConfigMaps${podType}" >/dev/null ; then
 	local -a systemfiles
-	readarray -t systemfiles <<< "$(listConfigMaps${podType})"
+	readarray -t systemfiles < <(listConfigMaps${podType})
 	trap 'kill -9 $(jobs -p); exit' INT
 	for i in $(seq 0 "$((parallelConfigMaps - 1))") ; do
 	    createObjects_n ConfigMaps "$parallelConfigMaps" "$blocksizeConfigMaps" "$((i * blocksizeConfigMaps))" "$sleepConfigMaps" "systemconfigmap" "${systemfiles[@]}"&
@@ -2665,7 +2665,7 @@ function createAllObjects() {
 	elif [[ -n "$line" ]] ; then
 	    (IFS=''; echo "$line")
 	fi
-    done <<< "$("createAll${objtype}" "$@" 2>&1)"
+    done < <("createAll${objtype}" "$@" 2>&1)
 }
 
 function doCleanup() {
@@ -2729,7 +2729,7 @@ function run_clusterbuster_1() {
 	while (( ${#expected_secrets[@]} )) ; do
 	    while read -r secname ; do
 		[[ -n "${secname:-}" ]] && unset "expected_secrets[$secname]"
-	    done <<< "$("$OC" get secret -oname --no-headers -l "$basename" -A)"
+	    done < <("$OC" get secret -oname --no-headers -l "$basename" -A)
 	    if (( ${#expected_secrets[@]} )) ; then
 		echo "Still waiting for ${#expected_secrets[@]} to be created."
 		sleep 10
@@ -2795,7 +2795,7 @@ function run_clusterbuster_1() {
     local objtype
     while read -r objtype ; do
 	[[ -n "${objtype:-}" ]] && printf "Created %${#totalObjectsCreated}d %s(s)\n" "${objectsCreated[$objtype]}" "$objtype"
-    done <<< "$( (IFS=$'\n'; echo "${!objectsCreated[*]}") | sort)"
+    done < <( (IFS=$'\n'; echo "${!objectsCreated[*]}") | sort)
     echo "Created $totalObjectsCreated object(s) total"
     if ((cleanup)) ; then
 	doCleanup

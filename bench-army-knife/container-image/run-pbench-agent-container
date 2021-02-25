@@ -168,7 +168,7 @@ rm -f /run/nologin
 declare -i sshd_port
 declare -i ssh_server_pid
 
-read -r sshd_port ssh_server_pid <<< "$(mini-sshd $sshd_args)"
+read -r sshd_port ssh_server_pid < <(mini-sshd $sshd_args)
 
 if (( !sshd_port )) ; then
     echo "Can't run mini ssh server!"
@@ -187,7 +187,7 @@ function run_pbench_agent_once() {
 		controller_host=${BASH_REMATCH[2]}
 		break
 	    fi
-	done <<< "$(host "$controller_host.svc.cluster.local" "$dns_server")"
+	done < <(host "$controller_host.svc.cluster.local" "$dns_server")
     fi
 
     # Let the controller know that we're ready to go

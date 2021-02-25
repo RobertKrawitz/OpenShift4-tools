@@ -49,7 +49,7 @@ function _____libvirt_apiserver_on_localhost() {
 	if [[ $ipaddr = 127.0.0.1 ]] ; then
 	    return 0
 	fi
-    done <<< "$(host "api.$(_____libvirt_domainname)")"
+    done < <(host "api.$(_____libvirt_domainname)")
     return 1
 }
 
@@ -72,7 +72,7 @@ function _____libvirt_find_dnsmasq() {
 	while read -r fn ; do
 	    [[ -z "$file" ]] || return 3
 	    file=$fn
-	done <<< "$(grep -l "^server=/$OPENSHIFT_INSTALL_BASE_DOMAIN/$_____libvirt_server_ipaddr" "/etc/NetworkManager/dnsmasq.d/"*.conf /dev/null)"
+	done < <(grep -l "^server=/$OPENSHIFT_INSTALL_BASE_DOMAIN/$_____libvirt_server_ipaddr" "/etc/NetworkManager/dnsmasq.d/"*.conf /dev/null)
 	[[ -n "$file" ]] || return 4
 	echo "$file"
 	grep -q "^address=/.apps.$OPENSHIFT_INSTALL_BASE_DOMAIN/$_____libvirt_apps_ipaddr" "$file"
@@ -184,7 +184,7 @@ function _____libvirt_find_pool() {
 	    fi
 	    return 0
 	fi
-    done <<< "$(virsh --quiet pool-list)"
+    done < <(virsh --quiet pool-list)
     # Too dangerous to return default if we don't find the right pool.
     # We could wipe everything out.
     echo "$found_pool"
@@ -192,7 +192,7 @@ function _____libvirt_find_pool() {
 
 function _____libvirt_find_default_domain() {
     local -a files
-    readarray -t files <<< "$(find /etc/NetworkManager/dnsmasq.d/ -type f -name '*.conf' -print)"
+    readarray -t files < <(find /etc/NetworkManager/dnsmasq.d/ -type f -name '*.conf' -print)
     [[ -z "${files[*]}" ]] && fatal "No dnsmasq files in /etc/NetworkManager/dnsmasq.d"
     local dnsmasq_domain=
     for f in "${files[@]}" ; do
@@ -318,20 +318,20 @@ function _____libvirt_cleanup() {
 	    if [[ $node = "${cluster_name}-worker-"* ]] ; then
 		_____libvirt_destroy_node "$pool" "$node"
 	    fi
-	done <<< "$(virsh list --name)"
+	done < <(virsh list --name)
 	_____libvirt_destroy_net "$cluster_name"
 	while read -r net ignore ; do
 	    if [[ $net = "$cluster_name"* ]] ; then
 		_____libvirt_destroy_net "$net"
 	    fi
-	done <<< "$(virsh --quiet net-list)"
+	done < <(virsh --quiet net-list)
 	_____libvirt_destroy_node "$pool" "${cluster_name}-bootstrap" "${cluster_name}-master-0"
 	# shellcheck disable=SC2034
 	while read -r volume ignore ; do
 	    if [[ $volume = "$cluster_name"* ]] ; then
 		_____libvirt_delete_volume "$pool" "$volume"
 	    fi
-	done <<< "$(virsh --quiet vol-list --pool "$pool")"
+	done < <(virsh --quiet vol-list --pool "$pool")
 	if [[ $pool = "$OPENSHIFT_INSTALL_CLUSTER_NAME"* ]] ; then
 	    virsh pool-delete "$pool"
 	fi

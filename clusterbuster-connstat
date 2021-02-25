@@ -281,7 +281,7 @@ function retrieve_pod_stats() {
 	    connection_refused=$(grep -c 'Connection refused' <<< "$data")
 	    connection_failures=$(grep -c 'Could not connect' <<< "$data")
 	    blocks=$(grep -c 'Write/Read' <<< "$data")
-	    readarray -t statlines <<< "$(grep -E '^STATS' <<< "$data")"
+	    readarray -t statlines < <(grep -E '^STATS' <<< "$data")
 	    if [[ $data = *"FINIS"* ]] ; then
 		row_prefix=
 	    fi
@@ -311,7 +311,7 @@ function get_all_pods() {
 	while read -r ns ; do
 	    ns=${ns##*/}
 	    "${OC}" get pods -ojson -l "${basename}-client" -n "$ns"
-	done <<< "$("${OC}" get ns -l "$basename" --no-headers | awk '{print $1}')"
+	done < <("${OC}" get ns -l "$basename" --no-headers | awk '{print $1}')
     else
 	"${OC}" get pods -ojson -l "${basename}-client"
     fi
@@ -358,7 +358,7 @@ function process_stats() {
 }
 
 function get_stats() {
-    process_stats <<< "$(get_all_pods "$basename" | jq -r "$jq_cmd")"
+    process_stats < <(get_all_pods "$basename" | jq -r "$jq_cmd")
 }
 
 function clean() {
@@ -390,7 +390,7 @@ function do_summarize() {
 		cached_stats[$item]+="${output[*]}"$'\n'
 		unset pod_cache["$item"]
 	    fi
-	done <<< "$(get_stats)"
+	done < <(get_stats)
 	if ((found_all)) ; then
 	    echo "$(IFS=$'\n'; echo "${cached_stats[*]}")"
 	    return
