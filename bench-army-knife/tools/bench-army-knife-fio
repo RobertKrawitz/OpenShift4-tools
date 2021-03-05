@@ -188,10 +188,9 @@ while getopts 'A:C:c:EeF:HIi:Kk:L:M:m:N:nP:p:qR:u:V:wXxYy' opt ; do
 	R) pod_cpu_request=$OPTARG	 ;;
 	u) username=$OPTARG		 ;;
 	V)
-	    IFS=':' read -r pvname pvtype pvtype_key pvscoped_name pvmount_path <<< "$OPTARG"
-	    if [[ -z "$pvname" || -z "$pvtype" || -z "$pvtype_key" || -z "$pvscoped_name" || -z "$pvmount_path" ]] ; then
-		echo "name, type, type_key, scoped name, and mount path must be provided"
-		echo "for persistent volume"
+	    IFS=':' read -r pvname pvtype pvmount_path pvtype_key pvscoped_name <<< "$OPTARG"
+	    if [[ -z "$pvname" || -z "$pvtype" || -z "$pvmount_path" ]] ; then
+		echo "name, type, and mount path must be provided for volumes"
 		exit 1
 	    fi
 	    ;;
@@ -612,9 +611,17 @@ function persistent_volume_decl() {
     if [[ -n "$pvname" ]] ; then
 	clean <<EOF
 - name: "$pvname"
+EOF
+	if [[ -n "$pvtype_key" ]] ; then
+	    clean <<EOF
   $pvtype:
     $pvtype_key: "$pvscoped_name"
 EOF
+	else
+	    clean <<EOF
+  $pvtype: {}
+EOF
+	fi
     fi
 }
 

@@ -5,32 +5,31 @@ use POSIX;
 use strict;
 use Time::Piece;
 use Time::HiRes qw(gettimeofday);
-our ($namespace, $pod, $container, $basetime, $baseoffset, $crtime, $poddelay, $exit_delay, $synchost, $syncport, $dirs, $files_per_dir, $blocksize, $block_count, @dirs) = @ARGV;
-
+#use File::Sync qw(sync);
+our ($namespace, $pod, $container, $basetime, $baseoffset, $crtime, $poddelay, $exit_delay, $synchost, $syncport, $dirs, $files_per_dir, $blocksize, $block_count, $processes, $loghost, $logport, @dirs) = @ARGV;
+$SIG{TERM} = sub { POSIX::_exit(0); };
 $basetime += $baseoffset;
 $crtime += $baseoffset;
-my ($time_overhead) = 0;
+
+sub cputime() {
+    my (@times) = times();
+    return $times[0] + $times[1] + $times[2] + $times[3];
+}
+
 sub ts() {
     my (@now) = gettimeofday();
     return sprintf("%s.%06d", gmtime($now[0])->strftime("%Y-%m-%dT%T"), $now[1]);
 }
 sub timestamp($) {
     my ($str) = @_;
-    printf STDERR "%s %s %s\n", $container, ts(), $str;
+    printf STDERR "%7d %s %s\n", $$, ts(), $str;
 }
+
 sub xtime() {
     my (@now) = gettimeofday();
     return $now[0] + ($now[1] / 1000000.0);
 }
-sub calibrate_time() {
-    for (my $i = 0; $i < 1000; $i++) {
-        my ($start) = xtime();
-	my ($end) = xtime();
-	$time_overhead += $end - $start;
-    }
-    $time_overhead /= 1000;
-}
-
+my ($dstime) = xtime();
 sub connect_to($$) {
     my ($addr, $port) = @_;
     my ($connected) = 0;
@@ -62,9 +61,6 @@ sub connect_to($$) {
     } while (! $connected);
     return ($sock, $ghbn_time, $stime);
 }
-$SIG{TERM} = sub { POSIX::_exit(0); };
-
-timestamp("Filebuster client starting");
 
 sub do_sync($$;$) {
     my ($addr, $port, $token) = @_;
@@ -96,33 +92,99 @@ sub do_sync($$;$) {
         }
     }
 }
-do_sync($synchost, $syncport);
 
 if ($#dirs < 0) {
     @dirs=("/tmp");
 }
-
 my ($buffer);
 vec($buffer, $blocksize - 1, 8) = "A";
 
-foreach my $dir (@dirs) {
-    $dir="$dir/$container";
-    mkdir("$dir") || die("Can't create directory $dir: $!\n");
-    foreach my $subdir (0..$dirs-1) {
-	my ($dirname) = "$dir/d$subdir";
-	mkdir("$dirname") || die("Can't create directory $dirname: $!\n");
-	foreach my $file (0..$files_per_dir-1) {
-	    my ($filename) = "$dirname/f$file";
-	    open(FILE, ">", $filename) || die "Can't create file $filename: $!\n";
-	    foreach my $block (0..$block_count - 1) {
-		if (syswrite(FILE, $buffer, $blocksize) != $blocksize) {
-		    die "Write to $filename failed: $!\n";
+
+sub runit($) {
+    my ($process) = @_;
+    my ($basecpu) = cputime();
+    my ($prevcpu) = $basecpu;
+    my ($iterations) = 1;
+
+    my $delaytime = $basetime + $poddelay - $dstime;
+    do_sync($synchost, $syncport);
+    my ($stime1) = xtime();
+    my ($stime) = $stime1;
+    my ($prevtime) = $stime;
+    my ($scputime) = cputime();
+    my ($ops) = 0;
+    foreach my $bdir (@dirs) {
+	my ($pdir)="$bdir/p$process";
+	mkdir("$pdir") || die("Can't create directory $pdir: $!\n");
+	$ops++;
+	my ($dir)="$pdir/$container";
+	mkdir("$dir") || die("Can't create directory $dir: $!\n");
+	$ops++;
+	foreach my $subdir (0..$dirs-1) {
+	    my ($dirname) = "$dir/d$subdir";
+	    mkdir("$dirname") || die("Can't create directory $dirname: $!\n");
+	    $ops++;
+	    foreach my $file (0..$files_per_dir-1) {
+		my ($filename) = "$dirname/f$file";
+		open(FILE, ">", $filename) || die "Can't create file $filename: $!\n";
+		$ops++;
+		foreach my $block (0..$block_count - 1) {
+		    if (syswrite(FILE, $buffer, $blocksize) != $blocksize) {
+			die "Write to $filename failed: $!\n";
+		    }
+		    $ops++;
 		}
+		close FILE;
 	    }
 	}
     }
+    sleep($exit_delay);
+    foreach my $bdir (@dirs) {
+	my ($pdir)="$bdir/p$process";
+	my ($dir)="$pdir/$container";
+	foreach my $subdir (0..$dirs-1) {
+	    my ($dirname) = "$dir/d$subdir";
+	    foreach my $file (0..$files_per_dir-1) {
+		my ($filename) = "$dirname/f$file";
+		unlink($filename) || die "Can't remove $filename: $!\n";
+		$ops++;
+	    }
+	    rmdir("$dirname") || die("Can't remove directory $dirname: $!\n");
+	    $ops++;
+	}
+	rmdir("$dir") || die("Can't remove directory $dir: $!\n");
+	$ops++;
+	rmdir("$pdir") || die("Can't create directory $pdir: $!\n");
+	$ops++;
+    }
+    system("sync");
+#    sync();
+    my ($etime) = xtime();
+    my ($eltime) = $etime - $stime1;
+    my ($cputime) = cputime() - $scputime;
+    my ($answer) = sprintf("STATS %d %.3f %.3f %.3f %.3f %.3f %.3f %7.3f %d %d %d",
+        $$, $crtime - $basetime, $dstime - $basetime, $stime1 - $basetime,
+        $eltime, $etime - $basetime, $cputime, 100.0 * $cputime / $eltime, $ops, $iterations,
+        $iterations / ($etime - $stime1));
+    print STDERR "$answer\n";
+    do_sync($synchost, $syncport, $answer);
+    do_sync($loghost, $logport, "-n $namespace $pod -c $container terminated 0 0 0 $answer");
 }
 
-sleep($exit_delay);
-
-do_sync($synchost, $syncport, "files test complete");
+timestamp("Filebuster client starting");
+$SIG{CHLD} = 'IGNORE';
+if ($processes > 1) {
+    for (my $i = 0; $i < $processes; $i++) {
+        if ((my $child = fork()) == 0) {
+            runit($i);
+            exit(0);
+        }
+    }
+} else {
+    runit(0);
+}
+print STDERR "FINIS\n";
+timestamp("About to exit");
+while (wait() > 0) {}
+timestamp("Done waiting");
+POSIX::_exit(0);

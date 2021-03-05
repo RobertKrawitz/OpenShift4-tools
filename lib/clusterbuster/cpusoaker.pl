@@ -63,7 +63,6 @@ sub connect_to($$) {
 
 sub do_sync($$;$) {
     my ($addr, $port, $token) = @_;
-    my $otoken = $token;
     if (not $addr) { return; }
     if ($addr eq '-') {
 	$addr=`ip route get 1 |awk '{print \$(NF-2); exit}'`;

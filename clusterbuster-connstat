@@ -156,6 +156,7 @@ function process_summary() {
     local -i readrate=0
     local -i writerate=0
     local -a output
+    local -i fsops=0
     local mode=
     while read -r -a output ; do
 	[[ -n "${output[*]}" ]] || continue
@@ -164,6 +165,7 @@ function process_summary() {
 		*'soaker'*)   mode=soaker   ;;
 		*'client'*)   mode=server   ;;
 		*'sysbench'*) mode=sysbench ;;
+		*'files'*)    mode=files    ;;
 		*)                          ;;
 	    esac
 	fi
@@ -174,6 +176,19 @@ function process_summary() {
 	    echo "${output[*]}"
 	fi
 	case "$mode" in
+	    files)
+		pod_start=$(($(clean "${output[12]}")))
+		if (( pod_start < pod_first_start )) ; then pod_first_start=pod_start; fi
+		if (( pod_start > pod_last_start )) ; then pod_last_start=pod_start; fi
+		start=$(clean "${output[13]}")
+		end=$(clean "${output[15]}")
+		et=$(clean "${output[14]}")
+		if (( start < first_start )) ; then first_start=$start; fi
+		if (( end > last_end )) ; then last_end=$end; fi
+		total_cpu+=$(clean "${output[16]}")
+		total_cpu_util+=$(clean "${output[17]}")
+		fsops+=$(clean "${output[18]}")
+		;;
 	    server)
 		total+=${output[19]}
 		start=$(clean "${output[14]}")
@@ -217,6 +232,16 @@ function process_summary() {
     done
     (( line_count )) || return
     case "$mode" in
+	files)
+	    echo "Filesystem ops: $fsops"
+	    echo "Filesystem ops/sec: $(bc <<< "scale=3; $fsops / ((($last_end)-($first_start))/1000)")"
+	    echo "Average_elapsed: $(bc <<< "scale=3; $total_et/$line_count/1000")"
+	    echo "Elapsed_span: $(bc <<< "scale=3; (($last_end)-($first_start))/1000")"
+	    echo "First start: $(bc <<< "scale=3; ($pod_first_start)/1000")"
+	    echo "Starting span: $(bc <<< "scale=3; (($pod_last_start)-($pod_first_start))/1000")"
+	    echo "Total CPU: $(bc <<< "scale=3; $total_cpu/1000")"
+	    echo "CPU utilization: $(bc <<< "scale=3; $total_cpu_util/1000")%"
+;;
 	server)
 	    echo "Bytes: $total"
 	    echo "Containers: $line_count"
@@ -322,7 +347,7 @@ trap exit INT
 function process_stats() {
     local -i curjobs=0
     local ns
-    local nsfield
+    local nsfield=
     local pod
     local container
     local status

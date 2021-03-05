@@ -77,11 +77,11 @@ declare -i scale_deployments=1
 declare -i syncStart=0
 declare runtimeClass=
 declare -a emptydirs=()
-declare -a persistent_volumes=()
-declare -A persistent_volume_mount_paths=()
-declare -A persistent_volume_types=()
-declare -A persistent_volume_type_keys=()
-declare -A persistent_volume_scoped_names=()
+declare -a volumes=()
+declare -A volume_mount_paths=()
+declare -A volume_types=()
+declare -A volume_type_keys=()
+declare -A volume_scoped_names=()
 declare -a sysbench_generic_options=()
 declare -a sysbench_fileio_options=()
 declare -A sysbench_fileio_tests=()
@@ -226,21 +226,31 @@ Extended Options:
     Using PBench:
        If pbench is to be used, both arguments below must be provided.
        --pbench_controller_address=address
-			Use the specified address to connect to the controller.
+                        Use the specified address to connect to the controller.
        --pbench_controller_port=port
-			Use the specified port to connect to the controller.
+                        Use the specified port to connect to the controller.
 
     Using Files:
        --volumes=N      Use the specified number of volumes.
-       			If not provided, /tmp (writable layer) is used.
+                        If not provided, /tmp (writable layer) is used.
+       --volume=name:type:name_type:mount_name:mount_path
+                        Mount a specified persistent volume.
+                        name is the name of the volume (required).
+                        type is the type of volume (required).
+                        mount_path is the path on which to mount the volume
+                            (required).
+                        type_key is the key for the volume (e. g.
+                            claimName for persistentVolumeClaim)
+                        scoped_name is the volume's name as recognized
+                            by the description.
        --dirs-per-volume=N
-			Create the specified number of directories per volume.
-			Default 1.
+                        Create the specified number of directories per volume.
+                        Default 1.
        --files-per-dir=N
-			Create the specified number of files per directory.
+                        Create the specified number of files per directory.
        --file-size=N
-			Each file should be of the specified size.
-			Sizes may be in bytes, [KMGT]iB, or [KMGT]B.
+                        Each file should be of the specified size.
+                        Sizes may be in bytes, [KMGT]iB, or [KMGT]B.
 
     Tuning object creation (short equivalents):
        --scale-ns=[0,1] Scale up the number of namespaces.
@@ -276,7 +286,7 @@ Extended Options:
 
     Pod Options:
        --external_sync=host:port
-			Sync to external host rather than internally
+                        Sync to external host rather than internally
        --<type>=<resource=value>
                         Resource requests and limits
                         <type> is pod_resource_request, pod_resource_limit,
@@ -285,17 +295,6 @@ Extended Options:
                         Run the pods in the designated runtimeclass.
        --kata           Synonym for --runtimeclass=kata-qemu
        --emptydir=dir   Mount an emptydir volume at the specified mount point.
-       --persistent_volume=name:type:name_type:mount_name:mount_path
-       --pv=name:type:type_key:scoped_name:mount_path
-                        Mount a specified persistent volume.
-                        name is the name of the volume (required).
-                        type is the type of volume (required).
-                        type_key is the key for the volume (e. g.
-                            claimName for persistentVolumeClaim)
-                        scoped_name is the volume's name as recognized
-                            by the description (required).
-                        mount_path is the path on which to mount the volume
-                            (required).
        --tolerate=<key:operator:effect>
                         Apply the specified tolerations to created pods.
 
@@ -324,7 +323,7 @@ Extended Options:
                         Space or comma separated general fio options
        --workdir=<dir>  Use the specified working directory for file I/O
        --fio-jobfile=<file>
-			Name of fio job file to use.  May be repeated.
+                        Name of fio job file to use.  May be repeated.
 
     Sysbench General Options:
        --sysbench-general-options=<options>
@@ -668,21 +667,21 @@ function process_option() {
 	timeout)		    timeout=$optvalue				;;
 	verbose_report)		    verbose_report=$optvalue			;;
 	emptydir)		    emptydirs+=("$optvalue")			;;
-	pv|persistent_volume)
-	    local pvname=
-	    local pvtype=
-	    local pvmount_path=
-	    IFS=':' read -r pvname pvtype pvtype_key pvscoped_name pvmount_path <<< "$optvalue"
-	    if [[ -z "$pvname" || -z "$pvtype" || -z "$pvtype_key" || -z "$pvscoped_name" || -z "$pvmount_path" ]] ; then
+	volume)
+	    local vname=
+	    local vtype=
+	    local vmount_path=
+	    IFS=':' read -r vname vtype vmount_path vtype_key vscoped_name <<< "$optvalue"
+	    if [[ -z "$vname" || -z "$vtype" || -z "$vmount_path" ]] ; then
 		echo "name, type, type_key, scoped name, and mount path must be provided"
-		echo "for persistent volume"
+		echo "for volumes"
 		exit 1
 	    fi
-	    persistent_volumes+=("$pvname")
-	    persistent_volume_mount_paths["$pvname"]=$pvmount_path
-	    persistent_volume_types["$pvname"]=$pvtype
-	    persistent_volume_type_keys["$pvname"]=$pvtype_key
-	    persistent_volume_scoped_names["$pvname"]=$pvscoped_name
+	    volumes+=("$vname")
+	    volume_mount_paths["$vname"]=$vmount_path
+	    volume_types["$vname"]=$vtype
+	    volume_type_keys["$vname"]=$vtype_key
+	    volume_scoped_names["$vname"]=$vscoped_name
 	    ;;
 	sync|syncstart|sync_start)  syncStart=$((1-syncStart))			;;
 	baseoffset|base_offset)     baseoffset=$optvalue			;;
@@ -1048,7 +1047,7 @@ function createVolumeMountsYAML() {
     local namespace=$1
     local deployment=${2:-1}
     local secrets=${3:-1}
-    (( secrets + ${#emptydirs[@]} + ${#configMapFiles[@]} + ${#persistent_volumes[@]} + hasSystemConfigMap )) || return;
+    (( secrets + ${#emptydirs[@]} + ${#configMapFiles[@]} + ${#volumes[@]} + hasSystemConfigMap )) || return;
     local -i i
     echo volumeMounts:
     for i in $(seq 0 $((secrets - 1))) ; do
@@ -1075,12 +1074,12 @@ EOF
   readOnly: true
 EOF
     fi
-    if [[ -n "${persistent_volumes[*]:-}" ]] ; then
+    if [[ -n "${volumes[*]:-}" ]] ; then
 	local vol
-	for vol in "${persistent_volumes[@]:-}" ; do
+	for vol in "${volumes[@]:-}" ; do
 	    cat <<EOF
 - name: "$vol"
-  mountPath: "${persistent_volume_mount_paths[$vol]}"
+  mountPath: "${volume_mount_paths[$vol]}"
 EOF
 	done
     fi
@@ -1137,7 +1136,7 @@ function createVolumesYAML() {
     local namespace=$1
     local deployment=${2:-1}
     local secrets=${3:-1}
-    (( secrets + ${#emptydirs[@]} + ${#configMapFiles[@]} + ${#persistent_volumes[@]} + hasSystemConfigMap )) || return;
+    (( secrets + ${#emptydirs[@]} + ${#configMapFiles[@]} + ${#volumes[@]} + hasSystemConfigMap )) || return;
     local -i i
     echo "volumes:"
     for i in $(seq 0 $((secrets - 1))) ; do
@@ -1165,14 +1164,22 @@ EOF
     name: "configmap-${namespace}"
 EOF
     fi
-    if [[ -n "${persistent_volumes[*]:-}" ]] ; then
+    if [[ -n "${volumes[*]:-}" ]] ; then
 	local vol
-	for vol in "${persistent_volumes[@]:-}" ; do
+	for vol in "${volumes[@]:-}" ; do
 	    cat <<EOF
 - name: "$vol"
-  ${persistent_volume_types[$vol]}:
-    ${persistent_volume_type_keys[$vol]}: "${persistent_volume_scoped_names[$vol]}"
 EOF
+	    if [[ -n "${volume_type_keys[$vol]}" ]] ; then
+		cat <<EOF
+  ${volume_types[$vol]}:
+    ${volume_type_keys[$vol]}: "${volume_scoped_names[$vol]}"
+EOF
+	    else
+		cat <<EOF
+  ${volume_types[$vol]}: {}
+EOF
+	    fi
 	done
     fi
     if (( hasSystemConfigMap )) ; then
@@ -1444,8 +1451,10 @@ function createContainersFilesYAML() {
     local namespace=$1
     local i=$2
     local secretCount=$3
-    local -i replicas=$4
+    local -i processes=$4
     local -i containers=$5
+    local log_host=${6:-}
+    local -i log_port=${7:-0}
     local -i j
     local syncService=
     local syncPortNum=
@@ -1479,6 +1488,10 @@ $(indent 2 genericCommand files.pl)
   - "$files_per_dir"
   - "$file_block_size"
   - "$file_blocks"
+  - "$processes"
+  - "$log_host"
+  - "$log_port"
+$(tmp_volume_paths=("${volume_mount_paths[@]/%/\"}"); IFS=$'\n'; echo "${tmp_volume_paths[*]/#/  - \"}")
 $(emptydirs=("${emptydirs[@]/%/\"}"); IFS=$'\n'; echo "${emptydirs[*]/#/  - \"}")
 $(indent 2 createVolumeMountsYAML "$namespace" "$i" "$secretCount")
 EOF
@@ -1489,7 +1502,7 @@ function createFilesSpec() {
     local namespace=$1
     local i=$2
     local secretCount=$3
-    local -i replicas=$4
+    local -i processes=$4
     local -i containers=$5
     cat <<EOF
 spec:
@@ -1509,18 +1522,15 @@ function createFilesDeployment() {
     local namespace=$1
     local i=$2
     local secretCount=$3
-    local -i replicas=$4
+    local -i processes=$4
     local -i containers=$5
     local nsline=${useNamespaces:+  namespace: "$namespace"}
-    if [[ $deploymentType = pod ]] ; then
-	local -i j=0
-	while (( j < replicas )) ; do
-	    local podname="${namespace}-${i}-files-${j}"
-	    createObject <<EOF
+    local podname="${namespace}-${i}-files"
+    createObject <<EOF
 apiVersion: v1
 kind: Pod
 metadata:
-  name: ${namespace}-files-${i}-${j}
+  name: ${namespace}-files-${i}
 $nsline
 $(indent 2 createPrivilegeYAML)
 $(indent 2 node_selector)
@@ -1530,46 +1540,13 @@ $(indent 2 node_selector)
   labels:
     ${basename}: "true"
     clusterbusterbase: "true"
-    name: ${namespace}-files-${i}-${j}
+    name: ${namespace}-files-${i}
     app: ${namespace}-files-${i}
     ${basename}-files: "true"
     ${basename}-client: "true"
 $(createFilesSpec "$@")
   restartPolicy: Never
 EOF
-	    j=$((j+1))
-	done
-    else
-	createObject <<EOF
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: ${namespace}-files-$i
-$nsline
-$(indent 2 createPrivilegeYAML)
-  labels:
-    ${basename}: "true"
-    clusterbusterbase: "true"
-spec:
-  replicas: 1
-$(indent 2 node_selector)
-  selector:
-    matchLabels:
-      app: ${namespace}-files-$i
-  strategy:
-    type: RollingUpdate
-  template:
-    metadata:
-      labels:
-        ${basename}: "true"
-        clusterbusterbase: "true"
-        name: ${namespace}-files-$i
-        app: ${namespace}-files-$i
-        ${basename}-files: "true"
-        ${basename}-client: "true"
-$(indent 4 createFilesSpec "$@")
-EOF
-    fi
 }
 
 function createContainersSysbenchYAML() {
