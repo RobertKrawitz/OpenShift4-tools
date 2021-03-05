@@ -142,15 +142,16 @@ Usage: ${___topsc:-$0} [options] [-- pbench-${bm_name} args]
        -q             Don't emit agent logs on stderr
        -R cpu_request Pod CPU request
        -u user        Record the specified username
-       -V volume      Mount a specified persistent volume
+       -V volume_spec Mount a specified volume
+                      spec is name:type:path:type_key:scoped_name
                       name is the name of the volume (required).
                       type is the type of volume (required).
+                      mount_path is the path on which to mount the volume
+                          (required).
                       type_key is the key for the volume (e. g.
                           claimName for persistentVolumeClaim)
                       scoped_name is the volume's name as recognized
                           by the description (required).
-                      mount_path is the path on which to mount the volume
-                          (required).
        -w             Agent and client wait forever at end
        -X             Affinity between ${bm_name} pods (default)
        -x             Anti-affinity between ${bm_name} pods
