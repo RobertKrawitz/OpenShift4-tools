@@ -312,7 +312,7 @@ function ping_agents() {
 	local -a agents_found=()
 	for agent in "${!agents_remaining[@]}" ; do
 	    echo -n "$agent: " 1>&2
-	    if ssh -n "$agent" true ; then
+	    if ssh -o PasswordAuthentication=no -n "root@$agent" true ; then
 		echo -n "OK!" 1>&2
 		agents_found+=("$agent")
 	    fi

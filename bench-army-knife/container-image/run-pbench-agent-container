@@ -123,7 +123,7 @@ if [[ -z "${BAK_SERVER_CONFIG:-}" || -z "${BAK_SERVER_PRIVATE_KEY:-}" ]] ; then
     [[ -z "$configdir" ]] && usage "-D must be specified."
     [[ -d "$configdir" ]] || usage "-D $configdir does not exist."
     [[ -r "$configdir"/pbench-agent.cfg ]] || usage "Expected configuration file $configdir/pbench-agent.cfg does not exist"
-    [[ -r "$configdir"/id_rsa ]] || usage "Expected private key $configdir/pbench-agent.cfg does not exist"
+    [[ -r "$configdir"/id_rsa ]] || usage "Expected private key $configdir/id_rsa does not exist"
 fi
 [[ -z "$keyfile" && -r "$configdir/id_rsa" ]] && keyfile="$configdir/id_rsa"
 [[ $keyfile == '/'* ]] || keyfile="$configdir/$keyfile"
@@ -207,8 +207,8 @@ function run_pbench_agent_once() {
 	# shellcheck disable=2034
 	read -r passive remote_ssh_port tunnel_port login <<< "$sync_data"
 	echo "Start ssh tunnel" 1>&2
-	echo ssh "${verbose[@]}" -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -i "$keyfile" -n -R "$tunnel_port:localhost:$sshd_port" -p "$remote_ssh_port" "${login:+$login@}$controller_host" sleep infinity 1>&2
-	ssh "${verbose[@]}" -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -i "$keyfile" -n -R "$tunnel_port:localhost:$sshd_port" -p "$remote_ssh_port" "${login:+$login@}$controller_host" sleep infinity 1>&2 &
+	echo ssh -o PasswordAuthentication=no "${verbose[@]}" -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -i "$keyfile" -n -R "$tunnel_port:localhost:$sshd_port" -p "$remote_ssh_port" "${login:+$login@}$controller_host" sleep infinity 1>&2
+	ssh -o PasswordAuthentication=no "${verbose[@]}" -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -i "$keyfile" -n -R "$tunnel_port:localhost:$sshd_port" -p "$remote_ssh_port" "${login:+$login@}$controller_host" sleep infinity 1>&2 &
 	ssh_tunnel_pid=$!
 	# Controller will ping us to make sure we're up so we don't need to
 	# sync ourselves.
