@@ -241,7 +241,7 @@ function process_summary() {
 	    echo "Starting span: $(bc <<< "scale=3; (($pod_last_start)-($pod_first_start))/1000")"
 	    echo "Total CPU: $(bc <<< "scale=3; $total_cpu/1000")"
 	    echo "CPU utilization: $(bc <<< "scale=3; $total_cpu_util/1000")%"
-;;
+	    ;;
 	server)
 	    echo "Bytes: $total"
 	    echo "Containers: $line_count"
