@@ -119,6 +119,8 @@ declare -i log_delay_usec=0
 declare -i log_xfertime=0
 declare -i log_exit_at_end=0
 
+declare kataRuntimeClass=kata
+
 declare accumulateddata=
 
 declare OC
@@ -233,6 +235,7 @@ Extended Options:
     Using Files:
        --volumes=N      Use the specified number of volumes.
                         If not provided, /tmp (writable layer) is used.
+       -V name:type:name_type:mount_name:mount_path
        --volume=name:type:name_type:mount_name:mount_path
                         Mount a specified persistent volume.
                         name is the name of the volume (required).
@@ -293,7 +296,8 @@ Extended Options:
                         container_resource_request, or container_resource_limit
        --runtimeclass=class
                         Run the pods in the designated runtimeclass.
-       --kata           Synonym for --runtimeclass=kata-qemu
+       -K
+       --kata           Synonym for --runtimeclass=${kataRuntimeClass}
        --emptydir=dir   Mount an emptydir volume at the specified mount point.
        --tolerate=<key:operator:effect>
                         Apply the specified tolerations to created pods.
@@ -555,6 +559,24 @@ function set_xfer_time() {
     fi
 }
 
+function process_volume() {
+    local volspec=$1
+    local vname=
+    local vtype=
+    local vmount_path=
+    IFS=':' read -r vname vtype vmount_path vtype_key vscoped_name <<< "$volspec"
+    if [[ -z "$vname" || -z "$vtype" || -z "$vmount_path" ]] ; then
+	echo "name, type, type_key, scoped name, and mount path must be provided"
+	echo "for volumes"
+	exit 1
+    fi
+    volumes+=("$vname")
+    volume_mount_paths["$vname"]=$vmount_path
+    volume_types["$vname"]=$vtype
+    volume_type_keys["$vname"]=$vtype_key
+    volume_scoped_names["$vname"]=$vscoped_name
+}    
+
 function process_option() {
     local option=$1
     local optname
@@ -629,7 +651,7 @@ function process_option() {
 	deployment_type)            deploymentType=$optvalue			;;
 	runtimeclass|runtime_class) runtimeClass=$optvalue			;;
 	report_object_creation)	    reportObjectCreation=$optvalue		;;
-	kata)			    runtimeClass=kata-oc			;;
+	kata)			    runtimeClass=${kataRuntimeClass}		;;
 	volumes)		    file_volumes=$optvalue			;;
 	dirs_per_volume)	    file_dirs_per_volume=$optvalue		;;
 	files_per_dir)		    files_per_dir=$optvalue			;;
@@ -667,22 +689,7 @@ function process_option() {
 	timeout)		    timeout=$optvalue				;;
 	verbose_report)		    verbose_report=$optvalue			;;
 	emptydir)		    emptydirs+=("$optvalue")			;;
-	volume)
-	    local vname=
-	    local vtype=
-	    local vmount_path=
-	    IFS=':' read -r vname vtype vmount_path vtype_key vscoped_name <<< "$optvalue"
-	    if [[ -z "$vname" || -z "$vtype" || -z "$vmount_path" ]] ; then
-		echo "name, type, type_key, scoped name, and mount path must be provided"
-		echo "for volumes"
-		exit 1
-	    fi
-	    volumes+=("$vname")
-	    volume_mount_paths["$vname"]=$vmount_path
-	    volume_types["$vname"]=$vtype
-	    volume_type_keys["$vname"]=$vtype_key
-	    volume_scoped_names["$vname"]=$vscoped_name
-	    ;;
+	volume)			    process_volume "$optvalue"			;;
 	sync|syncstart|sync_start)  syncStart=$((1-syncStart))			;;
 	baseoffset|base_offset)     baseoffset=$optvalue			;;
 	configmapfile)		    configMapFiles+=("$optvalue")		;;
@@ -751,39 +758,41 @@ function checkConfigMaps() {
     fi
 }
 
-while getopts ":B:b:c:D:d:EeHhM:m:N:nP:p:Qqr:Ss:T:t:vWw:XxYz:-:" opt ; do
+while getopts ":B:b:c:D:d:EeHhKM:m:N:nP:p:Qqr:Ss:T:t:V:vWw:XxYz:-:" opt ; do
     case "$opt" in
-	B) basename="$OPTARG"		;;
-	D) dataRate="$OPTARG"           ;;
-	E) exitAtEnd=0			;;
-	e) exitAtEnd=1			;;
-	h) help				;;
-	H) help_extended		;;
-	M) set_xfer "$OPTARG" 1000000	;;
-	N) namespaces="$OPTARG"         ;;
-	P) podType="$OPTARG"		;;
-	X) affinity=2			;;
-	b) blocksize="$OPTARG"          ;;
-	c) containers="$OPTARG"         ;;
-	d) depsPerNamespace="$OPTARG"   ;;
-	m) msgSize="$OPTARG"		;;
-	n) doit=0			;;
-	p) parallel="$OPTARG"           ;;
-	Q) reportObjectCreation=0	;;
-	q) verbose=0			;;
-	r) replicas="$OPTARG"           ;;
-	S) scale_ns=1			;;
-	s) secrets="$OPTARG"            ;;
-	T) deploymentType="$OPTARG"	;;
-	t) set_xfer_time "$OPTARG"	;;
-	v) verbose=1			;;
-	W) wait_for_secrets=0		;;
-	w) sleeptime="$OPTARG"          ;;
-	x) affinity=1			;;
-	Y) syncStart=$((1-syncStart))	;;
-	z) podsleeptime="$OPTARG"	;;
-	-) process_option "$OPTARG"	;;
-	*) help "$OPTARG"               ;;
+	B) basename="$OPTARG"		    ;;
+	b) blocksize="$OPTARG"              ;;
+	c) containers="$OPTARG"             ;;
+	D) dataRate="$OPTARG"               ;;
+	d) depsPerNamespace="$OPTARG"       ;;
+	E) exitAtEnd=0			    ;;
+	e) exitAtEnd=1			    ;;
+	h) help				    ;;
+	H) help_extended		    ;;
+	K) runtimeClass="$kataRuntimeClass" ;;
+	m) msgSize="$OPTARG"		    ;;
+	M) set_xfer "$OPTARG" 1000000	    ;;
+	n) doit=0			    ;;
+	N) namespaces="$OPTARG"             ;;
+	p) parallel="$OPTARG"               ;;
+	P) podType="$OPTARG"		    ;;
+	Q) reportObjectCreation=0	    ;;
+	q) verbose=0			    ;;
+	r) replicas="$OPTARG"               ;;
+	S) scale_ns=1			    ;;
+	s) secrets="$OPTARG"                ;;
+	T) deploymentType="$OPTARG"	    ;;
+	t) set_xfer_time "$OPTARG"	    ;;
+	V) process_volume "$OPTARG"	    ;;
+	v) verbose=1			    ;;
+	w) sleeptime="$OPTARG"              ;;
+	W) wait_for_secrets=0		    ;;
+	x) affinity=1			    ;;
+	X) affinity=2			    ;;
+	Y) syncStart=$((1-syncStart))	    ;;
+	z) podsleeptime="$OPTARG"	    ;;
+	-) process_option "$OPTARG"	    ;;
+	*) help "$OPTARG"                   ;;
     esac
 done
 [[ -n "${unknown_opts[*]:-}" ]] && help "${unknown_opts[@]}"
