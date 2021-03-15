@@ -324,7 +324,7 @@ function ping_agents() {
 	if (( ${#agents_remaining[@]} )) ; then
 	    # shellcheck disable=2155
 	    local now=$(printf '%(%s)T' -1)
-            if (( $max_wait_for_ssh_tunnel > 0 && now - start_time >= max_wait_for_ssh_tunnel )) ; then
+	    if (( $max_wait_for_ssh_tunnel > 0 && now - start_time >= max_wait_for_ssh_tunnel )) ; then
 		echo "Timed out!" 1>&2
 		return 1
 	    fi
