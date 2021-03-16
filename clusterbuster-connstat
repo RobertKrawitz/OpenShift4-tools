@@ -156,17 +156,41 @@ function process_summary() {
     local -i readrate=0
     local -i writerate=0
     local -a output
-    local -i fsops=0
+
+    local -i create_start=0
+    local -i create_end=0
+    local -i remove_start=0
+    local -i remove_end=0
+    local -i file_create_start=$first_start
+    local -i file_create_end=$last_end
+    local -i file_remove_start=$first_start
+    local -i file_remove_end=$last_end
+    local -i file_create_elapsed=0
+    local -i file_create_ops=0
+    local -i file_create_user_cpu=0
+    local -i file_create_sys_cpu=0
+    local -i file_create_total_cpu=0
+    local -i file_remove_elapsed=0
+    local -i file_remove_ops=0
+    local -i file_remove_user_cpu=0
+    local -i file_remove_sys_cpu=0
+    local -i file_remove_total_cpu=0
+    local -i file_total_elapsed=0
+    local -i file_total_ops=0
+    local -i file_total_user_cpu=0
+    local -i file_total_sys_cpu=0
+    local -i file_total_total_cpu=0
     local mode=
     while read -r -a output ; do
 	[[ -n "${output[*]}" ]] || continue
+	[[ ${output[*]} = *'STATS'* ]] || continue
 	if [[ -z "$mode" ]] ; then
 	    case "${output[2]}" in
 		*'soaker'*)   mode=soaker   ;;
 		*'client'*)   mode=server   ;;
 		*'sysbench'*) mode=sysbench ;;
 		*'files'*)    mode=files    ;;
-		*)                          ;;
+		*)            continue      ;;
 	    esac
 	fi
 	local -i start
@@ -177,17 +201,32 @@ function process_summary() {
 	fi
 	case "$mode" in
 	    files)
-		pod_start=$(($(clean "${output[12]}")))
+		pod_start=$(($(clean "${output[11]}") ))
 		if (( pod_start < pod_first_start )) ; then pod_first_start=pod_start; fi
 		if (( pod_start > pod_last_start )) ; then pod_last_start=pod_start; fi
-		start=$(clean "${output[13]}")
-		end=$(clean "${output[15]}")
-		et=$(clean "${output[14]}")
+		create_start=$(clean "${output[16]}")
+		create_end=$(($(clean "${output[17]}")+create_start))
+		remove_start=$(clean "${output[25]}")
+		remove_end=$(($(clean "${output[26]}")+remove_start))
+		if (( create_start < file_create_start )) ; then file_create_start=create_start; fi;
+		if (( create_end > file_create_end )) ; then file_create_end=create_end; fi;
+		if (( remove_start < file_remove_start )) ; then file_remove_start=remove_start; fi;
+		if (( remove_end > file_remove_end )) ; then file_remove_end=remove_end; fi;
+
+		start=$pod_start
+		et=$(clean "${output[12]}")
+		end=$((start+et))
 		if (( start < first_start )) ; then first_start=$start; fi
 		if (( end > last_end )) ; then last_end=$end; fi
-		total_cpu+=$(clean "${output[16]}")
-		total_cpu_util+=$(clean "${output[17]}")
-		fsops+=$(clean "${output[18]}")
+		file_create_elapsed+=$(clean "${output[17]}")
+		file_create_ops+=$(clean "${output[21]}")
+		file_create_user_cpu+=$(clean "${output[18]}")
+		file_create_sys_cpu+=$(clean "${output[19]}")
+
+		file_remove_elapsed+=$(clean "${output[26]}")
+		file_remove_ops+=$(clean "${output[30]}")
+		file_remove_user_cpu+=$(clean "${output[27]}")
+		file_remove_sys_cpu+=$(clean "${output[28]}")
 		;;
 	    server)
 		total+=${output[19]}
@@ -233,14 +272,39 @@ function process_summary() {
     (( line_count )) || return
     case "$mode" in
 	files)
-	    echo "Filesystem ops: $fsops"
-	    echo "Filesystem ops/sec: $(bc <<< "scale=3; $fsops / ((($last_end)-($first_start))/1000)")"
-	    echo "Average_elapsed: $(bc <<< "scale=3; $total_et/$line_count/1000")"
-	    echo "Elapsed_span: $(bc <<< "scale=3; (($last_end)-($first_start))/1000")"
-	    echo "First start: $(bc <<< "scale=3; ($pod_first_start)/1000")"
-	    echo "Starting span: $(bc <<< "scale=3; (($pod_last_start)-($pod_first_start))/1000")"
-	    echo "Total CPU: $(bc <<< "scale=3; $total_cpu/1000")"
-	    echo "CPU utilization: $(bc <<< "scale=3; $total_cpu_util/1000")%"
+	    file_create_elapsed=$((file_create_end - file_create_start))
+	    file_create_total_cpu=$((file_create_sys_cpu+file_create_user_cpu))
+	    file_remove_elapsed=$((file_remove_end - file_remove_start))
+	    file_remove_total_cpu=$((file_remove_sys_cpu+file_remove_user_cpu))
+	    file_total_elapsed=$((file_create_elapsed + file_remove_elapsed))
+	    file_total_ops=$((file_create_ops+file_remove_ops))
+	    file_total_user_cpu=$((file_create_user_cpu+file_remove_user_cpu))
+	    file_total_sys_cpu=$((file_create_sys_cpu+file_remove_sys_cpu))
+	    file_total_total_cpu=$((file_total_user_cpu+file_total_sys_cpu))
+
+	    cat <<EOF
+Filesystem create ops:     $file_create_ops
+Filesystem create elapsed: $(bc <<< "scale=3; $file_create_elapsed / 1000")
+Filesystem create CPU:     $(bc <<< "scale=3; $file_create_total_cpu / 1000")
+  User:                       $(bc <<< "scale=3; $file_create_user_cpu / 1000")
+  Sys:                        $(bc <<< "scale=3; $file_create_sys_cpu / 1000")
+Filesystem create util:    $(bc <<< "scale=3; $file_create_total_cpu / $file_create_elapsed * 100")%
+Filesystem create ops/sec: $(bc <<< "scale=3; $file_create_ops / ($file_create_elapsed / 1000)")
+
+Filesystem remove ops:     $file_remove_ops
+Filesystem remove elapsed: $(bc <<< "scale=3; $file_remove_elapsed / 1000")
+Filesystem remove CPU:     $(bc <<< "scale=3; $file_remove_total_cpu / 1000")
+  User:                       $(bc <<< "scale=3; $file_remove_user_cpu / 1000")
+  Sys:                        $(bc <<< "scale=3; $file_remove_sys_cpu / 1000")
+Filesystem remove ops/sec: $(bc <<< "scale=3; $file_remove_ops / ($file_remove_elapsed / 1000)")
+
+Filesystem total ops:     $file_total_ops
+Filesystem total elapsed: $(bc <<< "scale=3; $file_total_elapsed / 1000")
+Filesystem total CPU:     $(bc <<< "scale=3; $file_total_total_cpu / 1000")
+  User:                       $(bc <<< "scale=3; $file_total_user_cpu / 1000")
+  Sys:                        $(bc <<< "scale=3; $file_total_sys_cpu / 1000")
+Filesystem total ops/sec: $(bc <<< "scale=3; $file_total_ops / ($file_total_elapsed / 1000)")
+EOF
 	    ;;
 	server)
 	    echo "Bytes: $total"

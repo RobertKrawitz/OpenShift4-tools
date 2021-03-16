@@ -13,7 +13,9 @@ $crtime += $baseoffset;
 
 sub cputime() {
     my (@times) = times();
-    return $times[0] + $times[1] + $times[2] + $times[3];
+    my ($usercpu) = $times[0] + $times[2];
+    my ($syscpu) = $times[1] + $times[3];
+    return ($usercpu, $syscpu);
 }
 
 sub ts() {
@@ -99,19 +101,47 @@ if ($#dirs < 0) {
 my ($buffer);
 vec($buffer, $blocksize - 1, 8) = "A";
 
+sub remdir($$) {
+    my ($dirname, $oktofail) = @_;
+    if (! rmdir("$dirname")) {
+	if ($oktofail) {
+	    system("rm", "-rf", "$dirname");
+	} else {
+	    rmdir("$dirname") || die("Can't remove directory $dirname: $!\n");
+	}
+    }
+}
 
-sub runit($) {
+sub removethem($;$) {
+    my ($process, $oktofail) = @_;
+    my ($ops) = 0;
+    foreach my $bdir (@dirs) {
+	my ($pdir)="$bdir/p$process";
+	next if ($oktofail && ! -d $pdir);
+	my ($dir)="$pdir/$container";
+	next if ($oktofail && ! -d $dir);
+	foreach my $subdir (0..$dirs-1) {
+	    my ($dirname) = "$dir/d$subdir";
+	    next if ($oktofail && ! -d $dirname);
+	    foreach my $file (0..$files_per_dir-1) {
+		my ($filename) = "$dirname/f$file";
+		next if ($oktofail && ! -f $filename);
+		unlink($filename) || die "Can't remove $filename: $!\n";
+		$ops++;
+	    }
+	    remdir($dirname, $oktofail);
+	    $ops++;
+	}
+	remdir("$dir", $oktofail);
+	$ops++;
+	remdir("$pdir", $oktofail);
+	$ops++;
+    }
+    return $ops;
+}
+
+sub makethem($) {
     my ($process) = @_;
-    my ($basecpu) = cputime();
-    my ($prevcpu) = $basecpu;
-    my ($iterations) = 1;
-
-    my $delaytime = $basetime + $poddelay - $dstime;
-    do_sync($synchost, $syncport);
-    my ($stime1) = xtime();
-    my ($stime) = $stime1;
-    my ($prevtime) = $stime;
-    my ($scputime) = cputime();
     my ($ops) = 0;
     foreach my $bdir (@dirs) {
 	my ($pdir)="$bdir/p$process";
@@ -138,37 +168,63 @@ sub runit($) {
 	    }
 	}
     }
-    sleep($exit_delay);
-    foreach my $bdir (@dirs) {
-	my ($pdir)="$bdir/p$process";
-	my ($dir)="$pdir/$container";
-	foreach my $subdir (0..$dirs-1) {
-	    my ($dirname) = "$dir/d$subdir";
-	    foreach my $file (0..$files_per_dir-1) {
-		my ($filename) = "$dirname/f$file";
-		unlink($filename) || die "Can't remove $filename: $!\n";
-		$ops++;
-	    }
-	    rmdir("$dirname") || die("Can't remove directory $dirname: $!\n");
-	    $ops++;
-	}
-	rmdir("$dir") || die("Can't remove directory $dir: $!\n");
-	$ops++;
-	rmdir("$pdir") || die("Can't create directory $pdir: $!\n");
-	$ops++;
-    }
+    return $ops;
+}
+
+sub runit($) {
+    my ($process) = @_;
+    my ($basecpu) = cputime();
+    my ($prevcpu) = $basecpu;
+    my ($iterations) = 1;
+
+    my $delaytime = $basetime + $poddelay - $dstime;
+    # Make sure everything is cleared out first...but don't count the time here.
+    removethem($process, 1);
+
+    do_sync($synchost, $syncport);
+    my ($stime1) = xtime();
+    my ($stime0) = $stime1;
+    my ($stime) = $stime1;
+    my ($prevtime) = $stime;
+    my ($ucpu0, $scpu0) = cputime();
+    my ($ops) = makethem($process);
     system("sync");
-#    sync();
     my ($etime) = xtime();
     my ($eltime) = $etime - $stime1;
-    my ($cputime) = cputime() - $scputime;
-    my ($answer) = sprintf("STATS %d %.3f %.3f %.3f %.3f %.3f %.3f %7.3f %d %d %d",
-        $$, $crtime - $basetime, $dstime - $basetime, $stime1 - $basetime,
-        $eltime, $etime - $basetime, $cputime, 100.0 * $cputime / $eltime, $ops, $iterations,
+    my ($ucpu1, $scpu1) = cputime();
+    $ucpu1 -= $ucpu0;
+    $scpu1 -= $scpu0;
+    my ($answer0) = sprintf("CREATE %.3f %.3f %.3f %.3f %.3f %d %d %.3f",
+        $stime1 - $stime0, $eltime, $ucpu1,
+	$scpu1, 100.0 * ($ucpu1 + $scpu1) / $eltime, $ops, $iterations,
         $iterations / ($etime - $stime1));
+    do_sync($synchost, $syncport);
+
+    sleep($exit_delay);
+    $ops = 0;
+
+    do_sync($synchost, $syncport);
+    my ($stime1) = xtime();
+    my ($stime) = $stime1;
+    my ($prevtime) = $stime;
+    my ($ucpu0, $scpu0) = cputime();
+    my ($ops) = removethem($process);
+    system("sync");
+    my ($etime) = xtime();
+    my ($eltime) = $etime - $stime1;
+    my ($ucpu1, $scpu1) = cputime();
+    $ucpu1 -= $ucpu0;
+    $scpu1 -= $scpu0;
+    my ($answer1) = sprintf("REMOVE %.3f %.3f %.3f %.3f %.3f %d %d %.3f",
+        $stime1 - $stime0, $eltime, $ucpu1,
+	$scpu1, 100.0 * ($ucpu1 + $scpu1) / $eltime, $ops, $iterations,
+        $iterations / ($etime - $stime1));
+    my ($answer_base) = sprintf("%d %.3f %.3f %d %d", $$, $stime0 - $basetime, $etime - $stime0, $block_count, $blocksize);
+    my ($answer) = "-n $namespace $pod -c $container terminated 0 0 0 STATS $answer_base $answer0 $answer1";
     print STDERR "$answer\n";
-    do_sync($synchost, $syncport, $answer);
-    do_sync($loghost, $logport, "-n $namespace $pod -c $container terminated 0 0 0 $answer");
+    do_sync($synchost, $syncport, "\n$answer");
+    
+    do_sync($loghost, $logport, "$answer");
 }
 
 timestamp("Filebuster client starting");
