@@ -33,10 +33,12 @@ timestamp("Listening on port $listen_port");
 my (@clients);
 
 timestamp("Sync count will be $syncCount");
+my $syncCount1 = 0;
 while ($syncCount < 0 || $syncCount-- > 0) {
     my $child = fork();
     if ($child == 0) {
-	timestamp("Pass $syncCount expect $expected_clients clients");
+	timestamp("Pass $syncCount1 expect $expected_clients clients");
+	$syncCount1++;
 	while ($expected_clients > 0) {
 	    my ($client);
 	    accept($client, SOCK) || next;
