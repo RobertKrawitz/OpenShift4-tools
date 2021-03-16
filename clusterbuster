@@ -575,7 +575,7 @@ function process_volume() {
     volume_types["$vname"]=$vtype
     volume_type_keys["$vname"]=$vtype_key
     volume_scoped_names["$vname"]=$vscoped_name
-}    
+}
 
 function process_option() {
     local option=$1
