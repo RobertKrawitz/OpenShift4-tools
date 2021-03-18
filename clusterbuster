@@ -110,6 +110,7 @@ declare -i file_block_size=1
 declare -i file_volumes=0
 declare -i file_dirs_per_volume=1
 declare -i files_per_dir=1
+declare -i processes_per_pod=1
 
 declare -i log_bytes_per_line=1
 declare -i log_bytes_per_io=1
@@ -166,9 +167,9 @@ Usage: $0 [options] [name]
        -P podtype      Pod type (classic, pause, server, cpu, fio, sysbench,
                        files, log)
        -p parallel     Number of operations to perform in parallel (default 1)
+       -R processes    Number of processes per pod (default 1)
+                       Applies to cpu and files only.
        -r replicas     Number of replicas per deployment (default 1)
-                       For client/server, this refers to client pods.
-                       For cpu, this refers to processes per pod.
        -S              Scale up (add namespaces to existing load) (default no)
        -s secrets      Number of secrets per deployment (default 0)
        -T type         Use the specified deployment type:
@@ -213,6 +214,7 @@ Extended Options:
        --containers=N   Number of containers per pod (-c)
        --namespaces=N   Number of namespaces (-N)
        --secrets=N      Number of secrets (-s)
+       --processes=N    Number of processes per pod (-R)
        --replicas=N     Number of replicas per deployment (-r)
        --podsleep=N     Time for pod to sleep before exit (-z)
        --baseoffset=N   Add specified offset to base time
@@ -618,6 +620,7 @@ function process_option() {
 	secrets)		    secrets=$optvalue				;;
 	verbose)		    verbose=$optvalue				;;
 	quiet)			    verbose=$((!optvalue))			;;
+	processes)		    processes_per_pod=$optvalue			;;
 	replicas)		    replicas=$optvalue				;;
 	parallel)		    parallel=$optvalue				;;
 	sleep)			    sleeptime=$optvalue				;;
@@ -758,7 +761,7 @@ function checkConfigMaps() {
     fi
 }
 
-while getopts ":B:b:c:D:d:EeHhKM:m:N:nP:p:Qqr:Ss:T:t:V:vWw:XxYz:-:" opt ; do
+while getopts ":B:b:c:D:d:EeHhKM:m:N:nP:p:QqR:r:Ss:T:t:V:vWw:XxYz:-:" opt ; do
     case "$opt" in
 	B) basename="$OPTARG"		    ;;
 	b) blocksize="$OPTARG"              ;;
@@ -778,6 +781,7 @@ while getopts ":B:b:c:D:d:EeHhKM:m:N:nP:p:Qqr:Ss:T:t:V:vWw:XxYz:-:" opt ; do
 	P) podType="$OPTARG"		    ;;
 	Q) reportObjectCreation=0	    ;;
 	q) verbose=0			    ;;
+	R) processes_per_pod="$OPTARG"	    ;;
 	r) replicas="$OPTARG"               ;;
 	S) scale_ns=1			    ;;
 	s) secrets="$OPTARG"                ;;
@@ -1312,7 +1316,7 @@ function createDeploymentClassicYAML() {
     local nsline=${useNamespaces:+  namespace: "$namespace"}
     if [[ $deploymentType = pod ]] ; then
 	local -i j=0
-	while (( j < replicas )) ; do
+	while (( j++ < replicas )) ; do
 	    createObject <<EOF
 apiVersion: v1
 kind: Pod
@@ -1333,7 +1337,6 @@ $(indent 2 node_selector)
     clusterbusterbase: "true"
 $(createClassicSpec "$@")
 EOF
-	    j=$((j+1))
 	done
     else
 	createObject <<EOF
@@ -1460,7 +1463,7 @@ function createContainersFilesYAML() {
     local namespace=$1
     local i=$2
     local secretCount=$3
-    local -i processes=$4
+    local -i replicas=$4
     local -i containers=$5
     local log_host=${6:-}
     local -i log_port=${7:-0}
@@ -1497,7 +1500,7 @@ $(indent 2 genericCommand files.pl)
   - "$files_per_dir"
   - "$file_block_size"
   - "$file_blocks"
-  - "$processes"
+  - "$processes_per_pod"
   - "$log_host"
   - "$log_port"
 $(tmp_volume_paths=("${volume_mount_paths[@]/%/\"}"); IFS=$'\n'; echo "${tmp_volume_paths[*]/#/  - \"}")
@@ -1531,15 +1534,18 @@ function createFilesDeployment() {
     local namespace=$1
     local i=$2
     local secretCount=$3
-    local -i processes=$4
+    local -i replicas=$4
     local -i containers=$5
     local nsline=${useNamespaces:+  namespace: "$namespace"}
     local podname="${namespace}-${i}-files"
-    createObject <<EOF
+    if [[ $deploymentType = pod ]] ; then
+	local -i j=0
+	while (( j++ < replicas )) ; do
+	    createObject <<EOF
 apiVersion: v1
 kind: Pod
 metadata:
-  name: ${namespace}-files-${i}
+  name: ${namespace}-files-${i}-${j}
 $nsline
 $(indent 2 createPrivilegeYAML)
 $(indent 2 node_selector)
@@ -1556,6 +1562,38 @@ $(indent 2 node_selector)
 $(createFilesSpec "$@")
   restartPolicy: Never
 EOF
+	done
+    else
+	createObject <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ${namespace}-files-$i
+$nsline
+$(indent 2 createPrivilegeYAML)
+  labels:
+    ${basename}: "true"
+    clusterbusterbase: "true"
+spec:
+  replicas: $replicas
+$(indent 2 node_selector)
+  selector:
+    matchLabels:
+      app: ${namespace}-$i
+  strategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        ${basename}: "true"
+        clusterbusterbase: "true"
+        name: ${namespace}-files-$i
+        app: ${namespace}-files-$i
+        ${basename}-files: "true"
+        ${basename}-client: "true"
+$(indent 4 createFilesSpec "$@")
+EOF
+    fi
 }
 
 function createContainersSysbenchYAML() {
@@ -1894,11 +1932,13 @@ function createSoakerDeployment() {
     local -i containers=$5
     local nsline=${useNamespaces:+  namespace: "$namespace"}
     if [[ $deploymentType = pod ]] ; then
-	createObject <<EOF
+	local -i j=0
+	while (( j++ < replicas )) ; do
+	    createObject <<EOF
 apiVersion: v1
 kind: Pod
 metadata:
-  name: ${namespace}-soaker-${i}
+  name: ${namespace}-soaker-${i}-${j}
 $nsline
 $(indent 2 createPrivilegeYAML)
 $(indent 2 node_selector)
@@ -1915,6 +1955,7 @@ $(indent 2 node_selector)
 $(createSoakerSpec "$@")
   restartPolicy: Never
 EOF
+	done
     else
 	createObject <<EOF
 apiVersion: apps/v1
@@ -1927,7 +1968,7 @@ $(indent 2 createPrivilegeYAML)
     ${basename}: "true"
     clusterbusterbase: "true"
 spec:
-  replicas: 1
+  replicas: $replicas
 $(indent 2 node_selector)
   selector:
     matchLabels:
@@ -2220,7 +2261,7 @@ function createClientDeployment() {
     local nsline=${useNamespaces:+  namespace: "$namespace"}
     if [[ $deploymentType = pod ]] ; then
 	local -i j=0
-	while (( j < replicas )) ; do
+	while (( j++ < replicas )) ; do
 	    local podname="${namespace}-${i}-client-${j}"
 	    createObject <<EOF
 apiVersion: v1
@@ -2244,7 +2285,6 @@ $(indent 2 createPrivilegeYAML)
 $(createClientSpec "$@" "$podname" "$j")
   restartPolicy: Never
 EOF
-	    j=$((j+1))
 	done
     else
 	local podname="${namespace}-${i}-client"
