@@ -46,7 +46,6 @@ sub connect_to($$) {
             sleep(1);
         } else {
             my $straddr = inet_ntoa($faddr);
-            timestamp("Connecting to $addr:$port ($fname, $ftype)");
             $ghbn_time = xtime();
             my $sockmeta = pack($sockaddr, AF_INET, $port, $faddr);
             socket($sock, AF_INET, SOCK_STREAM, getprotobyname('tcp')) || die "can't make socket: $!";
@@ -55,7 +54,6 @@ sub connect_to($$) {
                 $connected = 1;
                 timestamp("Connected to $addr:$port ($fname, $ftype), waiting for sync");
             } else {
-                timestamp("Could not connect to $addr on port $port: $!");
                 close $sock;
                 sleep(1);
             }
@@ -187,6 +185,7 @@ sub runit($) {
     my ($stime) = $stime1;
     my ($prevtime) = $stime;
     my ($ucpu0, $scpu0) = cputime();
+    timestamp("Creating files...");
     my ($ops) = makethem($process);
     system("sync");
     my ($etime) = xtime();
@@ -198,9 +197,12 @@ sub runit($) {
         $stime1 - $stime0, $eltime, $ucpu1,
 	$scpu1, 100.0 * ($ucpu1 + $scpu1) / $eltime, $ops, $iterations,
         $iterations / ($etime - $stime1));
+    timestamp("Created files...");
     do_sync($synchost, $syncport);
 
+    timestamp("Sleeping for $exit_delay");
     sleep($exit_delay);
+    timestamp("Back from sleep");
     $ops = 0;
 
     do_sync($synchost, $syncport);
@@ -208,7 +210,9 @@ sub runit($) {
     my ($stime) = $stime1;
     my ($prevtime) = $stime;
     my ($ucpu0, $scpu0) = cputime();
+    timestamp("Removing files...");
     my ($ops) = removethem($process);
+    timestamp("Removed files...");
     system("sync");
     my ($etime) = xtime();
     my ($eltime) = $etime - $stime1;
@@ -240,7 +244,7 @@ if ($processes > 1) {
     runit(0);
 }
 print STDERR "FINIS\n";
-timestamp("About to exit");
+timestamp("Waiting for all processes to exit...");
 while (wait() > 0) {}
 timestamp("Done waiting");
 POSIX::_exit(0);
