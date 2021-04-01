@@ -6,7 +6,10 @@ declare -i parallel=1
 declare -i summarize=0
 declare -i timeout=-1
 declare -i verbose=0
+declare -i csv=0
+declare -i header=1
 declare -i use_namespace=1
+declare run_name=
 declare basename=clusterbuster
 declare -A cached_stats=()
 declare statsfile=
@@ -15,16 +18,19 @@ declare OC
 OC=$(type -p oc)
 OC=${OC:-$(type -p kubectl)}	# kubectl might not work, though...
 
-while getopts ':p:B:st:f:vqN' opt ; do
+while getopts ':p:B:st:f:vqNcnr:' opt ; do
     case "$opt" in
 	B) basename=$OPTARG 	  ;;
-	p) parallel=$OPTARG 	  ;;
-	t) timeout=$OPTARG  	  ;;
-	s) summarize=1	    	  ;;
-	f) statsfile=$OPTARG	  ;;
-	v) verbose=$((verbose+1)) ;;
 	N) use_namespace=0	  ;;
+	c) csv=1		  ;;
+	f) statsfile=$OPTARG	  ;;
+	n) header=0		  ;;
+	p) parallel=$OPTARG 	  ;;
 	q) verbose=0        	  ;;
+	r) run_name=$OPTARG	  ;;
+	s) summarize=1	    	  ;;
+	t) timeout=$OPTARG  	  ;;
+	v) verbose=$((verbose+1)) ;;
 	*) ;;
     esac
 done
@@ -121,6 +127,46 @@ function prettyprint() {
     done
 }
 
+function report() {
+    local fields=()
+    local values=()
+    local x=$'"'
+    if [[ -n "$run_name" ]] ; then
+	fields+=("${x}Name${x}")
+	values+=("$x$run_name$x")
+    fi
+    while (( $# > 0 )) ; do
+	fields+=("$x$1$x")
+	values+=("$x$2$x")
+	shift 2
+    done
+    if (( header )) ; then
+	(IFS=,; echo "${fields[*]}")
+    fi
+    (IFS=,; echo "${values[*]}")
+}
+
+function do_report() {
+    if (( csv )) ; then
+	local -a args=()
+	local field
+	local value
+	local line
+	while read -r line ; do
+	    if [[ -n "${line:-}" ]] ; then
+		value=${line#*:}
+		field=${line%:*}
+		value=$(echo $value)
+		field=$(echo $field)
+		args+=("$field" "$value")
+	    fi
+	done
+	report "${args[@]}"
+    else
+	cat
+    fi
+}
+
 function maxbits() {
     local -i i
     local -i a
@@ -132,6 +178,85 @@ function maxbits() {
 	fi
     done
     echo "$i"
+}
+
+function printit() {
+    case "$mode" in
+	files)
+	    file_create_elapsed=$((file_create_end - file_create_start))
+	    file_create_total_cpu=$((file_create_sys_cpu+file_create_user_cpu))
+	    file_remove_elapsed=$((file_remove_end - file_remove_start))
+	    file_remove_total_cpu=$((file_remove_sys_cpu+file_remove_user_cpu))
+	    file_total_elapsed=$((file_create_elapsed + file_remove_elapsed))
+	    file_total_ops=$((file_create_ops+file_remove_ops))
+	    file_total_user_cpu=$((file_create_user_cpu+file_remove_user_cpu))
+	    file_total_sys_cpu=$((file_create_sys_cpu+file_remove_sys_cpu))
+	    file_total_total_cpu=$((file_total_user_cpu+file_total_sys_cpu))
+
+	    cat <<EOF
+Filesystem create ops:     $file_create_ops
+Filesystem create elapsed: $(bc <<< "scale=3; $file_create_elapsed / 1000")
+Filesystem create CPU:     $(bc <<< "scale=3; $file_create_total_cpu / 1000")
+  Filesystem create user:  $(bc <<< "scale=3; $file_create_user_cpu / 1000")
+  Filesystem create sys:   $(bc <<< "scale=3; $file_create_sys_cpu / 1000")
+Filesystem create util:    $(bc <<< "scale=3; $file_create_total_cpu / $file_create_elapsed * 100")%
+Filesystem create ops/sec: $(bc <<< "scale=3; $file_create_ops / ($file_create_elapsed / 1000)")
+
+Filesystem remove ops:     $file_remove_ops
+Filesystem remove elapsed: $(bc <<< "scale=3; $file_remove_elapsed / 1000")
+Filesystem remove CPU:     $(bc <<< "scale=3; $file_remove_total_cpu / 1000")
+  Filesystem remove user:  $(bc <<< "scale=3; $file_remove_user_cpu / 1000")
+  Filesystem remove sys:   $(bc <<< "scale=3; $file_remove_sys_cpu / 1000")
+Filesystem remove ops/sec: $(bc <<< "scale=3; $file_remove_ops / ($file_remove_elapsed / 1000)")
+
+Filesystem total ops:     $file_total_ops
+Filesystem total elapsed: $(bc <<< "scale=3; $file_total_elapsed / 1000")
+Filesystem total CPU:     $(bc <<< "scale=3; $file_total_total_cpu / 1000")
+  Filesystem total user:  $(bc <<< "scale=3; $file_total_user_cpu / 1000")
+  Filesystem total sys:   $(bc <<< "scale=3; $file_total_sys_cpu / 1000")
+Filesystem total ops/sec: $(bc <<< "scale=3; $file_total_ops / ($file_total_elapsed / 1000)")
+EOF
+	    ;;
+	server)
+	    echo "Bytes: $total"
+	    echo "Containers: $line_count"
+	    echo "Average_elapsed: $(bc <<< "scale=3; $total_et/$line_count/1000")"
+	    echo "Elapsed_span: $(bc <<< "scale=3; (($last_end)-($first_start))/1000")"
+	    echo "Data rate MB/sec: $(bc <<< "scale=3; (($total*2/($total_et/$line_count/1000)/1000000))")"
+	    echo "Mean RTT msec: $(bc <<< "scale=3; $mean_rtt/$line_count/1000")"
+	    echo "Max RTT msec: $(bc <<< "scale=3; $max_rtt/1000")"
+	    echo "Iterations: $total_iterations"
+	    ;;
+	soaker)
+	    echo "Iterations: $total_iterations"
+	    echo "Average_elapsed: $(bc <<< "scale=3; $total_et/$line_count/1000")"
+	    echo "Elapsed_span: $(bc <<< "scale=3; (($last_end)-($first_start))/1000")"
+	    echo "First start: $(bc <<< "scale=3; ($pod_first_start)/1000")"
+	    echo "Starting span: $(bc <<< "scale=3; (($pod_last_start)-($pod_first_start))/1000")"
+	    echo "Total CPU: $(bc <<< "scale=3; $total_cpu/1000")"
+	    echo "CPU utilization: $(bc <<< "scale=3; $total_cpu_util/1000")%"
+	    if (( total_cpu == 0 )) ; then
+		echo "Iterations/CPU sec: 0"
+	    else
+		echo "Iterations/CPU sec: $(bc <<< "scale=0; $total_iterations*1000/$total_cpu")"
+	    fi
+	    if (( total_et == 0 )) ; then
+		echo "Iterations/sec: 0"
+	    else
+		echo "Iterations/sec: $(bc <<< "scale=0; $total_iterations*1000*$line_count/$total_et")"
+	    fi
+	    ;;
+	sysbench)
+	    echo "Read ops/sec:  $(bc <<< "scale=3; $read_ops")"
+	    echo "Write ops/sec: $(bc <<< "scale=3; $write_ops")"
+	    echo "Fsync ops/sec: $(bc <<< "scale=3; $fsync_ops")"
+	    echo "Read rate MB/sec: $(bc <<< "scale=3; $readrate")"
+	    echo "Write rate MB/sec: $(bc <<< "scale=3; $writerate")"
+	    ;;
+	*)
+	    echo "Unknown mode $mode" 1>&2
+	    ;;
+    esac
 }
 
 function process_summary() {
@@ -270,82 +395,7 @@ function process_summary() {
 	total_et+=$et
     done
     (( line_count )) || return
-    case "$mode" in
-	files)
-	    file_create_elapsed=$((file_create_end - file_create_start))
-	    file_create_total_cpu=$((file_create_sys_cpu+file_create_user_cpu))
-	    file_remove_elapsed=$((file_remove_end - file_remove_start))
-	    file_remove_total_cpu=$((file_remove_sys_cpu+file_remove_user_cpu))
-	    file_total_elapsed=$((file_create_elapsed + file_remove_elapsed))
-	    file_total_ops=$((file_create_ops+file_remove_ops))
-	    file_total_user_cpu=$((file_create_user_cpu+file_remove_user_cpu))
-	    file_total_sys_cpu=$((file_create_sys_cpu+file_remove_sys_cpu))
-	    file_total_total_cpu=$((file_total_user_cpu+file_total_sys_cpu))
-
-	    cat <<EOF
-Filesystem create ops:     $file_create_ops
-Filesystem create elapsed: $(bc <<< "scale=3; $file_create_elapsed / 1000")
-Filesystem create CPU:     $(bc <<< "scale=3; $file_create_total_cpu / 1000")
-  User:                       $(bc <<< "scale=3; $file_create_user_cpu / 1000")
-  Sys:                        $(bc <<< "scale=3; $file_create_sys_cpu / 1000")
-Filesystem create util:    $(bc <<< "scale=3; $file_create_total_cpu / $file_create_elapsed * 100")%
-Filesystem create ops/sec: $(bc <<< "scale=3; $file_create_ops / ($file_create_elapsed / 1000)")
-
-Filesystem remove ops:     $file_remove_ops
-Filesystem remove elapsed: $(bc <<< "scale=3; $file_remove_elapsed / 1000")
-Filesystem remove CPU:     $(bc <<< "scale=3; $file_remove_total_cpu / 1000")
-  User:                       $(bc <<< "scale=3; $file_remove_user_cpu / 1000")
-  Sys:                        $(bc <<< "scale=3; $file_remove_sys_cpu / 1000")
-Filesystem remove ops/sec: $(bc <<< "scale=3; $file_remove_ops / ($file_remove_elapsed / 1000)")
-
-Filesystem total ops:     $file_total_ops
-Filesystem total elapsed: $(bc <<< "scale=3; $file_total_elapsed / 1000")
-Filesystem total CPU:     $(bc <<< "scale=3; $file_total_total_cpu / 1000")
-  User:                       $(bc <<< "scale=3; $file_total_user_cpu / 1000")
-  Sys:                        $(bc <<< "scale=3; $file_total_sys_cpu / 1000")
-Filesystem total ops/sec: $(bc <<< "scale=3; $file_total_ops / ($file_total_elapsed / 1000)")
-EOF
-	    ;;
-	server)
-	    echo "Bytes: $total"
-	    echo "Containers: $line_count"
-	    echo "Average_elapsed: $(bc <<< "scale=3; $total_et/$line_count/1000")"
-	    echo "Elapsed_span: $(bc <<< "scale=3; (($last_end)-($first_start))/1000")"
-	    echo "Data rate MB/sec: $(bc <<< "scale=3; (($total*2/($total_et/$line_count/1000)/1000000))")"
-	    echo "Mean RTT msec: $(bc <<< "scale=3; $mean_rtt/$line_count/1000")"
-	    echo "Max RTT msec: $(bc <<< "scale=3; $max_rtt/1000")"
-	    echo "Iterations: $total_iterations"
-	    ;;
-	soaker)
-	    echo "Iterations: $total_iterations"
-	    echo "Average_elapsed: $(bc <<< "scale=3; $total_et/$line_count/1000")"
-	    echo "Elapsed_span: $(bc <<< "scale=3; (($last_end)-($first_start))/1000")"
-	    echo "First start: $(bc <<< "scale=3; ($pod_first_start)/1000")"
-	    echo "Starting span: $(bc <<< "scale=3; (($pod_last_start)-($pod_first_start))/1000")"
-	    echo "Total CPU: $(bc <<< "scale=3; $total_cpu/1000")"
-	    echo "CPU utilization: $(bc <<< "scale=3; $total_cpu_util/1000")%"
-	    if (( total_cpu == 0 )) ; then
-		echo "Iterations/CPU sec: 0"
-	    else
-		echo "Iterations/CPU sec: $(bc <<< "scale=0; $total_iterations*1000/$total_cpu")"
-	    fi
-	    if (( total_et == 0 )) ; then
-		echo "Iterations/sec: 0"
-	    else
-		echo "Iterations/sec: $(bc <<< "scale=0; $total_iterations*1000*$line_count/$total_et")"
-	    fi
-	    ;;
-	sysbench)
-	    echo "Read ops/sec:  $(bc <<< "scale=3; $read_ops")"
-	    echo "Write ops/sec: $(bc <<< "scale=3; $write_ops")"
-	    echo "Fsync ops/sec: $(bc <<< "scale=3; $fsync_ops")"
-	    echo "Read rate MB/sec: $(bc <<< "scale=3; $readrate")"
-	    echo "Write rate MB/sec: $(bc <<< "scale=3; $writerate")"
-	    ;;
-	*)
-	    echo "Unknown mode $mode"
-	    ;;
-    esac
+    printit |do_report
 }
 
 function retrieve_pod_stats() {
