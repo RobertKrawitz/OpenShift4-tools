@@ -763,15 +763,15 @@ cat <<\EOF
   three steps must be performed.  Not doing this can lead to very
   strange errors; see https://bugzilla.redhat.com/show_bug.cgi?id=1647479.
 
-  + Go to https://api.ci.openshift.org/ and in the upper right corner
-    you will see the '?'.  Dropdown to Command Line Tools that will
-    give you an 'oc login' command to run from a command line.
+  + Go to
+    https://oauth-openshift.apps.ci.l2s4.p1.openshiftapps.com/oauth/token/request
+    and choose the option to log in with Github.  Click "Display token" to get
+    the login command, and run it.
 
   + Run 'oc registry login'.
 
   + This will generate or update additional secrets in
-    ~/.docker/config.json.  In particular, the secret for
-    registry.svc.ci.openshift.org will change.
+    ~/.docker/config.json.
 
 * [auth] Ensure that you have correct credentials for your cloud platform,
   as appropriate.
