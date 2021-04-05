@@ -105,8 +105,8 @@ declare nodeSelector='node-role.kubernetes.io/worker'
 declare get_logs_pid
 declare -i pbenchControllerPort=0
 declare pbenchControllerAddress=
-declare -i file_blocks=1
-declare -i file_block_size=1
+declare -i file_size=1024
+declare -i file_block_size=0
 declare -i file_volumes=0
 declare -i file_dirs_per_volume=1
 declare -i files_per_dir=1
@@ -256,6 +256,11 @@ Extended Options:
        --file-size=N
                         Each file should be of the specified size.
                         Sizes may be in bytes, [KMGT]iB, or [KMGT]B.
+       --file-block-size=N
+                        Write files using the specified I/O chunk size.
+                        If unspecified, it defaults to the file size.
+                        This should be a divisor of the file size; if not,
+                        the results are unspecified.
 
     Tuning object creation (short equivalents):
        --scale-ns=[0,1] Scale up the number of namespaces.
@@ -658,22 +663,25 @@ function process_option() {
 	volumes)		    file_volumes=$optvalue			;;
 	dirs_per_volume)	    file_dirs_per_volume=$optvalue		;;
 	files_per_dir)		    files_per_dir=$optvalue			;;
+	file_block_size)	    file_block_size=$optvalue			;;
 	file_size)
 	    if [[ $optvalue =~ ([[:digit:]]+)([[:alpha:]]*) ]] ; then
-		file_blocks=${BASH_REMATCH[1]}
+		file_size=${BASH_REMATCH[1]}
 		local size_modifier=${BASH_REMATCH[2],,}
+		local -i size_multiplier=1
 		case "$size_modifier" in
-		    ''|b)          file_block_size=1                ;;
-		    kb|kilobytes)  file_block_size=1000             ;;
-		    ki|kib|kibibytes) file_block_size=1024          ;;
-		    mb|megabytes)  file_block_size=1000000          ;;
-		    mi|mib|mebibytes) file_block_size=1048576       ;;
-		    gb|gigabytes)  file_block_size=1000000000       ;;
-		    gi|gib|gibibytes) file_block_size=1073741824    ;;
-		    tb|terabytes)  file_block_size=1000000000000    ;;
-		    ti|tib|tebibytes) file_block_size=1099511627776 ;;
+		    ''|b)          size_multiplier=1                ;;
+		    kb|kilobytes)  size_multiplier=1000             ;;
+		    ki|kib|kibibytes) size_multiplier=1024          ;;
+		    mb|megabytes)  size_multiplier=1000000          ;;
+		    mi|mib|mebibytes) size_multiplier=1048576       ;;
+		    gb|gigabytes)  size_multiplier=1000000000       ;;
+		    gi|gib|gibibytes) size_multiplier=1073741824    ;;
+		    tb|terabytes)  size_multiplier=1000000000000    ;;
+		    ti|tib|tebibytes) size_multiplier=1099511627776 ;;
 		    *) fatal "Cannot parse filesize $optvalue"      ;;
 		esac
+		file_size=$((file_size*size_multiplier))
 	    else
 		fatal "Cannot parse filesize $optvalue"
 	    fi
@@ -837,6 +845,10 @@ fi
 if [[ -n "$pbenchControllerAddress" && $pbenchControllerPort -eq 0 ]] ; then
     echo "Both pbench_controller_address and pbench_controller_port must be specified"
     exit 1
+fi
+
+if (( file_block_size <= 0)) ; then
+    file_block_size=file_size
 fi
 
 for i in $(seq 0 $((file_volumes-1)) ) ; do
@@ -1470,6 +1482,7 @@ function createContainersFilesYAML() {
     local -i j
     local syncService=
     local syncPortNum=
+    local -i file_blocks=$((file_size/file_block_size))
     if (( syncStart )) ; then
 	syncService="${syncHost:-service-${namespace}-sync}"
 	syncPortNum=$syncPort
