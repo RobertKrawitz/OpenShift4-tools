@@ -167,6 +167,13 @@ function do_report() {
 	    if [[ -n "${line:-}" ]] ; then
 		value=${line#*:}
 		field=${line%:*}
+		# Convenient way of stripping extra whitespace
+		# shellcheck disable=SC2116
+		# shellcheck disable=SC2086
+		value=$(echo $value)
+		# shellcheck disable=SC2116
+		# shellcheck disable=SC2086
+		field=$(echo $field)
 		args+=("$field" "$value")
 	    fi
 	done
