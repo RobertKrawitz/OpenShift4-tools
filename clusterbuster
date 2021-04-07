@@ -591,6 +591,29 @@ function process_volume() {
     volume_scoped_names["$vname"]=$vscoped_name
 }
 
+function parse_size() {
+    if [[ $1 =~ ([[:digit:]]+)([[:alpha:]]*) ]] ; then
+	local size=${BASH_REMATCH[1]}
+	local size_modifier=${BASH_REMATCH[2],,}
+	local -i size_multiplier=1
+	case "$size_modifier" in
+	    ''|b)          size_multiplier=1                ;;
+	    kb|kilobytes)  size_multiplier=1000             ;;
+	    ki|kib|kibibytes) size_multiplier=1024          ;;
+	    mb|megabytes)  size_multiplier=1000000          ;;
+	    mi|mib|mebibytes) size_multiplier=1048576       ;;
+	    gb|gigabytes)  size_multiplier=1000000000       ;;
+	    gi|gib|gibibytes) size_multiplier=1073741824    ;;
+	    tb|terabytes)  size_multiplier=1000000000000    ;;
+	    ti|tib|tebibytes) size_multiplier=1099511627776 ;;
+	    *) fatal "Cannot parse size $optvalue"          ;;
+	esac
+	echo $((size*size_multiplier))
+    else
+	fatal "Cannot parse filesize $optvalue"
+    fi
+}
+
 function process_option() {
     local option=$1
     local optname
@@ -672,30 +695,8 @@ function process_option() {
 	volumes)		    file_volumes=$optvalue			;;
 	dirs_per_volume)	    file_dirs_per_volume=$optvalue		;;
 	files_per_dir)		    files_per_dir=$optvalue			;;
-	file_block_size)	    file_block_size=$optvalue			;;
-	file_size)
-	    if [[ $optvalue =~ ([[:digit:]]+)([[:alpha:]]*) ]] ; then
-		file_size=${BASH_REMATCH[1]}
-		local size_modifier=${BASH_REMATCH[2],,}
-		local -i size_multiplier=1
-		case "$size_modifier" in
-		    ''|b)          size_multiplier=1                ;;
-		    kb|kilobytes)  size_multiplier=1000             ;;
-		    ki|kib|kibibytes) size_multiplier=1024          ;;
-		    mb|megabytes)  size_multiplier=1000000          ;;
-		    mi|mib|mebibytes) size_multiplier=1048576       ;;
-		    gb|gigabytes)  size_multiplier=1000000000       ;;
-		    gi|gib|gibibytes) size_multiplier=1073741824    ;;
-		    tb|terabytes)  size_multiplier=1000000000000    ;;
-		    ti|tib|tebibytes) size_multiplier=1099511627776 ;;
-		    *) fatal "Cannot parse filesize $optvalue"      ;;
-		esac
-		file_size=$((file_size*size_multiplier))
-	    else
-		fatal "Cannot parse filesize $optvalue"
-	    fi
-	    ;;
-
+	file_block_size)	    file_block_size=$(parse_size $optvalue)	;;
+	file_size)		    file_size=$(parse_size $optvalue)		;;
 	log_bytes_per_line)	    log_bytes_per_line=$optvalue		;;
 	log_bytes_per_io)	    log_bytes_per_io=$optvalue			;;
 	log_xfer_count)		    log_xfer_count=$optvalue			;;
