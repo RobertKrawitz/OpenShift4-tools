@@ -121,6 +121,8 @@ declare -i log_xfertime=0
 declare -i log_exit_at_end=0
 
 declare kataRuntimeClass=kata
+declare imagePullPolicy=Always
+declare containerImage=quay.io/rkrawitz/bench-army-knife
 
 declare accumulateddata=
 
@@ -226,6 +228,11 @@ Extended Options:
        --precleanup     Clean up any prior objects
        --cleanup        Clean up generated objects
        --timeout=N      Time out reporting
+       --image_pull_policy=<policy>
+                        Image pull policy (default $imagePullPolicy)
+       --container_image=<image>
+                        Image to use (default $containerImage).
+                        Does not apply to "classic" or "pause" pod types.
 
     Using PBench:
        If pbench is to be used, both arguments below must be provided.
@@ -641,6 +648,8 @@ function process_option() {
 	blocksize_secrets)	    blocksizeSecrets=$optvalue			;;
 	blocksize_namespaces)	    blocksizeNamespaces=$optvalue		;;
 	blocksize_deployments)	    blocksizeDeployments=$optvalue		;;
+	container_image)	    containerImage=$optvalue			;;
+	image_pull_policy)	    imagePullPolicy=$optvalue			;;
 	sleep_configmaps)	    sleepConfigMaps=$optvalue			;;
 	sleep_secrets)		    sleepSecrets=$optvalue			;;
 	sleep_namespaces)	    sleepNamespaces=$optvalue			;;
@@ -1128,8 +1137,8 @@ function createPbenchAgentYAML() {
 	done
 	cat <<EOF
 - name: "pbench-agent"
-  image: "quay.io/rkrawitz/bench-army-knife:latest"
-  imagePullPolicy: Always
+  image: "$containerImage"
+  imagePullPolicy: $imagePullPolicy
   securityContext:
     privileged: false
     capabilities:
@@ -1226,7 +1235,7 @@ function createContainersClusterBusterYAML() {
     for j in $(seq 0 $((containers - 1))) ; do
 	cat <<EOF
 - name: ${namespace}-$i-$j
-  imagePullPolicy: Always
+  imagePullPolicy: $imagePullPolicy
   image: "busybox"
 $(indent 2 createContainerResources)
   command:
@@ -1253,7 +1262,7 @@ function createContainersPausePodYAML() {
     for j in $(seq 0 $((containers - 1))) ; do
 	cat <<EOF
 - name: ${namespace}-$i-$j
-  imagePullPolicy: Always
+  imagePullPolicy: $imagePullPolicy
   image: "gcr.io/google_containers/pause-amd64:3.0"
 $(indent 2 createContainerResources)
 $(indent 2 createVolumeMountsYAML "$namespace" "$i" "$secretCount")
@@ -1272,8 +1281,8 @@ function createContainersLogYAML() {
     for j in $(seq 0 $((containers - 1))) ; do
 	cat <<EOF
 - name: ${namespace}-$i-$j
-  imagePullPolicy: Always
-  image: "quay.io/rkrawitz/bench-army-knife"
+  imagePullPolicy: $imagePullPolicy
+  image: "$containerImage"
 $(indent 2 createContainerResources)
   env:
   - name: VERBOSE
@@ -1387,8 +1396,8 @@ function createSyncYAML() {
     local expectedClients=$3
     cat <<EOF
 - name: ${namespace}-sync
-  imagePullPolicy: Always
-  image: "quay.io/rkrawitz/bench-army-knife"
+  imagePullPolicy: $imagePullPolicy
+  image: "$containerImage"
   ports:
   - containerPort: $port
 $(indent 2 genericCommand sync.pl)
@@ -1436,7 +1445,7 @@ $(indent 2 node_selector)
     ${basename}-sync: "true"
     clusterbusterbase: "true"
 $(createSyncSpec "$syncCount" "$@")
-  restartPolicy: Never
+  restartPolicy: Always
 EOF
     else
 	createObject <<EOF
@@ -1492,8 +1501,8 @@ function createContainersFilesYAML() {
 	# shellcheck disable=2030
 	cat <<EOF
 - name: "c${j}"
-  imagePullPolicy: Always
-  image: "quay.io/rkrawitz/bench-army-knife"
+  imagePullPolicy: $imagePullPolicy
+  image: "$containerImage"
 $(indent 2 createContainerResources)
   env:
   - name: VERBOSE
@@ -1629,8 +1638,8 @@ function createContainersSysbenchYAML() {
     for j in $(seq 0 $((containers - 1))) ; do
 	cat <<EOF
 - name: "c${j}"
-  imagePullPolicy: Always
-  image: "quay.io/rkrawitz/bench-army-knife"
+  imagePullPolicy: $imagePullPolicy
+  image: "$containerImage"
 $(indent 2 createContainerResources)
   env:
   - name: VERBOSE
@@ -1762,8 +1771,8 @@ function createContainersFioYAML() {
     for j in $(seq 0 $((containers - 1))) ; do
 	cat <<EOF
 - name: "c${j}"
-  imagePullPolicy: Always
-  image: "quay.io/rkrawitz/bench-army-knife:latest"
+  imagePullPolicy: $imagePullPolicy
+  image: "$containerImage"
 $(indent 2 createContainerResources)
   env:
   - name: VERBOSE
@@ -1891,8 +1900,8 @@ function createContainersCPUSoakerYAML() {
     for j in $(seq 0 $((containers - 1))) ; do
 	cat <<EOF
 - name: "c$j"
-  imagePullPolicy: Always
-  image: "quay.io/rkrawitz/bench-army-knife"
+  imagePullPolicy: $imagePullPolicy
+  image: "$containerImage"
 $(indent 2 createContainerResources)
   env:
   - name: VERBOSE
@@ -2056,8 +2065,8 @@ function createServerContainerYAML() {
     local expectedClients=$5
     cat <<EOF
 - name: server
-  image: "quay.io/rkrawitz/bench-army-knife"
-  imagePullPolicy: Always
+  image: "$containerImage"
+  imagePullPolicy: $imagePullPolicy
 $(indent 2 createContainerResources)
   ports:
   - containerPort: $port
@@ -2176,8 +2185,8 @@ function createClientContainerYAML() {
     for j in $(seq 0 $((containers - 1))) ; do
 	cat <<EOF
 - name: c${j}
-  image: "quay.io/rkrawitz/bench-army-knife"
-  imagePullPolicy: Always
+  image: "$containerImage"
+  imagePullPolicy: $imagePullPolicy
 $(indent 2 createContainerResources)
   env:
   - name: VERBOSE
@@ -2314,7 +2323,7 @@ $nsline
 spec:
   replicas: $replicas
 $(indent 2 node_selector)
-  restartPolicy: Never
+  restartPolicy: Always
   selector:
     matchLabels:
       app: ${namespace}-${i}-client
