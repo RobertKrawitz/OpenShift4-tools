@@ -13,17 +13,19 @@ declare run_name=
 declare basename=clusterbuster
 declare -A cached_stats=()
 declare statsfile=
+declare -a extras=()
 
 declare OC
 OC=$(type -p oc)
 OC=${OC:-$(type -p kubectl)}	# kubectl might not work, though...
 
-while getopts ':p:B:st:f:vqNcnr:' opt ; do
+while getopts ':p:B:st:f:F:vqNcnr:' opt ; do
     case "$opt" in
 	B) basename=$OPTARG 	  ;;
 	N) use_namespace=0	  ;;
 	c) csv=1		  ;;
 	f) statsfile=$OPTARG	  ;;
+	F) extras+=("$OPTARG")	  ;;
 	n) header=0		  ;;
 	p) parallel=$OPTARG 	  ;;
 	q) verbose=0        	  ;;
@@ -130,11 +132,20 @@ function prettyprint() {
 function report() {
     local fields=()
     local values=()
+    local field=
+    local value=
+    local extra=
     local x=$'"'
     if [[ -n "$run_name" ]] ; then
 	fields+=("${x}Name${x}")
 	values+=("$x$run_name$x")
     fi
+    # Extra value with no = is treated as a field name with
+    # empty value
+    for extra in "${extras[@]}" ; do
+	fields+=("${x}${extra%%=*}${x}")
+	values+=("${x}${extra#*=}${x}")
+    done
     while (( $# > 0 )) ; do
 	fields+=("$x$1$x")
 	values+=("$x$2$x")
@@ -156,8 +167,6 @@ function do_report() {
 	    if [[ -n "${line:-}" ]] ; then
 		value=${line#*:}
 		field=${line%:*}
-		value=$(echo $value)
-		field=$(echo $field)
 		args+=("$field" "$value")
 	    fi
 	done
