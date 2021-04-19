@@ -877,6 +877,10 @@ $(indent 2 controller_affinity)
       name: controller
     - containerPort: $ssh_port
       name: ssh
+    - containerPort: $redis_port
+      name: redis
+    - containerPort: $datasink_port
+      name: datasink
     command:
     - "/usr/local/bin/bootstrap.sh"
     args:
