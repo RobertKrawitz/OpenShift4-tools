@@ -367,7 +367,7 @@ echo "********************" 1>&2
 set -x
 for remote in "${remotes[@]}" ; do
     echo "127.0.0.1 $remote" >> /etc/hosts
-    socat "TCP4-LISTEN:$first_port,fork" "EXEC:ssh $remote socat - \"TCP4:127.0.0.1:$first_port\"" &
+    socat "TCP4-LISTEN:$first_port,fork" "EXEC:ssh $remote socat - \"TCP4:127.0.0.1:$first_port,forever\"" &
     pids+=($!)
     first_port=$((first_port+1))
 done
