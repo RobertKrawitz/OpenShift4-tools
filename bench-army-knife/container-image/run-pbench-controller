@@ -198,7 +198,7 @@ if [[ -z "${BAK_SERVER_CONFIG:-}" || -z "${BAK_SERVER_PRIVATE_KEY:-}" ]] ; then
 	    warn "No configuration file $configdir/pbench-agent.cfg provided; using existing default."
 	fi
     fi
-    [[ -r "$configdir"/id_rsa ]] || usage "Expected private key $configdir/pbench-agent.cfg does not exist"
+    [[ -r "$configdir"/id_rsa ]] || usage "Expected private key $configdir/id_rsa does not exist"
 fi
 [[ $keyfile == '/'* ]] || keyfile="$configdir/$keyfile"
 [[ -r "$keyfile" ]] || usage "Private key file $keyfile does not exist."
@@ -424,12 +424,19 @@ else
     fi
 fi
 
-echo "Waiting for benchmark to complete" 1>&2
-if [[ -n "$*" ]] ; then
+function runit() {
+    echo "Command:"
+    echo "$@"
     "$@"
+}
+echo "Waiting for benchmark to complete" 1>&2
+echo "Environment:" 1>&2
+env 1>&2
+if [[ -n "$*" ]] ; then
+    runit "$@"
 else
     command=("sync.pl" "$worker_sync_port" "$expected_clients" "$worker_sync_count")
-    /opt/pbench-agent/bench-scripts/pbench-user-benchmark --config="$configname" -- "${command[@]}"
+    runit /opt/pbench-agent/bench-scripts/pbench-user-benchmark --config="$configname" -- "${command[@]}"
 fi
 echo "Moving results" 1>&2
 declare controller_arg=
