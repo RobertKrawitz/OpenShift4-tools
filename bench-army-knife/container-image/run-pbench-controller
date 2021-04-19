@@ -170,8 +170,10 @@ else
     echo "Using toolmeister strategy" 1>&2
     if (( use_ip_for_controller_addr )) ; then
 	# shellcheck disable=2155
-	export _pbench_full_hostname=$(host "$(hostname)" |awk '{print $NF}' | head -1)
-	export PBENCH_TM_BIND_HOSTNAME=$_pbench_full_hostname
+#	export _pbench_full_hostname=$(host "$(hostname)" |awk '{print $NF}' | head -1)
+#	export PBENCH_TM_BIND_HOSTNAME=$_pbench_full_hostname
+	export PBENCH_REDIS_SERVER="0.0.0.0:${PBENCH_CONTROLLER_SERVICE_PORT_REDIS};${PBENCH_CONTROLLER_SERVICE_HOST}:${PBENCH_CONTROLLER_SERVICE_PORT_REDIS}"
+	export PBENCH_TOOL_DATA_SINK="0.0.0.0:${PBENCH_CONTROLLER_SERVICE_PORT_DATA_SINK};${PBENCH_CONTROLLER_SERVICE_HOST}:${PBENCH_CONTROLLER_SERVICE_PORT_DATA_SINK}"
 	sed -i -e 's,bind {hostnames},protected-mode no,' /opt/pbench-agent/util-scripts/pbench-tool-meister-start
 	echo "Setting controller to $_pbench_full_hostname" 1>&2
     fi
@@ -441,6 +443,7 @@ fi
 echo "Moving results" 1>&2
 declare controller_arg=
 if supports_pbench_move_results_controller ; then
+    echo "Setting controller hostname to $controller_hostname for pbench-move-results"
     if [[ -n "$controller_hostname" ]] ; then
 	controller_arg="--controller=$controller_hostname"
     fi
