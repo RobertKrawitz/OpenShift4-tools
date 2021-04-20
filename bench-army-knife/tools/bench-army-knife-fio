@@ -110,6 +110,9 @@ declare pvmount_path=
 declare -i waitforever=0
 declare -A extra_hosts=()
 declare pre_script=
+declare job_file=
+declare secret_name=credentials
+declare secret_root=/etc/$secret_name
 
 function usage() {
     [[ -n "$*" ]] && echo "Unknown option $*"
@@ -136,6 +139,7 @@ Usage: ${___topsc:-$0} [options] [-- pbench-${bm_name} args]
        -I             Initialize the desired namespace
        -i interface   Use the specified network interface on each pod.
                       Default is the default interface.
+       -J jobfile     Use the specified fio job file as the template.
        -K             Use kata containers
        -k keyfile     Use the specified private key for sending results.
                       No default; must be provided.
@@ -173,7 +177,7 @@ EOF
     exit 1
 }
 
-while getopts 'A:C:c:EeF:fHIi:Kk:L:M:m:N:nP:p:qR:r:u:V:wXxYy' opt ; do
+while getopts 'A:C:c:EeF:fHIi:J:Kk:L:M:m:N:nP:p:qR:r:u:V:wXxYy' opt ; do
     case "$opt" in
 	A) pbench_agent_key=$OPTARG	 ;;
 	C) hostname=$OPTARG		 ;;
@@ -187,6 +191,7 @@ while getopts 'A:C:c:EeF:fHIi:Kk:L:M:m:N:nP:p:qR:r:u:V:wXxYy' opt ; do
 	   hostnetworkname=-hostnetwork	 ;;
 	i) interface="$OPTARG"		 ;;
 	I) initialize_ns=1		 ;;
+	J) jobfile=$OPTARG		 ;;
 	K) kata=1
 	   kataname=kata		 ;;
 	k) pbench_private_key=$OPTARG	 ;;
@@ -240,20 +245,35 @@ if [[ -n "$pbench_agent_key" && (! -r "$pbench_agent_key" || ! -r "${pbench_agen
     echo "Cannot read agent key $pbench_agent_key or ${pbench_agent_key}.pub"
     error=1
 fi
-(( error )) && usage
 
 if [[ -n "$pre_script" ]] ; then
-    additional_files+=("$pre_script")
+    if [[ ! -r "$pre_script" ]] ; then
+	echo "Pre-script '$pre_script' does not exist" 1>&2
+	error=1
+    else
+	additional_files+=("$pre_script")
+    fi
 fi
+
+if [[ -n "$jobfile" ]] ; then
+    if [[ ! -r "$jobfile" ]] ; then
+	echo "Job file '$jobfile' does not exist" 1>&2
+	error=1
+    else
+	additional_files+=("$jobfile")
+    fi
+fi
+
+(( error )) && usage
 
 for f in "${additional_files[@]}"; do
     if [[ $f = "run-pbench-controller="* || $f = "run-pbench-controller" ||
 	      $f = *"/run-pbench-controller" ]] ; then
-	pbench_controller_bin=/etc/credentials/run-pbench-controller
+	pbench_controller_bin="$secret_root"/run-pbench-controller
     fi
     if [[ $f = "run-pbench-agent-container="* || $f = "run-pbench-agent-container" ||
 	      $f = *"/run-pbench-agent-container" ]] ; then
-	pbench_agent_container_bin=/etc/credentials/run-pbench-agent-container
+	pbench_agent_container_bin="$secret_root"/run-pbench-agent-container
     fi
 done
 
@@ -321,7 +341,7 @@ if (( ! print_only )) ; then
     oc delete deployment --all
     oc delete pods --all
 
-    oc get secret credentials >/dev/null 2>&1 && oc delete secret credentials 
+    oc get secret "$secret_name" >/dev/null 2>&1 && oc delete secret "$secret_name" 
     oc delete service --all
 
     dnsserver=$(oc get service -n openshift-dns dns-default -ojson | jq -r '.spec.clusterIP')
@@ -1352,7 +1372,7 @@ function create_credentials_1() {
     additional_files+=("pbench-agent.cfg=$pbench_agent_cfg")
     additional_files+=("id_rsa_agent=$pbench_agent_key")
     additional_files+=("id_rsa_agent.pub=${pbench_agent_key}.pub")
-    _oc create secret generic credentials "${additional_files[@]/#/--from-file=}"
+    _oc create secret generic "$secret_name" "${additional_files[@]/#/--from-file=}"
     if [[ -n "$tmpkeydir" && -d "$tmpkeydir" ]] ; then
 	rm -rf "$tmpkeydir"
     fi
@@ -1661,7 +1681,7 @@ $(indent 4 create_resources)
     command:
     - "/usr/local/bin/bootstrap.sh"
     args:
-${pre_script:+    - "/etc/credentials/$pre_script"}
+${pre_script:+    - "$secret_root/$pre_script"}
     - "$pbench_agent_container_bin"
     $( ((quiet)) && echo '- "-q"')
 $( (( waitforever )) && echo "    - -w")
@@ -1669,7 +1689,7 @@ $( (( waitforever )) && echo "    - -w")
     - "-a"
     - "${namespace}${type:+-$type}${suffix}"
     - "-D"
-    - "/etc/credentials/"
+    - "$secret_root/"
     - "-n"
     - "$dnsserver"
     - "-K"
@@ -1679,15 +1699,15 @@ $( (( waitforever )) && echo "    - -w")
 $(indent 4 pbench-benchmark-environment "${environment[@]}")
     terminationGracePeriodSeconds: 1
     volumeMounts:
-    - name: credentials
-      mountPath: "/etc/credentials"
+    - name: "$secret_name"
+      mountPath: "$secret_root"
       readOnly: true
 $(indent 4 persistent_volume_mount)
   volumes:
-  - name: credentials
+  - name: "$secret_name"
     secret:
       defaultMode: 0400
-      secretName: credentials
+      secretName: "$secret_name"
 $(indent 2 persistent_volume_decl)
 EOF
 }
@@ -1758,7 +1778,7 @@ spec:
         - "-a"
         - "${namespace}-agent"
         - "-D"
-        - "/etc/credentials/"
+        - "$secret_root/"
         - "-n"
         - "$dnsserver"
         - "-K"
@@ -1767,15 +1787,15 @@ spec:
         - "${namespace}-controller.$namespace"
         terminationGracePeriodSeconds: 1
         volumeMounts:
-        - name: credentials
-          mountPath: "/etc/credentials"
+        - name: "$secret_name"
+          mountPath: "$secret_root"
           defaultMode: 0400
           readOnly: true
       volumes:
-      - name: credentials
+      - name: "$secret_name"
         secret:
           defaultMode: 0400
-          secretName: credentials
+          secretName: "$secret_name"
 EOF
     fi
 }
@@ -1860,6 +1880,14 @@ function mk_arglist() {
     done
 }
 
+function mk_jobfile() {
+    if [[ -r "$jobfile" ]] ; then
+	cat <<EOF
+- "--job-file=${secret_root}/${jobfile##*/}"
+EOF
+    fi
+}
+
 function controller_pod() {
     #shellcheck disable=SC2155
     local agents=$(oc get pods -l "$selector_key" -A --no-headers 2>/dev/null | wc -l)
@@ -1908,7 +1936,7 @@ $(indent 2 controller_affinity)
     command:
     - "/usr/local/bin/bootstrap.sh"
     args:
-${pre_script:+    - "/etc/credentials/$pre_script"}
+${pre_script:+    - "$secret_root/$pre_script"}
     - "$pbench_controller_bin"
 $(indent 4 set_controller_hostname)
     - "-I"
@@ -1916,7 +1944,7 @@ $( (( waitforever )) && echo "    - -w")
     - "-L"
     - "$ssh_port"
     - "-D"
-    - "/etc/credentials/"
+    - "$secret_root/"
     - "-K"
     - "id_rsa_agent.pub"
     - "-A"
@@ -1931,6 +1959,7 @@ $( (( waitforever )) && echo "    - -w")
 $(indent 4 mk_arglist "${namespace}" $instances)
     - "--"
     - "pbench-${bm_name}"
+$(indent 4 mk_jobfile)
     - "--config=$configname"
 $(indent 4 persistent_volume_extra_args "${namespace}" $instances)
     - "--unique-ports"
@@ -1938,13 +1967,13 @@ $(indent 4 persistent_volume_extra_args "${namespace}" $instances)
     - "$(mk_podlist ${namespace} $instances)"
 $(IFS=$'\n'; echo "${benchmark_args[*]/#/    - \"}" |grep '"' | sed -e 's/$/"/')
     volumeMounts:
-    - name: credentials
-      mountPath: "/etc/credentials"
+    - name: "$secret_name"
+      mountPath: "$secret_root"
       readOnly: true
   volumes:
-  - name: credentials
+  - name: "$secret_name"
     secret:
-      secretName: credentials
+      secretName: "$secret_name"
 EOF
 }
 
