@@ -94,6 +94,7 @@ declare pbench_private_key=
 declare pbench_agent_key=
 declare pbench_controller_bin=/usr/local/bin/run-pbench-controller
 declare pbench_agent_container_bin=/usr/local/bin/run-pbench-agent-container
+declare pbench_tunnel_bin=/usr/local/bin/create-tunnel
 declare -a additional_files=()
 declare selector_key=bench-army-knife-agent
 declare pod_cpu_request=
@@ -110,6 +111,8 @@ declare pvmount_path=
 declare -i waitforever=0
 declare -A extra_hosts=()
 declare pre_script=
+# This is used inside a here document, which shellcheck can't see
+# shellcheck disable=SC2034
 declare job_file=
 declare secret_name=credentials
 declare secret_root=/etc/$secret_name
@@ -352,70 +355,6 @@ fi
 function create_extra_credential_benchmark() {
     local tmpdir="$1"
     shift
-    if ! grep -q '10-fio-setup' < <(IFS=$'\n'; echo "$*") ; then
-	cat > "$tmpdir/10-fio-setup" <<'EOF'
-#!/bin/bash
-
-FIO_SOCKNAME=/tmp/fio.sock
-
-if [[ ${BENCH_ARMY_KNIFE_ROLE:-} = controller ]] ; then
-    cat > /usr/local/bin/create-tunnel <<'EOG'
-#!/bin/bash
-
-function fatal() {
-    echo "$*" 1>&2
-    exit 1
-}
-
-if (( $# < 4 )) ; then
-    fatal "Usage: $0 first_port remotes... -- command args..."
-fi
-
-declare -i first_port=$1; shift
-declare -a remotes=()
-declare -a pids=()
-
-while (( $# >= 0 )) ; do
-    if [[ $1 = -- ]] ; then
-        shift
-        break
-    fi
-    remotes+=("$1")
-    shift
-done
-
-if (( $# == 0 )) ; then
-    fatal "$0: no command specified"
-fi
-
-echo "********************" 1>&2
-echo $PATH 1>&2
-type -p ssh 1>&2
-echo "********************" 1>&2
-
-set -x
-for remote in "${remotes[@]}" ; do
-    echo "127.0.0.1 $remote" >> /etc/hosts
-    socat "TCP4-LISTEN:$first_port,fork" "EXEC:ssh $remote socat - \"TCP4:127.0.0.1:$first_port,forever\"" &
-    pids+=($!)
-    first_port=$((first_port+1))
-done
-set +x
-
-declare -i status
-"$@"
-status=$?
-
-kill -KILL "${pids[@]}"
-exit $status
-EOG
-    ls -l /usr/local/bin/create-tunnel 1>&2
-    chmod +x /usr/local/bin/create-tunnel
-fi
-
-EOF
-	echo "$tmpdir/10-fio-setup"
-    fi
     if [[ -n "$BENCH_ARMY_KNIFE_OVERRIDE_FIO" ]] ; then
 	cat 1>&2 <<'EOM'
 ***** WARNING ******
@@ -1341,8 +1280,6 @@ pbench-collect-sysinfo --group=$tool_group --dir=$benchmark_run_dir  --sysinfo=$
 
 rmdir $benchmark_run_dir/.running
 EOG
-    ls -l /usr/local/bin/create-tunnel 1>&2
-    chmod +x /usr/local/bin/create-tunnel
 fi
 
 EOF
@@ -1954,7 +1891,7 @@ $( (( waitforever )) && echo "    - -w")
     - "-u"
     - "$username"
     - "--"
-    - "/usr/local/bin/create-tunnel"
+    - "$pbench_tunnel_bin"
     - "8765"
 $(indent 4 mk_arglist "${namespace}" $instances)
     - "--"

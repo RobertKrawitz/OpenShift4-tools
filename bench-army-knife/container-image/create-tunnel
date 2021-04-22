@@ -1,0 +1,44 @@
+#!/bin/bash
+
+function fatal() {
+    echo "$*" 1>&2
+    exit 1
+}
+
+if (( $# < 4 )) ; then
+    fatal "Usage: $0 first_port remotes... -- command args..."
+fi
+
+declare -i first_port=$1; shift
+declare -a remotes=()
+declare -a pids=()
+
+while (( $# >= 0 )) ; do
+    if [[ $1 = -- ]] ; then
+        shift
+        break
+    fi
+    remotes+=("$1")
+    shift
+done
+
+if (( $# == 0 )) ; then
+    fatal "$0: no command specified"
+fi
+
+echo "Setting up tunnels:" 1>&2
+for remote in "${remotes[@]}" ; do
+    echo "- $remote" 1>&2
+    echo "127.0.0.1 $remote" >> /etc/hosts
+    socat "TCP4-LISTEN:$first_port,fork" "EXEC:ssh $remote socat - \"TCP4:127.0.0.1:$first_port,forever\"" &
+    pids+=($!)
+    first_port=$((first_port+1))
+done
+echo "Finished setting up tunnels"
+
+declare -i status
+"$@"
+status=$?
+
+kill -KILL "${pids[@]}"
+exit $status
