@@ -280,7 +280,7 @@ for f in "${additional_files[@]}"; do
     fi
 done
 
-configname=${configname:-${bm_name}}-${kataname}-${affinity_types[$anti_affinity],,}-${pod_cpu_limit:+-limit-${pod_cpu_limit}}${pod_cpu_request:+-request-${pod_cpu_request}}${pod_memory_limit:+-limit-${pod_memory_limit}}${pod_memory_request:+-request-${pod_memory_request}}
+configname=${configname:-${bm_name}}-${kataname}-${affinity_types[$anti_affinity],,}${pod_cpu_limit:+-limit-${pod_cpu_limit}}${pod_cpu_request:+-request-${pod_cpu_request}}${pod_memory_limit:+-mlimit-${pod_memory_limit}}${pod_memory_request:+-mrequest-${pod_memory_request}}
 
 shift $((OPTIND-1))
 
