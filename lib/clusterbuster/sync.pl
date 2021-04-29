@@ -21,16 +21,16 @@ $SIG{TERM} = sub { close SOCK; POSIX::_exit(0); };
 setsockopt(SOCK,SOL_SOCKET, SO_REUSEADDR, pack("l",1)) || die "setsockopt reuseaddr: $!\n";
 setsockopt(SOCK,SOL_SOCKET, SO_KEEPALIVE, pack("l",1)) || die "setsockopt keepalive: $!\n";
 bind(SOCK, pack($sockaddr, AF_INET, $listen_port, "\0\0\0\0")) || die "bind: $!\n";
-listen(SOCK, 5) || die "listen: $!";
 my $mysockaddr = getsockname(SOCK);
 my ($junk, $port, $addr) = unpack($sockaddr, $mysockaddr);
 die "can't get port $port: $!\n" if ($port ne $listen_port);
-timestamp("Listening on port $listen_port");
 my (@clients);
 
 while ($syncCount < 0 || $syncCount-- > 0) {
     my $child = fork();
     if ($child == 0) {
+	timestamp("Listening on port $listen_port");
+	listen(SOCK, 5) || die "listen: $!";
 	print STDERR "Expect $expected_clients clients\n";
 	while ($expected_clients > 0) {
 	    my ($client);
@@ -55,6 +55,7 @@ while ($syncCount < 0 || $syncCount-- > 0) {
         timestamp("Fork failed: $!");
 	POSIX::_exit(1);
     } else {
+	close(SOCK);
         wait();
     }
 }
