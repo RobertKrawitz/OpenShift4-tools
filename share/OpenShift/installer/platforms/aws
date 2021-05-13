@@ -31,6 +31,7 @@ declare -arg _____aws_known_instance_types=(" X.General Purpose"
 					    m5{,d}.{{,{,2,4,8,12,16,24}x}large,metal}
 					    m5{a,n,dn}.{,{,2,4,8,12,16,24}x}large
 					    m5ad.{,{,2,4,12,24}x}large
+					    m5zn.{{,{,2,3,6,12}x}large,metal}
 					    m4.{,{,2,4,10,16}x}large
 					    " X.Burstable"
 					    t{3,3a,2}.{nano,micro,small,medium,{,x,2x}large}
@@ -42,7 +43,7 @@ declare -arg _____aws_known_instance_types=(" X.General Purpose"
 					    c5n.{{,{,2,4,9,18}x}large,metal}
 					    " X.Memory Optimized"
 					    r4.{,{,2,4,8,16}x}large
-					    r5{,d}.{{,{,2,4,8,12,16,24}x}large,metal}
+					    r5{,d,b}.{{,{,2,4,8,12,16,24}x}large,metal}
 					    r5{a,n,dn}.{,{,2,4,8,12,16,24}x}large
 					    r5ad.{,{,2,4,12,24}x}large
 					    x1e.{,2,4,8,16,32}xlarge
@@ -51,18 +52,22 @@ declare -arg _____aws_known_instance_types=(" X.General Purpose"
 					    z1d.{{,{,2,3,6,12}x}large,metal}
 					    # High Memory are special dedicated-only hosts
 					    " X.High Memory (special dedicated-only hosts)"
-					    u-t{6,9}tb1.metal
-					    u-t{12,18,24}tb1.metal
+					    u-6tb1.{{56,112}xlarge,metal}
+					    u-{9,12}tb1.{112xlarge,metal}
+					    u-{18,24}tb1.metal
 					    " X.Storage Optimized"
 					    i3.{{,{,2,4,8,16}x}large,metal}
 					    i3en.{{,{,2,3,6,12,24}x}large,metal}
-					    d2.{,2,4,8}xlarge
+					    d{2,3}.{,2,4,8}xlarge
+					    d3en.{,2,4,6,8,12}xlarge
 					    h1.{2,4,8,16}xlarge
 					    " X.GPU"
+					    p4d.24xlarge
 					    p3.{2,8,16}xlarge
 					    p3dn.24xlarge
 					    p2.{,8,16}xlarge
 					    inf1.{,2,6,24}xlarge
+					    g4ad.{4,8,12}xlarge
 					    g4dn.{{,2,4,8,12,16}xlarge,metal}
 					    g3s.xlarge
 					    g3.{4,8,16}xlarge
@@ -125,7 +130,7 @@ aws     (random US AWS zone)
   aws3  (aws us-west-1)
   aws4  (aws us-west-2)
   aws5  (aws eu-west-2)
-   aws6  (aws eu-west-3)
+  aws6  (aws eu-west-3)
   aws7  (aws sa-east-1)
   aws-* (specified AWS region by name)
 EOF

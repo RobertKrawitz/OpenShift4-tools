@@ -857,8 +857,7 @@ function installer_setup() {
     local -i not_latest=1
     local release_data
     local image
-    local release_source=${OPENSHIFT_RELEASE_SOURCE:-https://${repo}.svc.ci.openshift.org/api/v1/releasestream}
-    local installer_registry=${OPENSHIFT_INSTALL_REGISTRY:-registry.svc.ci.openshift.org/${subdir_map[$repo]:-}/release}
+    local release_source=${OPENSHIFT_RELEASE_SOURCE:-openshift-release.apps.ci.l2s4.p1.openshiftapps.com/api/v1/releasestream}
     #release_channel=${release_channel:-${release_base_map[$repo]:-}}
     if (( query )) ; then
 	if [[ -z ${release_channel:-} ]] ; then
@@ -891,7 +890,7 @@ function installer_setup() {
 	[[ -n $install_version ]] || fatal "Can't extract install version!"
     fi
     echo "Using version $install_version${not_latest:- (latest)}" 1>&2
-    local -r pullspec="$installer_registry:$install_version"
+    local -r pullspec="$install_version"
     image=$("${OC}" adm release info --pullspecs "$pullspec" | awk '{if ($1 == "Pull") {print $3}}')
     [[ -z $image ]] && fail_find_image "$install_version"
     if (( ! force_local_tools )) ; then
