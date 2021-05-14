@@ -125,6 +125,7 @@ declare imagePullPolicy=Always
 declare containerImage=quay.io/rkrawitz/bench-army-knife
 
 declare accumulateddata=
+declare -a plurals=('s' '')
 
 declare OC
 OC=$(type -p oc)
@@ -1014,9 +1015,17 @@ function createObjectFromFile() {
     done
     if (( doit )) ; then
 	"$OC" create ${useNamespaces:+-n "$namespace"} "$objtype" "$objname" "${@/#/--from-file=}"
+	"$OC" label ${useNamespaces:+-n "$namespace"} "$objtype" "$objname" 'clusterbusterbase=true' "${basename}=true"
+	totalObjectsCreated=$((totalObjectsCreated+1))
+	if [[ -z ${objectsCreated[$objtype]:-} ]] ; then
+	    objectsCreated[$objtype]=1
+	else
+	    objectsCreated[$objtype]=$((${objectsCreated[$objtype]}+1))
+	fi
 	(( !sleeptime )) || sleep "$sleeptime"
     else
 	echo "$OC" create ${useNamespaces:+-n "$namespace"} "$objtype" "$objname" "${@/#/--from-file=}"
+	echo "$OC" label ${useNamespaces:+-n "$namespace"} "$objtype" "$objname" 'clusterbusterbase=true' "${basename}=true"
     fi
 }
 
@@ -2725,13 +2734,16 @@ function doCleanup() {
     if [[ -n "$useNamespaces" ]] ; then
 	objectsToClean=(namespace)
     else
-	objectsToClean=("$deploymentType" secret route service)
+	objectsToClean=("$deploymentType" configmap secret route service)
     fi
     for objtype in "${objectsToClean[@]}" ; do
 	if (( reportObjectCreation )) ; then
 	    "$OC" delete "$objtype" -l "$basename"
 	else
-	    echo "Deleted  $("$OC" delete "$objtype" -l "$basename" |wc -l) ${objtype}(s)"
+	    local objects_deleted=$("$OC" delete "$objtype" -l "$basename" |grep "^${objtype}.*deleted\$" |wc -l)
+	    if ((objects_deleted > 0)) ; then
+		printf "Deleted %d %s%s\n" "$objects_deleted" "$objtype" "${plurals[$(($objects_deleted == 1))]}"
+	    fi
 	fi
     done
 }
@@ -2844,9 +2856,9 @@ function run_clusterbuster_1() {
 
     local objtype
     while read -r objtype ; do
-	[[ -n "${objtype:-}" ]] && printf "Created %${#totalObjectsCreated}d %s(s)\n" "${objectsCreated[$objtype]}" "$objtype"
+	[[ -n "${objtype:-}" ]] && printf "Created %${#totalObjectsCreated}d %s%s\n" "${objectsCreated[$objtype]}" "$objtype" "${plurals[$((${objectsCreated[$objtype]} == 1))]}"
     done < <( (IFS=$'\n'; echo "${!objectsCreated[*]}") | sort)
-    echo "Created $totalObjectsCreated object(s) total"
+    printf "Created %d object%s total\n" "$totalObjectsCreated" "${plurals[$((totalObjectsCreated == 1))]}"
     if ((cleanup)) ; then
 	doCleanup
     fi
