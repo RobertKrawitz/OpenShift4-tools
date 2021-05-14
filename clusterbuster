@@ -832,6 +832,7 @@ fi
 (( !blocksizeSecrets )) && blocksizeSecrets=$blocksize
 (( !blocksizeNamespaces )) && blocksizeNamespaces=$blocksize
 (( !blocksizeDeployments )) && blocksizeDeployments=$blocksize
+(( verbose_report )) && report=1
 
 [[ -n $runtimeClass ]] && runtimeClass="runtimeClassName: \"$runtimeClass\""
 
@@ -2376,7 +2377,7 @@ function createDeploymentFiles() {
     local -i i
     if [[ syncStart -gt 0 && -z "$syncHost" ]] ; then
 	createService "$namespace" "${namespace}-sync" "$syncPort"
-	createSyncDeployment 3 "$namespace" "$((containers * replicas * count))"
+	createSyncDeployment 3 "$namespace" "$((containers * processes_per_pod * replicas * count))"
     fi
     for i in $(seq $firstDeployment $((count + firstDeployment - 1))) ; do
 	createFilesDeployment "$namespace" "$i" "$secretCount"  "$replicas" "$containers" "$log_host" "$log_port"
@@ -2465,7 +2466,7 @@ function calculateLogsRequiredSysbench() {
     local -i depsPerNamespace=${2:-1}
     local -i replicas=${3:-1}
     local -i containers=${4:-1}
-    echo $((namespaces * containers * replicas * depsPerNamespace))
+    echo $((namespaces * containers * processes_per_pod * replicas * depsPerNamespace))
 }
 
 function createDeploymentCPUSoaker() {
@@ -2479,10 +2480,10 @@ function createDeploymentCPUSoaker() {
     local -i i
     if [[ syncStart -gt 0 && -z "$syncHost" ]] ; then
 	createService "$namespace" "${namespace}-sync" "$syncPort"
-	createSyncDeployment 2 "$namespace" "$((containers * replicas * count))"
+	createSyncDeployment 2 "$namespace" "$((containers * replicas * processes_per_pod * count))"
     fi
     for i in $(seq $firstDeployment $((count + firstDeployment - 1))) ; do
-	createSoakerDeployment "$namespace" "$i" "$secretCount"  "$replicas" "$containers" "$log_host" "$log_port"
+	createSoakerDeployment "$namespace" "$i" "$secretCount"  "$((replicas * processes_per_pod))" "$containers" "$log_host" "$log_port"
     done
 }
 
@@ -2508,7 +2509,7 @@ function calculateLogsRequiredCPUSoaker() {
     local -i depsPerNamespace=${2:-1}
     local -i replicas=${3:-1}
     local -i containers=${4:-1}
-    echo $((namespaces * containers * replicas * depsPerNamespace))
+    echo $((namespaces * processes_per_pod * containers * replicas * depsPerNamespace))
 }
 
 function createDeploymentServer() {
