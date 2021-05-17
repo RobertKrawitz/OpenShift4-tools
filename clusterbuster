@@ -1894,13 +1894,14 @@ EOF
 }
 
 function createContainersCPUSoakerYAML() {
-    local namespace=$1
-    local i=$2
-    local secretCount=$3
-    local -i processes=$4
-    local -i containers=$5
-    local log_host=${6:-}
-    local -i log_port=${7:-0}
+    local podname=$1
+    local namespace=$2
+    local i=$3
+    local secretCount=$4
+    local -i processes=$5
+    local -i containers=$6
+    local log_host=${7:-}
+    local -i log_port=${8:-0}
     local -i j
     local syncService=
     local syncPortNum=
@@ -1919,7 +1920,7 @@ $(indent 2 createContainerResources)
     value: "$verbose"
 $(indent 2 genericCommand cpusoaker.pl)
   - "$namespace"
-  - "${namespace}-soaker-${i}"
+  - "$podname"
   - "c$j"
   - "$basetime"
   - "$baseoffset"
@@ -1938,11 +1939,12 @@ EOF
 }
 
 function createSoakerSpec() {
-    local namespace=$1
-    local i=$2
-    local secretCount=$3
-    local -i processes=$4
-    local -i containers=$5
+    local podname=$1
+    local namespace=$2
+    local i=$3
+    local secretCount=$4
+    local -i processes=$5
+    local -i containers=$6
     cat <<EOF
 spec:
 $(indent 2 node_selector)
@@ -1985,7 +1987,7 @@ $(indent 2 node_selector)
     app: ${namespace}-soaker-${i}
     ${basename}-soaker: "true"
     ${basename}-client: "true"
-$(createSoakerSpec "$@")
+$(createSoakerSpec "${namespace}-soaker-${i}-${j}" "$@")
   restartPolicy: Never
 EOF
 	done
@@ -2017,7 +2019,7 @@ $(indent 2 node_selector)
         app: ${namespace}-soaker-$i
         ${basename}-soaker: "true"
         ${basename}-client: "true"
-$(indent 4 createSoakerSpec "$@")
+$(indent 4 createSoakerSpec "${namespace}-soaker-${i}-deployment" "$@")
 EOF
     fi
 }
@@ -2740,9 +2742,10 @@ function doCleanup() {
 	if (( reportObjectCreation )) ; then
 	    "$OC" delete "$objtype" -l "$basename"
 	else
-	    local objects_deleted=$("$OC" delete "$objtype" -l "$basename" |grep "^${objtype}.*deleted\$" |wc -l)
+	    local objects_deleted
+	    objects_deleted=$("$OC" delete "$objtype" -l "$basename" |grep -c "^${objtype}.*deleted\$")
 	    if ((objects_deleted > 0)) ; then
-		printf "Deleted %d %s%s\n" "$objects_deleted" "$objtype" "${plurals[$(($objects_deleted == 1))]}"
+		printf "Deleted %d %s%s\n" "$objects_deleted" "$objtype" "${plurals[$((objects_deleted == 1))]}"
 	    fi
 	fi
     done
