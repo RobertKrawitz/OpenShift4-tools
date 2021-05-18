@@ -179,6 +179,8 @@ Usage: $0 [options] [name]
        -P podtype      Pod type (classic, pause, server, cpu, fio, sysbench,
                        files, log)
        -p parallel     Number of operations to perform in parallel (default 1)
+       -Q              Don't report creation of individual objects (default
+                       report them) 
        -R processes    Number of processes per pod (default 1)
                        Applies to cpu and files only.
        -r replicas     Number of replicas per deployment (default 1)
