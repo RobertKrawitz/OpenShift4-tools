@@ -163,15 +163,19 @@ function _helpmsg() {
     done
 cat <<EOF
 Usage: $0 [options] [name]
+    Help:
+       -h              Print basic help information.
+       -H              Print extended help.
+       --help-everything
+                       Print extended help, and in addition print a detailed
+                       description including examples.
+
     Options:
        -B basename     Base name of pods (default clusterbuster).
                        All objects are labeled with this name.
        -b blocksize    Number of objects to create in one oc call (default 1)
        -c containers   Number of containers per pod
        -d deployments  Number of deployments per namespace (default 1)
-       -h              Print this help message
-       -H              Print extended help.  Use --help-everything to
-                       get an extended description.
        -n              Print what would be done without doing it
        -N namespaces   Number of namespaces to create (default 1)
                        If 0 is specified, then no namespaces are created
