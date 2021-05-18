@@ -15,8 +15,8 @@ declare -A cached_stats=()
 declare statsfile=
 declare -a extras=()
 
-declare OC
-OC=$(type -p oc)
+declare OC=${OC:-${KUBECTL:-}}
+OC=${OC:-$(type -p oc)}
 OC=${OC:-$(type -p kubectl)}	# kubectl might not work, though...
 
 while getopts ':p:B:st:f:F:vqNcnr:' opt ; do

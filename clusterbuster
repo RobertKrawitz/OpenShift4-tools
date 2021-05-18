@@ -126,10 +126,19 @@ declare containerImage=quay.io/rkrawitz/bench-army-knife
 
 declare accumulateddata=
 declare -a plurals=('s' '')
+declare KUBECTL_VALIDATE=
 
-declare OC
-OC=$(type -p oc)
+declare OC=${OC:-${KUBECTL:-}}
+OC=${OC:-$(type -p oc)}
 OC=${OC:-$(type -p kubectl)}	# kubectl might not work, though...
+
+if [[ -z "$OC" ]] ; then
+    echo "Can't find kubectl or oc" 1>&2
+    exit 1
+elif [[ $OC = 'kubectl'* ]] ; then
+    KUBECTL_VALIDATE=--validate=false
+fi
+	
 
 declare __me__
 __me__=$(realpath -e "$0")
@@ -912,7 +921,7 @@ function indent() {
 
 function finishCreation() {
     if [[ $doit -ne 0 && -n $accumulateddata ]] ; then
-	"${OC}" apply -f - <<< "$accumulateddata" | timestamp
+	"${OC}" ${KUBECTL_VALIDATE} apply -f - <<< "$accumulateddata" | timestamp
 	accumulateddata=
     fi
 }
@@ -992,7 +1001,7 @@ function createObject() {
     if (( doit )) ; then
 	accumulateddata+="$data"
 	if (( ++blockitemcount >= blocksize )) ; then
-	    "${OC}" apply -f - <<< "$accumulateddata" | timestamp
+	    "${OC}" ${KUBECTL_VALIDATE} apply -f - <<< "$accumulateddata" | timestamp
 	    accumulateddata=
 	    blockitemcount=0
 	    (( !sleeptime )) || sleep "$sleeptime"
