@@ -130,10 +130,11 @@ fi
 [[ -r "$keyfile" ]] || usage "Private key file $keyfile does not exist."
 [[ -r "${keyfile}.pub" ]] || usage "Public key file ${keyfile}.pub does not exist."
 
-if [[ ! -r "$keyfile" || ! -r "${keyfile}.pub" ]] ; then
-    echo "Can't find key files $keyfile or $keyfile.pub" 1>&2
-    usage
-fi
+cp "$keyfile" "$HOME/.ssh/${keyfile##*/}_agent"
+cp "${keyfile}.pub" "$HOME/.ssh${keyfile##*/}_agent.pub"
+keyfile="$HOME/.ssh/${keyfile##*/}_agent"
+chmod 400 "$keyfile"
+
 declare server_config=${BAK_SERVER_CONFIG:-$configdir/pbench-agent.cfg}
 (umask 0333 && cp "$server_config" /opt/pbench-agent/config/pbench-agent.cfg && chown pbench:pbench /opt/pbench-agent/config/pbench-agent.cfg)
 
