@@ -225,10 +225,13 @@ sub runit() {
     my ($answer) = sprintf("STATS %d %.3f %.3f %.3f %d %d %d %d %d %.03f %.06f %.06f %.06f %.06f",
 	    $$, $crtime - $basetime, $dstime - $basetime, $stime1 - $basetime,
 	    $readops, $writeops, $fsyncops, $readrate, $writerate, $et, $min_lat, $avg_lat, $max_lat, $p95_lat);
+    $answer = "-n $namespace $pod -c $container terminated 0 0 0 $answer";
     print STDERR "$answer\n";
     docleanup();
     do_sync($synchost, $syncport, $answer);
-    do_sync($loghost, $logport, "-n $namespace $pod -c $container terminated 0 0 0 $answer");
+    if ($logport > 0) {
+	do_sync($loghost, $logport, $answer);
+    }
 }
 $SIG{CHLD} = 'IGNORE';
 if ($processes > 1) {

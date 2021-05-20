@@ -4,6 +4,12 @@ use POSIX;
 use strict;
 use Time::Piece;
 use Time::HiRes qw(gettimeofday);
+my ($verbose, $syncFile);
+use Getopt::Long;
+Getopt::Long::Configure("bundling", "no_ignore_case", "pass_through");
+GetOptions("v!"  => \$verbose,
+	   "f:s" => \$syncFile);
+
 $SIG{TERM} = sub { POSIX::_exit(0); };
 my ($listen_port, $expected_clients, $syncCount) = @ARGV;
 if (! $syncCount) {
@@ -26,6 +32,8 @@ my ($junk, $port, $addr) = unpack($sockaddr, $mysockaddr);
 die "can't get port $port: $!\n" if ($port ne $listen_port);
 my (@clients);
 
+my ($tmpSyncFile) = (defined($syncFile) && $syncFile ne '') ? "${syncFile}.tmp" : undef;
+
 while ($syncCount < 0 || $syncCount-- > 0) {
     my $child = fork();
     if ($child == 0) {
@@ -44,6 +52,14 @@ while ($syncCount < 0 || $syncCount-- > 0) {
 		timestamp("Read token from $peerhost failed: $!");
 	    }
 	    timestamp("Accepted connection from $peerhost ($peeraddr) on $port, token $tbuf");
+	    timestamp("$tmpSyncFile $tbuf");
+	    if ($tbuf =~ / STATS / && defined $tmpSyncFile) {
+		chomp $tbuf;
+		timestamp("Recording $tbuf");
+		open SYNC, ">>", "$tmpSyncFile" || die("Can't open sync file $tmpSyncFile: $!\n");
+		print SYNC "$tbuf\n";
+		close SYNC || die "Can't close sync file: $!\n";
+	    }
 	    push @clients, $client;
 	    $expected_clients--;
 	}
@@ -55,9 +71,17 @@ while ($syncCount < 0 || $syncCount-- > 0) {
         timestamp("Fork failed: $!");
 	POSIX::_exit(1);
     } else {
-	close(SOCK);
         wait();
     }
 }
+if (defined $syncFile && $syncFile ne "" && -f $tmpSyncFile) {
+    rename($tmpSyncFile, $syncFile) || die "Can't rename $syncFile to $tmpSyncFile: $!\n";
+    timestamp("Waiting for sync file $syncFile to be removed");
+    while (-f $syncFile) {
+	sleep(5);
+    }
+    timestamp("Sync file $syncFile removed, exiting");
+}
+
 POSIX::_exit(0);
 EOF

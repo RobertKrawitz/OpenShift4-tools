@@ -89,6 +89,7 @@ declare -a fio_generic_options=()
 declare common_workdir=
 declare -i report=0
 declare -i verbose_report=0
+declare logStrategy=poll
 declare -i precleanup=0
 declare -i cleanup=0
 declare -i timeout=-1
@@ -119,6 +120,7 @@ declare -i log_processes=1
 declare -i log_delay_usec=0
 declare -i log_xfertime=0
 declare -i log_exit_at_end=0
+declare -r syncFlagFile="/tmp/syncfile";
 
 declare kataRuntimeClass=kata
 declare imagePullPolicy=Always
@@ -132,13 +134,16 @@ declare OC=${OC:-${KUBECTL:-}}
 OC=${OC:-$(type -p oc)}
 OC=${OC:-$(type -p kubectl)}	# kubectl might not work, though...
 
-if [[ -z "$OC" ]] ; then
-    echo "Can't find kubectl or oc" 1>&2
+function fatal() {
+    echo "$*" 1>&2
     exit 1
+}
+
+if [[ -z "$OC" ]] ; then
+    fatal "Can't find kubectl or oc"
 elif [[ $OC = 'kubectl'* ]] ; then
     KUBECTL_VALIDATE=--validate=false
 fi
-	
 
 declare __me__
 __me__=$(realpath -e "$0")
@@ -184,7 +189,7 @@ Usage: $0 [options] [name]
                        files, log)
        -p parallel     Number of operations to perform in parallel (default 1)
        -Q              Don't report creation of individual objects (default
-                       report them) 
+                       report them)
        -R processes    Number of processes per pod (default 1)
                        Applies to cpu and files only.
        -r replicas     Number of replicas per deployment (default 1)
@@ -249,6 +254,18 @@ Extended Options:
        --container_image=<image>
                         Image to use (default $containerImage).
                         Does not apply to "classic" or "pause" pod types.
+       --log-strategy={poll,listen}
+                        Use the desired logging strategy to retrieve logs.
+                        - Poll indicates that sync pods should be polled
+                          for logs.
+                        - Listen indicates that pods should report log
+                          data directly to this tool, which will listen
+                          for the data.
+                        The default strategy is polling, which should work
+                        in all cases.  The older listen strategy will not
+                        work if pods cannot connect to the host from which
+                        this tool is run.  Polling should be used unless
+                        there is reason to believe it is not functioning.
 
     Using PBench:
        If pbench is to be used, both arguments below must be provided.
@@ -550,10 +567,60 @@ function timestamp() {
 
 trap exit INT
 
+function get_logs_poll() {
+    local pod
+    local status
+    for pod in "$@" ; do
+	pod_status_found=0
+	while : ; do
+	    # shellcheck disable=SC2086
+	    status=$(oc get pod $pod -o jsonpath="{.status.phase}" 2>/dev/null)
+	    case "$status" in
+		Running)
+		    break
+		    ;;
+		Pending)
+		    pod_status_found=1
+		    sleep 1
+		    ;;
+		Failed)
+		    pod_status_found=1
+		    echo "Status of pod $pod failed!" 1>&2
+		    return 1
+		    ;;
+		''|Succeeded)	# Might be an old pod not yet deleted
+		    if ((pod_status_found)) ; then
+			echo "Unexpected status '$status' of pod $pod!" 1>&2
+			return 1
+		    else
+			sleep 1
+		    fi
+		    ;;
+		*)
+		    pod_status_found=1
+		    echo "Unexpected status '$status' of pod $pod!" 1>&2
+		    return 1
+		    ;;
+	    esac
+	done
+	# shellcheck disable=SC2086
+	oc rsh $pod sh -c 'while [[ ! -f /tmp/syncfile ]] ; do sleep 5; done; cat /tmp/syncfile; rm -f /tmp/syncfile'
+    done
+}
+
+function get_logs_listen() {
+    exec "${__libdir__}/get_logs" "$@"
+}
+
 function get_logs() {
     local varg=
     ((verbose_report)) && varg=-v
-    exec "${__libdir__}/get_logs" "$@" | "${pathdir:-.}/clusterbuster-connstat" -s -f - "$varg"
+    log_cmd=get_logs_poll
+    if [[ ${logStrategy,,} = 'listen'* ]] ; then
+	log_cmd=get_logs_listen
+    fi
+    "$log_cmd" "$@"  | "${pathdir:-.}/clusterbuster-connstat" -s -f - "$varg"
+    return $((PIPESTATUS[0] && PIPESTATUS[1]))
 }
 
 function set_xfer() {
@@ -723,6 +790,7 @@ function process_option() {
 	report)	    		    report=$optvalue				;;
 	precleanup)		    precleanup=$optvalue			;;
 	cleanup)		    cleanup=$optvalue				;;
+	log*strategy)		    logStrategy=$optvalue			;;
 	timeout)		    timeout=$optvalue				;;
 	verbose_report)		    verbose_report=$optvalue			;;
 	emptydir)		    emptydirs+=("$optvalue")			;;
@@ -882,6 +950,11 @@ for i in $(seq 0 $((file_volumes-1)) ) ; do
     emptydirs+=("/mnt/volume-$i")
 done
 
+logStrategy=${logStrategy,,}
+if [[ $logStrategy != poll && $logStrategy != listen ]] ; then
+    fatal "Unknown --log_stragey (must be 'poll' or 'listen')"
+fi
+
 if [[ $dataRate != 0 && $dataRate != '' && $xferTimeMax -eq 0 && bytesMax -eq 0 ]] ; then
     bytes=$defaultBytes
     bytesMax=$defaultBytes
@@ -1017,6 +1090,14 @@ function createObject() {
     fi
 }
 
+function echoIfDesired() {
+    if (( reportObjectCreation )) ; then
+	cat
+    else
+	cat >/dev/null
+    fi
+}
+
 function createObjectFromFile() {
     local objtype=$1; shift
     local namespace=$1; shift
@@ -1029,8 +1110,8 @@ function createObjectFromFile() {
 	fi
     done
     if (( doit )) ; then
-	"$OC" create ${useNamespaces:+-n "$namespace"} "$objtype" "$objname" "${@/#/--from-file=}"
-	"$OC" label ${useNamespaces:+-n "$namespace"} "$objtype" "$objname" 'clusterbusterbase=true' "${basename}=true"
+	"$OC" create ${useNamespaces:+-n "$namespace"} "$objtype" "$objname" "${@/#/--from-file=}" | echoIfDesired
+	"$OC" label ${useNamespaces:+-n "$namespace"} "$objtype" "$objname" 'clusterbusterbase=true' "${basename}=true" | echoIfDesired
 	totalObjectsCreated=$((totalObjectsCreated+1))
 	if [[ -z ${objectsCreated[$objtype]:-} ]] ; then
 	    objectsCreated[$objtype]=1
@@ -1427,6 +1508,8 @@ function createSyncYAML() {
   ports:
   - containerPort: $port
 $(indent 2 genericCommand sync.pl)
+  - "-f"
+  - "$syncFlagFile"
   - "$syncPort"
   - "$expectedClients"
   - "$syncCount"
@@ -1471,7 +1554,7 @@ $(indent 2 node_selector)
     ${basename}-sync: "true"
     clusterbusterbase: "true"
 $(createSyncSpec "$syncCount" "$@")
-  restartPolicy: Always
+  restartPolicy: Never
 EOF
     else
 	createObject <<EOF
@@ -1568,7 +1651,6 @@ function createFilesSpec() {
 spec:
 $(indent 2 node_selector)
   terminationGracePeriodSeconds: 1
-  restartPolicy: Always
 $(indent 2 createPodResources)
 $(indent 2 <<< "$runtimeClass")
   containers:
@@ -1705,7 +1787,6 @@ function createSysbenchSpec() {
 spec:
 $(indent 2 node_selector)
   terminationGracePeriodSeconds: 1
-  restartPolicy: Always
 $(indent 2 createPodResources)
 $(indent 2 <<< "$runtimeClass")
   containers:
@@ -1836,7 +1917,6 @@ function createFioSpec() {
 spec:
 $(indent 2 node_selector)
   terminationGracePeriodSeconds: 1
-  restartPolicy: Always
 $(indent 2 createPodResources)
 $(indent 2 <<< "$runtimeClass")
   containers:
@@ -1964,7 +2044,6 @@ function createSoakerSpec() {
 spec:
 $(indent 2 node_selector)
   terminationGracePeriodSeconds: 1
-  restartPolicy: Always
 $(indent 2 createPodResources)
 $(indent 2 <<< "$runtimeClass")
   containers:
@@ -2759,7 +2838,7 @@ function doCleanup() {
 	else
 	    local objects_deleted
 	    objects_deleted=$("$OC" delete "$objtype" -l "$basename" |grep -c "^${objtype}.*deleted\$")
-	    if ((objects_deleted > 0)) ; then
+	    if ((objects_deleted > 0 && reportObjectCreation)) ; then
 		printf "Deleted %d %s%s\n" "$objects_deleted" "$objtype" "${plurals[$((objects_deleted == 1))]}"
 	    fi
 	fi
@@ -2825,10 +2904,23 @@ function run_clusterbuster_1() {
     if ((doit && report)) ; then
 	logs_expected="$("calculateLogsRequired" "$namespaces" "$depsPerNamespace" "$replicas" "$containers")"
 	if ((logs_expected)) ; then
-	    log_host=$(hostname -f)
-	    log_port=$("${__libdir__}/find_free_port")
-	    (( log_port )) || fatal "Can't get port to listen for logs on!"
-	    get_logs -p "$log_port" -c "$logs_expected" &
+	    if [[ $logStrategy = poll ]] ; then
+		local -a syncPods=()
+		if [[ -n "$useNamespaces" ]] ; then
+		    local -i i
+		    for i in $(seq 0 $((namespaces - 1))) ; do
+			syncPods+=("-n ${basename}-${i} ${basename}-${i}-sync")
+		    done
+		else
+		    syncPods=("${basename}-0-sync")
+		fi
+		get_logs "${syncPods[@]}" &
+	    else
+		log_host=$(hostname -f)
+		log_port=$("${__libdir__}/find_free_port")
+		(( log_port )) || fatal "Can't get port to listen for logs on!"
+		get_logs -p "$log_port" -c "$logs_expected" &
+	    fi
 	    get_logs_pid=$!
 	fi
     fi
@@ -2873,10 +2965,12 @@ function run_clusterbuster_1() {
     [[ -n "${get_logs_pid:-}" ]] && wait
 
     local objtype
-    while read -r objtype ; do
-	[[ -n "${objtype:-}" ]] && printf "Created %${#totalObjectsCreated}d %s%s\n" "${objectsCreated[$objtype]}" "$objtype" "${plurals[$((${objectsCreated[$objtype]} == 1))]}"
-    done < <( (IFS=$'\n'; echo "${!objectsCreated[*]}") | sort)
-    printf "Created %d object%s total\n" "$totalObjectsCreated" "${plurals[$((totalObjectsCreated == 1))]}"
+    if (( reportObjectCreation )) ; then
+	while read -r objtype ; do
+	    [[ -n "${objtype:-}" ]] && printf "Created %${#totalObjectsCreated}d %s%s\n" "${objectsCreated[$objtype]}" "$objtype" "${plurals[$((${objectsCreated[$objtype]} == 1))]}"
+	done < <( (IFS=$'\n'; echo "${!objectsCreated[*]}") | sort)
+	printf "Created %d object%s total\n" "$totalObjectsCreated" "${plurals[$((totalObjectsCreated == 1))]}"
+    fi
     if ((cleanup)) ; then
 	doCleanup
     fi

@@ -227,8 +227,9 @@ sub runit($) {
     my ($answer) = "-n $namespace $pod -c $container terminated 0 0 0 STATS $answer_base $answer0 $answer1";
     print STDERR "$answer\n";
     do_sync($synchost, $syncport, "\n$answer");
-    
-    do_sync($loghost, $logport, "$answer");
+    if ($logport > 0) {
+	do_sync($loghost, $logport, "$answer");
+    }
 }
 
 timestamp("Filebuster client starting");

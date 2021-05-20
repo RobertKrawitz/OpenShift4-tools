@@ -144,9 +144,12 @@ sub runit() {
         $$, $crtime - $basetime, $dstime - $basetime, $stime1 - $basetime,
         $eltime, $etime - $basetime, $cputime, 100.0 * $cputime / $eltime, $iterations,
         $iterations / ($etime - $stime1));
+    $answer = "-n $namespace $pod -c $container terminated 0 0 0 $answer";
     print STDERR "$answer\n";
     do_sync($synchost, $syncport, $answer);
-    do_sync($loghost, $logport, "-n $namespace $pod -c $container terminated 0 0 0 $answer");
+    if ($logport > 0) {
+	do_sync($loghost, $logport, $answer);
+    }
 }
 $SIG{CHLD} = 'IGNORE';
 if ($processes > 1) {

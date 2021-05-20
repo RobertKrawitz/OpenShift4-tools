@@ -6,7 +6,7 @@ use strict;
 use Time::HiRes qw(gettimeofday usleep);
 use Time::Piece;
 $SIG{TERM} = sub { kill 'KILL', -1; POSIX::_exit(0); };
-my ($namespace, $pod, $container, $basetime, $baseoffset, $poddelay, $connect_port, $container, $srvhost, $data_rate, $bytes, $bytesMax, $msgSize, $xfertime, $xfertimeMax, $crtime, $exit_at_end, $synchost, $syncport, $namespace, $log_host, $log_port, $podname) = @ARGV;
+my ($namespace, $pod, $container, $basetime, $baseoffset, $poddelay, $connect_port, $container, $srvhost, $data_rate, $bytes, $bytesMax, $msgSize, $xfertime, $xfertimeMax, $crtime, $exit_at_end, $synchost, $syncport, $namespace, $loghost, $logport, $podname) = @ARGV;
 $basetime += $baseoffset;
 $crtime += $baseoffset;
 my ($etime, $data_sent, $detime, $stime, $end_time, $dstime, $mean, $max, $stdev, $user, $sys, $cuser, $csys, $elapsed);
@@ -218,8 +218,8 @@ print STDERR "FINIS\n";
 if ($syncport) {
     do_sync($synchost, $syncport, "-n $namespace $pod -c $container $results");
 }
-if ($log_port > 0) {
-    do_sync($log_host, $log_port, "-n $namespace $pod -c $container terminated $cfail $refused $pass $results");
+if ($logport > 0) {
+    do_sync($loghost, $logport, "-n $namespace $pod -c $container terminated $cfail $refused $pass $results");
 }
 if (! $exit_at_end) {
     pause();

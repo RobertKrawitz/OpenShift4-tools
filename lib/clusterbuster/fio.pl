@@ -23,7 +23,7 @@ sub removeRundir() {
 }
 
 sub docleanup()  {
-    removeRundir()
+    removeRundir();
     kill 'KILL', -1;
     POSIX::_exit(0);
 }
@@ -173,7 +173,9 @@ sub runit(;$) {
 #    print STDERR "$answer\n";
 #    do_sync($synchost, $syncport, $answer);
      do_sync($synchost, $syncport);
-#    do_sync($loghost, $logport, "-n $namespace $pod -c $container terminated 0 0 0 $answer");
+#    if ($logport > 0) {
+#	do_sync($loghost, $logport, "-n $namespace $pod -c $container terminated 0 0 0 $answer");
+#    }
 }
 
 sub get_jobfiles($) {
