@@ -8,6 +8,7 @@ declare -i timeout=-1
 declare -i verbose=0
 declare -i csv=0
 declare -i header=1
+declare -i json_output=0
 declare -i use_namespace=1
 declare run_name=
 declare basename=clusterbuster
@@ -19,7 +20,23 @@ declare OC=${OC:-${KUBECTL:-}}
 OC=${OC:-$(type -p oc)}
 OC=${OC:-$(type -p kubectl)}	# kubectl might not work, though...
 
-while getopts ':p:B:st:f:F:vqNcnr:' opt ; do
+declare __me__
+__me__=$(realpath -e "$0")
+
+if [[ -z "$__me__" ]] ; then
+    echo "Can't find my path!" 1>&2
+    exit 1
+fi
+
+declare __mydir__=${__me__%/*}
+declare __libdir__=${__mydir__}/lib/clusterbuster
+
+if [[ ! -d "$__libdir__" ]] ; then
+    echo "Can't find my library dir!" 1>&2
+    exit 1
+fi
+
+while getopts ':p:B:st:f:F:jvqNcnr:' opt ; do
     case "$opt" in
 	B) basename=$OPTARG 	  ;;
 	N) use_namespace=0	  ;;
@@ -32,6 +49,7 @@ while getopts ':p:B:st:f:F:vqNcnr:' opt ; do
 	r) run_name=$OPTARG	  ;;
 	s) summarize=1	    	  ;;
 	t) timeout=$OPTARG  	  ;;
+	j) json_output=1	  ;;
 	v) verbose=$((verbose+1)) ;;
 	*) ;;
     esac
@@ -66,68 +84,6 @@ fi
 (( parallel <= 0 )) && parallel=1
 
 trap 'wait; exit' INT EXIT
-
-function prettyprint() {
-    local -a colwidths
-    local -a rows
-    local -a rowfields
-    local -i i
-    local f
-
-    local -a rowzero=(+ NAMESPACE POD + CONTAINER STATE REF FAIL BLOCKS + CREATED START + CONNECTED DSTART FINISH TRANSFERTIME USER SYSTEM DATA XFERTIME RATE SLEEPMEAN SLEEPSTDEV)
-    local -a formats=(.0s s s .0s s s d d d .0s .3f .3f .0s .3f .3f .3f .6f .3f .3f d .3f .3f .6f .6f)
-    local -ri nfields=$((${#rowzero[@]} - 1))
-
-    for i in $(seq 0 "$nfields") ; do
-	f=${rowzero[$i]}
-	f=${f%+}
-	colwidths[$i]=${#f}
-    done
-
-    readarray -t rows
-
-    for row in "${rows[@]}" ; do
-	# shellcheck disable=SC2206
-	rowfields=($row)
-	for i in $(seq 0 $((${#rowfields[@]} - 1)) ) ; do
-	    if (( ${colwidths[$i]} > 0 && ${#rowfields[$i]} > ${colwidths[$i]} )) ; then
-		colwidths[$i]=${#rowfields[$i]}
-	    fi
-	done
-    done
-
-    local printfstr0=
-    local printfstr1=
-
-    local -i width
-
-    for i in $(seq 0 "$nfields") ; do
-	f=${rowzero[$i]}
-	width=${colwidths[$i]}
-	fmt=${formats[$i]}
-	if [[ -n $printfstr0 && $printfstr0 != *'.0s' ]] ; then
-	    printfstr0+=' '
-	    printfstr1+=' '
-	fi
-	printfstr0+="%-${width}.${width}s"
-
-	if [[ $fmt = *'s' ]] ; then
-	    printfstr1+="%-${width}$fmt"
-	else
-	    printfstr1+="%${width}$fmt"
-	fi
-    done
-    printfstr0+='\n'
-    printfstr1+='\n'
-
-    # shellcheck disable=SC2059
-    printf "$printfstr0" "${rowzero[@]}"
-    for row in "${rows[@]}" ; do
-	# shellcheck disable=SC2059
-	# shellcheck disable=SC2086
-	printf "$printfstr1" $row
-    done
-}
 
 function report() {
     local fields=()
@@ -281,7 +237,7 @@ EOF
     esac
 }
 
-function process_summary() {
+function process_summary_legacy() {
     local -i line_count=0
     local -i total=0
     local -i maxbits=$(($(maxbits)))
@@ -303,6 +259,7 @@ function process_summary() {
     local -i readrate=0
     local -i writerate=0
     local -a output
+    local raw_output
 
     local -i create_start=0
     local -i create_end=0
@@ -328,7 +285,12 @@ function process_summary() {
     local -i file_total_sys_cpu=0
     local -i file_total_total_cpu=0
     local mode=
-    while read -r -a output ; do
+    while read -r rawoutput ; do
+	if [[ $rawoutput = '-n,'* ]] ; then
+	    readarray -d, -t output <<< "$rawoutput"
+	else
+	    readarray -t output <<< "$rawoutput"
+	fi
 	[[ -n "${output[*]}" ]] || continue
 	[[ ${output[*]} = *'STATS'* ]] || continue
 	if [[ -z "$mode" ]] ; then
@@ -343,9 +305,7 @@ function process_summary() {
 	local -i start
 	local -i end
 	local -i et
-	if (( verbose )) ; then
-	    echo "${output[*]}"
-	fi
+	(( verbose )) && echo "$rawoutput"
 	case "$mode" in
 	    files)
 		pod_start=$(($(clean "${output[11]}") ))
@@ -418,6 +378,14 @@ function process_summary() {
     done
     (( line_count )) || return
     printit |do_report
+}
+
+function process_summary() {
+    if ((json_output)) ; then
+	"${__libdir__}/postprocess-json.pl" "$@"
+    else
+	process_summary_legacy "$@"
+    fi
 }
 
 function retrieve_pod_stats() {
@@ -541,7 +509,8 @@ function do_summarize() {
     local pass=1
     while : ; do
 	local -i found_all=1
-	while read -r -a output ; do
+	set -x
+	while IFS=, read -r -a output ; do
 	    [[ -n "${output[*]}" ]] || continue
 	    local item="${output[1]} ${output[2]} ${output[4]}"
 	    if [[ -z "${output[10]:-}" || ${output[0]} = '!'* ]] ; then
@@ -564,7 +533,7 @@ function do_summarize() {
     done
 }
 
-if (( summarize )) ; then
+if (( summarize || json_output )) ; then
     case "$statsfile" in
 	-)  process_summary		   ;;
 	'') do_summarize | process_summary ;;

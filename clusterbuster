@@ -88,7 +88,7 @@ declare -A sysbench_fileio_tests=()
 declare -a fio_generic_options=()
 declare common_workdir=
 declare -i report=0
-declare -i verbose_report=0
+declare report_format=
 declare logStrategy=poll
 declare -i precleanup=0
 declare -i cleanup=0
@@ -246,6 +246,7 @@ Extended Options:
        --report         Print report (client/server, soaker,
                         fio, sysbench only)
        --verbose-report Print detailed report
+       --json-report    Print JSON report
        --precleanup     Clean up any prior objects
        --cleanup        Clean up generated objects
        --timeout=N      Time out reporting
@@ -604,7 +605,11 @@ function get_logs_poll() {
 	    esac
 	done
 	# shellcheck disable=SC2086
-	oc rsh $pod sh -c 'while [[ ! -f /tmp/syncfile ]] ; do sleep 5; done; cat /tmp/syncfile; rm -f /tmp/syncfile'
+	local cleanupCommand=
+	if ((cleanup)) ; then
+	    cleanupCommand="; sleep 1; rm -f '$syncFlagFile'"
+	fi
+	oc rsh $pod sh -c "while [[ ! -f '$syncFlagFile' ]] ; do sleep 5; done; cat '$syncFlagFile' $cleanupCommand"
     done
 }
 
@@ -613,13 +618,17 @@ function get_logs_listen() {
 }
 
 function get_logs() {
-    local varg=
-    ((verbose_report)) && varg=-v
+    local extra_arg=
+    case "$report_format" in
+	json)    extra_arg=-j ;;
+	verbose) extra_arg=-v ;;
+	*)                    ;;
+    esac
     log_cmd=get_logs_poll
     if [[ ${logStrategy,,} = 'listen'* ]] ; then
 	log_cmd=get_logs_listen
     fi
-    "$log_cmd" "$@"  | "${pathdir:-.}/clusterbuster-connstat" -s -f - "$varg"
+    "$log_cmd" "$@" | "${pathdir:-.}/clusterbuster-connstat" -s -f - "$extra_arg"
     return $((PIPESTATUS[0] && PIPESTATUS[1]))
 }
 
@@ -787,12 +796,13 @@ function process_option() {
 	log_delay_usec)		    log_delay_usec=$optvalue			;;
 	log_xfertime)		    log_xfertime=$optvalue			;;
 	log_exit_at_end)	    log_exit_at_end=$optvalue			;;
-	report)	    		    report=$optvalue				;;
+	report)		    	    report_format=summary			;;
+	verbose_report)		    report_format=verbose			;;
+	json_report)		    report_format=json				;;
 	precleanup)		    precleanup=$optvalue			;;
 	cleanup)		    cleanup=$optvalue				;;
 	log*strategy)		    logStrategy=$optvalue			;;
 	timeout)		    timeout=$optvalue				;;
-	verbose_report)		    verbose_report=$optvalue			;;
 	emptydir)		    emptydirs+=("$optvalue")			;;
 	volume)			    process_volume "$optvalue"			;;
 	sync|syncstart|sync_start)  syncStart=$((1-syncStart))			;;
@@ -916,9 +926,9 @@ fi
 (( !blocksizeSecrets )) && blocksizeSecrets=$blocksize
 (( !blocksizeNamespaces )) && blocksizeNamespaces=$blocksize
 (( !blocksizeDeployments )) && blocksizeDeployments=$blocksize
-(( verbose_report )) && report=1
 
 [[ -n $runtimeClass ]] && runtimeClass="runtimeClassName: \"$runtimeClass\""
+[[ -n "$report_format" ]] && report=1
 
 shift $((OPTIND - 1))
 
@@ -2588,7 +2598,7 @@ function createDeploymentCPUSoaker() {
 	createSyncDeployment 2 "$namespace" "$((containers * replicas * processes_per_pod * count))"
     fi
     for i in $(seq $firstDeployment $((count + firstDeployment - 1))) ; do
-	createSoakerDeployment "$namespace" "$i" "$secretCount"  "$((replicas * processes_per_pod))" "$containers" "$log_host" "$log_port"
+	createSoakerDeployment "$namespace" "$i" "$secretCount"  "$((processes_per_pod))" "$containers" "$log_host" "$log_port"
     done
 }
 

@@ -39,6 +39,7 @@ eval {
 	    my ($tbuf) = "";
 	    my ($status);
 	    if (($status = sysread($client, $tbuf, 1024)) > 0) {
+		$tbuf =~ s/ /,/g;
 		print "$tbuf\n";
 	    }
 	    close($client);

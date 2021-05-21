@@ -193,7 +193,7 @@ sub runit($) {
     my ($ucpu1, $scpu1) = cputime();
     $ucpu1 -= $ucpu0;
     $scpu1 -= $scpu0;
-    my ($answer0) = sprintf("CREATE %.3f %.3f %.3f %.3f %.3f %d %d %.3f",
+    my ($answer0) = sprintf("CREATE,%.3f,%.3f,%.3f,%.3f,%.3f,%d,%d,%.3f",
         $stime1 - $stime0, $eltime, $ucpu1,
 	$scpu1, 100.0 * ($ucpu1 + $scpu1) / $eltime, $ops, $iterations,
         $iterations / ($etime - $stime1));
@@ -219,14 +219,14 @@ sub runit($) {
     my ($ucpu1, $scpu1) = cputime();
     $ucpu1 -= $ucpu0;
     $scpu1 -= $scpu0;
-    my ($answer1) = sprintf("REMOVE %.3f %.3f %.3f %.3f %.3f %d %d %.3f",
+    my ($answer1) = sprintf("REMOVE,%.3f,%.3f,%.3f,%.3f,%.3f,%d,%d,%.3f",
         $stime1 - $stime0, $eltime, $ucpu1,
 	$scpu1, 100.0 * ($ucpu1 + $scpu1) / $eltime, $ops, $iterations,
         $iterations / ($etime - $stime1));
-    my ($answer_base) = sprintf("%d %.3f %.3f %d %d", $$, $stime0 - $basetime, $etime - $stime0, $block_count, $blocksize);
-    my ($answer) = "-n $namespace $pod -c $container terminated 0 0 0 STATS $answer_base $answer0 $answer1";
+    my ($answer_base) = sprintf("%d,%.3f,%.3f,%d,%d", $$, $stime0 - $basetime, $etime - $stime0, $block_count, $blocksize);
+    my ($answer) = "-n,$namespace,$pod,-c,$container,terminated,0,0,0,STATS,$answer_base,$answer0,$answer1";
     print STDERR "$answer\n";
-    do_sync($synchost, $syncport, "\n$answer");
+    do_sync($synchost, $syncport, "$answer");
     if ($logport > 0) {
 	do_sync($loghost, $logport, "$answer");
     }

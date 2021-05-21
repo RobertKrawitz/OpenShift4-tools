@@ -222,10 +222,10 @@ sub runit() {
 	}
     }
     close CLEANUP;
-    my ($answer) = sprintf("STATS %d %.3f %.3f %.3f %d %d %d %d %d %.03f %.06f %.06f %.06f %.06f",
+    my ($answer) = sprintf("-n,%s,%s,-c,%s,terminated,%d,%d,%d,STATS %d %.3f %.3f %.3f %d %d %d %d %d %.03f %.06f %.06f %.06f %.06f",
+			   $namespace, $pod, $container, 0, 0, 0,
 	    $$, $crtime - $basetime, $dstime - $basetime, $stime1 - $basetime,
 	    $readops, $writeops, $fsyncops, $readrate, $writerate, $et, $min_lat, $avg_lat, $max_lat, $p95_lat);
-    $answer = "-n $namespace $pod -c $container terminated 0 0 0 $answer";
     print STDERR "$answer\n";
     docleanup();
     do_sync($synchost, $syncport, $answer);

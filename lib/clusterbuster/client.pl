@@ -39,10 +39,12 @@ sub calibrate_time() {
     $time_overhead /= 1000;
 }
 sub stats() {
-    return sprintf("STATS %.3f %.3f %.3f %.3f %.3f %.3f %.6f %.3f %.3f %d %.3f %.3f %.6f %.6f %.6f %.6f %d",
-	   $crtime - $basetime, $start_time - $basetime, $ghbn_time - $basetime, $etime - $basetime,
-	   $dstime - $basetime, $end_time - $basetime, $elapsed, $user, $sys,
-	   $data_sent, $detime, $data_sent / $detime / 1000000.0, $mean, $max, $stdev, $time_overhead, $pass);
+    return
+	sprintf("-n,%s,%s,-c,%s,terminated,%d,%d,%d,STATS,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.6f,%.3f,%.3f,%d,%.3f,%.3f,%.6f,%.6f,%.6f,%.6f,%d",
+		$namespace, $pod, $container, $cfail, $refused, $pass,
+		$crtime - $basetime, $start_time - $basetime, $ghbn_time - $basetime, $etime - $basetime,
+		$dstime - $basetime, $end_time - $basetime, $elapsed, $user, $sys,
+		$data_sent, $detime, $data_sent / $detime / 1000000.0, $mean, $max, $stdev, $time_overhead, $pass);
 }
 sub connect_to($$) {
     my ($addr, $port) = @_;
@@ -216,10 +218,10 @@ my ($results) = stats();
 print STDERR "$results\n";
 print STDERR "FINIS\n";
 if ($syncport) {
-    do_sync($synchost, $syncport, "-n $namespace $pod -c $container $results");
+    do_sync($synchost, $syncport, $results);
 }
 if ($logport > 0) {
-    do_sync($loghost, $logport, "-n $namespace $pod -c $container terminated $cfail $refused $pass $results");
+    do_sync($loghost, $logport, $results);
 }
 if (! $exit_at_end) {
     pause();

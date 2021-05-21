@@ -131,7 +131,6 @@ sub runit() {
 		} else {
 		    $avgcpu = ($icputime * $weight) + ($avgcpu * (1.0 - $weight));
 		}
-		printf STDERR "pid %d elapsed %.03f cpu %0.3f util %7.3f avg %7.3f mov %7.3f iter %d ips %d\n", $$, $etime, $cputime, 100.0 * $cputime / $etime, 100.0 * $icputime / ($ntime - $prevtime), 100 * $avgcpu / ($ntime - $prevtime), $iterations, $iterations / $etime;
 		$prevtime = $ntime;
 		$prevcpu = $cpu;
             }
@@ -140,11 +139,13 @@ sub runit() {
     my ($etime) = xtime();
     my ($eltime) = $etime - $stime1;
     my ($cputime) = cputime() - $scputime;
-    my ($answer) = sprintf("STATS %d %.3f %.3f %.3f %.3f %.3f %.3f %7.3f %d %d",
-        $$, $crtime - $basetime, $dstime - $basetime, $stime1 - $basetime,
-        $eltime, $etime - $basetime, $cputime, 100.0 * $cputime / $eltime, $iterations,
-        $iterations / ($etime - $stime1));
-    $answer = "-n $namespace $pod -c $container terminated 0 0 0 $answer";
+    my ($answer) = sprintf("-n,%s,%s,-c,%s,terminated,%d,%d,%d,STATS,%d,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%d,%d,%.3f,%.3f",
+			   $namespace, $pod, $container, 0,0,0,
+			   $$, $crtime - $basetime, $dstime - $basetime, $stime1 - $basetime,
+			   $eltime, $etime - $basetime, $cputime, 100.0 * $cputime / $eltime, $iterations,
+			   $iterations / ($etime - $stime1),
+			   $basetime, $dstime, $crtime, $stime1
+	);
     print STDERR "$answer\n";
     do_sync($synchost, $syncport, $answer);
     if ($logport > 0) {

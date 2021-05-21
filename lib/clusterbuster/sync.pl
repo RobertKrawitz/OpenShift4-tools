@@ -52,10 +52,8 @@ while ($syncCount < 0 || $syncCount-- > 0) {
 		timestamp("Read token from $peerhost failed: $!");
 	    }
 	    timestamp("Accepted connection from $peerhost ($peeraddr) on $port, token $tbuf");
-	    timestamp("$tmpSyncFile $tbuf");
-	    if ($tbuf =~ / STATS / && defined $tmpSyncFile) {
+	    if ($tbuf =~ /,STATS,/ && defined $tmpSyncFile) {
 		chomp $tbuf;
-		timestamp("Recording $tbuf");
 		open SYNC, ">>", "$tmpSyncFile" || die("Can't open sync file $tmpSyncFile: $!\n");
 		print SYNC "$tbuf\n";
 		close SYNC || die "Can't close sync file: $!\n";

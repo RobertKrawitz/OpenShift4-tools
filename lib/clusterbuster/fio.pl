@@ -167,21 +167,23 @@ sub runit(;$) {
         my ($status) = $? >> 8;
         print STDERR "fio returned $status\n";
     }
-#    my ($answer) = sprintf("STATS %d %.3f %.3f %.3f %d %d %d %d %d %.03f %.06f %.06f %.06f %.06f",
-#	    $$, $crtime - $basetime, $dstime - $basetime, $stime1 - $basetime,
-#	    $readops, $writeops, $fsyncops, $readrate, $writerate, $et, $min_lat, $avg_lat, $max_lat, $p95_lat);
+#    my ($answer) =
+#	sprintf("-n,%s,%s,-c,%s,terminated,0,0,0,STATS,%d,%.3f,%.3f,%.3f,%d,%d,%d,%d,%d,%.03f,%.06f,%.06f,%.06f,%.06f",
+#		$namespace, $pod, $container,
+#		$$, $crtime - $basetime, $dstime - $basetime, $stime1 - $basetime,
+#		$readops, $writeops, $fsyncops, $readrate, $writerate, $et, $min_lat, $avg_lat, $max_lat, $p95_lat);
 #    print STDERR "$answer\n";
 #    do_sync($synchost, $syncport, $answer);
      do_sync($synchost, $syncport);
 #    if ($logport > 0) {
-#	do_sync($loghost, $logport, "-n $namespace $pod -c $container terminated 0 0 0 $answer");
+#	do_sync($loghost, $logport, $answer);
 #    }
 }
 
 sub get_jobfiles($) {
     my ($dir) = @_;
     opendir DIR, $dir || die "Can't find job files in $dir: #!\n";
-    
+
     my @files = map { "$dir/$_" } grep { -f "$dir/$_" } sort readdir DIR;
     closedir DIR;
     print STDERR "get_jobfiles($dir) => @files\n";
