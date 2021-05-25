@@ -382,7 +382,7 @@ function process_summary_legacy() {
 
 function process_summary() {
     if ((json_output)) ; then
-	"${__libdir__}/postprocess-json.pl" "$@"
+	"${__libdir__}/postprocess-json.py" "$@"
     else
 	process_summary_legacy "$@"
     fi
