@@ -40,11 +40,11 @@ sub calibrate_time() {
 }
 sub stats() {
     return
-	sprintf("-n,%s,%s,-c,%s,terminated,%d,%d,%d,STATS,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.6f,%.3f,%.3f,%d,%.3f,%.3f,%.6f,%.6f,%.6f,%.6f,%d",
+	sprintf("-n,%s,%s,-c,%s,terminated,%d,%d,%d,STATS,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.6f,%.3f,%.3f,%d,%.3f,%.3f,%.6f,%.6f,%.6f,%.6f",
 		$namespace, $pod, $container, $cfail, $refused, $pass,
 		$crtime - $basetime, $start_time - $basetime, $ghbn_time - $basetime, $etime - $basetime,
 		$dstime - $basetime, $end_time - $basetime, $elapsed, $user, $sys,
-		$data_sent, $detime, $data_sent / $detime / 1000000.0, $mean, $max, $stdev, $time_overhead, $pass);
+		$data_sent, $detime, $data_sent / $detime / 1000000.0, $mean, $max, $stdev, $time_overhead);
 }
 sub connect_to($$) {
     my ($addr, $port) = @_;

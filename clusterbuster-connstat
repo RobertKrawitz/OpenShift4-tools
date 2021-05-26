@@ -342,7 +342,7 @@ function process_summary_legacy() {
 		et=$(clean "${output[20]}")
 		mean_rtt+=$(clean "${output[22]}")
 		t=$(clean "${output[23]}")
-		total_iterations=${output[26]}
+		total_iterations=${output[8]}
 		if (( t > max_rtt )) ; then max_rtt=$t; fi
 		if (( start < first_start )) ; then first_start=$start; fi
 		if (( end > last_end )) ; then last_end=$end; fi
