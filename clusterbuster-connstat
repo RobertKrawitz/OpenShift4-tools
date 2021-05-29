@@ -287,9 +287,9 @@ function process_summary_legacy() {
     local mode=
     while read -r rawoutput ; do
 	if [[ $rawoutput = '-n,'* ]] ; then
-	    readarray -d, -t output <<< "$rawoutput"
+	    IFS=, read -r -a output <<< "$rawoutput"
 	else
-	    readarray -t output <<< "$rawoutput"
+	    read -r -a output <<< "$rawoutput"
 	fi
 	[[ -n "${output[*]}" ]] || continue
 	[[ ${output[*]} = *'STATS'* ]] || continue
