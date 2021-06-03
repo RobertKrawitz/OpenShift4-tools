@@ -584,7 +584,7 @@ function get_logs_poll() {
 		    pod_status_found=1
 		    sleep 1
 		    ;;
-		Failed)
+		Error|Failed)
 		    pod_status_found=1
 		    echo "Status of pod $pod failed!" 1>&2
 		    return 1
@@ -609,7 +609,7 @@ function get_logs_poll() {
 	if ((cleanup)) ; then
 	    cleanupCommand="; sleep 1; rm -f '$syncFlagFile'"
 	fi
-	oc rsh $pod sh -c "while [[ ! -f '$syncFlagFile' ]] ; do sleep 5; done; cat '$syncFlagFile' $cleanupCommand"
+	oc rsh "$pod" sh -c "while [[ ! -f '$syncFlagFile' ]] ; do sleep 5; done; cat '$syncFlagFile' $cleanupCommand"
     done
 }
 
@@ -989,6 +989,24 @@ fi
 
 [[ -z "$*" ]] || echo "Warning: extraneous arguments $# after basename will be ignored!" 1>&2
 
+function __OC() {
+    if [[ $1 = describe || $1 = get ]] ; then
+	"$OC" "$@"
+    elif ((reportObjectCreation)) ; then
+	"$OC" "$@" 2>&1
+    else
+	"$OC" "$@" 2>&1 |grep -v -E '(^No resources found|deleted|created|labeled)$'
+    fi
+    return "${PIPESTATUS[0]}"
+}
+
+function _OC() {
+    if ! __OC "$@" ; then
+	echo "__KUBEFAIL__ $OC $* failed!"
+	exit 1
+    fi
+}
+
 function indent_1() {
     local -i column="$1"
     local line
@@ -1010,7 +1028,7 @@ function indent() {
 
 function finishCreation() {
     if [[ $doit -ne 0 && -n $accumulateddata ]] ; then
-	"${OC}" ${KUBECTL_VALIDATE} apply -f - <<< "$accumulateddata" | timestamp
+	(_OC ${KUBECTL_VALIDATE} apply -f - <<< "$accumulateddata" | timestamp 1>&2) || exit 1
 	accumulateddata=
     fi
 }
@@ -1090,7 +1108,7 @@ function createObject() {
     if (( doit )) ; then
 	accumulateddata+="$data"
 	if (( ++blockitemcount >= blocksize )) ; then
-	    "${OC}" ${KUBECTL_VALIDATE} apply -f - <<< "$accumulateddata" | timestamp
+	    (_OC ${KUBECTL_VALIDATE} apply -f - <<< "$accumulateddata" | timestamp 1>&2) || exit 1
 	    accumulateddata=
 	    blockitemcount=0
 	    (( !sleeptime )) || sleep "$sleeptime"
@@ -1120,8 +1138,8 @@ function createObjectFromFile() {
 	fi
     done
     if (( doit )) ; then
-	"$OC" create ${useNamespaces:+-n "$namespace"} "$objtype" "$objname" "${@/#/--from-file=}" | echoIfDesired
-	"$OC" label ${useNamespaces:+-n "$namespace"} "$objtype" "$objname" 'clusterbusterbase=true' "${basename}=true" | echoIfDesired
+	(_OC create ${useNamespaces:+-n "$namespace"} "$objtype" "$objname" "${@/#/--from-file=}" | echoIfDesired 1>&2) || exit 1
+	(_OC label ${useNamespaces:+-n "$namespace"} "$objtype" "$objname" 'clusterbusterbase=true' "${basename}=true" | echoIfDesired 1>&2) || exit 1
 	totalObjectsCreated=$((totalObjectsCreated+1))
 	if [[ -z ${objectsCreated[$objtype]:-} ]] ; then
 	    objectsCreated[$objtype]=1
@@ -1130,8 +1148,8 @@ function createObjectFromFile() {
 	fi
 	(( !sleeptime )) || sleep "$sleeptime"
     else
-	echo "$OC" create ${useNamespaces:+-n "$namespace"} "$objtype" "$objname" "${@/#/--from-file=}"
-	echo "$OC" label ${useNamespaces:+-n "$namespace"} "$objtype" "$objname" 'clusterbusterbase=true' "${basename}=true"
+	echo _OC create ${useNamespaces:+-n "$namespace"} "$objtype" "$objname" "${@/#/--from-file=}"
+	echo _OC label ${useNamespaces:+-n "$namespace"} "$objtype" "$objname" 'clusterbusterbase=true' "${basename}=true" || exit 1
     fi
 }
 
@@ -2732,7 +2750,7 @@ function allocate_namespaces() {
 	    if [[ -n "$ns" ]] ; then
 		namespaces_in_use[${ns#namespace/}]=1
 	    fi
-        done < <("$OC" get ns -l "$basename" --no-headers -o name 2>/dev/null)
+        done < <(_OC get ns -l "$basename" --no-headers -o name 2>/dev/null)
     fi
     while (( ns_count++ < namespaces )) ; do
         while [[ -n "${namespaces_in_use[${basename}-$ns_idx]:-}" ]] ; do
@@ -2756,7 +2774,7 @@ function find_first_deployment() {
 		    firstDeployment=$((deployment + 1))
 		fi
 	    fi
-        done < <("$OC" get deployments -l "$basename" -A --no-headers 2>/dev/null)
+        done < <(_OC get deployments -l "$basename" -A --no-headers 2>/dev/null)
     fi
 }
 
@@ -2766,7 +2784,7 @@ function createAllNamespaces() {
     for i in $(seq 0 "$((parallelNamespaces - 1))") ; do
 	createObjects_n Namespace "$parallelNamespaces" "$blocksizeNamespaces" "$((i * blocksizeNamespaces))" "$sleepNamespaces" &
     done
-    wait
+    wait || exit 1
 }
 
 function createAllSecrets() {
@@ -2775,7 +2793,7 @@ function createAllSecrets() {
     for i in $(seq 0 "$((parallelSecrets - 1))") ; do
 	createObjects_n Secrets "$parallelSecrets" "$blocksizeSecrets" "$((i * blocksizeSecrets))" "$sleepSecrets" "$depsPerNamespace" "$secrets" &
     done
-    wait
+    wait || exit 1
 }
 
 function createSystemConfigMap() {
@@ -2786,7 +2804,7 @@ function createSystemConfigMap() {
 	for i in $(seq 0 "$((parallelConfigMaps - 1))") ; do
 	    createObjects_n ConfigMaps "$parallelConfigMaps" "$blocksizeConfigMaps" "$((i * blocksizeConfigMaps))" "$sleepConfigMaps" "systemconfigmap" "${systemfiles[@]}"&
 	done
-	wait
+	wait || exit 1
     fi
 }
 
@@ -2798,7 +2816,7 @@ function createAllConfigMaps() {
     for i in $(seq 0 "$((parallelConfigMaps - 1))") ; do
 	createObjects_n ConfigMaps "$parallelConfigMaps" "$blocksizeConfigMaps" "$((i * blocksizeConfigMaps))" "$sleepConfigMaps" "configmap" "${configMapFiles[@]}"&
     done
-    wait
+    wait || exit 1
 }
 
 function createAllDeployments() {
@@ -2808,7 +2826,7 @@ function createAllDeployments() {
 	export PARALLEL_ROTOR=$i
 	createObjects_n Deployment "$parallelDeployments" "$blocksizeDeployments" "$((i * blocksizeDeployments))" "$sleepDeployments" "$depsPerNamespace" "$secrets" "$replicas" "$containers" "$log_host" "$log_port" &
     done
-    wait
+    wait || exit 1
 }
 
 function createAllObjects() {
@@ -2816,9 +2834,12 @@ function createAllObjects() {
     local objtype=$1
     shift
     while IFS= read -r 'line' ; do
-	if [[ $line =~ ^[[:digit:]]{4}(-[[:digit:]]{2}){2}T([[:digit:]]{2}:){2}[[:digit:]]{2}\.[[:digit:]]{6}\ +([-a-z0-9]+)/([-a-z0-9]+)\ +created$ ]] ; then
+	if [[ $line = *'__KUBEFAIL__ '* ]] ; then
+	    echo "${line/__KUBEFAIL__ /}" 1>&2
+	    return 1
+	elif [[ $line =~ ^[[:digit:]]{4}(-[[:digit:]]{2}){2}T([[:digit:]]{2}:){2}[[:digit:]]{2}\.[[:digit:]]{6}\ +([-a-z0-9]+)/([-a-z0-9]+)\ +created$ ]] ; then
 	    if (( reportObjectCreation )) ; then
-		echo "$line"
+		echo "$line" 1>&2
 	    fi
 	    totalObjectsCreated=$((totalObjectsCreated+1))
 	    found_objtype=${BASH_REMATCH[3]}
@@ -2828,7 +2849,7 @@ function createAllObjects() {
 		objectsCreated[$found_objtype]=$((${objectsCreated[$found_objtype]:-}+1))
 	    fi
 	elif [[ -n "$line" ]] ; then
-	    (IFS=''; echo "$line")
+	    (IFS=''; echo "$line" 1>&2)
 	fi
     done < <("createAll${objtype}" "$@" 2>&1)
 }
@@ -2844,12 +2865,12 @@ function doCleanup() {
     fi
     for objtype in "${objectsToClean[@]}" ; do
 	if (( reportObjectCreation )) ; then
-	    "$OC" delete "$objtype" -l "$basename"
+	    _OC delete "$objtype" -l "$basename" 1>&2
 	else
 	    local objects_deleted
-	    objects_deleted=$("$OC" delete "$objtype" -l "$basename" |grep -c "^${objtype}.*deleted\$")
+	    objects_deleted=$(_OC delete "$objtype" -l "$basename" |grep -c "^${objtype}.*deleted\$")
 	    if ((objects_deleted > 0 && reportObjectCreation)) ; then
-		printf "Deleted %d %s%s\n" "$objects_deleted" "$objtype" "${plurals[$((objects_deleted == 1))]}"
+		printf "Deleted %d %s%s\n" "$objects_deleted" "$objtype" "${plurals[$((objects_deleted == 1))]}" 1>&2
 	    fi
 	fi
     done
@@ -2898,7 +2919,7 @@ function run_clusterbuster_1() {
 	while (( ${#expected_secrets[@]} )) ; do
 	    while read -r secname ; do
 		[[ -n "${secname:-}" ]] && unset "expected_secrets[$secname]"
-	    done < <("$OC" get secret -oname --no-headers -l "$basename" -A)
+	    done < <(_OC get secret -oname --no-headers -l "$basename" -A)
 	    if (( ${#expected_secrets[@]} )) ; then
 		echo "Still waiting for ${#expected_secrets[@]} to be created."
 		sleep 10
@@ -2913,6 +2934,8 @@ function run_clusterbuster_1() {
     local -i log_port=0
     if ((doit && report)) ; then
 	logs_expected="$("calculateLogsRequired" "$namespaces" "$depsPerNamespace" "$replicas" "$containers")"
+	basetime=$(printf '%(%s)T' -1)
+	createAllObjects Deployments || exit 1
 	if ((logs_expected)) ; then
 	    if [[ $logStrategy = poll ]] ; then
 		local -a syncPods=()
@@ -2932,19 +2955,18 @@ function run_clusterbuster_1() {
 		get_logs -p "$log_port" -c "$logs_expected" &
 	    fi
 	    get_logs_pid=$!
+	    trap '[[ -n "$(jobs -p)" ]] && kill -HUP $(jobs -p)' INT TERM HUP
 	fi
     fi
-    basetime=$(printf '%(%s)T' -1)
-    createAllObjects Deployments
 
     (( doit )) || return
     if ((report && logs_expected && timeout > 0)) ; then
 	local -i finis=0
 	while (( timeout < 0 || timeout-- )) ; do
 	    # CreateContainerError is not necessarily fatal
-	    if "${OC}" get pods -A -l "$basename" |grep -q -E -e '([^r]Error|Evicted|Crash)' ; then
+	    if _OC get pods -A -l "$basename" |grep -q -E -e '([^r]Error|Evicted|Crash)' ; then
 		echo "Run failed:" 1>&2
-		"${OC}" get pods -A -l "$basename" |grep -E -e '([^r]Error|Evicted|Crash)'
+		_OC get pods -A -l "$basename" |grep -E -e '([^r]Error|Evicted|Crash)'
 		break
 	    fi
 	    # This appears to be needed for the shell to actually reap
@@ -2977,9 +2999,9 @@ function run_clusterbuster_1() {
     local objtype
     if (( reportObjectCreation )) ; then
 	while read -r objtype ; do
-	    [[ -n "${objtype:-}" ]] && printf "Created %${#totalObjectsCreated}d %s%s\n" "${objectsCreated[$objtype]}" "$objtype" "${plurals[$((${objectsCreated[$objtype]} == 1))]}"
+	    [[ -n "${objtype:-}" ]] && printf "Created %${#totalObjectsCreated}d %s%s\n" "${objectsCreated[$objtype]}" "$objtype" "${plurals[$((${objectsCreated[$objtype]} == 1))]}" 1>&2
 	done < <( (IFS=$'\n'; echo "${!objectsCreated[*]}") | sort)
-	printf "Created %d object%s total\n" "$totalObjectsCreated" "${plurals[$((totalObjectsCreated == 1))]}"
+	printf "Created %d object%s total\n" "$totalObjectsCreated" "${plurals[$((totalObjectsCreated == 1))]}" 1>&2
     fi
     if ((cleanup)) ; then
 	doCleanup

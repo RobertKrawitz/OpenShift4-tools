@@ -354,7 +354,7 @@ for line in sys.stdin:
     if line.find(",") == -1:
         splitchar = ' '
     vals.extend(line.split(splitchar))
-    if mode is None:
+    if mode is None and len(vals) > 3:
         if vals[3].find('-soaker-') >= 0:
             mode_func = process_cpusoaker
         elif vals[3].find('-client-') >= 0:
