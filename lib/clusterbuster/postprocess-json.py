@@ -4,10 +4,6 @@ from __future__ import print_function
 import sys
 import json
 
-mode_func = None
-rows = []
-mode = None
-
 
 def eprint(*args, **kwargs):
     print(*args, file=sys.stderr, **kwargs)
@@ -347,25 +343,36 @@ def process_sysbench(rows):
     return answer
 
 
-for line in sys.stdin:
-    line = line.rstrip()
-    vals = [line]
-    splitchar = ','
-    if line.find(",") == -1:
-        splitchar = ' '
-    vals.extend(line.split(splitchar))
-    if mode is None and len(vals) > 3:
-        if vals[3].find('-soaker-') >= 0:
-            mode_func = process_cpusoaker
-        elif vals[3].find('-client-') >= 0:
-            mode_func = process_clientserver
-        elif vals[3].find('-sysbench-') >= 0:
-            mode_func = process_sysbench
-        elif vals[3].find('-files-') >= 0:
-            mode_func = process_files
-        else:
-            efail("Unrecognized mode from %s" % (vals[3]), file=sys.stderr)
-    rows.append(vals)
+def main():
+    mode_func = None
+    rows = []
+    mode = None
 
-if mode_func is not None:
-    print(json.dumps(mode_func(rows)))
+    for line in sys.stdin:
+        line = line.rstrip()
+        vals = [line]
+        splitchar = ','
+        if line.find(",") == -1:
+            splitchar = ' '
+        vals.extend(line.split(splitchar))
+        if mode is None and len(vals) > 3:
+            if vals[3].find('-soaker-') >= 0:
+                mode_func = process_cpusoaker
+            elif vals[3].find('-client-') >= 0:
+                mode_func = process_clientserver
+            elif vals[3].find('-sysbench-') >= 0:
+                mode_func = process_sysbench
+            elif vals[3].find('-files-') >= 0:
+                mode_func = process_files
+            else:
+                efail("Unrecognized mode from %s" % (vals[3]), file=sys.stderr)
+        rows.append(vals)
+
+    if mode_func is not None:
+        print(json.dumps(mode_func(rows)))
+
+
+try:
+    main()
+except KeyboardInterrupt:
+    pass
