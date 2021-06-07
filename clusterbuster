@@ -121,6 +121,8 @@ declare -i log_delay_usec=0
 declare -i log_xfertime=0
 declare -i log_exit_at_end=0
 declare -r syncFlagFile="/tmp/syncfile";
+# shellcheck disable=2155
+declare -r runUUID=$(uuidgen -r)
 
 declare kataRuntimeClass=kata
 declare imagePullPolicy=Always
@@ -568,6 +570,73 @@ function timestamp() {
 
 trap exit INT
 
+function monitor_pods() {
+    exec 0</dev/null 1>/dev/null
+    local arg
+    local -i timeout=-1
+    local -i ppid=0
+    OPTIND=0
+    while getopts "t:p:" arg "$@" ; do
+	case "$arg" in
+	    p) ppid="$OPTARG"    ;;
+	    t) timeout="$OPTARG" ;;
+	    *)                   ;;
+	esac
+    done
+    shift $((OPTIND - 1))
+    if ((timeout > 0)) ; then
+	timeout=$(($(date +%s) + timeout))
+    fi
+    while : ; do
+	# shellcheck disable=2034
+	while read -r name rdy status rest ; do
+	    case "${status,,}" in
+		error|failed)
+		    echo "Pod $name $status!" 1>&2
+		    if (( ppid > 0 )) ; then
+			exec 2>/dev/null
+			kill -USR1 "$ppid"
+		    fi
+		    return 1
+		    ;;
+		*)  ;;
+	    esac
+	done <<< "$(__OC get pods --no-headers "$@" 2>/dev/null)"
+	if ((timeout > 0 && $(date +%s) > timeout)) ; then
+	    echo "Monitor pods timeout!" 1>&2
+	    if (( ppid > 0 )) ; then
+		exec 2>/dev/null
+		kill -USR1 "$ppid"
+	    fi
+	    return 1
+	fi
+	sleep 5
+    done
+}
+
+function run_logger() {
+    local -a pids_to_kill=()
+    OPTIND=0
+    while getopts "p:" arg "$@" ; do
+	case "$arg" in
+	    p) pids_to_kill+=("$OPTARG") ;;
+	    *)                           ;;
+	esac
+    done
+    shift $((OPTIND-1))
+    trap '[[ -n "${pids_to_kill[*]}" ]] && exec 2>/dev/null && kill $(jobs -p) && "${pids_to_kill[@]}" && return 1' TERM INT HUP
+    "$@" </dev/null &
+    # shellcheck disable=2207
+    pids_to_kill+=($(jobs -p))
+    wait
+    # shellcheck disable=SC2046
+    if [[ -n "${pids_to_kill[*]}" ]] ; then
+	exec 2>/dev/null
+	kill -USR2 "${pids_to_kill[@]}"
+	[[ -n "$(jobs -p)" ]] && kill $(jobs -p)
+    fi
+}
+
 function get_logs_poll() {
     local pod
     local status
@@ -609,7 +678,20 @@ function get_logs_poll() {
 	if ((cleanup)) ; then
 	    cleanupCommand="; sleep 1; rm -f '$syncFlagFile'"
 	fi
-	oc rsh "$pod" sh -c "while [[ ! -f '$syncFlagFile' ]] ; do sleep 5; done; cat '$syncFlagFile' $cleanupCommand"
+	trap 'exec 2>/dev/null; [[ -n "$(jobs -p)" ]] && kill $(jobs -p); return 1' INT TERM HUP
+	trap 'exec 2>/dev/null; kill $(jobs -p); return 1' USR1
+	trap 'exec 3>&2 2>/dev/null ; kill $(jobs -p) && wait ; exec 2>&3 3>&-' USR2
+	local mypid=$BASHPID
+	monitor_pods -p "$mypid" -- -l "${basename}-id=$runUUID" &
+	run_logger -p "$mypid" oc rsh -T "$pod" sh -c "while [[ ! -f '$syncFlagFile' ]] ; do sleep 5; done; cat '$syncFlagFile' $cleanupCommand" &
+	wait
+	# shellcheck disable=SC2046
+	if [[ -n "$(jobs -p)" ]] ; then
+	    exec 3>&2 2>/dev/null
+	    kill $(jobs -p)
+	    wait
+	    exec 2>&3 3>&-
+	fi
     done
 }
 
@@ -629,7 +711,7 @@ function get_logs() {
 	log_cmd=get_logs_listen
     fi
     "$log_cmd" "$@" | "${pathdir:-.}/clusterbuster-connstat" -s -f - "$extra_arg"
-    return $((PIPESTATUS[0] && PIPESTATUS[1]))
+    return $((PIPESTATUS[0] || PIPESTATUS[1]))
 }
 
 function set_xfer() {
@@ -990,7 +1072,7 @@ fi
 [[ -z "$*" ]] || echo "Warning: extraneous arguments $# after basename will be ignored!" 1>&2
 
 function __OC() {
-    if [[ $1 = describe || $1 = get ]] ; then
+    if [[ $1 = describe || $1 = get || $1 = status ]] ; then
 	"$OC" "$@"
     elif ((reportObjectCreation)) ; then
 	"$OC" "$@" 2>&1
@@ -1162,6 +1244,7 @@ kind: Namespace
 metadata:
   name: "${namespace}"
   labels:
+    ${basename}-id: "$runUUID"
     ${basename}: "true"
     clusterbusterbase: "true"
 EOF
@@ -1184,6 +1267,7 @@ metadata:
   name: "secret-${namespace}-${i}-${j}"
 $nsline
   labels:
+    ${basename}-id: "$runUUID"
     ${basename}: "true"
     clusterbusterbase: "true"
 data:
@@ -1485,6 +1569,7 @@ $(indent 2 node_selector)
     matchLabels:
       app: ${namespace}-${i}
   labels:
+    ${basename}-id: "$runUUID"
     ${basename}: "true"
     name: ${namespace}-${i}
     app: ${namespace}-${i}
@@ -1516,6 +1601,7 @@ $(indent 2 node_selector)
   template:
     metadata:
       labels:
+        ${basename}-id: "$runUUID"
         ${basename}: "true"
         clusterbusterbase: "true"
         name: ${namespace}-$i
@@ -1575,6 +1661,7 @@ $(indent 2 node_selector)
     matchLabels:
       app: ${namespace}-sync
   labels:
+    ${basename}-id: "$runUUID"
     name: ${namespace}-sync
     app: ${namespace}-sync
     k8s-app: ${namespace}-sync
@@ -1593,6 +1680,7 @@ metadata:
 $(indent 2 createPrivilegeYAML)
 $nsline
   labels:
+    ${basename}-id: "$runUUID"
     ${basename}: "true"
     clusterbusterbase: "true"
 spec:
@@ -1606,6 +1694,7 @@ $(indent 2 node_selector)
   template:
     metadata:
       labels:
+        ${basename}-id: "$runUUID"
         name: ${namespace}-sync
         app: ${namespace}-sync
         k8s-app: ${namespace}-sync
@@ -1711,6 +1800,7 @@ $(indent 2 node_selector)
     matchLabels:
       app: ${namespace}-files-${i}
   labels:
+    ${basename}-id: "$runUUID"
     ${basename}: "true"
     clusterbusterbase: "true"
     name: ${namespace}-files-${i}
@@ -1730,6 +1820,7 @@ metadata:
 $nsline
 $(indent 2 createPrivilegeYAML)
   labels:
+    ${basename}-id: "$runUUID"
     ${basename}: "true"
     clusterbusterbase: "true"
 spec:
@@ -1743,6 +1834,7 @@ $(indent 2 node_selector)
   template:
     metadata:
       labels:
+        ${basename}-id: "$runUUID"
         ${basename}: "true"
         clusterbusterbase: "true"
         name: ${namespace}-files-$i
@@ -1844,6 +1936,7 @@ $(indent 2 node_selector)
     matchLabels:
       app: ${namespace}-sysbench-${i}
   labels:
+    ${basename}-id: "$runUUID"
     ${basename}: "true"
     clusterbusterbase: "true"
     name: ${namespace}-sysbench-${i}
@@ -1875,6 +1968,7 @@ $(indent 2 node_selector)
   template:
     metadata:
       labels:
+        ${basename}-id: "$runUUID"
         ${basename}: "true"
         clusterbusterbase: "true"
         name: ${namespace}-sysbench-$i
@@ -1974,6 +2068,7 @@ $(indent 2 node_selector)
     matchLabels:
       app: ${namespace}-fio-${i}
   labels:
+    ${basename}-id: "$runUUID"
     ${basename}: "true"
     clusterbusterbase: "true"
     name: ${namespace}-fio-${i}
@@ -1992,6 +2087,7 @@ metadata:
 $nsline
 $(indent 2 createPrivilegeYAML)
   labels:
+    ${basename}-id: "$runUUID"
     ${basename}: "true"
     clusterbusterbase: "true"
 spec:
@@ -2005,6 +2101,7 @@ $(indent 2 node_selector)
   template:
     metadata:
       labels:
+        ${basename}-id: "$runUUID"
         ${basename}: "true"
         clusterbusterbase: "true"
         name: ${namespace}-fio-$i
@@ -2103,6 +2200,7 @@ $(indent 2 node_selector)
     matchLabels:
       app: ${namespace}-soaker-${i}
   labels:
+    ${basename}-id: "$runUUID"
     ${basename}: "true"
     clusterbusterbase: "true"
     name: ${namespace}-soaker-${i}
@@ -2135,6 +2233,7 @@ $(indent 2 node_selector)
   template:
     metadata:
       labels:
+        ${basename}-id: "$runUUID"
         ${basename}: "true"
         clusterbusterbase: "true"
         name: ${namespace}-soaker-$i
@@ -2158,6 +2257,7 @@ metadata:
   name: "service-${deployment}"
 $nsline
   labels:
+    ${basename}-id: "$runUUID"
     ${basename}: "true"
     clusterbusterbase: "true"
 spec:
@@ -2180,6 +2280,7 @@ metadata:
   name: "route-${deployment}"
 $nsline
   labels:
+    ${basename}-id: "$runUUID"
     ${basename}: "true"
     clusterbusterbase: "true"
 spec:
@@ -2256,6 +2357,7 @@ $(indent 2 createPrivilegeYAML)
     matchLabels:
       app: ${namespace}-${i}
   labels:
+    ${basename}-id: "$runUUID"
     name: ${namespace}-${i}
     app: ${namespace}-${i}
     k8s-app: ${namespace}-${i}-server
@@ -2274,6 +2376,7 @@ metadata:
 $nsline
 $(indent 2 createPrivilegeYAML)
   labels:
+    ${basename}-id: "$runUUID"
     ${basename}: "true"
     clusterbusterbase: "true"
 spec:
@@ -2287,6 +2390,7 @@ $(indent 2 node_selector)
   template:
     metadata:
       labels:
+        ${basename}-id: "$runUUID"
         name: ${namespace}-${i}
         app: ${namespace}-${i}
         k8s-app: ${namespace}-${i}-server
@@ -2433,6 +2537,7 @@ $(indent 2 createPrivilegeYAML)
     matchLabels:
       app: ${namespace}-${i}-client
   labels:
+    ${basename}-id: "$runUUID"
     ${basename}: "true"
     name: ${namespace}-${i}-client
     app: ${namespace}-${i}-client
@@ -2453,6 +2558,7 @@ metadata:
 $(indent 2 createPrivilegeYAML)
 $nsline
   labels:
+    ${basename}-id: "$runUUID"
     ${basename}: "true"
     clusterbusterbase: "true"
 spec:
@@ -2467,6 +2573,7 @@ $(indent 2 node_selector)
   template:
     metadata:
       labels:
+        ${basename}-id: "$runUUID"
         name: ${namespace}-${i}-client
         app: ${namespace}-${i}-client
         ${basename}: "true"
@@ -2989,13 +3096,16 @@ function run_clusterbuster_1() {
 		kill -9 "$get_logs_pid"
 		get_logs_pid=
 		exec 2>&3 3>&-
+		wait "$get_logs_pid"
 	    fi
 	    echo "Run did not terminate" 1>&2
 	    status=1
 	fi
     fi
-    [[ -n "${get_logs_pid:-}" ]] && wait
-
+    if [[ -n "${get_logs_pid:-}" ]] ; then
+	wait "$get_logs_pid"
+	status=$?
+    fi
     local objtype
     if (( reportObjectCreation )) ; then
 	while read -r objtype ; do
