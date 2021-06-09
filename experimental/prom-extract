@@ -1,4 +1,4 @@
-#!/usr/bin/env python3.8
+#!/usr/bin/env python3
 
 # Copyright 2021 Robert Krawitz/Red Hat
 #
@@ -27,27 +27,54 @@ import urllib3
 import uuid
 import yaml
 
+def eprint(*args, **kwargs):
+    print(*args, file=sys.stderr, **kwargs)
+
+
+def efail(*args, **kwargs):
+    print(*args, file=sys.stderr, **kwargs)
+    sys.exit(1)
+
 def get_prometheus_default_url():
     try:
-        completion = subprocess.run(['oc', 'get', 'route', '-n', 'openshift-monitoring',
-                                     'prometheus-k8s', '--no-headers', '-o',
-                                     'custom-columns=host:status.ingress[0].host'],
-                                      check=True,
-                                      capture_output=True)
-    except CalledProcessError as err:
-        efail("Unable to retrieve prometheus-k8s route: %s %s" % (err.stdin, err.stdout))
-    return 'https://%s' % (completion.stdout.strip().decode())
-
+        with subprocess.Popen(['oc', 'get', 'route',
+                               '-n', 'openshift-monitoring',
+                               'prometheus-k8s', '--no-headers', '-o',
+                               'custom-columns=host:status.ingress[0].host'],
+                              stdin=subprocess.DEVNULL,
+                              stdout=subprocess.PIPE) as subproc:
+            stdout_data = []
+            while True:
+                data = subproc.stdout.readline()
+                if len(data) > 0:
+                    stdout_data.append(data.strip().decode())
+                else:
+                    break
+            if subproc.poll() != 0:
+                efail("Unable to retrieve prometheus-k8s route")
+            return 'https://%s' % "\n".join(stdout_data)
+    except Exception as err:
+        efail("Unable to retrieve prometheus-k8s route: %s" % err)
 
 def get_prometheus_token():
     try:
-        completion = subprocess.run(['oc', 'sa', 'get-token', '-n', 'openshift-monitoring',
-                                     'prometheus-k8s'],
-                                      check=True,
-                                      capture_output=True)
-    except CalledProcessError as err:
-        efail("Unable to retrieve prometheus-k8s token: %s %s" % (err.stdin, err.stdout))
-    return 'Bearer %s' % completion.stdout.strip().decode()
+        with subprocess.Popen(['oc', 'sa', 'get-token',
+                               '-n', 'openshift-monitoring',
+                               'prometheus-k8s'],
+                              stdin=subprocess.DEVNULL,
+                              stdout=subprocess.PIPE) as subproc:
+            stdout_data = []
+            while True:
+                data = subproc.stdout.readline()
+                if len(data) > 0:
+                    stdout_data.append(data.strip().decode())
+                else:
+                    break
+            if subproc.poll() != 0:
+                efail("Unable to retrieve prometheus-k8s token")
+            return 'Bearer %s' % "\n".join(stdout_data)
+    except Exception as err:
+        efail("Unable to retrieve prometheus-k8s token: %s" % err)
 
 
 def generate_uuid():
@@ -65,15 +92,6 @@ parser.add_argument('--json-from-command', help='Interpret command stdout as JSO
 parser.add_argument('--uuid', type=str, metavar='UUID', help='Index results by UUID (generate if not provided)', default=generate_uuid()),
 parser.add_argument('command', metavar='command', help='command [args...]', type=str, nargs='*')
 args = parser.parse_args()
-
-
-def eprint(*args, **kwargs):
-    print(*args, file=sys.stderr, **kwargs)
-
-
-def efail(*args, **kwargs):
-    print(*args, file=sys.stderr, **kwargs)
-    sys.exit(1)
 
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
