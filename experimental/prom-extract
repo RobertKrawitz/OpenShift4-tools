@@ -19,6 +19,7 @@ from prometheus_api_client import PrometheusConnect
 import argparse
 import datetime
 import json
+import openshift
 import selectors
 import subprocess
 import sys
@@ -64,6 +65,8 @@ def run_command(cmd, fail_on_bad_status=True, report_stderr_async=True,
                         if report_stderr_async:
                             print(data, file=sys.stderr)
             if not foundSomething:
+                while command.poll() is None:
+                    time.sleep(1)
                 if fail_on_bad_status and command.poll() != 0:
                     raise RuntimeError('Command %s failed: exit status %d' % (' '.join(cmd), command.poll()))
                 return (stdout_data, stderr_data, command.poll())
@@ -76,43 +79,17 @@ def run_command_simple(cmd):
 
 def get_prometheus_default_url():
     try:
-        with subprocess.Popen(['oc', 'get', 'route',
-                               '-n', 'openshift-monitoring',
-                               'prometheus-k8s', '--no-headers', '-o',
-                               'custom-columns=host:status.ingress[0].host'],
-                              stdin=subprocess.DEVNULL,
-                              stdout=subprocess.PIPE) as subproc:
-            stdout_data = []
-            while True:
-                data = subproc.stdout.readline()
-                if len(data) > 0:
-                    stdout_data.append(data.strip().decode())
-                else:
-                    break
-            if subproc.poll() != 0:
-                efail("Unable to retrieve prometheus-k8s route")
-            return 'https://%s' % "\n".join(stdout_data)
+        with openshift.project('openshift-monitoring'):
+            return 'https://%s' % openshift.selector(['route/prometheus-k8s']).objects()[0].as_dict()['spec']['host']
     except Exception as err:
         efail("Unable to retrieve prometheus-k8s route: %s" % err)
 
 
 def get_prometheus_token():
     try:
-        with subprocess.Popen(['oc', 'sa', 'get-token',
-                               '-n', 'openshift-monitoring',
-                               'prometheus-k8s'],
-                              stdin=subprocess.DEVNULL,
-                              stdout=subprocess.PIPE) as subproc:
-            stdout_data = []
-            while True:
-                data = subproc.stdout.readline()
-                if len(data) > 0:
-                    stdout_data.append(data.strip().decode())
-                else:
-                    break
-            if subproc.poll() != 0:
-                efail("Unable to retrieve prometheus-k8s token")
-            return 'Bearer %s' % "\n".join(stdout_data)
+        return 'Bearer %s' % run_command_simple(['oc', 'sa', 'get-token',
+                                                 '-n', 'openshift-monitoring',
+                                                 'prometheus-k8s'])
     except Exception as err:
         efail("Unable to retrieve prometheus-k8s token: %s" % err)
 
@@ -178,8 +155,8 @@ except FileNotFoundError as err:
     efail('Cannot open metrics profile: %s' % err)
     sys.exit(1)
 
-startTime = datetime.datetime.now()
-metricsStartTime = startTime + datetime.timedelta(seconds = -abs(args.epoch))
+startTime = int(time.time())
+metricsStartTime = datetime.datetime.now() + datetime.timedelta(seconds = -abs(args.epoch))
 chunkSize = datetime.timedelta(seconds=args.step)
 stdout_data=[]
 stderr_data=[]
@@ -188,23 +165,24 @@ try:
     stdout_data, stderr_data, cmd_exit_status = run_command(args.command)
 except Exception as err:
     efail(err)
+endTime = int(time.time())
 
 json_output = None
-if args.json_from_command:
+if args.json_from_command and len(stdout_data) > 0:
     try:
         json_output = json.loads("\n".join(a[1] for a in stdout_data))
     except json.decoder.JSONDecodeError as err:
         eprint("Cannot decode command output as JSON: %s" % err)
 
 time.sleep(args.post_settling_time)
-endTime = datetime.datetime.now()
+metricsEndTime = datetime.datetime.now()
 
 metric_results={}
 
 for metric in yaml['metrics']:
     metric_data=[]
     if 'instant' not in metric or metric['instant'] is not True:
-        metric_data = prom.custom_query_range(metric['query'], start_time=metricsStartTime, end_time=endTime,step=30)
+        metric_data = prom.custom_query_range(metric['query'], start_time=metricsStartTime, end_time=metricsEndTime,step=30)
     else:
         metric_data = prom.custom_query(metric['query'])
     name = metric['query']
@@ -218,10 +196,11 @@ for metric in yaml['metrics']:
 
 results = {
     'metadata': {
-        'jobStart': int(time.time()),
+        'jobStart': startTime,
+        'jobEnd': endTime,
         'uuid': args.uuid,
         'cluster_version': get_cluster_version(),
-        'nodes': get_nodes(),
+        'nodes': [n.as_dict() for n in openshift.selector('nodes').objects()]
     },
     'command': args.command,
     'stdout': stdout_data,
