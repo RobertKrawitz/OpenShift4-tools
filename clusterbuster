@@ -1061,7 +1061,7 @@ case "${podType,,}" in
     pause|pausepod)        podType=PausePod      ;;
     file|files)            podType=Files         ;;
     log|logger|logging)    podType=Log           ;;
-    *)			   help_all		 ;;
+    *)			   help_extended	 ;;
 esac
 
 if [[ -n ${1:-} ]] ; then
@@ -3039,10 +3039,10 @@ function run_clusterbuster_1() {
     local -i logs_expected=0
     local log_host=
     local -i log_port=0
+    basetime=$(printf '%(%s)T' -1)
+    createAllObjects Deployments || exit 1
     if ((doit && report)) ; then
 	logs_expected="$("calculateLogsRequired" "$namespaces" "$depsPerNamespace" "$replicas" "$containers")"
-	basetime=$(printf '%(%s)T' -1)
-	createAllObjects Deployments || exit 1
 	if ((logs_expected)) ; then
 	    if [[ $logStrategy = poll ]] ; then
 		local -a syncPods=()
