@@ -66,7 +66,7 @@ else
     shift
 fi
 
-echo "Command: ${___topsc:-$0} $*"
+echo "Command: ${___topsc:-$0} $*" 1>&2
 
 declare -r bm_name=uperf
 declare namespace=pbench
@@ -107,10 +107,12 @@ declare -i current_hostaddr=1
 declare -i waitforever=0
 declare -A extra_hosts=()
 declare -A host_aliases=()
+declare pbench_send_results=-r
+declare -r report_file=/tmp/pbench-report.json
 
 function usage() {
-    [[ -n "$*" ]] && echo "Unknown option $*"
-    expand <<EOF
+    [[ -n "$*" ]] && echo "Unknown option $*" 1>&2
+    expand 1>&2 <<EOF
 Usage: ${___topsc:-$0} [options] [-- pbench-${bm_name} args]
        -A agent_key   Use the specified public/private key pair for
                       communication with the agent.  Session key will
@@ -146,6 +148,7 @@ Usage: ${___topsc:-$0} [options] [-- pbench-${bm_name} args]
        -p pairs       Number of client/server pairs to create.
        -q             Don't emit agent logs on stderr
        -R cpu_request Pod CPU request
+       -s             Send rather than move Pbench results
        -u user        Record the specified username
        -w             Agent and client wait forever at end
        -X             Affinity between ${bm_name} server and client
@@ -157,7 +160,7 @@ EOF
     exit 1
 }
 
-while getopts 'A:C:c:EeF:fHIi:Kk:L:M:m:N:nP:p:qR:u:wXxYy' opt ; do
+while getopts 'A:C:c:EeF:fHIi:Kk:L:M:m:N:nP:p:qR:Ssu:wXxYy' opt ; do
     case "$opt" in
 	A) pbench_agent_key=$OPTARG	 ;;
 	C) hostname=$OPTARG		 ;;
@@ -182,6 +185,8 @@ while getopts 'A:C:c:EeF:fHIi:Kk:L:M:m:N:nP:p:qR:u:wXxYy' opt ; do
 	p) instances=$OPTARG		 ;;
 	q) quiet=1			 ;;
 	R) pod_cpu_request=$OPTARG	 ;;
+	S) pbench_send_results=-R	 ;;
+	s) pbench_send_results=-r	 ;;
 	u) username=$OPTARG		 ;;
 	w) waitforever=1		 ;;
 	x) anti_affinity=1		 ;;
@@ -217,7 +222,7 @@ elif [[ ! -r "$pbench_private_key" ]] ; then
     error=1
 fi
 if [[ -n "$pbench_agent_key" && (! -r "$pbench_agent_key" || ! -r "${pbench_agent_key}.pub") ]] ; then
-    echo "Cannot read agent key $pbench_agent_key or ${pbench_agent_key}.pub"
+    echo "Cannot read agent key $pbench_agent_key or ${pbench_agent_key}.pub" 1>&2
     error=1
 fi
 (( error )) && usage
@@ -245,10 +250,10 @@ function _oc() {
     if (( print_only )) ; then
 	echo "+++" oc "$*" 1>&2
 	if [[ ($1 = apply || $1 = create) && $2 = '-f' && $3 = '-' ]] ; then
-	    expand | grep .
+	    expand | grep . 1>&2
 	fi
     else
-	oc "$@"
+	oc "$@" 1>&2
     fi
 }
 
@@ -278,27 +283,27 @@ function get_ip() {
 
 if (( ! print_only )) ; then
     if (( initialize_ns )) && oc get ns "$namespace" >/dev/null 2>&1 ; then
-	oc delete ns "$namespace"
+	oc delete ns "$namespace" 1>&2
     fi
 
     if ! oc get project "$namespace" >/dev/null 2>&1 ; then
-	oc adm new-project "$namespace"
-	oc project "$namespace"
+	oc adm new-project "$namespace" 1>&2
+	oc project "$namespace" 1>&2
     elif [[ $(oc project -q) != "$namespace" ]] ; then
-	oc project "$namespace"
+	oc project "$namespace" 1>&2
     fi
     
     if ! oc get serviceaccount "$namespace" >/dev/null 2>&1; then
-	oc create serviceaccount "$namespace"
-	oc adm policy add-cluster-role-to-user cluster-admin "$namespace"
-	oc adm policy add-scc-to-user privileged -z "$namespace"
+	oc create serviceaccount "$namespace" 1>&2
+	oc adm policy add-cluster-role-to-user cluster-admin "$namespace" 1>&2
+	oc adm policy add-scc-to-user privileged -z "$namespace" 1>&2
     fi
 
-    oc delete deployment --all
-    oc delete pods --all
+    oc delete deployment --all 1>&2
+    oc delete pods --all 1>&2
 
-    oc get secret credentials >/dev/null 2>&1 && oc delete secret credentials 
-    oc delete service --all
+    oc get secret credentials >/dev/null 2>&1 && oc delete secret credentials 1>&2
+    oc delete service --all 1>&2
 
     dnsserver=$(oc get service -n openshift-dns dns-default -ojson | jq -r '.spec.clusterIP')
 else
@@ -452,10 +457,10 @@ function create_object() {
     local data
     data="$("$@" | expand)"
     if [[ -n "$data" ]] ; then
-	echo "Creating $*"
+	echo "Creating $*" 1>&2
 	_oc apply -f - <<< "$data" || {
-	    echo "Failing object:"
-	    echo "$data"
+	    echo "Failing object:" 1>&2
+	    echo "$data" 1>&2
 	    return 1
 	}
     fi
@@ -889,6 +894,9 @@ $(indent 4 set_controller_hostname)
 $(indent 4 set_host_aliases)
     - "-I"
 $( (( waitforever )) && echo "    - -w")
+    - "${pbench_send_results}"
+    - "-f"
+    - "$report_file"
     - "-L"
     - "$ssh_port"
     - "-D"
@@ -1022,11 +1030,18 @@ function monitor_logs() {
     done
 }
 
+function monitor_reporting() {
+    until oc rsh -T -n "$namespace" "${namespace}-controller" sh -c "while [[ ! -f '$report_file' ]] ; do sleep 5; done; cat '$report_file'; sleep 1; rm -f '$report_file'" 1>&3 ; do
+	sleep 5
+    done
+}
+
 function monitor_pod() {
     local pod=$1
     local ns=${2:+-n $2}
     local container=${3:+-c $3}
     local -i lines_printed=0
+    local -i report_monitor_pid=0
 
     while : ; do
 	# shellcheck disable=SC2086
@@ -1041,6 +1056,11 @@ function monitor_pod() {
 		return 1
 		;;
 	    succeeded|running)
+		if [[ ${status,,} = running && $report_monitor_pid -eq 0 ]] ; then
+		    monitor_reporting 1>&3 &
+		    report_monitor_pid=$!
+		    trap '[[ -n "$(jobs -p)" ]] && kill "$(jobs -p)"' TERM INT EXIT
+		fi
 		# shellcheck disable=SC2086
 		oc logs -f $ns $pod $container | while read -r LINE ; do
 		    printf ".L.%012o %s\n" $((++lines_printed)) "$LINE"
@@ -1059,4 +1079,4 @@ function monitor_pod() {
     done
 }
 
-(( print_only )) || monitor_pod "${namespace}-controller" "$namespace" 2>&1 | monitor_logs
+(( print_only )) || (monitor_pod "${namespace}-controller" "$namespace" 2>&1 | monitor_logs 1>&2) 3>&1

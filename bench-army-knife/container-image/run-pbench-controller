@@ -35,7 +35,12 @@ declare -i use_ip_for_controller_addr=0
 declare -i tunnel_port_start=18000
 declare username=${LOGNAME:-$(id -un)}
 declare controller_hostname=
+declare -i preserve_pbench_results=0
 declare -A host_aliases=()
+declare report_file=
+declare -A pbench_preexisting_results=()
+declare -r resultsdir=/var/lib/pbench-agent
+declare resultfilename=result.json
 
 function usage() {
     if [[ -n "$*" ]] ; then
@@ -47,47 +52,57 @@ Usage: $0 [options] [command args...]
                               Create alias hostnames in the ssh config.
        -A expected_agents     Number of expected agents.  Default $expected_agents.
        -C worker_sync_count   Number of times worker benchmark is expected
-       	  		      to sync with the controller.  Should be at
-			      least 2 (start and end of run).  Only applies
-			      if a user benchmark is being run.
-			      Default $worker_sync_count.
+                              to sync with the controller.  Should be at
+                              least 2 (start and end of run).  Only applies
+                              if a user benchmark is being run.
+                              Default $worker_sync_count.
        -c expected_clients    Number of workers that will sync.
        -D configdir           Directory containing pbench configuration
                               and public and private key for communication
-			      with pbench server.
-			      Any files named [nn]-[name] will be sourced in
-			      order of name immediately following 
-			      pbench-agent.sh.
+                              with pbench server.
+                              Any files named [nn]-[name] will be sourced in
+                              order of name immediately following 
+                              pbench-agent.sh.
                               NO DEFAULT.
        -e                     Log the environment.
+       -F result_file         Filename of the expected results file from
+                              the run.  This should be the name of the file
+                              within the results directory.  Default is
+                              $resultfilename.  This should only matter for
+                              users of pbench-user-benchmark.
+       -f file                Store results in the specified file.
+                              When the file is removed by some external means,
+                              the pod will exit unless -w is in effect.
        -H hostname            Use the specified hostname for saving results.
        -I                     Use the IP address internally as the controller
                               hostname.  Only applies if tool-meister is in use.
                               IP address is looked up rather than assumed from
                               ip addr.
        -K authorized_keyfile  File(s) containing authorized keys that will be
-       	  		      allowed to connect to us.  May be repeated.
+                              allowed to connect to us.  May be repeated.
                               Default is the public keyfile (-k).
        -k keyfile             Public and private key files used to communicate
-       	  		      with the agents.
+                              with the agents.
        -L sshd_listen_port    Port on which sshd should listen.  If not
-       	  		      specified, controller will connect to the agents.
-			      NO DEFAULT.
+                              specified, controller will connect to the agents.
+                              NO DEFAULT.
        -N configuration_name  Configuration name for pbench logging.
                               Default to <whoami><hostname><timestamp>.
        -p                     Don't attempt to start a separate sshd.
        -P external_ssh_port   Port that agents should attempt to connect on,
-       	  		      if different from -L.
+                              if different from -L.
+       -r                     Remove Pbench data after run (default)
+       -R                     Preserve Pbench data after run
        -S worker_sync_port    Port on which benchmark workers should sync.
-       	  		      NO DEFAULT.
+                              NO DEFAULT.
        -s agent_sync_port     Port on which agents should sync.  NO DEFAULT.
        -T tunnel_port_start   Start ssh tunnel ports at the specified number.
-       	  		      Default $tunnel_port_start.
+                              Default $tunnel_port_start.
        -t tool_script         Script to execute pbench-register-tool and
-       	  		      pbench-register-tool-set commands.  This script
-			      will be sourced in an envronment that wraps
+                              pbench-register-tool-set commands.  This script
+                              will be sourced in an envronment that wraps
                               pbench-register-tool* commands.  These commands
-			      should not include --remote options.
+                              should not include --remote options.
        -u username            Username for storing results
        -v                     Increase verbosity.  May be repeated.
        -W max_wait_time       Maximum time to wait for remote ssh
@@ -107,6 +122,7 @@ set +u				# Until the script is fixed.
 # shellcheck disable=1091
 . /etc/profile.d/pbench-agent.sh
 set -u
+shopt -c nullglob
 
 function add_host_alias() {
     local host
@@ -116,7 +132,7 @@ function add_host_alias() {
     host_aliases[$host]=$aliases
 }
 
-while getopts "A:a:C:c:D:eH:Ik:K:L:N:P:pS:s:T:t:u:vW:w" arg ; do
+while getopts "A:a:C:c:D:ef:H:Ik:K:L:N:P:pRrS:s:T:t:u:vW:w" arg ; do
     case "$arg" in
 	A) expected_agents="$OPTARG"             ;;
 	a) add_host_alias "$OPTARG"		 ;;
@@ -124,6 +140,7 @@ while getopts "A:a:C:c:D:eH:Ik:K:L:N:P:pS:s:T:t:u:vW:w" arg ; do
 	c) expected_clients="$OPTARG"            ;;
 	D) configdir="$OPTARG"                   ;;
 	e) log_environment=1	                 ;;
+	f) report_file="$OPTARG"		 ;;
 	H) controller_hostname="$OPTARG"	 ;;
 	I) use_ip_for_controller_addr=1		 ;;
 	K) ssh_authorized_key_file+=("$OPTARG")  ;;
@@ -132,6 +149,8 @@ while getopts "A:a:C:c:D:eH:Ik:K:L:N:P:pS:s:T:t:u:vW:w" arg ; do
 	N) configname="$OPTARG"                  ;;
 	P) ssh_ext_port="$OPTARG"	         ;;
 	p) dont_start_sshd=1; passive=1	         ;;
+	R) preserve_pbench_results=1		 ;;
+	r) preserve_pbench_results=0		 ;;
 	S) worker_sync_port="$OPTARG"            ;;
 	s) agent_sync_port="$OPTARG"             ;;
 	T) tunnel_port_start="$OPTARG"		 ;;
@@ -145,6 +164,9 @@ while getopts "A:a:C:c:D:eH:Ik:K:L:N:P:pS:s:T:t:u:vW:w" arg ; do
 done
 
 shift $((OPTIND-1))
+for f in "$resultsdir"/*.copied ; do
+    pbench_preexisting_results[$f]=1
+done
 
 function supports_pbench_move_results_controller() {
     if [[ ! -r /opt/pbench-agent/VERSION ]] ; then
@@ -440,7 +462,11 @@ else
     command=("sync.pl" "$worker_sync_port" "$expected_clients" "$worker_sync_count")
     runit /opt/pbench-agent/bench-scripts/pbench-user-benchmark --config="$configname" -- "${command[@]}"
 fi
-echo "Moving results" 1>&2
+if ((preserve_pbench_results)) ; then
+    echo "Copying results" 1>&2
+else
+    echo "Moving results" 1>&2
+fi
 declare controller_arg=
 if supports_pbench_move_results_controller ; then
     echo "Setting controller hostname to $controller_hostname for pbench-move-results"
@@ -448,14 +474,46 @@ if supports_pbench_move_results_controller ; then
 	controller_arg="--controller=$controller_hostname"
     fi
 fi
-pbench-move-results --user="$username" ${controller_arg:+$controller_arg}
+if ((preserve_pbench_results)) ; then
+    echo pbench-copy-results --user="$username" ${controller_arg:+$controller_arg} 1>&2
+    pbench-copy-results --user="$username" ${controller_arg:+$controller_arg}
+else
+    echo pbench-move-results --user="$username" ${controller_arg:+$controller_arg} 1>&2
+    pbench-move-results --user="$username" ${controller_arg:+$controller_arg}
+fi
 declare -i move_status=$?
 echo "Final sync" 1>&2
 sync.pl "$agent_sync_port" "$expected_agents" 1
 if (( move_status )) ; then
     echo "*** Failed!"
+    if [[ ${report_file:-} = "/tmp/"* ]] ; then
+	touch "$report_file"
+    fi
 else
     echo "*** Complete!"
+    if [[ ${report_file:-} = "/tmp/"* ]] ; then
+	tmp_report_file="${report_file}.tmp"
+	tmp_tmp_report_file="${tmp_report_file}.tmp"
+	for f in "$resultsdir"/*.copied ; do
+	    if [[ -z "${pbench_preexisting_results[$f]:-}" ]] ; then
+		f=${f%.copied}
+		if [[ ! -f "$tmp_report_file" ]] ; then
+		    echo '{}' | jq --arg controller "$controller_hostname" '. | {controller: $controller, results: []}' > "$tmp_report_file"
+		fi
+		if [[ -d "${f}" && -f "${f}/${resultfilename}" ]] ; then
+		    jq --arg resultname "$f" --slurpfile results "${f}/${resultfilename}" '.results[.results|length] = { name: $resultname, data: $results[]?}' < "$tmp_report_file" > "$tmp_tmp_report_file" && mv -f "$tmp_tmp_report_file" "$tmp_report_file"
+		fi
+	    fi
+	done
+	mv "$tmp_report_file" "$report_file"
+    fi
+fi
+if [[ -f "$report_file" ]] ; then
+    echo "Waiting for report file $report_file to be removed"
+    while [[ -f "$report_file" ]] ; do
+	sleep 5
+    done
+    echo "Report file $report_file removed."
 fi
 (( waitforever )) && sleep infinity
 exit $move_status
