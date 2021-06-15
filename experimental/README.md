@@ -6,15 +6,8 @@ promote them when ready.
 <!-- markdown-toc start - Don't edit this section. Run M-x markdown-toc-generate-toc again -->
 **Table of Contents**
 
-- [OpenShift4-tools](#openshift4-tools)
-    - [Cluster utilities](#cluster-utilities)
-    - [Testing tools](#testing-tools)
-    - [General information tools](#general-information-tools)
-    - [PBench orchestration](#pbench-orchestration)
-    - [oinst API](#oinst-api)
-        - [Introduction](#introduction)
-        - [API calls](#api-calls)
-        - [Validating Instance Types](#validating-instance-types)
+- [Experimental OpenShift4-tools](#experimental-openshift4-tools)
+    - [Data reporting utilities](#data-reporting-utilities)
 
 <!-- markdown-toc end -->
 
@@ -23,6 +16,22 @@ promote them when ready.
 - **prom-extract**: Capture selected Prometheus data for the duration
   of a run; report the results along with metadata and workload output
   JSON-formatted.
+  
+  `prom-extract` is written in Python.  It requires the following
+  Python3 libraries to be installed:
+  
+  - **python3-pyyaml**: available via dnf/yum on Fedora, RHEL, etc.
+
+  - **prometheus-api-client**: not currently packaged.  This can be
+    installed via `pip3 install prometheus-api-client`.  *Note that
+    this is **not** the same package as `prometheus-client`, which is
+    available via dnf*.  `prometheus-api-client` provides the
+    Prometheus query API, while `prometheus-client` is a Prometheus
+    provider.
+
+  - **openshift-client**: not currently packaged.  This can be
+    installed via `pip3 install openshift-client`.  It provides much
+    of the OpenShift client API.
   
   Usage:
   
