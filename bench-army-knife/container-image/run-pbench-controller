@@ -168,6 +168,10 @@ for f in "$resultsdir"/*.copied ; do
     pbench_preexisting_results[$f]=1
 done
 
+if [[ -n "$report_file" ]] ; then
+    preserve_pbench_results=1
+fi
+
 function supports_pbench_move_results_controller() {
     if [[ ! -r /opt/pbench-agent/VERSION ]] ; then
 	return 1
