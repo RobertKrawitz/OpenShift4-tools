@@ -501,7 +501,7 @@ else
 		    echo '{}' | jq --arg controller "$controller_hostname" '. | {controller: $controller, results: []}' > "$tmp_report_file"
 		fi
 		if [[ -d "${f}" && -f "${f}/${resultfilename}" ]] ; then
-		    jq --arg resultname "$f" --slurpfile results "${f}/${resultfilename}" '.results[.results|length] = { name: $resultname, data: $results[]?}' < "$tmp_report_file" > "$tmp_tmp_report_file" && mv -f "$tmp_tmp_report_file" "$tmp_report_file"
+		    jq --arg resultname "${f%%*/}" --slurpfile results "${f}/${resultfilename}" '.results[.results|length] = { name: $resultname, data: $results[]?}' < "$tmp_report_file" > "$tmp_tmp_report_file" && mv -f "$tmp_tmp_report_file" "$tmp_report_file"
 		fi
 	    fi
 	done
