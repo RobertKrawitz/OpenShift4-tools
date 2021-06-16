@@ -122,7 +122,7 @@ set +u				# Until the script is fixed.
 # shellcheck disable=1091
 . /etc/profile.d/pbench-agent.sh
 set -u
-shopt -c nullglob
+shopt -s nullglob
 
 function add_host_alias() {
     local host
