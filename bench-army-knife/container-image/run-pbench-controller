@@ -168,8 +168,8 @@ for f in "$resultsdir"/*.copied ; do
     pbench_preexisting_results[$f]=1
 done
 
-if [[ -n "$report_file" ]] ; then
-    preserve_pbench_results=1
+if [[ -n "$report_file" && $preserve_pbench_results -eq 0 ]] ; then
+    preserve_pbench_results=-1
 fi
 
 function supports_pbench_move_results_controller() {
@@ -502,10 +502,13 @@ else
 	    if [[ -z "${pbench_preexisting_results[$f]:-}" ]] ; then
 		f=${f%.copied}
 		if [[ ! -f "$tmp_report_file" ]] ; then
-		    echo '{}' | jq --arg controller "$controller_hostname" '. | {controller: $controller, results: []}' > "$tmp_report_file"
+		    echo '{ "results": []}' > "$tmp_report_file"
 		fi
 		if [[ -d "${f}" && -f "${f}/${resultfilename}" ]] ; then
-		    jq --arg resultname "${f%%*/}" --slurpfile results "${f}/${resultfilename}" '.results[.results|length] = { name: $resultname, data: $results[]?}' < "$tmp_report_file" > "$tmp_tmp_report_file" && mv -f "$tmp_tmp_report_file" "$tmp_report_file"
+		    jq --arg controller "$controller_hostname" --arg resultname "${f%%*/}" --slurpfile results "${f}/${resultfilename}" '.results[.results|length] = { controller: $controller, name: $resultname, data: $results[]?}' < "$tmp_report_file" > "$tmp_tmp_report_file" && mv -f "$tmp_tmp_report_file" "$tmp_report_file"
+		fi
+		if ((preserve_pbench_results != 1)) ; then
+		    rm -rf $f ${f}.copied
 		fi
 	    fi
 	done

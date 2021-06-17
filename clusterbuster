@@ -710,7 +710,7 @@ function get_logs() {
     if [[ ${logStrategy,,} = 'listen'* ]] ; then
 	log_cmd=get_logs_listen
     fi
-    "$log_cmd" "$@" | "${pathdir:-.}/clusterbuster-connstat" -s -f - "$extra_arg"
+    "$log_cmd" "$@" | "${pathdir:-.}/clusterbuster-connstat" -l "${basename}-id=$runUUID" -s -f - "$extra_arg"
     return $((PIPESTATUS[0] || PIPESTATUS[1]))
 }
 

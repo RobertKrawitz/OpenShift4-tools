@@ -109,6 +109,8 @@ declare -A extra_hosts=()
 declare -A host_aliases=()
 declare pbench_send_results=-r
 declare -r report_file=/tmp/pbench-report.json
+# shellcheck disable=SC2155
+declare job_uuid=$(uuidgen -r)
 
 function usage() {
     [[ -n "$*" ]] && echo "Unknown option $*" 1>&2
@@ -612,6 +614,7 @@ metadata:
   namespace: "$namespace"
 $(indent 2 create_network_annotation)
   labels:
+    bench-army-knife-id: "$job_uuid"
     k8s-app: ${namespace}-${bm_name}${type:+-$type}
     app: ${bm_name}
     app-subtype: ${bm_name}${type:+-$type}
@@ -685,6 +688,7 @@ metadata:
   name: ${namespace}-agent-host
   namespace: "$namespace"
   labels:
+    bench-army-knife-id: "$job_uuid"
     k8s-app: bench-army-knife-agent-deployment
 spec:
   replicas: $((1 + anti_affinity))
@@ -697,6 +701,7 @@ spec:
       name: ${namespace}-agent-host
       namespace: "$namespace"
       labels:
+        bench-army-knife-id: "$job_uuid"
         ${selector_key}: "true"
         k8s-app: bench-army-knife-agent
         bench-army-knife-sync: "12"
@@ -771,6 +776,7 @@ metadata:
   name: "${namespace}-controller"
   namespace: "$namespace"
   labels:
+    bench-army-knife-id: "$job_uuid"
     name: ${namespace}-controller
     ${namespace}-controller: "true"
     app: ${namespace}-controller
@@ -860,6 +866,7 @@ metadata:
       app: ${namespace}-controller
       name: ${namespace}-controller
   labels:
+    bench-army-knife-id: "$job_uuid"
     name: ${namespace}-controller
     app: ${namespace}-controller
     ${namespace}-controller: "true"
@@ -1030,10 +1037,19 @@ function monitor_logs() {
     done
 }
 
-function monitor_reporting() {
-    until oc rsh -T -n "$namespace" "${namespace}-controller" sh -c "while [[ ! -f '$report_file' ]] ; do sleep 5; done; cat '$report_file'; sleep 1; rm -f '$report_file'" 1>&3 ; do
+function monitor_reporting_1() {
+    until oc rsh -T -n "$namespace" "${namespace}-controller" sh -c "while [[ ! -f '$report_file' ]] ; do sleep 5; done; cat '$report_file'; sleep 1; rm -f '$report_file'"; do
 	sleep 5
     done
+}
+
+function monitor_reporting() {
+    local tmp
+    tmp=$(mktemp "/tmp/bench-army-knife${bm_name:+-$bm_name}}XXXXXX.json")
+    # shellcheck disable=SC2064
+    trap "rm -f $tmp" INT TERM EXIT
+    monitor_reporting_1 > "$tmp"
+    jq --slurpfile objects <(oc get all -A -l "bench-army-knife-id=$job_uuid" -o json) '{results: .results, api_objects: [$objects[].items?[] | { kind: .kind, name: .metadata.name, namespace: .metadata.namespace}]}' < "$tmp" 1>&3
 }
 
 function monitor_pod() {

@@ -29,6 +29,7 @@ declare basename=clusterbuster
 declare -A cached_stats=()
 declare statsfile=
 declare -a extras=()
+declare selector=
 
 declare OC=${OC:-${KUBECTL:-}}
 OC=${OC:-$(type -p oc)}
@@ -50,7 +51,7 @@ if [[ ! -d "$__libdir__" ]] ; then
     exit 1
 fi
 
-while getopts ':p:B:st:f:F:jvqNcnr:' opt ; do
+while getopts ':p:B:st:f:F:jvqNcnr:l:' opt ; do
     case "$opt" in
 	B) basename=$OPTARG 	  ;;
 	N) use_namespace=0	  ;;
@@ -64,10 +65,13 @@ while getopts ':p:B:st:f:F:jvqNcnr:' opt ; do
 	s) summarize=1	    	  ;;
 	t) timeout=$OPTARG  	  ;;
 	j) json_output=1	  ;;
+	l) selector=$OPTARG	  ;;
 	v) verbose=$((verbose+1)) ;;
 	*) ;;
     esac
 done
+
+shift "$((OPTIND - 1))"
 
 if (( use_namespace )) ; then
     read -r -d '' jq_cmd <<\EOF
@@ -94,6 +98,10 @@ else
  else null end))] | flatten | map (select (. != null))[]
 EOF
 fi
+
+read -r -d '' jq_cmd_pods <<\EOF
+{results: ., api_objects: [$objects[].items?[] | { kind: .kind, name: .metadata.name, namespace: .metadata.namespace}]}
+EOF
 
 (( parallel <= 0 )) && parallel=1
 
@@ -273,7 +281,6 @@ function process_summary_legacy() {
     local -i readrate=0
     local -i writerate=0
     local -a output
-    local raw_output
 
     local -i create_start=0
     local -i create_end=0
@@ -396,9 +403,16 @@ function process_summary_legacy() {
 
 function process_summary() {
     if ((json_output)) ; then
-	"${__libdir__}/postprocess-json.py" "$@"
+	local tmp
+	tmp=$(mktemp "/tmp/cbdataXXXXXX.json")
+	# shellcheck disable=SC2064
+	trap "rm -f -- $tmp" INT TERM EXIT
+	"${__libdir__}/postprocess-json.py" > "$tmp"
+	# Don't collect this until we've processed the data
+	jq --slurpfile objects <("$OC" get all -ojson -A -l "$selector") \
+	   "$jq_cmd_pods" < "$tmp"
     else
-	process_summary_legacy "$@"
+	process_summary_legacy
     fi
 }
 
@@ -449,7 +463,9 @@ declare wait_n=$(( BASH_VERSINFO[0] > 4 || (BASH_VERSINFO[0] > 4 && BASH_VERSINF
 
 function get_all_pods() {
     local basename=$1
-    if (( use_namespace )) ; then
+    if [[ -n "$selector" ]] ; then
+	"$OC" get pods -ojson -A -l "$selector"
+    elif (( use_namespace )) ; then
 	local ns
 	while read -r ns ; do
 	    ns=${ns##*/}
