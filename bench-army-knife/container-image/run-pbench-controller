@@ -508,7 +508,7 @@ else
 		    jq --arg controller "$controller_hostname" --arg resultname "${f%%*/}" --slurpfile results "${f}/${resultfilename}" '.results[.results|length] = { controller: $controller, name: $resultname, data: $results[]?}' < "$tmp_report_file" > "$tmp_tmp_report_file" && mv -f "$tmp_tmp_report_file" "$tmp_report_file"
 		fi
 		if ((preserve_pbench_results != 1)) ; then
-		    rm -rf $f ${f}.copied
+		    rm -rf "$f" "${f}.copied"
 		fi
 	    fi
 	done
@@ -516,11 +516,11 @@ else
     fi
 fi
 if [[ -f "$report_file" ]] ; then
-    echo "Waiting for report file $report_file to be removed"
+    echo "Waiting for report file $report_file to be retrieved"
     while [[ -f "$report_file" ]] ; do
-	sleep 5
+	sleep 1
     done
-    echo "Report file $report_file removed."
+    echo "Report file $report_file retrieved."
 fi
 (( waitforever )) && sleep infinity
 exit $move_status

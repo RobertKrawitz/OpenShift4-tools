@@ -68,7 +68,6 @@ fi
 
 echo "Command: ${___topsc:-$0} $*" 1>&2
 
-declare -r bm_name=fio
 declare namespace=pbench
 declare -i kata=0
 declare -i initialize_ns=0
@@ -79,7 +78,6 @@ declare -i datasink_port=8080	# For tool data sink
 declare kataname=non_kata
 declare username=$LOGNAME
 declare configname=
-declare -i anti_affinity=0
 declare -i controller_anti_affinity=1
 declare -i host_networking=0
 declare -i print_only=0
@@ -94,7 +92,6 @@ declare pbench_private_key=
 declare pbench_agent_key=
 declare pbench_controller_bin=/usr/local/bin/run-pbench-controller
 declare pbench_agent_container_bin=/usr/local/bin/run-pbench-agent-container
-declare pbench_tunnel_bin=/usr/local/bin/create-tunnel
 declare -a additional_files=()
 declare selector_key=bench-army-knife-agent
 declare pod_cpu_request=
@@ -103,23 +100,28 @@ declare pod_memory_request=
 declare pod_memory_limit=
 declare -i force_external_agents=-1
 declare interface=
+declare -i waitforever=0
+declare -A extra_hosts=()
+declare pbench_send_results=-r
+declare -r report_file=/tmp/pbench-report.json
+# shellcheck disable=SC2155
+declare job_uuid=$(uuidgen -r)
+declare pre_script=
+declare secret_name=credentials
+declare secret_root=/etc/$secret_name
+
+# Benchmark-specific variables
+declare -r bm_name=fio
+declare -i anti_affinity=0
+declare pbench_tunnel_bin=/usr/local/bin/create-tunnel
 declare pvname=
 declare pvtype=
 declare pvtype_key=
 declare pvscoped_name=
 declare pvmount_path=
-declare -i waitforever=0
-declare -A extra_hosts=()
-declare pre_script=
 # This is used inside a here document, which shellcheck can't see
 # shellcheck disable=SC2034
 declare job_file=
-declare secret_name=credentials
-declare secret_root=/etc/$secret_name
-declare pbench_send_results=-r
-declare -r report_file=/tmp/pbench-report.json
-# shellcheck disable=SC2155
-declare job_uuid=$(uuidgen -r)
 
 function usage() {
     [[ -n "$*" ]] && echo "Unknown option $*" 1>&2
@@ -276,7 +278,7 @@ fi
 
 (( error )) && usage
 
-for f in "${additional_files[@]}"; do
+for f in "${additional_files[@]}" ; do
     if [[ $f = "run-pbench-controller="* || $f = "run-pbench-controller" ||
 	      $f = *"/run-pbench-controller" ]] ; then
 	pbench_controller_bin="$secret_root"/run-pbench-controller
@@ -1840,7 +1842,6 @@ function controller_pod() {
     #shellcheck disable=SC2155
     local agents=$(oc get pods -l "$selector_key" -A --no-headers 2>/dev/null | wc -l)
     echo "Expect $agents agents" 1>&2
-    #shellcheck disable=2086
     clean <<EOF
 ---
 apiVersion: v1
@@ -1908,15 +1909,15 @@ $( (( waitforever )) && echo "    - -w")
     - "--"
     - "$pbench_tunnel_bin"
     - "8765"
-$(indent 4 mk_arglist "${namespace}" $instances)
+$(indent 4 mk_arglist "${namespace}" "$instances")
     - "--"
     - "pbench-${bm_name}"
 $(indent 4 mk_jobfile)
     - "--config=$configname"
-$(indent 4 persistent_volume_extra_args "${namespace}" $instances)
+$(indent 4 persistent_volume_extra_args "${namespace}" "$instances")
     - "--unique-ports"
     - "-c"
-    - "$(mk_podlist ${namespace} $instances)"
+    - "$(mk_podlist "${namespace}" "$instances")"
 $(IFS=$'\n'; echo "${benchmark_args[*]/#/    - \"}" |grep '"' | sed -e 's/$/"/')
     volumeMounts:
     - name: "$secret_name"
@@ -1975,6 +1976,7 @@ function monitor_logs() {
 }
 
 function monitor_reporting_1() {
+    # TODO Need a better check here.
     until oc rsh -T -n "$namespace" "${namespace}-controller" sh -c "while [[ ! -f '$report_file' ]] ; do sleep 5; done; cat '$report_file'; sleep 1; rm -f '$report_file'"; do
 	sleep 5
     done
@@ -1982,11 +1984,16 @@ function monitor_reporting_1() {
 
 function monitor_reporting() {
     local tmp
-    tmp=$(mktemp "/tmp/bench-army-knife${bm_name:+-$bm_name}}XXXXXX.json")
+    tmp=$(mktemp "/tmp/bench-army-knife${bm_name:+-$bm_name}XXXXXX.json")
     # shellcheck disable=SC2064
     trap "rm -f $tmp" INT TERM EXIT
+    # It's unfortunate to create a temporary file here, but we need to hold off
+    # on trying to retrieve the underlying objects until monitoring is complete.
+    # Otherwise we might not retrieve all of the objects, or we might get them
+    # in an earlier state.
     monitor_reporting_1 > "$tmp"
-    jq --slurpfile objects <(oc get all -A -l "bench-army-knife-id=$job_uuid" -o json) '{results: .results, api_objects: [$objects[].items?[] | { kind: .kind, name: .metadata.name, namespace: .metadata.namespace}]}' < "$tmp" 1>&3
+    jq -c --slurpfile objects <(oc get all -A -l "bench-army-knife-id=$job_uuid" -o json) '{results: .results, api_objects: [$objects[].items?[] | { kind: .kind, name: .metadata.name, namespace: .metadata.namespace}]}' < "$tmp" 1>&3
+    rm -f "$tmp"
 }
 
 function monitor_pod() {
