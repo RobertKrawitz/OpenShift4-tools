@@ -11,6 +11,9 @@ GetOptions("v!" => \$verbose);
 
 $SIG{TERM} = sub { POSIX::_exit(0); };
 my ($listen_port, $expected_clients, $syncCount, @ssh_ports) = @ARGV;
+if ($listen_port eq '' || $expected_clients eq '') {
+    die "Usage: $0 listen_port expected_clients [count=1 [ssh_ports]]\n";
+}
 if (! $syncCount) {
     $syncCount = 1;
 }

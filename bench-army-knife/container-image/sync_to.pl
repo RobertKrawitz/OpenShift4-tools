@@ -7,6 +7,9 @@ use Time::HiRes qw(gettimeofday);
 
 my (@addrs);
 my ($addr, $port, $token) = @ARGV;
+if ($addr eq '' || $port eq '') {
+    die "Usage: $0 addr port [token]\n";
+}
 print STDERR "addr is '$addr'\n";
 if ($addr eq '' || $addr eq '-') {
     $addr=`ip route get 1 |awk '{print \$(NF-2); exit}'`;
@@ -38,6 +41,9 @@ if (not $token) {
 }
 timestamp("My token will be $token");
 
+my ($initial_reporting_interval) = 60;
+my ($max_reporting_interval) = 3600;
+
 sub connect_to {
     my ($port, @addrs) = @_;
     timestamp("Using addresses " . join(", ", @addrs));
@@ -51,6 +57,7 @@ sub connect_to {
     my ($last_failure_msg_reps) = 0;
     my ($last_failure_msg_stamp) = -1;
     my ($last_failure_msg);
+    my ($reporting_interval) = $initial_reporting_interval;
     do {
 	my ($addr) = $addrs[$iteration++ % ($#addrs + 1)];
         ($fname,$faliases,$ftype,$flen,$faddr) = gethostbyname($addr);
@@ -62,11 +69,16 @@ sub connect_to {
             my $straddr = inet_ntoa($faddr);
 	    my $now = xtime;
 	    my ($connecting_msg) = "Connecting to $addr:$port ($fname, $ftype)";
-	    if ($connecting_msg ne $last_connecting_msg || $now - $last_connecting_msg_stamp >= 60) {
+	    if ($connecting_msg ne $last_connecting_msg || $now - $last_connecting_msg_stamp >= $reporting_interval) {
 		if ($connecting_msg eq $last_connecting_msg && $last_connecting_msg_reps > 0) {
 		    timestamp("Last message repeated $last_connecting_msg_reps time" . ($last_connecting_msg_reps > 1 ? "s" : ""));
+		    $reporting_interval *= 2;
+		    if ($reporting_interval > $max_reporting_interval) {
+			$reporting_interval = $max_reporting_interval;
+		    }
 		} else {
 		    timestamp($connecting_msg);
+		    $reporting_interval = $initial_reporting_interval;
 		}
 		$last_connecting_msg_stamp = $now;
 		$last_connecting_msg_reps = 0;
