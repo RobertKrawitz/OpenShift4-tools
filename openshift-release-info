@@ -341,7 +341,7 @@ if (! @ARGV) {
 
 my $command = lc shift @ARGV;
 
-$base="https://$base_repo.svc.ci.openshift.org";
+$base="https://$base_repo.apps.ci.l2s4.p1.openshiftapps.com";
 $dot_url="${base}/graph?format=dot";
 $cincy_url="$base/graph";
 
