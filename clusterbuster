@@ -141,6 +141,10 @@ function fatal() {
     exit 1
 }
 
+function warn() {
+    echo "$*" 1>&2
+}
+
 if [[ -z "$OC" ]] ; then
     fatal "Can't find kubectl or oc"
 elif [[ $OC = 'kubectl'* ]] ; then
@@ -1015,22 +1019,41 @@ fi
 shift $((OPTIND - 1))
 
 if [[ -z $OC && $doit -gt 0 ]] ; then
-    echo "Cannot find oc or kubectl command, exiting!"
-    exit 1
+    fatal "Cannot find oc or kubectl command, exiting!"
 fi
 
 if (( msgSize <= 0 )) ; then
-    echo "Message size must be positive, exiting!"
-    exit 1
+    fatal "Message size must be positive, exiting!"
 fi
 
 if [[ -z "$pbenchControllerAddress" && $pbenchControllerPort -ne 0 ]] ; then
-    echo "Both pbench_controller_address and pbench_controller_port must be specified"
-    exit 1
+    fatal "Both pbench_controller_address and pbench_controller_port must be specified"
 fi
 
 if [[ -n "$pbenchControllerAddress" && $pbenchControllerPort -eq 0 ]] ; then
-    echo "Both pbench_controller_address and pbench_controller_port must be specified"
+    fatal "Both pbench_controller_address and pbench_controller_port must be specified"
+fi
+
+function validate_resource() {
+    local rtype=$1
+    local token
+    local status=0
+    shift
+    for token in "$@" ; do
+	if [[ $token != *'='* ]] ; then
+	    warn "Invalid $rtype specification $token (must be <resource>=<quantity>)"
+	    status=1
+	fi
+    done
+    return $status
+}
+
+resource_validation_failed=0
+validate_resource pod_resource_request "${pod_resource_requests[@]}" || resource_validation_failed=1
+validate_resource pod_resource_limit "${pod_resource_limits[@]}" || resource_validation_failed=1
+validate_resource container_resource_request "${container_resource_requests[@]}" || resource_validation_failed=1
+validate_resource container_resource_limit "${container_resource_limits[@]}" || resource_validation_failed=1
+if ((resource_validation_failed)) ; then
     exit 1
 fi
 
