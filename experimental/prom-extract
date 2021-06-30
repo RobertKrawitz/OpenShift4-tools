@@ -17,7 +17,7 @@
 from __future__ import print_function
 from prometheus_api_client import PrometheusConnect
 import argparse
-import datetime
+from datetime import datetime, timezone, timedelta
 import json
 import openshift
 import selectors
@@ -62,11 +62,11 @@ def run_command(cmd, fail_on_bad_status=True, report_stderr_async=True,
                     foundSomething = True
                     data = data.decode().rstrip()
                     if key.fileobj is command.stdout:
-                        stdout_data.append([time.time(), data])
+                        stdout_data.append([datetime.now(timezone.utc).isoformat(), data])
                         if report_stdout_async:
                             print(data)
                     elif key.fileobj is command.stderr:
-                        stderr_data.append([time.time(), data])
+                        stderr_data.append([datetime.now(timezone.utc).isoformat(), data])
                         if report_stderr_async:
                             print(data, file=sys.stderr)
             if not foundSomething:
@@ -75,11 +75,6 @@ def run_command(cmd, fail_on_bad_status=True, report_stderr_async=True,
                 if fail_on_bad_status and command.poll() != 0:
                     raise RuntimeError('Command %s failed: exit status %d' % (' '.join(cmd), command.poll()))
                 return (stdout_data, stderr_data, command.poll())
-
-
-def run_command_simple(cmd):
-    stdout, _, _ = run_command(cmd)
-    return "\n".join(a[1] for a in stdout)
 
 
 def get_prometheus_default_url():
@@ -91,34 +86,22 @@ def get_prometheus_default_url():
 
 
 def get_prometheus_token():
-    # Unfortunately, the openshift package doesn't appear to provide the
-    # necessary primitives to do this.
     try:
-        return 'Bearer %s' % run_command_simple(['oc', 'sa', 'get-token',
-                                                 '-n', 'openshift-monitoring',
-                                                 'prometheus-k8s'])
+        with openshift.project('openshift-monitoring'):
+            return 'Bearer %s' % openshift.get_serviceaccount_auth_token('prometheus-k8s')
     except Exception as err:
         efail("Unable to retrieve prometheus-k8s token: %s" % err)
 
 
-def get_cluster_version():
-    try:
-        return json.loads(run_command_simple(['oc', 'version', '-ojson']))
-    except Exception as err:
-        efail("Unable to retrieve cluster version: %s" % err)
-
-
 def get_nodes():
     try:
-        return json.loads(run_command_simple(['oc', 'get', 'nodes', '-ojson']))
+        return json.loads([n.as_dict() for n in openshift.selector(['node']).objects()])
     except Exception as err:
         efail("Unable to retrieve cluster version: %s" % err)
 
 
 def generate_uuid():
-    UUID = uuid.uuid4()
-    print('UUID: %s' % UUID, file=sys.stderr)
-    return str(UUID)
+    return str(uuid.uuid4())
 
 
 parser = argparse.ArgumentParser(description='Scrape data from Prometheus')
@@ -132,8 +115,6 @@ parser.add_argument('-t', '--token', type=str,
                     default=get_prometheus_token())
 parser.add_argument('-m', '--metrics-profile', type=str, metavar='file',
                     help='Metrics profile file or URL', default='metrics.yaml')
-parser.add_argument('-j', '--json-output', help='Print JSON formatted output',
-                    action='store_true')
 parser.add_argument('--epoch', type=int, default=1200, metavar='seconds',
                     help='Start of metrics relative to job start')
 parser.add_argument('--post-settling-time', type=int, default=60, metavar='seconds',
@@ -141,7 +122,7 @@ parser.add_argument('--post-settling-time', type=int, default=60, metavar='secon
 parser.add_argument('--json-from-command', action='store_true',
                     help='Interpret command stdout as JSON')
 parser.add_argument('--uuid', type=str, metavar='UUID', default=generate_uuid(),
-                    help='Index results by UUID (generate if not provided)'),
+                    help='Index results by UUID (generate if not provided)')
 parser.add_argument('--full-object-data', help='Retrieve full object data',
                     action='store_true')
 parser.add_argument('command', metavar='command', help='command [args...]',
@@ -164,9 +145,8 @@ except FileNotFoundError as err:
     efail('Cannot open metrics profile: %s' % err)
     sys.exit(1)
 
-startTime = int(time.time())
-metricsStartTime = datetime.datetime.now() + datetime.timedelta(seconds=-abs(args.epoch))
-chunkSize = datetime.timedelta(seconds=args.step)
+startTime = datetime.now(timezone.utc)
+metricsStartTime = startTime + timedelta(seconds=-abs(args.epoch))
 stdout_data = []
 stderr_data = []
 
@@ -176,7 +156,7 @@ except KeyboardInterrupt:
     efail("Interrupted")
 except Exception as err:
     efail(err)
-endTime = int(time.time())
+endTime = datetime.now(timezone.utc)
 
 json_output = None
 if args.json_from_command and len(stdout_data) > 0:
@@ -184,13 +164,6 @@ if args.json_from_command and len(stdout_data) > 0:
         json_output = json.loads("\n".join(a[1] for a in stdout_data))
     except json.decoder.JSONDecodeError as err:
         eprint("Cannot decode command output as JSON: %s" % err)
-
-json_results = {}
-if 'results' in json_output:
-    json_results = json_output['results']
-    del json_output['results']
-else:
-    json_results = json_output
 
 
 def extract_pod_data(pod):
@@ -217,46 +190,48 @@ def get_object(kind, name):
         return api_object
 
 
+json_results = {}
 json_api_objects = []
-if 'api_objects' in json_output:
-    for api_object in json_output['api_objects']:
-        bad_object = False
-        if 'kind' not in api_object:
-            eprint("API object %s does not contain a kind" % api_object)
-            bad_object = True
-        if 'namespace' not in api_object:
-            eprint("API object %s does not contain a namespace" % api_object)
-            bad_object = True
-        if 'name' not in api_object:
-            eprint("API object %s does not contain a name" % api_object)
-            bad_object = True
-        if bad_object:
-            continue
-        try:
-            with openshift.project(api_object['namespace']):
+if json_output is not None:
+    if 'results' in json_output:
+        json_results = json_output['results']
+        del json_output['results']
+
+    if 'api_objects' in json_output:
+        for api_object in json_output['api_objects']:
+            bad_object = False
+            for tag in ['kind', 'namespace', 'name']:
+                if tag not in api_object:
+                    eprint("API object %s does not contain a %s" % (api_object, tag))
+                    bad_object = True
+            if not bad_object:
                 try:
-                    json_api_objects.append(get_object(api_object['kind'], api_object['name']))
-                except Exception as get_err:
-                    eprint("Unable to retrieve object %s/%s in namespace %s: %s" %
-                           (api_object['kind'], api_object['name'], api_object['namespace'], get_err))
-        except Exception as ns_err:
-            eprint("Unable to set namespace %s: %s" % (api_object['namespace'], ns_err))
-    del json_output['api_objects']
+                    with openshift.project(api_object['namespace']):
+                        try:
+                            json_api_objects.append(get_object(api_object['kind'], api_object['name']))
+                        except Exception as get_err:
+                            eprint("Unable to retrieve object %s/%s in namespace %s: %s" %
+                                   (api_object['kind'], api_object['name'], api_object['namespace'], get_err))
+                except Exception as ns_err:
+                    eprint("Unable to set namespace %s: %s" % (api_object['namespace'], ns_err))
+        del json_output['api_objects']
 
-json_output.pop('results', None)
+    json_output.pop('results', None)
 
-if args.post_settling_time > 1:
+if args.post_settling_time > 0:
     eprint("Waiting %d seconds for complete metrics results" % args.post_settling_time)
-time.sleep(args.post_settling_time)
-metricsEndTime = datetime.datetime.now()
+    time.sleep(args.post_settling_time)
+metricsEndTime = datetime.now(timezone.utc)
 
 metric_results = {}
 
 eprint("Collecting metrics...")
 for metric in yaml['metrics']:
+    if 'query' not in metric:
+        continue
     metric_data = []
     if 'instant' not in metric or metric['instant'] is not True:
-        metric_data = prom.custom_query_range(metric['query'], start_time=metricsStartTime, end_time=metricsEndTime, step=30)
+        metric_data = prom.custom_query_range(metric['query'], start_time=metricsStartTime, end_time=metricsEndTime, step=args.step)
     else:
         metric_data = prom.custom_query(metric['query'])
     name = metric['query']
@@ -270,21 +245,26 @@ for metric in yaml['metrics']:
 
 results = {
     'metadata': {
-        'jobStart': startTime,
-        'jobEnd': endTime,
+        'jobStart': startTime.isoformat(timespec='seconds'),
+        'jobEnd': endTime.isoformat(timespec='seconds'),
         'uuid': args.uuid,
-        'cluster_version': get_cluster_version(),
+        'cluster_version': openshift.get_server_version(),
         'nodes': [n.as_dict() for n in openshift.selector('nodes').objects()],
         'command': args.command,
     },
-    'stdout': stdout_data,
     'stderr': stderr_data,
     'metrics': metric_results,
 }
 
 if json is not None:
-    results['results'] = json_results
-    results['api_objects'] = json_api_objects
-    results['run_data'] = json_output
+    if json_results:
+        results['results'] = json_results
+    if json_api_objects:
+        results['api_objects'] = json_api_objects
+    if json_output:
+        results['run_data'] = json_output
+else:
+    if stdout_data:
+        results['stdout'] = stdout_data
 
 print(json.dumps(results, indent=4))
