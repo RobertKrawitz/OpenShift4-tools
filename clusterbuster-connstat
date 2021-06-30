@@ -406,7 +406,7 @@ function process_summary() {
 	local tmp
 	tmp=$(mktemp "/tmp/cbdataXXXXXX.json")
 	# shellcheck disable=SC2064
-	trap "rm -f -- $tmp" INT TERM EXIT
+	trap "rm -f -- $tmp; exit" INT TERM EXIT
 	"${__libdir__}/postprocess-json.py" > "$tmp"
 	# Don't collect this until we've processed the data
 	jq --slurpfile objects <("$OC" get all -ojson -A -l "$selector") \
