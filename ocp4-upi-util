@@ -1,0 +1,1154 @@
+#!/bin/bash
+
+# Copyright 2019-2020 Robert Krawitz/Red Hat
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+declare config_file=${OCP4_CONFIG_FILE:-}
+declare ocp4_pull_secret=${OCP4_PULL_SECRET:-$HOME/.docker/config.json}
+declare ocp4_public_key=${OCP4_PUBLIC_KEY:-$HOME/.ssh/id_rsa.pub}
+declare command=$0
+
+# The following can be overridden in the config file if needed.
+declare bootstrap_prefix=192.168.222
+declare bootstrap_ipaddr
+declare bootstrap_net
+declare -i pxe_port=81
+declare cluster_cidr=10.128.0.0/14
+declare cluster_host_prefix=23
+declare cluster_network_type=OpenShiftSDN
+declare cluster_service_network=172.30.0.0/16
+declare cluster_hyperthreading=Enabled
+declare cluster_domain=test.myocp4.com
+declare cluster_basedomain
+declare cluster_name
+declare cluster_network_bridge_name=baremetal
+declare cluster_install_dir=${KUBECONFIG:+${KUBECONFIG/\/auth\/kubeconfig/}}
+declare filesystems_json="$HOME"/filesystems.json
+declare -i masters_schedulable=0
+declare -i infra_count=0
+declare -i master_as_infra=0
+declare -r cachedir="$HOME/.cache/ocp4_install"
+declare bootstrap_mac=52:54:00:f9:8e:41
+declare -a mgmt_masters=()
+declare -a master_macs=()
+declare -a worker_macs=()
+declare -a mgmt_workers=()
+declare -a exclude_ifs=()
+declare public_interface=
+declare bare_metal_interface=
+declare -i do_install_kata=0
+
+# shellcheck disable=SC2155
+declare -r command_help=$(cat <<'EOF'
+    Commands:
+        do_install <version>     Install a baremetal cluster using UPI
+        install_kata             Install sandboxed containers into cluster
+        bootstrap_destroy        Destroy any (virtual) bootstrap node
+        setup_dnsmasq            Set up dnsmasq/haproxy configuration
+        setup_infra              Set up an infra node
+     The following commands all use IPMI:
+        reset_all                Reset all nodes
+        reset_masters            Reset all master nodes
+        reset_workers            Reset all worker nodes
+        bios_all                 Boot all nodes into BIOS
+        bios_masters             Boot master nodes into BIOS
+        bios_workers             Boot worker nodes into BIOS
+        bios_master <index>      Boot specified master (by index) into BIOS
+        bios_worker <index>      Boot specified worker (by index) into BIOS
+        pxe_all                  PXE boot all nodes
+        pxe_masters              PXE all master nodes
+        pxe_workers              PXE all worker nodes
+        pxe_master <index>       PXE specified master (by index)
+        pxe_worker <index>       PXE specified worker (by index)
+        poweroff_all             Power off all nodes
+        poweroff_masters         Power off all masters
+        poweroff_workers         Power off all workers
+        poweroff_master <index>  Power off specified master (by index)
+        poweroff_worker <index>  Power off specified woerker (by index)
+EOF
+	)
+
+declare -a simple_commands=()
+
+function setup_commands() {
+    local line
+    while IFS= read -r line ; do
+	if [[ $line = '        '* ]] ; then
+	    line=${line/        /}
+	    line=${line%% *}
+	    simple_commands+=("$line")
+	fi
+    done <<< "$command_help"
+}
+
+function fatal() {
+    echo "FATAL: $*" 1>&2
+    exit 1
+}
+
+function warn() {
+    echo "Warning: $*" 1>&2
+}
+
+setup_commands
+
+function usage() {
+    cmdmsg=
+    if [[ ${command##*/} = ocp4-upi-util ]] ; then
+	cmdmsg=' command'
+    fi
+    cat 1>&2 <<EOF
+Usage: $command -c <configfile> [options]$cmdmsg args...
+    Options:
+        -k public key      Public key file (default $ocp4_public_key)
+        -p pull secret     Pull secret (default $ocp4_pull_secret)
+    The config file is bash syntax and is sourced by this installer.
+    All nodes, including the bootstrap node on which this command is run,
+    must have the same network topology.  There must be one public interface
+    that is externally accessible (this is disabled on the master and worker
+    nodes) and one interface on a shared (presumably fast) network that is
+    isolated physically or virtually.  The latter is also known as the
+    "bare metal interface".
+    Non-array settings may be provided from the environment.
+      Mandatory setttings:
+        master_macs           Array of master MAC addresses (should be 1 or 3)
+        mgmt_masters          Array of master management addresses (for IPMI)
+        worker_macs           Array of worker MAC addresses
+        mgmt_workers          Array of worker management addresses (for IPMI)
+        public_interface      Name of external interface device on all nodes
+        bare_metal_interface  Name of the bare metal interface
+      Options:
+        cluster_domain        Domain name of the cluster
+                              (default test.myocp4.com)
+        IPMI_USER             IPMI username (no default)
+        IPMI_PASSWORD         IPMI password (no default)
+        exclude_ifs           List of additional interfaces that should be
+                              disabled on all nodes
+        infra_count           Number of dedicated infrastructure nodes
+                              (default 0)
+        master_as_infra       Use the first master as an infrastructure node
+                              (default 0).  This is in addition to any
+                              explicit infra nodes.
+        do_install_kata       Install OpenShift sandboxed containers
+        masters_schedulable   Allow user pods to be scheduled on master nodes
+                              (default 0)
+        bootstrap_mac         MAC address of bootstrap VM
+                              (default 52:54:00:f9:8e:41)
+        cluster_host_prefix   32 - desired bare metal network size (default 23)
+
+$command_help
+EOF
+    exit
+}
+# shellcheck disable=SC2206
+declare -a default_exclude_ifs=(${EXCLUDE_IFS:-})
+declare pub_if=${PUB_IF:-}
+declare ip_base=192.168.222
+declare -i host_base=20
+declare -i max_host_count=71
+
+function do_setup_dnsmasq_help() {
+    cat <<EOF
+Usage: $0 [options] domain bootstrap_mac master0_mac [master_macs...] [workers_macs]
+    Options:
+        -e exclude    Exclude the specified interface (may repeat)
+	-p pub_if     Use the specified interface as the public IF
+        -N base       Use the specified base network (default $ip_base)
+        -b host_base  Start hosts at the specified number (default $host_base)
+        -n max_hosts  Allow the specified maximum number of hosts (default $max_host_count)
+	-m masters    Specify the number of masters (default $master_count)
+	-i infras     Specify the number of infra nodes (default $infra_count)
+     At least $master_count MAC addrs must be specified
+
+EOF
+    exit 1
+}
+
+function generate_dnsmasq() {
+    local -i master_count=$1; shift
+    local -i worker_count=$1; shift
+    local -i infra_count=$1; shift
+    cat <<EOF
+listen-address=${ip_base}.${prov_host}
+bind-interfaces
+strict-order
+local=/${ocp4_domain}/
+domain=${ocp4_domain}
+expand-hosts
+#except-interface=lo
+#except-interface=virbr0
+EOF
+    for int in "$pub_if" "${exclude_list[@]}" ; do
+	echo "#except-interface=$int"
+    done
+    cat <<EOF
+#interface=baremetal
+dhcp-range=${ip_base}.${host_base},${ip_base}.${host_max}
+dhcp-no-override
+dhcp-authoritative
+dhcp-lease-max=41
+dhcp-host=${bootstrap_mac},${ip_base}.${bootstrap_host},bootstrap
+EOF
+    for i in $(seq 0 "$((master_count - 1))") ; do
+	printf "dhcp-host=%s,${ip_base}.%d,master-%d\n" "$1" $((master_base+i)) "$i"
+	shift
+    done
+    i=0
+    for i in $(seq 0 "$((infra_count - 1))") ; do
+	printf "dhcp-host=%s,${ip_base}.%d,infra-%d\n" "$1" $((infra_base+i)) "$i"
+	shift
+    done
+    i=0
+    for arg in "$@" ; do
+	printf "dhcp-host=%s,${ip_base}.%d,worker-%d\n" "$arg" $((worker_base+i)) "$i"
+	i=$((i+1))
+    done
+    cat <<EOF
+enable-tftp
+tftp-root=/var/lib/tftpboot
+dhcp-boot=lpxelinux.0
+address=/api.${ocp4_domain}/${ip_base}.${prov_host}
+address=/api-int.${ocp4_domain}/${ip_base}.${prov_host}
+address=/.apps.${ocp4_domain}/${ip_base}.${prov_host}
+EOF
+
+    for i in $(seq 0 "$((master_count - 1))") ; do
+	cat <<EOF
+address=/etcd-${i}.${ocp4_domain}/${ip_base}.$((master_base+i))
+srv-host=_etcd-server-ssl._tcp.${ocp4_domain},etcd-${i}.${ocp4_domain}.,2380,0,10
+EOF
+    done
+}
+
+function generate_service() {
+    local name=$1
+    local -i port=$2
+    local -i master_count=$3
+    local -i worker_count=$4
+    local -i infra_count=$5
+    local -i i
+    case "$name" in
+	master)
+	    cat <<EOF
+    server           bootstrap ${ip_base}.$((bootstrap_host)):${port} check
+EOF
+	    for i in $(seq 0 "$((master_count - 1))") ; do
+		cat <<EOF
+    server           master-${i} ${ip_base}.$((master_base+i)):${port} check
+EOF
+	    done
+	    ;;
+	worker)
+	    for i in $(seq 0 "$((infra_count - 1))") ; do
+		cat <<EOF
+    server           infra-${i} ${ip_base}.$((infra_base+i)):${port} check
+EOF
+	    done
+	    for i in $(seq 0 "$((worker_count - 1))") ; do
+		cat <<EOF
+    server           worker-${i} ${ip_base}.$((worker_base+i)):${port} check
+EOF
+	    done
+	    ;;
+	*)
+	    echo "Unknown node type $name" 1>&2
+	    exit 1
+	    ;;
+    esac
+}
+
+function generate_haproxy_1() {
+    local -i master_count=$1; shift
+    local -i worker_count=$1; shift
+    local -i infra_count=$1; shift
+    local LINE
+    while IFS= read -r 'LINE' ; do
+	if [[ $LINE = '# --- BEGIN OCP4-UPI ---' ]] ; then
+	    break
+	fi
+	echo "$LINE"
+    done < /etc/haproxy/haproxy.cfg
+    cat <<EOF
+# --- BEGIN OCP4-UPI ---
+#-----------------
+# OCP4-UPI CONFIG
+#-----------------
+frontend kapi
+    mode             tcp
+    bind             *:6443
+    default_backend  kapi
+
+frontend mc
+    mode             tcp
+    bind             *:22623
+    default_backend  mc
+
+frontend https
+    mode             tcp
+    bind             *:443
+    default_backend  https
+
+frontend http
+    mode             http
+    bind             *:80
+    default_backend  http
+
+backend kapi
+    mode             tcp
+    balance          roundrobin
+$(generate_service master 6443 "$master_count" "$worker_count" "$infra_count")
+
+backend mc
+    mode             tcp
+    balance          roundrobin
+$(generate_service master 22623 "$master_count" "$worker_count" "$infra_count")
+
+backend https
+    mode             tcp
+    balance          roundrobin
+$(generate_service worker 443  "$master_count" "$worker_count" "$infra_count")
+
+backend http
+    mode             http
+    balance          roundrobin
+$(generate_service worker 80 "$master_count" "$worker_count" "$infra_count")
+EOF
+}
+
+function generate_haproxy() {
+    local output
+    output="$(generate_haproxy_1 "$@")"
+    echo "$output"
+}
+
+function _setup_dnsmasq() {
+    local -i master_count=3
+    local -i infra_count=0
+    local -i worker_count=0
+    local -a exclude_list=()
+    OPTIND=0
+    while getopts "e:p:N:b:n:m:i:" opt "$@"; do
+	case "$opt" in
+	    e) exclude_list+=("$OPTARG") ;;
+	    p) pub_if=$OPTARG            ;;
+	    N) ip_base=$OPTARG           ;;
+	    b) host_base=$OPTARG         ;;
+	    n) max_host_count=$OPTARG    ;;
+	    m) master_count=$OPTARG      ;;
+	    i) infra_count=$OPTARG       ;;
+	    *) do_setup_dnsmasq_help     ;;
+	esac
+    done
+
+    (( ${#exclude_list[@]} )) || exclude_list=("${default_exclude_ifs[@]}")
+
+    shift $((OPTIND-1))
+
+    local ocp4_domain=$1
+    shift
+
+    [[ -z "$pub_if" ]] && fatal "pub_if must be set to the public IP address on this node"
+    (( $# < master_count + infra_count + 1 )) && do_setup_dnsmasq_help
+    [[ -f /etc/dnsmasq.conf ]] || fatal "dnsmasq does not appear to be installed; please install!"
+    [[ -n "$ocp4_domain" ]] || fatal "domain must be specified"
+
+    badaddr=0
+
+    for addr in "$@" ; do
+	if [[ ! $addr =~ ([0-9a-f]{2}:){5}[0-9a-f]{2} ]] ; then
+	    echo "$addr is not a valid MAC"
+	    badaddr=1
+	fi
+    done
+
+    (( badaddr )) && exit 1
+    local bootstrap_mac=$1
+    shift
+
+    [[ -d /etc/dnsmasq.d ]] && mkdir -p /etc/dnsmasq.d
+
+    if grep -q '^conf-dir=.*/etc/dnsmasq.d' /etc/dnsmasq.conf ; then
+	:
+    else
+	echo 'conf-dir=/etc/dnsmasq.d' >> /etc/dnsmasq.conf
+    fi
+
+    local prov_host=1
+    host_max=$((host_base+max_host_count-1))
+    bootstrap_host=$((host_base+max_host_count-1))
+    master_base=$((host_base+0))
+    infra_base=$((host_base+5))
+    worker_base=$((master_base+10))
+    worker_count=$(($# - master_count - infra_count))
+
+    generate_dnsmasq "$master_count" "$worker_count" "$infra_count" "$@" > /etc/dnsmasq.d/ocp &&
+	generate_haproxy "$master_count" "$worker_count" "$infra_count" "$@" > /etc/haproxy/haproxy.cfg.new &&
+	mv -f /etc/haproxy/haproxy.cfg.new /etc/haproxy/haproxy.cfg &&
+	rm -f /var/lib/dnsmasq/dnsmasq.leases &&
+	systemctl restart dnsmasq haproxy
+}
+
+function generate_install_config() {
+    cat <<EOF
+apiVersion: v1
+baseDomain: ${cluster_basedomain}
+compute:
+- hyperthreading: ${cluster_hyperthreading}
+  name: worker
+  replicas: 0
+controlPlane:
+  hyperthreading: ${cluster_hyperthreading}
+  name: master
+  replicas: ${#master_macs[@]}
+metadata:
+  name: ${cluster_name}
+networking:
+  clusterNetwork:
+  - cidr: ${cluster_cidr}
+    hostPrefix: ${cluster_host_prefix}
+  networkType: ${cluster_network_type}
+  serviceNetwork:
+  - ${cluster_service_network}
+platform:
+  none: {}
+pullSecret: '$(jq -c . < "$ocp4_pull_secret")'
+sshKey: '$(head -1 "$ocp4_public_key")'
+EOF
+}
+
+function generate_ocp4_upi_net() {
+    cat <<EOF
+<network>
+  <name>ocp4-upi</name>
+  <forward mode='bridge'/>
+  <bridge name='${cluster_network_bridge_name}' />
+</network>
+EOF
+}
+
+function generate_pxelinux_cfg() {
+    local node_type=${1:-master}
+    shift
+    cat <<EOF
+DEFAULT pxeboot
+TIMEOUT 20
+PROMPT 0
+LABEL pxeboot
+    KERNEL http://${bootstrap_ipaddr}:${pxe_port}/ocp4-upi/rhcos-installer-kernel
+    APPEND rdblacklist=megaraid_sas ip=dhcp rd.neednet=1 initrd=http://${bootstrap_ipaddr}:${pxe_port}/ocp4-upi/rhcos-installer-initramfs.img console=tty0 console=ttyS0 coreos.inst=yes coreos.inst.install_dev=sda coreos.inst.image_url=http://${bootstrap_ipaddr}:${pxe_port}/ocp4-upi/rhcos-metal-bios.raw.gz coreos.inst.ignition_url=http://${bootstrap_ipaddr}:${pxe_port}/ocp4-upi/${node_type}.ign $*
+    SYSAPPEND 2
+EOF
+}
+
+function setup_tftpboot() {
+    local ntype=${1:-master}
+    shift 1
+    local -a macs=()
+    while [[ "$*" ]] ; do
+	local arg=$1
+	shift
+	if [[ $arg = '--' ]] ; then break; fi
+	macs+=("$arg")
+    done
+    local m
+    for m in "${macs[@]}" ; do
+	local file="/var/lib/tftpboot/pxelinux.cfg/01-${m//:/-}"
+	echo "Configuring $m as $ntype: $file"
+	generate_pxelinux_cfg "$ntype" "$@" > "$file"
+    done
+}
+
+function setup_bm_if() {
+    ip addr show dev "${cluster_network_bridge_name}" >/dev/null 2>&1 && return
+    [[ -n "$bare_metal_interface" ]] && {
+	fatal "No bare metal interface defined in bare_metal_interface"
+    }
+    nmcli con down "$bare_metal_interface"
+    nmcli con del "$bare_metal_interface"
+    nmcli con add type bridge ifname "${cluster_network_bridge_name}" con-name "${cluster_network_bridge_name}" ipv4.method manual ipv4.addr "${bootstrap_ipaddr}"/24 ipv4.dns "${bootstrap_ipaddr}" ipv4.dns-priority 10 autoconnect yes bridge.stp no
+    nmcli con add type bridge-slave autoconnect yes con-name "$bare_metal_interface" ifname "$bare_metal_interface" master "${cluster_network_bridge_name}"
+    nmcli con reload "$bare_metal_interface"
+    nmcli con reload "${cluster_network_bridge_name}"
+    nmcli con up "${cluster_network_bridge_name}"
+    nmcli con up "$bare_metal_interface"
+}
+
+function setup_iptables() {
+    # shellcheck disable=SC2155
+    local now=$(date)
+    cat > /etc/sysconfig/iptables <<EOF
+# Generated by iptables-save v1.8.4 on ${now}
+*filter
+:INPUT ACCEPT [0:0]
+:FORWARD ACCEPT [0:0]
+:OUTPUT ACCEPT [0:0]
+COMMIT
+# Completed on ${now}
+# Generated by iptables-save ${now}
+*nat
+:PREROUTING ACCEPT [19706105:1351513100]
+:INPUT ACCEPT [19316913:1327483195]
+:POSTROUTING ACCEPT [10198181:615920995]
+:OUTPUT ACCEPT [10198181:615920995]
+-A POSTROUTING -s ${bootstrap_net} -d 224.0.0.0/24 -j RETURN
+-A POSTROUTING -s ${bootstrap_net} -d 255.255.255.255/32 -j RETURN
+-A POSTROUTING -s ${bootstrap_net} ! -d ${bootstrap_net} -p tcp -j MASQUERADE --to-ports 1024-65535
+-A POSTROUTING -s ${bootstrap_net} ! -d ${bootstrap_net} -p udp -j MASQUERADE --to-ports 1024-65535
+-A POSTROUTING -s ${bootstrap_net} ! -d ${bootstrap_net} -j MASQUERADE
+-A POSTROUTING -s ${bootstrap_net} ! -d ${bootstrap_net} -o $public_interface -j MASQUERADE
+COMMIT
+# Completed on ${now}
+# Generated by iptables-save v1.8.4 on ${now}
+*mangle
+:PREROUTING ACCEPT [0:0]
+:INPUT ACCEPT [0:0]
+:FORWARD ACCEPT [0:0]
+:OUTPUT ACCEPT [0:0]
+:POSTROUTING ACCEPT [0:0]
+-A POSTROUTING -o virbr0 -p udp -m udp --dport 68 -j CHECKSUM --checksum-fill
+COMMIT
+# Completed on ${now}
+EOF
+    iptables-restore < /etc/sysconfig/iptables
+}
+
+function check_packages() {
+    if [[ -z "$(dnf -q group list -C --installed 'Virtualization Host')" ]] ; then
+	dnf -y groupinstall 'Virtualization Host'
+    fi
+    local -a required_rpms=()
+    local rpm
+    for rpm in wget virt-install jq podman git python3-pyyaml qemu-kvm syslinux virt-manager virt-viewer xorg-x11-xauth xinetd syslinux-tftpboot haproxy httpd perl perl-JSON ipmitool ; do
+	rpm --quiet -q "$rpm" || required_rpms+=("$rpm")
+    done
+    if [[ -n "${!required_rpms[*]}" ]] ; then
+	echo "Installing ${required_rpms[*]}"
+	dnf -y install "${required_rpms[@]}"
+    fi
+}
+
+function pre_setup() {
+    cd ~
+    setenforce 0 || true
+    grep -q SELINUX=disabled /etc/selinux/config || sed -i s/^SELINUX=.*/SELINUX=disabled/ /etc/selinux/config
+    check_packages
+    sed -i s/Listen\ 80/Listen\ ${pxe_port}/ /etc/httpd/conf/httpd.conf
+    [[ -f "$ocp4_public_key" ]] || ssh-keygen -t rsa -b 4096 -f "${ocp4_public_key%.pub}" -N "" -q
+    setup_bm_if
+    setup_iptables
+    local bootstrap_ipaddr_quoted=${bootstrap_ipaddr//./\\.}
+    grep -q "nameserver *${bootstrap_ipaddr_quoted}" /etc/resolv.conf ||
+	sed -i "/^search/a nameserver\ ${bootstrap_ipaddr}" /etc/resolv.conf
+}
+
+function get_key() {
+    local data="$1"
+    shift
+    local key
+    for key in "$@" ; do
+	# shellcheck disable=SC2155
+	local answer="$(jq -r "($key)" <<< "$data")"
+	if [[ -n "$answer" && $answer != 'null' ]] ; then
+	    echo "$answer"
+	    return
+	fi
+    done
+}
+
+function try_to_download() {
+    local -a registry_hosts=(openshift-release.apps.ci.l2s4.p1.openshiftapps.com openshift-release-artifacts.apps.ci.l2s4.p1.openshiftapps.com)
+    local target=$1; shift
+    local host
+    [[ -d "$cachedir" ]] || mkdir "$cachedir"
+    for host in "${registry_hosts[@]}" ; do
+	wget -P "$cachedir" "$@" "https://${host}/${target}" && return 0
+    done
+    return 1
+}
+
+function fetch_tools_if_needed() {
+    if [[ -f "$cachedir/openshift-client-linux-${VERSION}.tar.gz" &&
+	      -f "$cachedir/openshift-install-linux-${VERSION}.tar.gz" ]] ; then
+	return 0
+    elif [[ -n "$(type -p oc)" ]] && (cd "$cachedir" && oc adm release extract --tools "$VERSION") ; then
+	return 0
+    else
+	[[ -f "$cachedir/openshift-client-linux-${VERSION}.tar.gz" ]] || try_to_download "${VERSION}/openshift-client-linux-${VERSION}.tar.gz" -nv -N || {
+		echo "Can't download client for $VERSION"
+		return 1
+	    }
+	[[ -f "$cachedir/openshift-install-linux-${VERSION}.tar.gz" ]] || try_to_download "${VERSION}/openshift-install-linux-${VERSION}.tar.gz" -nv -N || {
+		echo "Can't download installer for $VERSION"
+		return 1
+	    }
+    fi
+}
+
+function setup_dnsmasq() {
+    echo '*** Configuring dnsmasq'
+    # We need "-e" prepended as a separate argument for each member
+    # shellcheck disable=SC2068
+    _setup_dnsmasq -m "${#master_macs[@]}" -i "$infra_count" -p "$public_interface" ${exclude_ifs[@]/#/-e } "$cluster_domain" "${bootstrap_mac}" "${master_macs[@]}" "${worker_macs[@]}"
+}
+
+function setup_install_1() {
+    [[ -n "$1" ]] && VERSION=$1
+    if [[ -z "$VERSION" ]] ; then
+	fatal "VERSION is not set!"
+    fi
+    cd "$HOME"
+    pre_setup
+    [[ $VERSION =~ ([0-9]\.[0-9]+).* ]] && export RELEASE=${BASH_REMATCH[1]}
+    [[ -d "$cluster_install_dir" ]] && rm -rf "$cluster_install_dir"
+    mkdir "$cluster_install_dir"
+    setup_dnsmasq
+    fetch_tools_if_needed || return 1
+    cd "$cluster_install_dir"
+    tar -C "$cluster_install_dir" -xzf "$cachedir/openshift-client-linux-${VERSION}.tar.gz"
+    tar -C "$cluster_install_dir" -xzf "$cachedir/openshift-install-linux-${VERSION}.tar.gz"
+    PATH="${cluster_install_dir}:$PATH"
+    installerURL="https://raw.githubusercontent.com/openshift/installer/release-$RELEASE/data/data/rhcos.json"
+    echo "Fetching installer data from $installerURL"
+    installer_data="$(curl -s -S "$installerURL")"
+    local -A paths
+    local -A fn
+    baseURI=$(get_key "$installer_data" .baseURI)
+
+    paths[bios]=$(get_key "$installer_data" .images.metal.path)
+    fn[bios]="rhcos-metal-bios.raw.gz"
+
+    paths[kernel]=$(get_key "$installer_data" .images.kernel.path '.images."live-kernel".path')
+    fn[kernel]="rhcos-installer-kernel"
+
+    paths[initramfs]=$(get_key "$installer_data" .images.initramfs.path '.images."live-initramfs".path')
+    fn[initramfs]="rhcos-installer-initramfs.img"
+
+    paths[rootfs]=$(get_key "$installer_data" '.images."live-rootfs".path')
+    fn[rootfs]="rhcos-installer-rootfs"
+
+    if [[ -d /var/www/html/ocp4-upi ]] ; then
+	rm -f /var/www/html/ocp4-upi/bootstrap.ign \
+	   /var/www/html/ocp4-upi/master.ign \
+	   /var/www/html/ocp4-upi/worker.ign
+    else
+	mkdir /var/www/html/ocp4-upi
+    fi
+
+    for f in "${!fn[@]}" ; do
+	rm -f "/var/www/html/ocp4-upi/${fn[$f]}"
+	if [[ -n "${paths[$f]:-}" ]] ; then
+	    dest="/var/www/html/ocp4-upi/${paths[$f]}"
+	    if [[ ! -f "/var/www/html/ocp4-upi/${paths[$f]}" ]] ; then
+		wget -nv -O "${dest}.tmp" "$baseURI/${paths[$f]}" && mv "${dest}.tmp" "$dest"
+	    fi
+	    ln -s "$dest" "/var/www/html/ocp4-upi/${fn[$f]}"
+	fi
+    done
+    systemctl restart httpd
+    mkdir -p lab/etc/sysconfig/network-scripts/
+    for pubif in "$public_interface" "${exclude_ifs[@]}" ; do
+	cat << EOF > "lab/etc/sysconfig/network-scripts/ifcfg-$pubif"
+DEVICE=$pubif
+BOOTPROTO=none
+ONBOOT=no
+EOF
+    done
+    generate_install_config > "$cluster_install_dir/install-config.yaml"
+    cp -p "$cluster_install_dir/install-config.yaml" "$cluster_install_dir/install-config-save.yaml"
+    ./openshift-install create manifests
+    if (( !masters_schedulable && ${#mgmt_workers[@]} > 0 )) ; then
+	sed -i '/mastersSchedulable/s/true/false/' manifests/cluster-scheduler-02-config.yml
+    else
+	sed -i '/mastersSchedulable/s/false/true/' manifests/cluster-scheduler-02-config.yml
+    fi
+    ./openshift-install create ignition-configs
+    for i in master worker; do
+	cp -p "${i}.ign" "${i}.ign.orig"
+	filetranspile -i "${i}.ign.orig" -f ./lab -o "${i}.ign"
+    done
+    if [[ -n "$filesystems_json" && -f "$filesystems_json" ]] ; then
+	for i in master worker; do
+	    jq -c ".systemd? += $(jq .systemd < "$filesystems_json") | .storage? += $(jq .storage < "$filesystems_json")" < "${i}.ign" > "${i}.ign.tmp" && mv -f "${i}.ign.tmp" "${i}.ign"
+	done
+    fi
+    for i in master worker bootstrap ; do
+	cp "$cluster_install_dir/$i.ign" /var/www/html/ocp4-upi
+	chmod 644 /var/www/html/ocp4-upi/"$i.ign"
+    done
+    mkdir -p /var/lib/tftpboot/pxelinux.cfg
+    for m in "${master_macs[@]}" "${worker_macs[@]}" ; do
+	m=${m//:/-}
+	rm -f "/var/lib/tftpboot/pxelinux.cfg/01-$m"
+    done
+    rootfs_arg=${paths[rootfs]:+"coreos.inst.insecure coreos.live.rootfs_url=http://${bootstrap_ipaddr}:${pxe_port}/ocp4-upi/rhcos-installer-rootfs"}
+    setup_tftpboot master "${master_macs[@]}" -- "$rootfs_arg"
+    setup_tftpboot worker "${worker_macs[@]}" -- "$rootfs_arg"
+    setup_tftpboot bootstrap "$bootstrap_mac" -- "$rootfs_arg"
+    # Clear out old known_hosts entries so ssh doesn't choke on host
+    # identification changing.
+    sed -i -E -e '/^((master-|worker|infra-)[[:digit:]]+|bootstrap)[, ]/d' ~/.ssh/known_hosts
+}
+
+function ipmi_cmd() {
+    echo -n "$1: "
+    ipmitool ${IPMI_USER:+-U "$IPMI_USER"} ${IPMI_PASSWORD:+-P "$IPMI_PASSWORD"} -H "$@"
+}
+
+function ipmi_master() {
+    m="$1"
+    shift
+    if [[ -n "${mgmt_masters[$m]}" ]] ; then
+	ipmi_cmd "${mgmt_masters[$m]}" "$@"
+    fi
+}
+
+function ipmi_worker() {
+    m="$1"
+    shift
+    if [[ -n "${mgmt_workers[$m]}" ]] ; then
+	ipmi_cmd "${mgmt_workers[$m]}" "$@"
+    fi
+}
+
+function ipmi_masters() {
+    for node in "${mgmt_masters[@]}" ; do
+	ipmi_cmd "$node" "$@"
+    done
+}
+
+function ipmi_workers() {
+    for node in "${mgmt_workers[@]}" ; do
+	ipmi_cmd "$node" "$@"
+    done
+}
+
+function ipmi_all() {
+    ipmi_masters "$@"
+    ipmi_workers "$@"
+}
+
+function pxe_master() {
+    for h in "$@" ; do
+	ipmi_master "$h" chassis bootdev pxe
+	ipmi_master "$h" chassis power on
+	ipmi_master "$h" chassis power reset
+    done
+}
+
+function pxe_worker() {
+    for h in "$@" ; do
+	ipmi_worker "$h" chassis bootdev pxe
+	ipmi_worker "$h" chassis power on
+	ipmi_worker "$h" chassis power reset
+    done
+}
+
+function pxe_all() {
+    pxe_masters
+    pxe_workers
+}
+
+function bios_worker() {
+    for h in "$@" ; do
+	ipmi_worker "$h" chassis bootdev bios
+	ipmi_worker "$h" chassis power on
+	ipmi_worker "$h" chassis power reset
+    done
+}
+
+function bios_master() {
+    for h in "$@" ; do
+	ipmi_master "$h" chassis bootdev bios
+	ipmi_master "$h" chassis power on
+	ipmi_master "$h" chassis power reset
+    done
+}
+
+function bios_masters() {
+    ipmi_masters chassis bootdev bios
+    ipmi_masters chassis power on
+    ipmi_masters chassis power reset
+}
+
+function bios_workers() {
+    ipmi_workers chassis bootdev bios
+    ipmi_workers chassis power on
+    ipmi_workers chassis power reset
+}
+
+function bios_all() {
+    bios_masters
+    bios_workers
+}
+
+function reset_masters() {
+    ipmi_masters chassis power on
+    ipmi_masters chassis power reset
+}
+
+function reset_workers() {
+    ipmi_workers chassis power on
+    ipmi_workers chassis power reset
+}
+
+function reset_all() {
+    reset_masters
+    reset_workers
+}
+
+### The following service routines will need to be ported to support virtual nodes:
+
+function poweroff_all() {
+    ipmi_all chassis power off
+}
+
+function pxe_masters() {
+    ipmi_masters chassis bootdev pxe
+    ipmi_masters chassis power on
+    ipmi_masters chassis power reset
+}
+
+function pxe_workers() {
+    ipmi_workers chassis bootdev pxe
+    ipmi_workers chassis power on
+    ipmi_workers chassis power reset
+}
+
+function setup_install() {
+    (setup_install_1 "$@")
+}
+
+### End of service routines
+
+function bootstrap_destroy() {
+    echo "Please ignore any errors below this line."
+    echo "========================================="
+    virsh destroy ocp4-upi-bootstrap || echo "(ignoring)"
+    virsh undefine ocp4-upi-bootstrap || echo "(ignoring)"
+    virsh vol-delete --pool default ocp4-upi-bootstrap.qcow2 || echo "(ignoring)"
+    echo "========================================="
+    echo "Please ignore any errors above this line."
+}
+
+function bootstrap_install() {
+    bootstrap_destroy
+    echo virt-install -n ocp4-upi-bootstrap --pxe --os-type=Linux --os-variant=rhel8.1 --ram=8192 --vcpus=4 --network network=ocp4-upi,mac="$bootstrap_mac" --disk size=120,bus=scsi,sparse=yes --check disk_size=off --noautoconsole --wait -1 1>&2
+    virt-install -n ocp4-upi-bootstrap --pxe --os-type=Linux --os-variant=rhel8.1 --ram=8192 --vcpus=4 --network network=ocp4-upi,mac="$bootstrap_mac" --disk size=120,bus=scsi,sparse=yes --check disk_size=off --noautoconsole --wait -1
+}
+
+function master_install() {
+    (cd "$cluster_install_dir" && ./openshift-install wait-for bootstrap-complete --log-level debug)
+}
+
+function approve_csrs() {
+    oc get csr -ojson | jq -r '.items[] | select(.status == {}) | .metadata.name'| xargs --no-run-if-empty oc adm certificate approve
+}
+
+function get_infra_nodes() {
+    if ((master_as_infra)) ; then
+	oc get node --no-headers -oname |grep 'node/master'
+    else
+	oc get node --no-headers -oname |grep 'node/infra'
+    fi
+}
+
+function make_infra_config() {
+    local item
+    for item in "$@" ; do
+	cat <<EOF
+    ${item}:
+      tolerations:
+      - key: "node-role.kubernetes.io/master"
+        operator: "Exists"
+        effect: "NoSchedule"
+      nodeSelector:
+        node-role.kubernetes.io/infra: ""
+EOF
+    done
+}
+
+function setup_infra() {
+    (( infra_count <= 0 && master_as_infra <= 0 )) && return
+    echo "*** Labeling infra nodes"
+    local node
+    while read -r node ; do
+	oc label "$node" node-role.kubernetes.io/infra= node-role.kubernetes.io/worker- |grep -v 'label .* not found'
+    done <<< "$(get_infra_nodes)"
+    echo "*** Moving monitoring to infra nodes"
+    oc apply -f - <<EOF
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cluster-monitoring-config
+  namespace: openshift-monitoring
+data:
+  config.yaml: |+
+$(make_infra_config alertmanagerMain prometheusK8s prometheusOperator grafana k8sPrometheusAdapter kubeStateMetrics telemeterClient openshiftStateMetrics thanosQuerier)
+EOF
+}
+
+function install_kata() {
+    (( do_install_kata <= 0 )) && return
+    if oc get kataconfig >/dev/null 2>&1 ; then
+	echo '*** Kata already installed'
+    fi
+    echo '*** Installing Kata'
+    local -i waiting=0
+    while (($(oc get mcp worker -ojson | jq -r .status.machineCount) <= 0)) ; do
+	if (( ! waiting)) ; then
+	    echo "   Waiting for worker machineconfigpool"
+	    waiting=1
+	fi
+	sleep 5
+    done
+    # shellcheck disable=SC2155
+    local -i currentGeneration=$(oc get mcp worker -ojson | jq -r .status.observedGeneration)
+    curl -s -S https://raw.githubusercontent.com/openshift/sandboxed-containers-operator/master/deploy/install.sh | bash
+    waiting=0
+    while (($(oc get mcp worker -ojson |jq -r '.status.observedGeneration') <= currentGeneration)) ; do
+	if (( ! waiting )) ; then
+	    echo "   Waiting for worker generation to increment"
+	    waiting=1
+	fi
+	sleep 5
+    done
+    echo
+    local -i lastCount=-1
+    while : ; do
+	# shellcheck disable=SC2155
+	local readyCount=$(oc get mcp worker -ojson | jq -r .status.readyMachineCount)
+	# shellcheck disable=SC2155
+	local totalCount=$(oc get mcp worker -ojson | jq -r .status.machineCount)
+	if [[ -n "$readyCount" && -n "$totalCount" && $readyCount -eq $totalCount ]] ; then
+	    break
+	fi
+	if [[ -n $readyCount && $readyCount -ne $lastCount ]] ; then
+	    echo "    Waiting for all nodes to become ready ($readyCount / $totalCount)..."
+	    lastCount=$readyCount
+	fi
+	sleep 5
+    done
+    echo "    Done"
+    echo '*** Kata installed successfully'
+}
+
+function start_workers() {
+    (( ${#mgmt_workers[@]} <= 0 )) && return
+    echo "*** Starting workers"
+    pxe_workers
+    echo "*** Waiting for workers to become ready"
+    while : ; do
+	# shellcheck disable=SC2155
+	local readyNodes=$(oc get nodes |grep worker |grep -v -c NotReady)
+	if [[ -n "$readyNodes" && $readyNodes -eq ${#mgmt_workers[@]} ]] ; then
+	    break
+	fi
+	approve_csrs
+	sleep 1
+    done
+    setup_infra
+    install_kata
+}
+
+# If this is called from the command line it will get passed any arguments.
+# When we call it directly, it doesn't.
+# shellcheck disable=SC2120
+function setup_chrony() {
+    [[ -n "$1" ]] && chrony_server=$1
+    [[ -z "${chrony_server}" ]] && return
+    echo "*** Setting up chrony"
+    # shellcheck disable=SC2155
+    local chronydata=$(base64 -w 0 << EOF
+server "$chrony_server" iburst
+stratumweight 0
+driftfile /var/lib/chrony/drift
+rtcsync
+makestep 1 -1
+bindcmdaddress 127.0.0.1
+bindcmdaddress ::1
+keyfile /etc/chrony.keys
+noclientlog
+logchange 0.5
+EOF
+)
+    local role
+    for role in master worker infra ; do
+	[[ -z "$(oc get nodes -l "node-role.kubernetes.io/${role}=" 2>/dev/null)" ]] && continue
+	oc apply -f - <<EOF
+apiVersion: machineconfiguration.openshift.io/v1
+kind: MachineConfig
+metadata:
+  labels:
+    machineconfiguration.openshift.io/role: $role
+  name: 99-${role}s-chrony-configuration
+spec:
+  config:
+    ignition:
+      config: {}
+      security:
+        tls: {}
+      timeouts: {}
+      version: 3.2.0
+    networkd: {}
+    passwd: {}
+    storage:
+      files:
+      - contents:
+          source: data:text/plain;charset=utf-8;base64,$chronydata
+        mode: 420
+        overwrite: true
+        path: /etc/chrony.conf
+  osImageURL: ""
+EOF
+    done
+}
+
+function do_install_2() {
+    set -e
+    cd "$HOME"
+    trap 'exit 125' INT TERM
+    echo "*** Configuring installation"
+    setup_install "$@"
+    echo "*** Powering down all nodes"
+    poweroff_all
+    echo "*** Installing bootstrap"
+    bootstrap_install
+    echo "*** Starting master(s)"
+    pxe_masters
+    echo "*** Installing master(s)"
+    master_install
+    echo "*** Destroying bootstrap"
+    bootstrap_destroy
+    start_workers
+    # We don't invoke setup_chrony with arguments,
+    # but command line use might.
+    # shellcheck disable=SC2119
+    setup_chrony
+}
+
+function elapsed_time() {
+    local -i start=$1
+    local -i end=$2
+    local -i et=$((end-start))
+    if (( et < 0 )) ; then et=$((-et)) ; fi
+    if ((1 == 1)) ; then
+	printf "%2d:%0.2d:%0.2d" "$((et / 3600))" "$(( (et % 3600) / 60))" "$((et % 60))"
+    elif (( et >= 3600 )) ; then
+	printf "%dh %2dm %2ds" "$((et / 3600))" "$(( (et % 3600) / 60))" "$((et % 60))"
+    elif (( et >= 60 )) ; then
+	printf "%dm %2ds" "$((et / 60))" "$((et % 60))"
+    else
+	printf "%ds" "$et"
+    fi
+}
+
+function do_install_1() {
+    # shellcheck disable=SC2155
+    local -i start=$(date +%s)
+    echo "*** Starting installation at $(date +%Y-%m-%dT%H:%M:%S%z)"
+    (do_install_2 "$@")
+    local -i status=$?
+    # shellcheck disable=SC2155
+    local et=$(elapsed_time "$start" "$(date +%s)")
+    case "$status" in
+	0)   echo "*** Install completed in $et at $(date +%Y-%m-%dT%H:%M:%S%z)"  ;;
+	125) echo "*** Install aborted after $et at $(date +%Y-%m-%dT%H:%M:%S%z)" ;;
+	*)   echo "*** Install FAILED in $et at $(date +%Y-%m-%dT%H:%M:%S%z)"     ;;
+    esac
+}
+
+function timestamp() {
+    local start=$1
+    while IFS='' read -r line ; do
+	printf "%s %s\n" "$(elapsed_time "$start" "$(date +%s)")" "$line"
+#	printf "%(%Y-%m-%dT%H:%M:%S)T %s\n" -1 "$line"
+    done
+}
+
+function do_install() {
+    (do_install_1 "$@") 2>&1 |timestamp "$(date +%s)"
+}
+
+#################################################################
+while getopts 'c:i:k:p:' opt ; do
+    case "$opt" in
+	c) config_file="$OPTARG" ;;
+	i) cluster_install_dir="$OPTARG" ;;
+	k) ocp4_public_key="$OPTARG"     ;;
+	p) ocp4_pull_secret="$OPTARG"    ;;
+	*) usage                         ;;
+    esac
+done
+
+shift $((OPTIND-1))
+
+if [[ ${command##*/} = ocp4-upi-util ]] ; then
+    if (( $# < 1 )) ; then
+	usage
+    fi
+    command=${1##*/}
+    shift
+fi
+
+if [[ -z "${config_file:-}" ]] ; then
+    # shellcheck disable=SC2016
+    fatal 'Config file must be specified, either with -c or $OCP4_CONFIG_FILE'
+fi
+
+if [[ ! -r "$config_file" ]] ; then
+    fatal "Cannot read config file $config_file"
+fi
+
+# shellcheck disable=SC1090
+. "$config_file" || fatal "Unable to process config file $config_file"
+cluster_basedomain=${cluster_basedomain:-${cluster_domain#*.}}
+cluster_name=${cluster_name:-${cluster_domain%%.*}}
+bootstrap_ipaddr=${bootstrap_prefix}.1
+bootstrap_net=${bootstrap_prefix}.0/24
+
+# Check invariants of the configuration
+
+declare -A known_macaddrs=()
+
+function check_macaddr() {
+    local addr
+    for addr in "$@" ; do
+	[[ -z "${known_macaddrs[$addr]}" ]] || fatal "Duplicate macaddr $addr"
+	[[ $addr =~ ^[0-9a-f]{2}(:[0-f]{2}){5} ]] || fatal "Malformed address $addr"
+    done
+}
+
+(( ${#mgmt_masters[@]} == 1 || ${#mgmt_masters[@]} == 3 )) || fatal "Configuration must have 1 or 3 masters, actual ${#mgmt_masters[@]}"
+(( ${#mgmt_masters[@]} == ${#master_macs[@]} )) || fatal "Configuration must have same number of mgmt_masters as master_macs"
+(( ${#worker_macs[@]} > infra_count )) || fatal "Configuration must have at least 1 worker_macs in addition to infra nodes"
+(( ${#worker_macs[@]} == ${#mgmt_workers[@]} )) || fatal "Configuration must have as many worker_macs as mgmt_workers, actual ${#worker_macs[@]} and ${#mgmt_workers[@]}"
+bootstrap_mac=${bootstrap_mac,,}
+master_macs=("${master_macs[@],,}")
+worker_macs=("${worker_macs[@],,}")
+check_macaddr "$bootstrap_mac"
+check_macaddr "${master_macs[@]}"
+check_macaddr "${worker_macs[@]}"
+[[ -n "$public_interface" ]] || fatal "public_interface must be specified"
+[[ -n "$bare_metal_interface" ]] || fatal "bare_metal_interface must be specified"
+[[ -n "$cluster_domain" ]] || fatal "cluster_domain must be specified"
+[[ -n "$IPMI_USER" ]] || warning "IPMI_USER is not specified; IPMI may not work correctly."
+[[ -n "$IPMI_PASSWORD" ]] || fatal "IPMI_PASSWORD is not specified; IPMI may not work correctly."
+
+[[ -r "$ocp4_pull_secret" ]] || fatal "No pull secret!"
+[[ -r "$ocp4_public_key" ]] || fatal "No public key!"
+
+for cmd in "${simple_commands[@]}" ; do
+    if [[ $command = "$cmd" ]] ; then "$command" "$@"; exit $?; fi
+done
+fatal "Unknown command $command!"

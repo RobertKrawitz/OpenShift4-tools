@@ -20,7 +20,7 @@ etc. OpenShift 4 clusters.
 
 ## Cluster utilities
 
-- **oinst**: OpenShift 4.x installer wrapper, currently for AWS, GCE,
+- **oinst**: OpenShift 4.x IPI installer wrapper, currently for AWS, GCE,
   and libvirt.
 
   You may want to install kubechart
@@ -30,6 +30,9 @@ etc. OpenShift 4 clusters.
 
   I welcome PRs to extend this to other platforms.  See [the `oinst`
   API](#oinst-api) below for more information.
+
+- **ocp4-upi-util**: OpenShift 4.x UPI installer wrapper, currently for
+  baremetal hosts supporting IPMI.  Needs more documentation.
 
 - **waitfor-pod**: wait for a specified pod to make its appearance (used
   as a helper by `oinst`).
