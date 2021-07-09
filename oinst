@@ -746,12 +746,12 @@ function warn_authentication_failure() {
 cat <<\EOF
 * [auth] You need to download your pull secrets.
 
-  Visit https://try.openshift.com and log in.  Click on Create
-  Cluster/Self-Installed Cluster
-  (https://cloud.redhat.com/openshift/install) and select your
-  appropriate cloud platform.  From there, select User-Provisioned
-  Infrastructure.  Download your pull secret and place it in
-  or merge it into ~/.docker/config.json
+  Visit https://try.openshift.com and log in.  Click on Self-managed
+  (https://cloud.redhat.com/openshift/create/datacenter?trial=ocp) and
+  select Local (https://cloud.redhat.com/openshift/create/local).
+  From there, select User-Provisioned Infrastructure.  Download or
+  copy your pull secret and place it in or merge it into
+  ~/.docker/config.json
 
 * [auth] You need an appropriate quay.io credential.
 
