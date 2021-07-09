@@ -490,29 +490,30 @@ echo "Final sync" 1>&2
 sync.pl "$agent_sync_port" "$expected_agents" 1
 if (( move_status )) ; then
     echo "*** Failed!"
-    if [[ ${report_file:-} = "/tmp/"* ]] ; then
-	touch "$report_file"
-    fi
 else
     echo "*** Complete!"
-    if [[ ${report_file:-} = "/tmp/"* ]] ; then
-	tmp_report_file="${report_file}.tmp"
-	tmp_tmp_report_file="${tmp_report_file}.tmp"
-	for f in "$resultsdir"/*.copied ; do
-	    if [[ -z "${pbench_preexisting_results[$f]:-}" ]] ; then
-		f=${f%.copied}
-		if [[ ! -f "$tmp_report_file" ]] ; then
-		    echo '{ "results": []}' > "$tmp_report_file"
-		fi
-		if [[ -d "${f}" && -f "${f}/${resultfilename}" ]] ; then
-		    jq --arg controller "$controller_hostname" --arg resultname "${f%%*/}" --slurpfile results "${f}/${resultfilename}" '.results[.results|length] = { controller: $controller, name: $resultname, data: $results[]?}' < "$tmp_report_file" > "$tmp_tmp_report_file" && mv -f "$tmp_tmp_report_file" "$tmp_report_file"
-		fi
-		if ((preserve_pbench_results != 1)) ; then
-		    rm -rf "$f" "${f}.copied"
-		fi
+fi
+if [[ ${report_file:-} = "/tmp/"* ]] ; then
+    tmp_report_file="${report_file}.tmp"
+    tmp_tmp_report_file="${tmp_report_file}.tmp"
+    for f in "$resultsdir"/* ; do
+	if [[ -z "${pbench_preexisting_results[$f]:-}" && -f "${f}/${resultfilename}" ]] ; then
+	    echo "Saving results from ${f}/${resultfilename}" 1>&2
+	    if [[ ! -f "$tmp_report_file" ]] ; then
+		echo '{ "results": []}' > "$tmp_report_file"
 	    fi
-	done
+	    if [[ -d "${f}" && -f "${f}/${resultfilename}" ]] ; then
+		jq --arg controller "$controller_hostname" --arg resultname "${f%%*/}" --slurpfile results "${f}/${resultfilename}" '.results[.results|length] = { controller: $controller, name: $resultname, data: $results[]?}' < "$tmp_report_file" > "$tmp_tmp_report_file" && mv -f "$tmp_tmp_report_file" "$tmp_report_file"
+	    fi
+	    if ((preserve_pbench_results != 1)) ; then
+		rm -rf "$f" "${f}.copied"
+	    fi
+	fi
+    done
+    if [[ -f "$tmp_report_file" ]] ; then
 	mv "$tmp_report_file" "$report_file"
+    else
+	touch "$report_file"
     fi
 fi
 if [[ -f "$report_file" ]] ; then

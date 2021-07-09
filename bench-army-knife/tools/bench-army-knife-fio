@@ -1976,10 +1976,17 @@ function monitor_logs() {
 }
 
 function monitor_reporting_1() {
+    local tmp1
+    tmp1=$(mktemp "/tmp/bench-army-knife${bm_name:+-$bm_name}-resultsXXXXXX.json")
     # TODO Need a better check here.
-    until oc rsh -T -n "$namespace" "${namespace}-controller" sh -c "while [[ ! -f '$report_file' ]] ; do sleep 5; done; cat '$report_file'; sleep 1; rm -f '$report_file'"; do
+    until oc rsh -T -n "$namespace" "${namespace}-controller" sh -c "while [[ ! -f '$report_file' ]] ; do sleep 5; done; cat '$report_file'" > "$tmp1"; do
 	sleep 5
     done
+    # Don't clear the report file until we have it safely off the controller
+    oc rsh -T -n "$namespace" "${namespace}-controller" sh -c "rm -f '$report_file'"
+    cat "$tmp1"
+    rm -f "$tmp1"
+    return 0
 }
 
 function monitor_reporting() {
