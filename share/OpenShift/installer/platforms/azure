@@ -1,0 +1,471 @@
+#!/bin/bash
+
+# Copyright 2021 Robert Krawitz/Red Hat
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+
+################################################################
+### Azure platform code					     ###
+################################################################
+
+declare -rg _____azure_default_domain=${AZURE_DEFAULT_DOMAIN:-devcluster.openshift.com}
+declare -rga _____azure_default_locations=(eastus eastus2 westus westus2)
+declare -g _____azure_base_domain_resource_group_name=${AZURE_BASE_DOMAIN_RESOURCE_GROUP_NAME:-}
+declare -g _____azure_subscription_id=
+declare -g _____azure_client_id=
+declare -g _____azure_client_secret=
+declare -g _____azure_tenant_id=
+
+add_platform _____azure_dispatch
+
+register_options azure_base_domain_resource_group_name \
+		 azureSubscriptionId azure_subscription_id \
+		 azureClientId azure_client_id \
+		 azureClientSecret azure_client_secret \
+		 azureTenantId azure_tenant_id
+
+declare -gA _____azure_pattern_map=()
+_____azure_pattern_map[A_v2]=Av2
+_____azure_pattern_map[Am_v2]=Amv2
+_____azure_pattern_map[Bls]=B
+_____azure_pattern_map[Bms]=B
+_____azure_pattern_map[Bs]=B
+_____azure_pattern_map[DCs_v2]=DCsv2
+_____azure_pattern_map[DS]=D
+_____azure_pattern_map[DS_v2]=DSv2
+_____azure_pattern_map[D_v2]=Dv2
+_____azure_pattern_map[D_v3]=Dv3
+_____azure_pattern_map[D_v4]=Dv4
+_____azure_pattern_map[Da_v4]=Dav4
+_____azure_pattern_map[Das_v4]=Dasv4
+_____azure_pattern_map[Dd_v4]=Ddv4
+_____azure_pattern_map[Dds_v4]=Ddsv4
+_____azure_pattern_map[Ds_v3]=Dsv3
+_____azure_pattern_map[Ds_v4]=Dvs4
+_____azure_pattern_map[Dv2]=Dv2
+_____azure_pattern_map[E_v3]=Ev3
+_____azure_pattern_map[E_v4]=Ev4
+_____azure_pattern_map[Ea_v4]=Eav4
+_____azure_pattern_map[Eas_v4]=Easv4
+_____azure_pattern_map[Ed_v4]=Edv4
+_____azure_pattern_map[Eds_v4]=Edsv4
+_____azure_pattern_map[Es_v3]=Esv3
+_____azure_pattern_map[Es_v4]=Esv4
+_____azure_pattern_map[HBrs]=HB
+_____azure_pattern_map[HBrs_v2]=HBv2
+_____azure_pattern_map[HBrs_v3]=HBv3
+_____azure_pattern_map[HCrs]=HC
+_____azure_pattern_map[Hm]=H
+_____azure_pattern_map[Hmr]=H
+_____azure_pattern_map[Hr]=H
+_____azure_pattern_map[Ls_v2]=Lsv2
+_____azure_pattern_map[Mdms_v2]=Mdsv2
+_____azure_pattern_map[Mds_v2]=Mdsv2
+_____azure_pattern_map[Midms_v2]=Mdsv2
+_____azure_pattern_map[Mids_v2]=Mdsv2
+_____azure_pattern_map[Mims_v2]=Msv2
+_____azure_pattern_map[Mis_v2]=Msv2
+_____azure_pattern_map[Mls]=M
+_____azure_pattern_map[Mm]=M
+_____azure_pattern_map[Mms]=M
+_____azure_pattern_map[Mms_v2]=Msv2
+_____azure_pattern_map[Ms]=M
+_____azure_pattern_map[Ms_v2]=Msv2
+_____azure_pattern_map[Mts]=M
+_____azure_pattern_map[NCas_T4_v3]=NCasT4_v3
+_____azure_pattern_map[NCrs_v2]=NCv2
+_____azure_pattern_map[NCrs_v3]=NCv3
+_____azure_pattern_map[NCs_v2]=NCv2
+_____azure_pattern_map[NCs_v3]=NCv3
+_____azure_pattern_map[NDasr_v4]=NDasrA100_v4
+_____azure_pattern_map[NDrs]=ND
+_____azure_pattern_map[NDrs_v2]=NDv2
+_____azure_pattern_map[NDs]=ND
+_____azure_pattern_map[NVas_v4]=NVv4
+_____azure_pattern_map[NVs_v3]=NVv3
+_____azure_pattern_map[NVvs_v3]=NVv3
+
+declare -gA _____azure_pattern_exceptions=()
+_____azure_pattern_exceptions[Standard_M208ms_v2]=Mv2
+_____azure_pattern_exceptions[Standard_M208s_v2]=Mv2
+_____azure_pattern_exceptions[Standard_M416ms_v2]=Mv2
+_____azure_pattern_exceptions[Standard_M416s_v2]=Mv2
+
+
+declare -arg _____azure_known_instance_types=(" X.General Purpose"
+					      Standard_A{1,2,4,8}_v2
+					      Standard_A{2,4,8}m_v2
+					      Standard_DC{1,2,4,8}s_v2
+					      # Note that there are Dv2/DSv2 series in both general purpose and memory
+					      Standard_D{,S}{1,2,3,4,5}_v2
+					      # Note that the naming for the v2 and v3 D series is different!
+					      # https://docs.microsoft.com/en-us/azure/virtual-machines/dv2-dsv2-series
+					      # https://docs.microsoft.com/en-us/azure/virtual-machines/dv3-dsv3-series
+					      Standard_D{2,4,8,16,32,48,64}_v3
+					      Standard_D{2,4,8,16,32,48,64}s_v3
+					      Standard_D{2,4,8,16,32,48,64}_v4
+					      Standard_D{2,4,8,16,32,48,64}s_v4
+					      Standard_D{2,4,8,16,32,48,64,96}a_v4
+					      Standard_D{2,4,8,16,32,48,64,96}as_v4
+					      Standard_D{2,4,8,16,32,48,64}d_v4
+					      Standard_D{2,4,8,16,32,48,64}ds_v4
+					      " X.Burstable"
+					      Standard_B{1ls,1s,2s,{1,2,4,8,12,16,20}ms}
+					      " X.Compute Optimized"
+					      Standard_F{2,4,8,16,32,48,64,72}s_v2
+					      Standard_FX{4,12,24,36,48}mds
+					      " X.Memory Optimized"
+					      Standard_D{,S}{11,12,13,14,15}_v2
+					      Standard_E{2,4,8,16,32,48,64}_v3
+					      Standard_E{2,4,8,16,32,48,64}s_v3
+					      Standard_E{2,4,8,16,32,48,64}_v4
+					      Standard_E{2,4,8,16,32,48,64}s_v4
+					      Standard_E{2,4,8,16,20,32,48,65,96}a_v4
+					      Standard_E{2,4,8,16,20,32,48,65,96}as_v4
+					      Standard_E{2,4,8,16,20,32,48,65,96}d_v4
+					      Standard_E{2,4,8,16,20,32,48,65,96}ds_v4
+					      Standard_M{8,16,32,64,128}ms
+					      Standard_M32ts
+					      Standard_M{32,64}ls
+					      Standard_M{64,128}
+					      Standard_M{64,128}m
+					      Standard_M{32,64,128}ms_v2
+					      Standard_M{64,128}s_v2
+					      Standard_M192{is,ims}_v2
+					      Standard_M{32,64,128}dms_v2
+					      Standard_M{64,128}ds_v2
+					      Standard_M192{ids,idms}_v2
+					      Standard_M{208,416}ms_v2
+					      Standard_M{208,416}s_v2
+					      " X.Storage Optimized"
+					      Standard_L{8,16,32,48,64,80}s_v2
+					      " X.GPU"
+					      Standard_NC{6,12,24,24r}
+					      Standard_NC{6,12,24,24r}s_v2
+					      Standard_NC{6,12,24,24r}s_v3
+					      Standard_NC{4,8,16,64}as_T4_v3
+					      Standard_ND96asr_v4
+					      Standard_ND{6,12,24,24r}s
+					      Standard_ND40rs_v2
+					      Standard_NV{6,12,24}
+					      Standard_NV{6,12,24}s_v3
+					      Standard_NV{4,8,16,32}as_v4
+					      " X.High Performance"
+					      Standard_H{8,16,8m,16m,164,16mr}
+					      Standard_HB60rs
+					      Standard_HB120rs_v2
+					      Standard_HB120{16,32,64,96,}rs_v3
+					      Standard_HC44rs
+					     )
+
+function _____azure_how_to_list_locations() {
+    if [[ -n "$(type -p az)" ]] ; then
+	cat <<'EOF'
+  You can list all available locations by running
+  $ az account list-locations
+EOF
+    else
+	cat <<'EOF'
+  You can list all available locations by first installing
+  the Azure CLI via instructions on 
+  https://docs.microsoft.com/en-us/cli/azure/install-azure-cli
+  and then running  
+  $ az account list-locations
+EOF
+    fi
+}
+
+function _____azure_is_uuid_or_null() {
+    [[ -z "$1" || $1 =~ ^[[:xdigit:]]{8}-([[:xdigit:]]{4}-){3}[[:xdigit:]]{12}$ ]]
+}
+
+function _____azure_backup_file() {
+    local file=$1
+    local -i index=1
+    while [[ -f "${file}.BAK.$index" ]] ; do
+	index=$((index+1))
+    done
+    # So that later move will be atomic
+    ln "$file" "${file}.BAK.$index"
+}
+
+function _____azure_compare_json_file_to_text() {
+    local file="$1"
+    local text="$2"
+    [[ -r "$file" ]] || return 1
+    [[ "$(jq -r . <<< "$text" | sort)" = "$(jq -r . < "$file" | sort)" ]]
+}
+
+function _____azure_validate() {
+    # External variables, part of the API.
+    # shellcheck disable=SC2154
+    validate_instance_type "$worker_type" "$master_type" Azure master_type _____azure_split_instance "${_____azure_known_instance_types[@]}" <<EOF
+Currently known Azure instance types.  Note that not all types are
+available in all locations, and Azure may add additional types at
+any time.  See https://docs.microsoft.com/en-us/azure/virtual-machines/sizes
+for current information about what instance types exist.  To determine what
+instance types are available in any given location, run
+
+\$ az vm list-sizes --location <location>
+
+All instance types should be prefixed with "Standard_".
+$(_____azure_how_to_list_locations | sed -e 's/^ //')
+EOF
+    if [[ -z "${_____azure_base_domain_resource_group_name:-}" ]] ; then
+	echo "--azure_base_domain_resource_group_name must be set" 1>&2
+	return 1
+    elif [[ -n "${_____azure_subscription_id}${_____azure_client_id}${_____azure_client_secret}${_____azure_tenant_id}" ]] ; then
+	local -i bad_credentials=0
+	local -a missing_credentials=()
+	[[ -z "${_____azure_subscription_id}" ]] && missing_credentials+=("--azure_subscription_id")
+	[[ -z "${_____azure_client_id}" ]] && missing_credentials+=("--azure_client_id")
+	[[ -z "${_____azure_client_secret}" ]] && missing_credentials+=("--azure_client_secret")
+	[[ -z "${_____azure_tenant_id}" ]] && missing_credentials+=("--azure_tenant_id")
+	if [[ -n "${missing_credentials[*]}" ]] ; then
+	    bad_credentials=1
+	    echo "The following credentials are missing; all must be supplied:" 1>&2
+	    (IFS=$'\n'; echo "${missing_credentials[*]}") 1>&2
+	fi
+	if ! _____azure_is_uuid_or_null "$_____azure_subscription_id" ; then
+	    bad_credentials=1
+	    echo "--azure_subscription_id is not a valid UUID" 1>&2
+	fi
+	if ! _____azure_is_uuid_or_null "$_____azure_client_id" ; then
+	    bad_credentials=1
+	    echo "--azure_client_id is not a valid UUID" 1>&2
+	fi
+	if ! _____azure_is_uuid_or_null "$_____azure_tenant_id" ; then
+	    bad_credentials=1
+	    echo "--azure_tenant_id is not a valid UUID" 1>&2
+	fi
+	if ((bad_credentials != 0)) ; then
+	    echo "Please fix the above errors before continuing"
+	    return 1
+	fi
+	if [[ ! -d "$HOME/.azure" ]] ; then
+	    mkdir "$HOME/.azure" || {
+		echo "Cannot create $HOME/.azure"
+		return 1
+	    }
+	fi
+
+	# shellcheck disable=SC2155
+	local service_principal_text=$(printf '{"%s":"%s","%s":"%s","%s":"%s","%s":"%s"}'  \
+					     subscriptionId "$_____azure_subscription_id" \
+					     clientId       "$_____azure_client_id"       \
+					     clientSecret   "$_____azure_client_secret"   \
+					     tenantId       "$_____azure_tenant_id")
+	local -r service_principal_file="$HOME/.azure/osServicePrincipal.json"
+	local -r tmp_service_principal_file="$HOME/.azure/osServicePrincipal.json.tmp"
+	if _____azure_compare_json_file_to_text "$service_principal_file" "$service_principal_text" ; then
+	    echo "Existing service principal file matches specified file" 1>&2
+	else
+	    (umask 77; echo -n "$service_principal_text" > "${tmp_service_principal_file}")
+	    if ! _____azure_compare_json_file_to_text "$tmp_service_principal_file" "$service_principal_text" ; then
+		echo "Cannot correctly create temporary service principal file $tmp_service_principal_file" 1>&2
+		return 1
+	    fi
+	    if [[ -f "$service_principal_file" ]] ; then
+		_____azure_backup_file "$service_principal_file" || {
+		    echo "Cannot back up $service_principal_file" 1>&2
+		    return 1
+		}
+	    fi
+	    mv "$tmp_service_principal_file" "$service_principal_file" || {
+		echo "Cannot rename $tmp_service_principal_file to $service_principal_file" 1>&2
+		return 1
+	    }
+	fi
+    elif [[ ! -f "$HOME/.azure/osServicePrincipal.json" ]] ; then
+	echo "Expected $HOME/.azure/osServicePrincipal.json is not present; installation would fail" 1>&2
+	return 1
+    fi
+}
+
+function _____azure_split_instance() {
+    local instance=$1
+    local generic=
+    local class=
+    local suffix=
+    # shellcheck disable=SC2034
+    IFS=_ read -r generic class suffix <<< "$instance"
+    suffix=${suffix:+_$suffix}
+    local class_answer=""
+    local instance_answer="${class}${suffix}"
+    if [[ -n "${_____azure_pattern_exceptions[$instance]:-}" ]] ; then
+	class_answer="${_____azure_pattern_exceptions[$instance]:-}"
+    elif [[ $class =~ ([A-Z]+)([0-9]*)([a-z]*) ]] ; then
+	local class_pattern="${BASH_REMATCH[1]}${BASH_REMATCH[3]}${suffix}"
+	class_answer+=${_____azure_pattern_map[$class_pattern]:-$class_pattern}
+    else
+	class_answer+=$class
+    fi
+    echo "$class_answer"
+    echo "$instance_answer"
+}
+
+function _____azure_default_install_type() {
+    echo "${_____azure_default_locations[((RANDOM % ${#_____azure_default_locations[@]}))]}"
+}
+
+function _____azure_setup() {
+    local location=${1#azure}
+    location=${location#[-._]}
+    # shellcheck disable=SC2155
+    case "$location" in
+	'')   export OPENSHIFT_INSTALL_AZURE_LOCATION=$(_____azure_default_install_type) ;;
+	?*)   export OPENSHIFT_INSTALL_AZURE_LOCATION=$location   ;;
+    esac
+}
+
+function _____azure_help() {
+    case "$1" in
+	install_types)
+	    cat <<'EOF'
+azure     (random US Azure location)
+  azure-* (specified Azure location by name)
+EOF
+	    _____azure_how_to_list_locations
+	    ;;
+	default_domain)
+	    cat <<\EOF
+For Azure: default is $_____azure_default_domain.
+EOF
+	    ;;
+	options)
+	    cat << 'EOF'
+
+For Azure:
+  azure_base_domain_resource_group_name name
+                      Use the specified base domain
+                      resource group name (no default, may set
+                      AZURE_BASE_DOMAIN_RESOURCE_GROUP_NAME
+                      in environment, otherwise required)
+     The following options are only needed if you do not already have
+     a .azure/osServicePrincipal.json file.  You must specify all of them.
+  azure_subscription_id id
+                      Use the specified subscription ID
+                      (needed if you do not already have
+                      .azure/osServicePrincipal.json)
+  azure_client_id id  Use the specified client ID if needed
+  azure_client_secret secret
+                      Use the specified client secret if needed
+  azure_tenant_id id  Use the specified tenant ID if needed
+EOF
+	    ;;
+	*)  ;;
+    esac
+}
+
+function _____azure_instance() {
+    if [[ -n "${1:-}" ]] ; then
+	cat <<EOF
+
+azure:
+  type: "$1"
+EOF
+    fi
+}
+
+function _____azure_platform() {
+    cat <<EOF
+azure:
+  region: $OPENSHIFT_INSTALL_AZURE_LOCATION
+  cloudName: AzurePublicCloud
+  outboundType: Loadbalancer
+  baseDomainResourceGroupName: "$_____azure_base_domain_resource_group_name"
+EOF
+}
+
+function _____azure_base_domain() {
+    echo "${install_domain:-$_____azure_default_domain}"
+}
+
+function _____azure_set_option() {
+    local option=$1
+    local value=$2
+    case "${option,,}" in
+	azure_base_domain_resource_group_name)
+	    _____azure_base_domain_resource_group_name="$value" ;;
+	azure_subscription_id|azuresubscriptionid)
+	    _____azure_subscription_id="$value"                 ;;
+	azure_client_id|azureclientid)
+	    _____azure_client_id="$value"                       ;;
+	azure_client_secret|azureclientsecret)
+	    _____azure_client_secret="$value"                   ;;
+	azure_tenant_id|azuretenantid)
+	    _____azure_tenant_id="$value"                       ;;
+	*)
+	    fatal "Unknown option $option in Azure platform"    ;;
+    esac
+}
+
+function _____azure_print_diagnostic() {
+    case "$1" in
+	_____azure_existing_resource_detected)
+	    cat <<'EOF'
+* [azure] Error message suggests that the installer tried to create a
+  resource that already exists.  This resource needs to be tracked down
+  and cleaned up.
+
+EOF
+	    return 1
+	    ;;
+	_____azure_bootstrap_failed)
+	    cat <<'EOF'
+* [azure] Bootstrap timed out.  This may indicate a network problem,
+  an incompatibility between the machine instance type and RHCOS,
+  a bug in the installer image, or similar.  It also suggests the
+  possibility of authentication problems, including the possibility
+  that your pull secret is invalid/expired.
+
+EOF
+	    ;;
+    esac
+}
+
+function _____azure_diagnose() {
+    case "$*" in
+	*'Tried to create resource record set'*)
+	    set_diagnostic _____azure_existing_resource_detected _____azure_print_diagnostic
+	    ;;
+	*'Bootstrap failed to complete'*'context deadline exceeded'*)
+	    set_diagnostic _____azure_bootstrap_failed _____azure_print_diagnostic
+	    ;;
+    esac
+}
+
+function _____azure_dispatch() {
+    local op="$1"
+    shift
+    case "$op" in
+	base_domain)          _____azure_base_domain "$@"          ;;
+	cleanup)              :					   ;;
+	default_install_type) _____azure_default_install_type "$@" ;;
+	diagnose)	      _____azure_diagnose "$@"		   ;;
+	platform_help)        _____azure_help "$@"                 ;;
+	is_install_type)      [[ $1 = 'azure'* ]]		   ;;
+	machine_cidr)         echo '10.0.0.0/16'		   ;;
+	master)               _____azure_instance "$master_type"   ;;
+	platform)             _____azure_platform "$@"             ;;
+	postinstall)          :					   ;;
+	replicas)             cmdline_replicas "$1" 3              ;;
+	set_option)	      _____azure_set_option "$@"	   ;;
+	setup)                _____azure_setup "$@"                ;;
+	supports_bastion)     true				   ;;
+	validate)             _____azure_validate "$@"             ;;
+	worker)               _____azure_instance "$worker_type"   ;;
+	*)                    dispatch_unknown azure "$@"	   ;;
+    esac
+}

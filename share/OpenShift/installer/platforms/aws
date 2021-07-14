@@ -77,6 +77,8 @@ declare -arg _____aws_known_instance_types=(" X.General Purpose"
 					   )
 
 function _____aws_validate() {
+    # External variables, part of the API.
+    # shellcheck disable=SC2154
     validate_instance_type "$worker_type" "$master_type" AWS master_type _____aws_split_instance "${_____aws_known_instance_types[@]}" <<'EOF'
 Currently known AWS instance types.  Note that not all types are
 available in all regions, and AWS may add additional types at
@@ -107,6 +109,7 @@ function _____aws_default_install_type() {
 function _____aws_setup() {
     local region=${1#aws}
     region=${region#[-._]}
+    # shellcheck disable=SC2155
     case "$region" in
 	'')   export OPENSHIFT_INSTALL_AWS_REGION=$(_____aws_default_install_type) ;;
 	1)    export OPENSHIFT_INSTALL_AWS_REGION=us-east-1 ;;
@@ -181,8 +184,9 @@ EOF
 	    cat <<'EOF'
 * [aws] Bootstrap timed out.  This may indicate a network problem,
   an incompatibility between the machine instance type and RHCOS,
-  a bug in the installer image, or similar; it also suggests the
-  possibility of authentication problems.
+  a bug in the installer image, or similar.  It also suggests the
+  possibility of authentication problems, including the possibility
+  that your pull secret is invalid/expired.
 
 EOF
 	    ;;

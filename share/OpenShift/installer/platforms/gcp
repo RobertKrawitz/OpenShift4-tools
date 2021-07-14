@@ -46,6 +46,8 @@ declare -arg _____gcp_known_instance_types=(" X.General Purpose (Current Generat
 					   )
 
 function _____gcp_validate() {
+    # External variables, part of the API.
+    # shellcheck disable=SC2154
     validate_instance_type "$worker_type" "$master_type" GCP master_type _____gcp_split_instance "${_____gcp_known_instance_types[@]}" <<'EOF'
 Currently known GCP instance types.  Note that not all types are
 available in all regions, and GCP may add additional types at
@@ -67,6 +69,7 @@ function _____gcp_split_instance() {
 function _____gcp_setup() {
     local region=${1#gcp}
     region=${region#[-._]}
+    # shellcheck disable=SC2155
     case "$region" in
 	'')   export OPENSHIFT_INSTALL_GCP_REGION=$(_____gcp_default_install_type) ;;
 	1)    export OPENSHIFT_INSTALL_GCP_REGION=us-central1		  ;;
@@ -111,7 +114,7 @@ EOF
 
 For GCP:
   gcp_project_id proj Use the specified project id
-    (default $_____gcp_default_project)
+                      (default $_____gcp_default_project)
 EOF
 ;;
 	*)  ;;
