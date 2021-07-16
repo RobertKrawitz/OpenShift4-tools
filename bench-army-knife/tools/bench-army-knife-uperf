@@ -37,6 +37,7 @@ function finddir() {
 
 declare ___realsc=
 declare ___topsc
+set -u
 if [[ -z ${___topsc:-} ]] ; then
     export ___topsc="${0##*/}"
     # shellcheck disable=SC2155
@@ -109,6 +110,7 @@ declare job_uuid=$(uuidgen -r)
 declare pre_script=
 declare secret_name=credentials
 declare secret_root=/etc/$secret_name
+declare -i report_full_timeseries_data=1
 
 # Benchmark-specific variables
 declare -r bm_name=uperf
@@ -159,6 +161,7 @@ Usage: ${___topsc:-$0} [options] [-- pbench-${bm_name} args]
                       should then be exec'ed as the next stage.
        -R cpu_request Pod CPU request
        -s             Send rather than move Pbench results
+       -T             Report only summary
        -u user        Record the specified username
        -w             Agent and client wait forever at end
        -X             Affinity between ${bm_name} server and client
@@ -170,7 +173,7 @@ EOF
     exit 1
 }
 
-while getopts 'A:C:c:EeF:fHIi:Kk:L:M:m:N:nP:p:qR:r:Ssu:wXxYy' opt ; do
+while getopts 'A:C:c:EeF:fHIi:Kk:L:M:m:N:nP:p:qR:r:SsTu:wXxYy' opt ; do
     case "$opt" in
 	A) pbench_agent_key=$OPTARG	 ;;
 	C) hostname=$OPTARG		 ;;
@@ -198,6 +201,7 @@ while getopts 'A:C:c:EeF:fHIi:Kk:L:M:m:N:nP:p:qR:r:Ssu:wXxYy' opt ; do
 	r) pre_script=$OPTARG		 ;;
 	S) pbench_send_results=-R	 ;;
 	s) pbench_send_results=-r	 ;;
+	T) report_full_timeseries_data=0 ;;
 	u) username=$OPTARG		 ;;
 	w) waitforever=1		 ;;
 	x) anti_affinity=1		 ;;
@@ -220,19 +224,19 @@ elif [[ ! -r "${pbench_agent_cfg:-}" ]] ; then
     echo "Cannot read pbench agent config $pbench_agent_cfg" 1>&2
     error=1
 fi
-if [[ -z "$pbench_private_key" ]] ; then
+if [[ -z "${pbench_private_key:-}" ]] ; then
     echo "pbench private key file not provided" 1>&2
     error=1
 elif [[ ! -r "$pbench_private_key" ]] ; then
     echo "Cannot read pbench private key $pbench_private_key" 1>&2
     error=1
 fi
-if [[ -n "$pbench_agent_key" && (! -r "$pbench_agent_key" || ! -r "${pbench_agent_key}.pub") ]] ; then
+if [[ -n "${pbench_agent_key:-}" && (! -r "$pbench_agent_key" || ! -r "${pbench_agent_key}.pub") ]] ; then
     echo "Cannot read agent key $pbench_agent_key or ${pbench_agent_key}.pub" 1>&2
     error=1
 fi
 
-if [[ -n "$pre_script" ]] ; then
+if [[ -n "${pre_script:-}" ]] ; then
     if [[ ! -r "$pre_script" ]] ; then
 	echo "Pre-script '$pre_script' does not exist" 1>&2
 	error=1
@@ -281,11 +285,11 @@ function _oc() {
 function get_ip() {
     local netname=$1; shift
     if oc get pod "$@" >/dev/null 2>&1 ; then
-	if [[ -n "$interface" ]] ; then
+	if [[ -n "${interface:-}" ]] ; then
 	    # Note that because pod annotations are strings rather than JSON
 	    # objects we have to use one jq invocation to print the annotation
 	    # raw, which will look like JSON (we hope) piped into another
-	    # invocation 
+	    # invocation
 	    oc get pod -ojson "$@" | jq -r '.metadata.annotations."k8s.v1.cni.cncf.io/network-status"' | jq -j -r '[foreach .[] as $item ([[],[]];0; if ($item.name == "'"$netname"'") then $item.ips[0] else null end)] |map(select(. != null)) | if(length > 0) then .[0] else "" end'
 	    local -i i
 	    for i in "${PIPESTATUS[@]}" ; do
@@ -313,7 +317,7 @@ if (( ! print_only )) ; then
     elif [[ $(oc project -q) != "$namespace" ]] ; then
 	oc project "$namespace" 1>&2
     fi
-    
+
     if ! oc get serviceaccount "$namespace" >/dev/null 2>&1; then
 	oc create serviceaccount "$namespace" 1>&2
 	oc adm policy add-cluster-role-to-user cluster-admin "$namespace" 1>&2
@@ -334,8 +338,8 @@ fi
 function create_credentials_1() {
     local tmpkeydir=
     tmpkeydir=$(umask 77; mktemp -d -t "pbench-agent-key.XXXXXX")
-    if [[ -z "$pbench_agent_key" && $print_only -eq 0 ]] ; then
-	if [[ -n "$tmpkeydir" ]] ; then
+    if [[ -z "${pbench_agent_key:-}" && $print_only -eq 0 ]] ; then
+	if [[ -n "${tmpkeydir:-}" ]] ; then
 	    # shellcheck disable=SC2064
 	    trap "rm -rf $tmpkeydir" INT TERM EXIT
 	    ssh-keygen -f "$tmpkeydir/id_rsa" -C "generated pbench agent key" -N '' -q -t rsa
@@ -354,7 +358,7 @@ function create_credentials_1() {
     additional_files+=("id_rsa_agent=$pbench_agent_key")
     additional_files+=("id_rsa_agent.pub=${pbench_agent_key}.pub")
     _oc create secret generic "$secret_name" "${additional_files[@]/#/--from-file=}"
-    if [[ -n "$tmpkeydir" && -d "$tmpkeydir" ]] ; then
+    if [[ -n "${tmpkeydir:-}" && -d "$tmpkeydir" ]] ; then
 	rm -rf "$tmpkeydir"
     fi
 }
@@ -367,7 +371,7 @@ function indent_1() {
     local -i column="$1"
     local line=
     while IFS='' read -r 'line' ; do
-	if [[ -n "$line" ]] ; then
+	if [[ -n "${line:-}" ]] ; then
 	    local prefix=
 	    if [[ $line = '#'* ]] ; then
 		line=${line:1}
@@ -444,7 +448,7 @@ EOF
 
 # Until privileged containers work with Kata
 function security_context() {
-    if (( force_privileged == 0 && 
+    if (( force_privileged == 0 &&
 	      ((kata && force_external_agents != 0) ||
 		   (force_external_agents == 1)) )) ; then
 	clean <<'EOF'
@@ -484,7 +488,7 @@ EOF
 function create_object() {
     local data
     data="$("$@" | expand)"
-    if [[ -n "$data" ]] ; then
+    if [[ -n "${data:-}" ]] ; then
 	echo "Creating $*" 1>&2
 	_oc apply -f - <<< "$data" || {
 	    echo "Failing object:" 1>&2
@@ -577,7 +581,7 @@ EOF
 }
 
 function create_network_annotation() {
-    if [[ -n "$interface_net" ]] ; then
+    if [[ -n "${interface_net:-}" ]] ; then
 	clean <<EOF
 annotations:
   k8s.v1.cni.cncf.io/networks: |-
@@ -588,7 +592,7 @@ annotations:
       }
     ]
 EOF
-    elif [[ -n "$interface" ]] ; then
+    elif [[ -n "${interface:-}" ]] ; then
 	clean <<EOF
 annotations:
   k8s.v1.cni.cncf.io/networks: "$interface"
@@ -628,7 +632,7 @@ function pbench-benchmark-pod() {
 	fi
     done
 
-    local type=$1
+    local type=${1:-}
     affinity_string+=" -a app-subtype=${bm_name}${type:+-$type}"
 # shellcheck disable=SC2086
     clean <<EOF
@@ -820,7 +824,7 @@ spec:
     targetPort: $redis_port
   - name: data-sink
     port: $datasink_port
-    targetPort: $datasink_port  
+    targetPort: $datasink_port
   type: ClusterIP
   selector:
     name: ${namespace}-controller
@@ -828,7 +832,7 @@ EOF
 }
 
 function set_controller_hostname() {
-    if [[ -n "$hostname" ]] ; then
+    if [[ -n "${hostname:-}" ]] ; then
 	clean <<EOF
 - "-H"
 - "$hostname"
@@ -980,7 +984,7 @@ function create_benchmark_objects() {
     local -i missing_servers=$instances
     local affinity_term=-a
     if (( anti_affinity )) ; then affinity_term=-A; fi
-    if [[ -n "$interface" ]] ; then
+    if [[ -n "${interface:-}" ]] ; then
 	local extra=
 	local -A ips_to_setup=()
 	for i in $(seq 1 "$instances") ; do
@@ -1026,7 +1030,7 @@ function create_benchmark_objects() {
 		for i in $(seq 1 "$instances") ; do
 		    if [[ -z "${serverClusterIPs[$i]:-}" ]] ; then
 			serverClusterIPs[$i]="$(get_ip "$interface" "-n" "$namespace" "${namespace}-server-${i}")"
-			if [[ -n "${serverClusterIPs[$i]}" ]] ; then
+			if [[ -n "${serverClusterIPs[$i]:-}" ]] ; then
 			    missing_servers=$((missing_servers-1));
 			    create_object pbench-benchmark-pod -H "${namespace}-server-${i}=${serverClusterIPs[$i]}" -s "$i" "$affinity_term" app-subtype=${bm_name}-server client
 			fi
@@ -1039,7 +1043,7 @@ function create_benchmark_objects() {
     create_object agent_deployment
     if (( ! print_only )) ; then
 	# Servers must already exist, since we have their IPs above
-	while (( $(oc get pods --no-headers -n "$namespace" -l k8s-app="${namespace}-${bm_name}-client" | wc -l) != instances )) ; do
+	while (( $(oc get pods --no-headers -n "${namespace:-}" -l k8s-app="${namespace}-${bm_name}-client" | wc -l) != instances )) ; do
 	    sleep 1
 	done
     fi
@@ -1065,6 +1069,31 @@ function monitor_logs() {
     done
 }
 
+# shellcheck disable=SC2155
+declare -r jq_pbench_cleanup_code=$(cat <<'EOF'
+def __walk(f):
+  . as $in
+  | if type == "object" then
+      reduce keys[] as $key
+        ( {}; . + { ($key):  ($in[$key] | __walk(f)) } ) | f
+  elif type == "array" then map( __walk(f) ) | f
+  else f
+  end;
+
+__walk(if type == "object" then with_entries(select(.key |test("samples|server_hostname|server_port|uid|iteration_name_format")|not)) else . end) | __walk(if(type == "object" and has("client_hostname") and .client_hostname != "all") then select(.|not) else . end)
+EOF
+)
+
+function cleanup_report() {
+    if (( report_full_timeseries_data)) ; then
+	echo "Reporting full data" 1>&2
+	cat
+    else
+	echo "Postprocessing with $jq_pbench_cleanup_code" 1>&2
+	jq -r "$jq_pbench_cleanup_code"
+    fi
+}
+
 function monitor_reporting_1() {
     local tmp1
     tmp1=$(mktemp "/tmp/bench-army-knife${bm_name:+-$bm_name}-resultsXXXXXX.json")
@@ -1088,7 +1117,7 @@ function monitor_reporting() {
     # on trying to retrieve the underlying objects until monitoring is complete.
     # Otherwise we might not retrieve all of the objects, or we might get them
     # in an earlier state.
-    monitor_reporting_1 > "$tmp"
+    monitor_reporting_1 | cleanup_report > "$tmp"
     jq -c --slurpfile objects <(oc get all -A -l "bench-army-knife-id=$job_uuid" -o json) '{results: .results, api_objects: [$objects[].items?[] | { kind: .kind, name: .metadata.name, namespace: .metadata.namespace}]}' < "$tmp" 1>&3
     rm -f "$tmp"
 }
