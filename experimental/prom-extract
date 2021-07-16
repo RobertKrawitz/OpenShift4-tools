@@ -27,6 +27,17 @@ import time
 import urllib3
 import uuid
 import yaml
+import os.path
+import re
+from benchmark_runner.common.elasticshearch.es_operations import ESOperations
+
+
+known_reporting_types = ["everything", "all", 'basic', 'summary', 'none']
+report_included_types = {
+    'everything': ['all'],
+    'all': ['basic'],
+    'basic': ['summary']
+}
 
 
 def eprint(*args, **kwargs):
@@ -104,6 +115,20 @@ def generate_uuid():
     return str(uuid.uuid4())
 
 
+class HandleReportArgument(argparse.Action):
+    def __call__(self, parser, namespace, values, option_string):
+        answers = [option.strip().lower() for option in values.split(",")]
+        for answer in answers:
+            if answer not in known_reporting_types:
+                raise argparse.ArgumentTypeError("Unknown report value %s; expect one or more of: %s" %
+                                                 (answer, ', '.join(known_reporting_types)))
+            else:
+                if namespace.report is None:
+                    namespace.report = []
+                if answer not in namespace.report:
+                    namespace.report.append(answer)
+
+
 parser = argparse.ArgumentParser(description='Scrape data from Prometheus')
 parser.add_argument('-u', '--url', '--prometheus-url', type=str,
                     help='Prometheus URL', metavar='URL',
@@ -115,7 +140,7 @@ parser.add_argument('-t', '--token', type=str,
                     default=get_prometheus_token())
 parser.add_argument('-m', '--metrics-profile', type=str, metavar='file',
                     help='Metrics profile file or URL', default='metrics.yaml')
-parser.add_argument('--epoch', type=int, default=1200, metavar='seconds',
+parser.add_argument('--epoch', type=int, default=60, metavar='seconds',
                     help='Start of metrics relative to job start')
 parser.add_argument('--post-settling-time', type=int, default=60, metavar='seconds',
                     help='Time to continue collecting metrics after job completion')
@@ -123,12 +148,32 @@ parser.add_argument('--json-from-command', action='store_true',
                     help='Interpret command stdout as JSON')
 parser.add_argument('--uuid', type=str, metavar='UUID', default=generate_uuid(),
                     help='Index results by UUID (generate if not provided)')
-parser.add_argument('--full-object-data', help='Retrieve full object data',
-                    action='store_true')
+parser.add_argument('--report', help='What to report, one or more of %s' % ', '.join(known_reporting_types),
+                    metavar='Reporting types', action=HandleReportArgument)
+parser.add_argument('--es_host', '--es-host', help='Elasticsearch host', metavar='hostname',
+                    type=str)
+parser.add_argument('--es_port', '--es-port', help='Elasticsearch port', metavar='port',
+                    type=int)
+parser.add_argument('--job_type', '--job-type', help='Type of job (fio, uperf, etc)',
+                    metavar='command', type=str)
 parser.add_argument('command', metavar='command', help='command [args...]',
                     type=str, nargs='*')
 args = parser.parse_args()
 
+if args.report is None:
+    args.report = ['summary']
+else:
+    def expand_list(collection, included_collections):
+        did_something = True
+        while did_something:
+            did_something = False
+            for item in collection:
+                if item in included_collections:
+                    for included_item in included_collections[item]:
+                        if included_item not in collection:
+                            collection.append(included_item)
+                            did_something = True
+    expand_list(args.report, report_included_types)
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 authorization = {}
@@ -173,21 +218,61 @@ def extract_pod_data(pod):
     answer['namespace'] = pod['metadata']['namespace']
     answer['phase'] = pod['status']['phase']
     answer['nodeName'] = pod['spec']['nodeName']
-    answer['containerStatus'] = pod['status']['containerStatuses']
+    if 'all' in args.report:
+        answer['containerStatus'] = pod['status']['containerStatuses']
     return answer
+
+
+def extract_controller_data(controller):
+    answer = {}
+    answer['kind'] = controller['kind']
+    answer['name'] = controller['metadata']['name']
+    answer['namespace'] = controller['metadata']['namespace']
+    return answer
+
+
+def extract_service_data(service):
+    answer = {}
+    answer['kind'] = service['kind']
+    answer['name'] = service['metadata']['name']
+    answer['namespace'] = service['metadata']['namespace']
+    if 'all' in args.report:
+        answer['spec'] = service['spec']
 
 
 object_handler_map = {
     'Pod': extract_pod_data,
+    'Deployment': extract_controller_data,
+    'ReplicaSet': extract_controller_data,
+    'DaemonSet': extract_controller_data,
+    'Service': extract_service_data
 }
 
 
 def get_object(kind, name):
     api_object = openshift.selector('%s/%s' % (kind, name)).objects()[0].as_dict()
-    if not args.full_object_data and kind in object_handler_map:
+    if kind in object_handler_map:
         return object_handler_map[kind](api_object)
     else:
         return api_object
+
+
+def cleanupNode(node):
+    if 'everything' in args.report:
+        return node
+    else:
+        answer = {}
+        answer['name'] = node['metadata']['name']
+        if 'all' in args.report:
+            answer['labels'] = {}
+            for label in node['metadata']['labels']:
+                if re.compile('^node-role.kubernetes.io/').search(label):
+                    answer['labels'][label] = node['metadata']['labels'][label]
+
+            answer['nodeInfo'] = node['status']['nodeInfo']
+            answer['allocatable'] = node['status']['allocatable']
+            answer['capacity'] = node['status']['capacity']
+        return answer
 
 
 json_results = {}
@@ -208,7 +293,9 @@ if json_output is not None:
                 try:
                     with openshift.project(api_object['namespace']):
                         try:
-                            json_api_objects.append(get_object(api_object['kind'], api_object['name']))
+                            apiobj = get_object(api_object['kind'], api_object['name'])
+                            if apiobj is not None:
+                                json_api_objects.append(apiobj)
                         except Exception as get_err:
                             eprint("Unable to retrieve object %s/%s in namespace %s: %s" %
                                    (api_object['kind'], api_object['name'], api_object['namespace'], get_err))
@@ -234,6 +321,15 @@ for metric in yaml['metrics']:
         metric_data = prom.custom_query_range(metric['query'], start_time=metricsStartTime, end_time=metricsEndTime, step=args.step)
     else:
         metric_data = prom.custom_query(metric['query'])
+    for metric_instance in metric_data:
+        try:
+            if 'values' in metric_instance:
+                for point in metric_instance['values']:
+                    point[1] = round(float(point[1]))
+            if 'value' in metric_instance:
+                metric_instance['value'][1] = float(metric_instance['value'][1])
+        except Exception as error:
+            eprint('Unable to parse metric query %s: %s' % (metric['query'], error))
     name = metric['query']
     if 'metricName' in metric:
         name = metric['metricName']
@@ -249,22 +345,41 @@ results = {
         'jobEnd': endTime.isoformat(timespec='seconds'),
         'uuid': args.uuid,
         'cluster_version': openshift.get_server_version(),
-        'nodes': [n.as_dict() for n in openshift.selector('nodes').objects()],
         'command': args.command,
     },
-    'stderr': stderr_data,
-    'metrics': metric_results,
+    'rundata': {
+        'metrics': metric_results,
+    }
 }
+
+if 'summary' in args.report:
+    results['metadata']['nodes'] = [cleanupNode(n.as_dict()) for n in openshift.selector('nodes').objects()]
+
+if 'everything' in args.report:
+    results['rundata']['stderr'] = stderr_data,
+
 
 if json is not None:
     if json_results:
-        results['results'] = json_results
+        results['rundata']['results'] = json_results
     if json_api_objects:
-        results['api_objects'] = json_api_objects
+        results['rundata']['api_objects'] = json_api_objects
     if json_output:
-        results['run_data'] = json_output
+        results['rundata']['run_data'] = json_output
 else:
     if stdout_data:
-        results['stdout'] = stdout_data
+        results['rundata']['stdout'] = stdout_data
 
-print(json.dumps(results, indent=4))
+
+if args.es_host is not None or args.es_port is not None:
+    if args.es_host is None or args.es_port is None:
+        efail("Both host and port must be specified for Elasticsearch")
+    es_operations = ESOperations(es_host=args.es_host, es_port=args.es_port)
+    job_type = args.job_type
+    if job_type is None:
+        job_type = os.path.basename(args.command[0])
+    print(str(job_type))
+    es_operations.upload_to_es(data=results['rundata'], index=str(job_type),
+                               es_add_items=results['metadata'])
+else:
+    print(json.dumps(results, indent=4))
