@@ -117,6 +117,7 @@ declare pre_script=
 declare secret_name=credentials
 declare secret_root=/etc/$secret_name
 declare -i report_full_timeseries_data=1
+declare -i debug=0
 
 # Benchmark-specific variables
 declare -r bm_name=fio
