@@ -155,16 +155,14 @@ declare __me__
 __me__=$(realpath -e "$0")
 
 if [[ -z "$__me__" ]] ; then
-    echo "Can't find my path!" 1>&2
-    exit 1
+    fatal "Can't find my path!"
 fi
 
 declare __mydir__=${__me__%/*}
 declare __libdir__=${__mydir__}/lib/clusterbuster
 
 if [[ ! -d "$__libdir__" ]] ; then
-    echo "Can't find my library dir!" 1>&2
-    exit 1
+    fatal "Can't find my library dir!"
 fi
 
 function _helpmsg() {
