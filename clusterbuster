@@ -147,7 +147,7 @@ function warn() {
 
 if [[ -z "$OC" ]] ; then
     fatal "Can't find kubectl or oc"
-elif [[ $OC = 'kubectl'* ]] ; then
+elif [[ $OC =~ 'kubectl' ]] ; then
     KUBECTL_VALIDATE=--validate=false
 fi
 
