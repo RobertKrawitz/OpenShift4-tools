@@ -1472,7 +1472,7 @@ function createContainersClusterBusterYAML() {
 	cat <<EOF
 - name: ${namespace}-$i-$j
   imagePullPolicy: $imagePullPolicy
-  image: "busybox"
+  image: "$containerImage"
 $(indent 2 createContainerResources)
   command:
   - /bin/sh
