@@ -1016,10 +1016,6 @@ fi
 
 shift $((OPTIND - 1))
 
-if [[ -z $OC && $doit -gt 0 ]] ; then
-    fatal "Cannot find oc or kubectl command, exiting!"
-fi
-
 if (( msgSize <= 0 )) ; then
     fatal "Message size must be positive, exiting!"
 fi
