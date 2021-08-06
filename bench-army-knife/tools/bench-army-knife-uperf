@@ -118,6 +118,7 @@ declare secret_name=credentials
 declare secret_root=/etc/$secret_name
 declare -i report_full_timeseries_data=1
 declare -i debug=0
+declare report_data=${_BENCH_ARMY_KNIFE_EXTRACT_DATA:-0}
 
 # Benchmark-specific variables
 declare -r bm_name=uperf
@@ -135,11 +136,12 @@ Usage: ${___topsc:-$0} [options] [-- pbench-${bm_name} args]
                       be generated if not provided.
        -C name        Use the specified name for the controller's hostname
        -c configname  Record the specified configuration name
+       -D             Enable debugging.
+       -d             Enable data collection and reporting.
        -E             Don't use external agents on worker nodes.
                       Default with non-Kata pods
        -e             Use external agents on the worker nodes.
                       Default yes with Kata pods
-       -D             Enable debugging.
        -F file        Add the specified file to the secret passed to
                       the pods.  May be <file> or <name=file>.
        -f             Force all containers to be privileged.
@@ -181,12 +183,13 @@ EOF
     exit 1
 }
 
-while getopts 'A:C:c:DEeF:fHIi:Kk:L:M:m:N:nP:p:qR:r:SsTu:wXxYy' opt ; do
+while getopts 'A:C:c:DdEeF:fHIi:Kk:L:M:m:N:nP:p:qR:r:SsTu:wXxYy' opt ; do
     case "$opt" in
 	A) pbench_agent_key=$OPTARG	 ;;
 	C) hostname=$OPTARG		 ;;
 	c) configname=$OPTARG		 ;;
 	D) debug=1			 ;;
+	d) report_data=1		 ;;
 	E) force_external_agents=1	 ;;
 	e) force_external_agents=0	 ;;
 	F) additional_files+=("$OPTARG") ;;
@@ -888,6 +891,15 @@ EOF
     done
 }
 
+function enable_reporting() {
+    if ((report_data)) ; then
+	cat <<EOF
+- "-f"
+- "$report_file"
+EOF
+    fi
+}
+
 function controller_pod() {
     #shellcheck disable=SC2155
     local agents=$(oc get pods -l "$selector_key" -A --no-headers 2>/dev/null | wc -l)
@@ -943,8 +955,7 @@ $(indent 4 set_host_aliases)
     - "-I"
 $( (( waitforever )) && echo "    - -w")
     - "${pbench_send_results}"
-    - "-f"
-    - "$report_file"
+$(indent 4 enable_reporting)
     - "-L"
     - "$ssh_port"
     - "-D"
@@ -1250,7 +1261,7 @@ function monitor_pod() {
 		return 1
 		;;
 	    succeeded|running)
-		if [[ ${status,,} = running && $report_monitor_pid -eq 0 ]] ; then
+		if [[ $report_data -gt 0 && ${status,,} = running && $report_monitor_pid -eq 0 ]] ; then
 		    monitor_reporting 1>&3 &
 		    report_monitor_pid=$!
 		    trap '[[ -n "$(jobs -p)" ]] && kill "$(jobs -p)"' TERM INT EXIT
