@@ -177,7 +177,9 @@ Usage: ${___topsc:-$0} [options] [-- pbench-${bm_name} args]
        -r pre-script  Run the specified pre-script prior to invoking
                       the controller.  All args to the pre-script
                       should then be exec'ed as the next stage.
+       -Q             Do not send or move Pbench results
        -R cpu_request Pod CPU request
+       -S             Preserve Pbench results after run
        -s             Send rather than move Pbench results
        -T             Report only summary
        -u user        Record the specified username
@@ -201,7 +203,7 @@ EOF
     exit 1
 }
 
-while getopts 'A:C:c:DdEeF:fHIi:J:Kk:L:M:m:N:nP:p:qR:r:SsTu:V:wXxYy' opt ; do
+while getopts 'A:C:c:DdEeF:fHIi:J:Kk:L:M:m:N:nP:p:QqR:r:SsTu:V:wXxYy' opt ; do
     case "$opt" in
 	A) pbench_agent_key=$OPTARG	 ;;
 	C) hostname=$OPTARG		 ;;
@@ -228,6 +230,7 @@ while getopts 'A:C:c:DdEeF:fHIi:J:Kk:L:M:m:N:nP:p:qR:r:SsTu:V:wXxYy' opt ; do
 	n) print_only=1			 ;;
 	P) pbench_agent_cfg=$OPTARG	 ;;
 	p) instances=$OPTARG		 ;;
+	Q) pbench_send_results=-n	 ;;
 	q) quiet=1			 ;;
 	R) pod_cpu_request=$OPTARG	 ;;
 	r) pre_script=$OPTARG		 ;;

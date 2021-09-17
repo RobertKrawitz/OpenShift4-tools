@@ -41,6 +41,7 @@ declare report_file=
 declare -A pbench_preexisting_results=()
 declare -r resultsdir=/var/lib/pbench-agent
 declare resultfilename=result.json
+declare -i do_copy_results=1
 
 function usage() {
     if [[ -n "$*" ]] ; then
@@ -86,6 +87,7 @@ Usage: $0 [options] [command args...]
        -L sshd_listen_port    Port on which sshd should listen.  If not
                               specified, controller will connect to the agents.
                               NO DEFAULT.
+       -n                     Do not copy the final pbench data.
        -N configuration_name  Configuration name for pbench logging.
                               Default to <whoami><hostname><timestamp>.
        -p                     Don't attempt to start a separate sshd.
@@ -132,7 +134,7 @@ function add_host_alias() {
     host_aliases[$host]=$aliases
 }
 
-while getopts "A:a:C:c:D:ef:H:Ik:K:L:N:P:pRrS:s:T:t:u:vW:w" arg ; do
+while getopts "A:a:C:c:D:ef:H:Ik:K:L:N:nP:pRrS:s:T:t:u:vW:w" arg ; do
     case "$arg" in
 	A) expected_agents="$OPTARG"             ;;
 	a) add_host_alias "$OPTARG"		 ;;
@@ -147,6 +149,7 @@ while getopts "A:a:C:c:D:ef:H:Ik:K:L:N:P:pRrS:s:T:t:u:vW:w" arg ; do
 	k) keyfile="$OPTARG"                     ;;
 	L) sshd_listen_port="$OPTARG"; passive=1 ;;
 	N) configname="$OPTARG"                  ;;
+	n) do_copy_results=0			 ;;
 	P) ssh_ext_port="$OPTARG"	         ;;
 	p) dont_start_sshd=1; passive=1	         ;;
 	R) preserve_pbench_results=1		 ;;
@@ -466,7 +469,9 @@ else
     command=("sync.pl" "$worker_sync_port" "$expected_clients" "$worker_sync_count")
     runit /opt/pbench-agent/bench-scripts/pbench-user-benchmark --config="$configname" -- "${command[@]}"
 fi
-if ((preserve_pbench_results)) ; then
+if ((! do_copy_results)) ; then
+    echo "NOT copying results" 1>&2
+elif ((preserve_pbench_results)) ; then
     echo "Copying results" 1>&2
 else
     echo "Moving results" 1>&2
@@ -478,14 +483,17 @@ if supports_pbench_move_results_controller ; then
 	controller_arg="--controller=$controller_hostname"
     fi
 fi
-if ((preserve_pbench_results)) ; then
-    echo pbench-copy-results --user="$username" ${controller_arg:+$controller_arg} 1>&2
-    pbench-copy-results --user="$username" ${controller_arg:+$controller_arg}
-else
-    echo pbench-move-results --user="$username" ${controller_arg:+$controller_arg} 1>&2
-    pbench-move-results --user="$username" ${controller_arg:+$controller_arg}
+declare -i move_status=0
+if ((do_copy_results)) ; then
+    if ((preserve_pbench_results)) ; then
+	echo pbench-copy-results --user="$username" ${controller_arg:+$controller_arg} 1>&2
+	pbench-copy-results --user="$username" ${controller_arg:+$controller_arg}
+    else
+	echo pbench-move-results --user="$username" ${controller_arg:+$controller_arg} 1>&2
+	pbench-move-results --user="$username" ${controller_arg:+$controller_arg}
+    fi
+    move_status=$?
 fi
-declare -i move_status=$?
 echo "Final sync" 1>&2
 sync.pl "$agent_sync_port" "$expected_agents" 1
 if (( move_status )) ; then

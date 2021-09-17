@@ -166,10 +166,12 @@ Usage: ${___topsc:-$0} [options] [-- pbench-${bm_name} args]
                       No default; must be provided.
        -p pairs       Number of client/server pairs to create.
        -q             Don't emit agent logs on stderr
+       -Q             Do not send or move Pbench results
        -r pre-script  Run the specified pre-script prior to invoking
                       the controller.  All args to the pre-script
                       should then be exec'ed as the next stage.
        -R cpu_request Pod CPU request
+       -S             Preserve Pbench results after run
        -s             Send rather than move Pbench results
        -T             Report only summary
        -u user        Record the specified username
@@ -183,7 +185,7 @@ EOF
     exit 1
 }
 
-while getopts 'A:C:c:DdEeF:fHIi:Kk:L:M:m:N:nP:p:qR:r:SsTu:wXxYy' opt ; do
+while getopts 'A:C:c:DdEeF:fHIi:Kk:L:M:m:N:nP:p:QqR:r:SsTu:wXxYy' opt ; do
     case "$opt" in
 	A) pbench_agent_key=$OPTARG	 ;;
 	C) hostname=$OPTARG		 ;;
@@ -208,6 +210,7 @@ while getopts 'A:C:c:DdEeF:fHIi:Kk:L:M:m:N:nP:p:qR:r:SsTu:wXxYy' opt ; do
 	n) print_only=1			 ;;
 	P) pbench_agent_cfg=$OPTARG	 ;;
 	p) instances=$OPTARG		 ;;
+	Q) pbench_send_results=-n	 ;;
 	q) quiet=1			 ;;
 	R) pod_cpu_request=$OPTARG	 ;;
 	r) pre_script=$OPTARG		 ;;
