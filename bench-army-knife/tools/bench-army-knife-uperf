@@ -126,6 +126,7 @@ declare -i anti_affinity=1
 declare hostnetworkname=
 declare -i current_hostaddr=1
 declare -A host_aliases=()
+declare -a annotations=()
 
 function usage() {
     [[ -n "$*" ]] && echo "Unknown option $*" 1>&2
@@ -134,6 +135,8 @@ Usage: ${___topsc:-$0} [options] [-- pbench-${bm_name} args]
        -A agent_key   Use the specified public/private key pair for
                       communication with the agent.  Session key will
                       be generated if not provided.
+       -a annotation  Provide the specified annotations in the worker
+                      pod specs.  May be repeated.
        -C name        Use the specified name for the controller's hostname
        -c configname  Record the specified configuration name
        -D             Enable debugging.
@@ -166,12 +169,10 @@ Usage: ${___topsc:-$0} [options] [-- pbench-${bm_name} args]
                       No default; must be provided.
        -p pairs       Number of client/server pairs to create.
        -q             Don't emit agent logs on stderr
-       -Q             Do not send or move Pbench results
        -r pre-script  Run the specified pre-script prior to invoking
                       the controller.  All args to the pre-script
                       should then be exec'ed as the next stage.
        -R cpu_request Pod CPU request
-       -S             Preserve Pbench results after run
        -s             Send rather than move Pbench results
        -T             Report only summary
        -u user        Record the specified username
@@ -185,9 +186,10 @@ EOF
     exit 1
 }
 
-while getopts 'A:C:c:DdEeF:fHIi:Kk:L:M:m:N:nP:p:QqR:r:SsTu:wXxYy' opt ; do
+while getopts 'A:a:C:c:DdEeF:fHIi:Kk:L:M:m:N:nP:p:qR:r:SsTu:wXxYy' opt ; do
     case "$opt" in
 	A) pbench_agent_key=$OPTARG	 ;;
+	a) annotations+=("$OPTARG")	 ;;
 	C) hostname=$OPTARG		 ;;
 	c) configname=$OPTARG		 ;;
 	D) debug=1			 ;;
@@ -210,7 +212,6 @@ while getopts 'A:C:c:DdEeF:fHIi:Kk:L:M:m:N:nP:p:QqR:r:SsTu:wXxYy' opt ; do
 	n) print_only=1			 ;;
 	P) pbench_agent_cfg=$OPTARG	 ;;
 	p) instances=$OPTARG		 ;;
-	Q) pbench_send_results=-n	 ;;
 	q) quiet=1			 ;;
 	R) pod_cpu_request=$OPTARG	 ;;
 	r) pre_script=$OPTARG		 ;;
@@ -595,10 +596,11 @@ EOF
     fi
 }
 
-function create_network_annotation() {
-    if [[ -n "${interface_net:-}" ]] ; then
-	clean <<EOF
-annotations:
+function create_annotations() {
+    if [[ -n "${interface_net:-}${interface:-}${annotations[*]}" ]] ; then
+	echo "annotations:"
+	if [[ -n "${interface_net:-}" ]] ; then
+	    clean <<EOF
   k8s.v1.cni.cncf.io/networks: |-
     [
       {
@@ -607,11 +609,19 @@ annotations:
       }
     ]
 EOF
-    elif [[ -n "${interface:-}" ]] ; then
+	elif [[ -n "${interface:-}" ]] ; then
 	clean <<EOF
-annotations:
   k8s.v1.cni.cncf.io/networks: "$interface"
 EOF
+	fi
+	local ann=
+	local key=
+	local value=
+	for ann in "${annotations[@]}" ; do
+	    key=${ann%%=*}
+	    value=${ann#*=}
+	    echo "  $key: \"$value\""
+	done
     fi
 }
 
@@ -657,7 +667,7 @@ kind: Pod
 metadata:
   name: $(pbench-benchmark-podname-base "$type")${suffix}
   namespace: "$namespace"
-$(indent 2 create_network_annotation)
+$(indent 2 create_annotations)
   labels:
     bench-army-knife-id: "$job_uuid"
     k8s-app: ${namespace}-${bm_name}${type:+-$type}

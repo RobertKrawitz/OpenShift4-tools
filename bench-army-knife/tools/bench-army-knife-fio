@@ -133,6 +133,7 @@ declare pvmount_path=
 # shellcheck disable=SC2034
 declare job_file=
 declare jobfile=
+declare -a annotations=()
 
 function usage() {
     [[ -n "$*" ]] && echo "Unknown option $*" 1>&2
@@ -141,6 +142,8 @@ Usage: ${___topsc:-$0} [options] [-- pbench-${bm_name} args]
        -A agent_key   Use the specified public/private key pair for
                       communication with the agent.  Session key will
                       be generated if not provided.
+       -a annotation  Provide the specified annotations in the worker
+                      pod specs.  May be repeated.
        -C name        Use the specified name for the controller's hostname
        -c configname  Record the specified configuration name
        -D             Enable debugging.
@@ -177,9 +180,7 @@ Usage: ${___topsc:-$0} [options] [-- pbench-${bm_name} args]
        -r pre-script  Run the specified pre-script prior to invoking
                       the controller.  All args to the pre-script
                       should then be exec'ed as the next stage.
-       -Q             Do not send or move Pbench results
        -R cpu_request Pod CPU request
-       -S             Preserve Pbench results after run
        -s             Send rather than move Pbench results
        -T             Report only summary
        -u user        Record the specified username
@@ -203,9 +204,10 @@ EOF
     exit 1
 }
 
-while getopts 'A:C:c:DdEeF:fHIi:J:Kk:L:M:m:N:nP:p:QqR:r:SsTu:V:wXxYy' opt ; do
+while getopts 'A:a:C:c:DdEeF:fHIi:J:Kk:L:M:m:N:nP:p:qR:r:SsTu:V:wXxYy' opt ; do
     case "$opt" in
 	A) pbench_agent_key=$OPTARG	 ;;
+	a) annotations+=("$OPTARG")	 ;;
 	C) hostname=$OPTARG		 ;;
 	c) configname=$OPTARG		 ;;
 	D) debug=1			 ;;
@@ -230,7 +232,6 @@ while getopts 'A:C:c:DdEeF:fHIi:J:Kk:L:M:m:N:nP:p:QqR:r:SsTu:V:wXxYy' opt ; do
 	n) print_only=1			 ;;
 	P) pbench_agent_cfg=$OPTARG	 ;;
 	p) instances=$OPTARG		 ;;
-	Q) pbench_send_results=-n	 ;;
 	q) quiet=1			 ;;
 	R) pod_cpu_request=$OPTARG	 ;;
 	r) pre_script=$OPTARG		 ;;
@@ -1576,6 +1577,20 @@ EOF
     fi
 }
 
+function create_annotations() {
+    if [[ -n "${annotations[*]}" ]] ; then
+	echo "annotations:"
+	local ann=
+	local key=
+	local value=
+	for ann in "${annotations[@]}" ; do
+	    key=${ann%%=*}
+	    value=${ann#*=}
+	    echo "  $key: \"$value\""
+	done
+    fi
+}
+
 function pbench-benchmark-pod() {
     local -a etchosts_addons=()
     local -A extra_hosts=()
@@ -1618,6 +1633,7 @@ kind: Pod
 metadata:
   name: $(pbench-benchmark-podname-base "$type")${suffix}
   namespace: "$namespace"
+$(indent 2 create_annotations)
   labels:
     bench-army-knife-id: "$job_uuid"
     k8s-app: ${namespace}-${bm_name}${type:+-$type}
