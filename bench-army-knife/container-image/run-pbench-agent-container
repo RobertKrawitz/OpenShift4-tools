@@ -176,20 +176,30 @@ if (( !sshd_port )) ; then
     exit 1
 fi
 
+function sync_to() {
+    local controller_host=$1
+    local controller_port=$2
+    local token=${3:-$(( (RANDOM * 262144) + (RANDOM * 8) + (RANDOM %8)))}
+    while : ; do
+	local n_controller_host=$controller_host
+	if [[ -n "${dns_server:-}" && $controller_host =~ ^[[:alnum:]][-[:alnum:]]*[[:alnum:]]\.[[:alnum:]][-[:alnum:]]*[[:alnum:]]$ ]] ; then
+	    echo "Looking for IP address for $controller_host from $dns_server" 1>&2
+	    while read -r line ; do
+		echo "$line" 1>&2
+		if [[ $line =~ ^$controller_host(\.svc.cluster.local)?\ has\ address\ (.*)$ ||
+			  $line =~ (.*)\ has\ address\ (($controller_host)(\.svc.cluster.local)?)$ ]] ; then
+		    n_controller_host=${BASH_REMATCH[2]}
+		    break
+		fi
+	    done < <(host "$controller_host.svc.cluster.local" "$dns_server")
+	fi
+	sync_to.pl -r 1 "$n_controller_host" "$controller_port" "$token" && return;
+    done
+}	
+
 function run_pbench_agent_once() {
     echo "Running pbench agent" 1>&2
     ip addr 1>&2
-    if [[ -n "${dns_server:-}" && $controller_host =~ ^[[:alnum:]][-[:alnum:]]*[[:alnum:]]\.[[:alnum:]][-[:alnum:]]*[[:alnum:]]$ ]] ; then
-	echo "Looking for IP address for $controller_host from $dns_server" 1>&2
-	while read -r line ; do
-	    echo "$line" 1>&2
-	    if [[ $line =~ ^$controller_host(\.svc.cluster.local)?\ has\ address\ (.*)$ ||
-		      $line =~ (.*)\ has\ address\ (($controller_host)(\.svc.cluster.local)?)$ ]] ; then
-		controller_host=${BASH_REMATCH[2]}
-		break
-	    fi
-	done < <(host "$controller_host.svc.cluster.local" "$dns_server")
-    fi
 
     # Let the controller know that we're ready to go
     # shellcheck disable=2155
@@ -200,7 +210,7 @@ function run_pbench_agent_once() {
     fi
     echo "Waiting for contact from controller" 1>&2
     # shellcheck disable=2155
-    local sync_data=$(sync_to.pl "$controller_host" "$controller_port" "$token")
+    local sync_data=$(sync_to "$controller_host" "$controller_port" "$token")
     echo "Got sync, data $sync_data" 1>&2
     local ssh_tunnel_pid
 
@@ -219,7 +229,7 @@ function run_pbench_agent_once() {
 
     # And wait around to be released after pbench-move-results
     echo "Waiting for release from controller" 1>&2
-    sync_to.pl "$controller_host" "$controller_port"
+    sync_to "$controller_host" "$controller_port"
 }
 
 while : ; do
