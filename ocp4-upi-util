@@ -1,4 +1,4 @@
-#!/bin/bash -x
+#!/bin/bash
 
 # Copyright 2019-2020 Robert Krawitz/Red Hat
 #
@@ -958,29 +958,38 @@ function install_kata() {
     fi
     echo '*** Installing Kata'
     local -i waiting=0
-    while (($(oc get mcp worker -ojson | jq -r .status.machineCount) <= 0)) ; do
-	if (( ! waiting)) ; then
-	    echo "   Waiting for worker machineconfigpool"
-	    waiting=1
-	fi
-	sleep 5
-    done
-    oc apply -f <<< "$(generate_kata_operator_yaml)"
+    oc apply -f - <<< "$(generate_kata_operator_yaml)"
+    # Wait for kataconfig to exist as a CRD.
     # Probably should have a timeout here.
     until oc get kataconfig -A >/dev/null 2>&1 ; do sleep 1; done
-    oc apply -f <<'EOF'
+    until oc apply -f - <<'EOF'
 apiVersion: kataconfiguration.openshift.io/v1
 kind: KataConfig
 metadata:
   name: example-kataconfig
 EOF
-    waiting=0
+    do
+	sleep 5
+    done
     local readyCount
     local totalCount
     local -i lastCount=-1
-    while [[ $(oc get kataconfig -ojsonpath='{.items[0].status.installationStatus.IsInProgress}') != false ]] ; do
-	readyCount=$(oc get kataconfig -ojsonpath='{.items[0].status.installationStatus.completed.completedNodesCount}')
-	totalCount=$(oc get kataconfig -ojsonpath='{.items[0].status.totalNodesCount}')
+    # Wait for the kataconfig to exist
+    until oc get kataconfig example-kataconfig >/dev/null 2>&1 ; do
+	sleep 5
+    done
+    while [[ -z "$totalCount" ]] ; do
+	totalCount=$(oc get kataconfig example-kataconfig -ojsonpath='{.status.totalNodesCount}') || true
+	if [[ -n "$totalCount" ]] ; then
+	    break
+	fi
+	sleep 5
+    done
+    until [[ $(oc get kataconfig example-kataconfig -ojsonpath='{.status.installationStatus.IsInProgress}') = false ]] ; do
+	readyCount=$(oc get kataconfig example-kataconfig -ojsonpath='{.status.installationStatus.completed.completedNodesCount}') || {
+	    sleep 5
+	    continue
+	}
 	if [[ -n $readyCount && $readyCount -ne $lastCount ]] ; then
 	    echo "    Waiting for all nodes to become ready ($readyCount / $totalCount)..."
 	    lastCount=$readyCount
