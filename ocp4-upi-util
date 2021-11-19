@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/bash -x
 
 # Copyright 2019-2020 Robert Krawitz/Red Hat
 #
@@ -48,6 +48,7 @@ declare -a exclude_ifs=()
 declare public_interface=
 declare bare_metal_interface=
 declare -i do_install_kata=0
+declare -i apply_kata_workaround=1
 
 # shellcheck disable=SC2155
 declare -r command_help=$(cat <<'EOF'
@@ -113,6 +114,8 @@ Usage: $command -c <configfile> [options]$cmdmsg args...
     Options:
         -k public key      Public key file (default $ocp4_public_key)
         -p pull secret     Pull secret (default $ocp4_pull_secret)
+        -i installdir      Install into specified directory
+        -e var=val         Override setting from the config file
     The config file is bash syntax and is sourced by this installer.
     All nodes, including the bootstrap node on which this command is run,
     must have the same network topology.  There must be one public interface
@@ -141,6 +144,8 @@ Usage: $command -c <configfile> [options]$cmdmsg args...
                               (default 0).  This is in addition to any
                               explicit infra nodes.
         do_install_kata       Install OpenShift sandboxed containers
+	apply_kata_workaround Apply 4.8 workaround for sandboxed containers
+                              not adding additional CPUs correctly
         masters_schedulable   Allow user pods to be scheduled on master nodes
                               (default 0)
         bootstrap_mac         MAC address of bootstrap VM
@@ -878,15 +883,8 @@ EOF
     done
 }
 
-function setup_infra() {
-    (( infra_count <= 0 && master_as_infra <= 0 )) && return
-    echo "*** Labeling infra nodes"
-    local node
-    while read -r node ; do
-	oc label "$node" node-role.kubernetes.io/infra= node-role.kubernetes.io/worker- |grep -v 'label .* not found'
-    done <<< "$(get_infra_nodes)"
-    echo "*** Moving monitoring to infra nodes"
-    oc apply -f - <<EOF
+function generate_infra() {
+    cat <<EOF
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -895,6 +893,61 @@ metadata:
 data:
   config.yaml: |+
 $(make_infra_config alertmanagerMain prometheusK8s prometheusOperator grafana k8sPrometheusAdapter kubeStateMetrics telemeterClient openshiftStateMetrics thanosQuerier)
+EOF
+}
+
+function setup_infra() {
+    (( infra_count <= 0 && master_as_infra <= 0 )) && return
+    echo "*** Labeling infra nodes"
+    local node
+    while read -r node ; do
+	oc label "$node" node-role.kubernetes.io/infra= node-role.kubernetes.io/worker- |grep -v 'label .* not found'
+    done <<< "$(get_infra_nodes)"
+    echo "*** Moving monitoring to infra nodes"
+    generate_infra | oc apply -f -
+}
+
+function generate_kata_operator_yaml() {
+    cat <<'EOF'
+apiVersion: operators.coreos.com/v1alpha1
+kind: CatalogSource
+metadata:
+ name:  my-operator-catalog
+ namespace: openshift-marketplace
+spec:
+ DisplayName: My Operator Catalog
+ sourceType: grpc
+ image:  quay.io/openshift_sandboxed_containers/openshift-sandboxed-containers-operator-catalog:v1.2.0
+ updateStrategy:
+   registryPoll:
+      interval: 5m
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: openshift-sandboxed-containers-operator
+---
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: openshift-sandboxed-containers-operator
+  namespace: openshift-sandboxed-containers-operator
+spec:
+  targetNamespaces:
+  - openshft-sandboxed-containers-operator
+---
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: sandboxed-containers-operator
+  namespace: openshift-sandboxed-containers-operator
+spec:
+  channel: "preview-1.0"
+  installPlanApproval: Automatic
+  name: sandboxed-containers-operator
+  source: my-operator-catalog
+  sourceNamespace: openshift-marketplace
+  startingCSV: sandboxed-containers-operator.v1.2.0
 EOF
 }
 
@@ -912,27 +965,22 @@ function install_kata() {
 	fi
 	sleep 5
     done
-    # shellcheck disable=SC2155
-    local -i currentGeneration=$(oc get mcp worker -ojson | jq -r .status.observedGeneration)
-    curl -s -S https://raw.githubusercontent.com/openshift/sandboxed-containers-operator/master/deploy/install.sh | bash
+    oc apply -f <<< "$(generate_kata_operator_yaml)"
+    # Probably should have a timeout here.
+    until oc get kataconfig -A >/dev/null 2>&1 ; do sleep 1; done
+    oc apply -f <<'EOF'
+apiVersion: kataconfiguration.openshift.io/v1
+kind: KataConfig
+metadata:
+  name: example-kataconfig
+EOF
     waiting=0
-    while (($(oc get mcp worker -ojson |jq -r '.status.observedGeneration') <= currentGeneration)) ; do
-	if (( ! waiting )) ; then
-	    echo "   Waiting for worker generation to increment"
-	    waiting=1
-	fi
-	sleep 5
-    done
-    echo
+    local readyCount
+    local totalCount
     local -i lastCount=-1
-    while : ; do
-	# shellcheck disable=SC2155
-	local readyCount=$(oc get mcp worker -ojson | jq -r .status.readyMachineCount)
-	# shellcheck disable=SC2155
-	local totalCount=$(oc get mcp worker -ojson | jq -r .status.machineCount)
-	if [[ -n "$readyCount" && -n "$totalCount" && $readyCount -eq $totalCount ]] ; then
-	    break
-	fi
+    while [[ $(oc get kataconfig -ojsonpath='{.items[0].status.installationStatus.IsInProgress}') != false ]] ; do
+	readyCount=$(oc get kataconfig -ojsonpath='{.items[0].status.installationStatus.completed.completedNodesCount}')
+	totalCount=$(oc get kataconfig -ojsonpath='{.items[0].status.totalNodesCount}')
 	if [[ -n $readyCount && $readyCount -ne $lastCount ]] ; then
 	    echo "    Waiting for all nodes to become ready ($readyCount / $totalCount)..."
 	    lastCount=$readyCount
@@ -941,6 +989,43 @@ function install_kata() {
     done
     echo "    Done"
     echo '*** Kata installed successfully'
+    if (( apply_kata_workaround )) ; then
+	# shellcheck disable=SC2155
+	local cmdfile=$(cat <<'EOF'
+#!/bin/bash
+set -e
+if [[ -f /usr/libexec/kata-containers/osbuilder/kata-osbuilder.sh ]] ; then
+    sudo mount -o rw,remount /usr
+    grep cpu /usr/lib/udev/rules.d/40-redhat.rules
+    sudo sed -i  's/^SUBSYSTEM=="cpu"/#SUBSYSTEM=="cpu"/' /usr/lib/udev/rules.d/40-redhat.rules
+    grep cpu /usr/lib/udev/rules.d/40-redhat.rules
+    sudo /usr/libexec/kata-containers/osbuilder/kata-osbuilder.sh
+    sudo mount -o ro,remount /usr
+    grep cpu /usr/lib/udev/rules.d/40-redhat.rules
+else
+    echo "Kata does not appear to be installed on $(hostname)"
+fi
+EOF
+	       )
+	local -a oc_version
+	IFS=. read -r -a oc_version <<< "$(oc version -ojson |jq -r .openshiftVersion)"
+
+	if ((oc_version[0] > 4 || (oc_version[0] == 4 && oc_version[1] != 8) )) ; then
+	    echo "Openshift version ${oc_version[0]}.${oc_version[1]}.${oc_version[2]} does not need Kata workaround" 1>&2
+	else
+	    echo "Applying sandboxed containers workaround for OCP 4.8"
+	    local -i failed=0
+	    for node in $(oc get node -lnode-role.kubernetes.io/worker= -oname --no-headers); do
+		echo -n "  $node: "
+		if oc debug -T "$node" -- chroot /host sh -c 'cat > /tmp/fix-kata; chmod +x /tmp/fix-kata; /tmp/fix-kata' <<< "$cmdfile" ; then
+		    echo "done"
+		else
+		    failed=$((failed+1))
+		    echo "failed!"
+		fi
+	    done
+	fi
+    fi
 }
 
 function start_workers() {
@@ -1081,12 +1166,15 @@ function do_install() {
 }
 
 #################################################################
-while getopts 'c:i:k:p:' opt ; do
+declare -a cmdline_vars=()
+
+while getopts 'c:i:k:p:e:' opt ; do
     case "$opt" in
 	c) config_file="$OPTARG" ;;
 	i) cluster_install_dir="$OPTARG" ;;
 	k) ocp4_public_key="$OPTARG"     ;;
 	p) ocp4_pull_secret="$OPTARG"    ;;
+	e) cmdline_vars+=("$OPTARG")     ;;
 	*) usage                         ;;
     esac
 done
@@ -1112,6 +1200,15 @@ fi
 
 # shellcheck disable=SC1090
 . "$config_file" || fatal "Unable to process config file $config_file"
+
+declare var=
+for var in "${cmdline_vars[@]}" ; do
+    # Really should sanity check this, but this command is not
+    # intended to run with privilege higher than the command line
+    # that invoked it.
+    eval "$var"
+done
+
 cluster_basedomain=${cluster_basedomain:-${cluster_domain#*.}}
 cluster_name=${cluster_name:-${cluster_domain%%.*}}
 bootstrap_ipaddr=${bootstrap_prefix}.1
