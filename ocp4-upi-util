@@ -48,12 +48,14 @@ declare -a exclude_ifs=()
 declare public_interface=
 declare bare_metal_interface=
 declare -i do_install_kata=0
+declare -i do_install_cnv=0
 declare -i apply_kata_workaround=1
 
 # shellcheck disable=SC2155
 declare -r command_help=$(cat <<'EOF'
     Commands:
         do_install <version>     Install a baremetal cluster using UPI
+        install_cnv              Install sandboxed containers into cluster
         install_kata             Install sandboxed containers into cluster
         bootstrap_destroy        Destroy any (virtual) bootstrap node
         setup_dnsmasq            Set up dnsmasq/haproxy configuration
@@ -907,57 +909,86 @@ function setup_infra() {
     generate_infra | oc apply -f -
 }
 
-function generate_kata_operator_yaml() {
-    cat <<'EOF'
-apiVersion: operators.coreos.com/v1alpha1
-kind: CatalogSource
-metadata:
- name:  my-operator-catalog
- namespace: openshift-marketplace
-spec:
- DisplayName: My Operator Catalog
- sourceType: grpc
- image:  quay.io/openshift_sandboxed_containers/openshift-sandboxed-containers-operator-catalog:v1.2.0
- updateStrategy:
-   registryPoll:
-      interval: 5m
----
+function _get_ns_csv_name() {
+    local ns=$1
+    oc get csv -n "$ns" -ojsonpath='{.items[0].metadata.name}'
+}
+
+function _get_ns_version() {
+    local ns=$1
+    oc get csv -n "$ns" -ojsonpath='{.items[0].spec.version}'
+}
+
+function _get_operator_csv() {
+    local operator=$1
+    oc get packagemanifest -n openshift-marketplace "$operator" -ojsonpath='{.status.channels[0].currentCSV}'
+}
+
+function _get_operator_channel() {
+    local operator=$1
+    oc get packagemanifest -n openshift-marketplace "$operator" -ojsonpath='{.status.channels[0].name}'
+}
+
+function _get_operator_catalog_source() {
+    local operator=$1
+    oc get packagemanifest -n openshift-marketplace "$operator" -ojsonpath='{.status.catalogSource}'
+}
+
+function _get_operator_namespace() {
+    local operator=$1
+    oc get packagemanifest -n openshift-marketplace "$operator" -ojsonpath='{.status.channels[0].currentCSVDesc.annotations.operatorframework\.io/suggested-namespace}'
+}
+
+function generate_operator_yaml() {
+    local operator=$1
+    local csv
+    csv=$(_get_operator_csv "$operator")
+    local channel
+    channel=$(_get_operator_channel "$operator")
+    local catalog_source
+    catalog_source=$(_get_operator_catalog_source "$operator")
+    local namespace
+    namespace=$(_get_operator_namespace "$operator")
+    cat <<EOF
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: openshift-sandboxed-containers-operator
+  name: "$namespace"
 ---
 apiVersion: operators.coreos.com/v1
 kind: OperatorGroup
 metadata:
-  name: openshift-sandboxed-containers-operator
-  namespace: openshift-sandboxed-containers-operator
+  name: "$namespace"
+  namespace: "$namespace"
 spec:
   targetNamespaces:
-  - openshft-sandboxed-containers-operator
+  - $namespace
 ---
 apiVersion: operators.coreos.com/v1alpha1
 kind: Subscription
 metadata:
-  name: sandboxed-containers-operator
-  namespace: openshift-sandboxed-containers-operator
+  name: $operator
+  namespace: $namespace
 spec:
-  channel: "preview-1.0"
+  channel: "$channel"
   installPlanApproval: Automatic
-  name: sandboxed-containers-operator
-  source: my-operator-catalog
+  name: $operator
+  source: $catalog_source
   sourceNamespace: openshift-marketplace
-  startingCSV: sandboxed-containers-operator.v1.2.0
+  startingCSV: $csv
 EOF
 }
 
-function install_kata() {
+function generate_kata_operator_yaml() {
+    generate_operator_yaml "sandboxed-containers-operator"
+}
+
+function install_kata_internal() {
     (( do_install_kata <= 0 )) && return
-    if oc get kataconfig >/dev/null 2>&1 ; then
+    if oc get kataconfig example-kataconfig >/dev/null 2>&1 ; then
 	echo '*** Kata already installed'
     fi
     echo '*** Installing Kata'
-    local -i waiting=0
     oc apply -f - <<< "$(generate_kata_operator_yaml)"
     # Wait for kataconfig to exist as a CRD.
     # Probably should have a timeout here.
@@ -1037,6 +1068,46 @@ EOF
     fi
 }
 
+function install_kata() {
+    do_install_kata=1 install_kata_internal
+}
+
+function generate_cnv_operator_yaml() {
+    generate_operator_yaml "kubevirt-hyperconverged"
+}
+
+function install_cnv_internal() {
+    (( do_install_cnv <= 0 )) && return
+    if oc get hyperconverged kubevirt-hyperconverged >/dev/null 2>&1 ; then
+	echo '*** CNV already installed'
+    fi
+    echo '*** Installing CNV'
+    oc apply -f - <<< "$(generate_cnv_operator_yaml)"
+    # Wait for kataconfig to exist as a CRD.
+    # Probably should have a timeout here.
+    until oc get hyperconverged -A >/dev/null 2>&1 ; do sleep 1; done
+    until oc apply -f - <<'EOF'
+apiVersion: hco.kubevirt.io/v1beta1
+kind: HyperConverged
+metadata:
+  name: kubevirt-hyperconverged
+  namespace: openshift-cnv
+Spec:
+  BareMetalPlatform: true
+EOF
+    do
+	sleep 5
+    done
+    until oc get deployment -n openshift-cnv virt-operator >/dev/null 2>&1 ; do
+	sleep 5
+    done
+    oc -n openshift-cnv wait deployment/virt-operator --for=condition=Available --timeout="300s"
+}
+
+function install_cnv() {
+    do_install_cnv=1 install_cnv_internal
+}
+
 function start_workers() {
     (( ${#mgmt_workers[@]} <= 0 )) && return
     echo "*** Starting workers"
@@ -1052,7 +1123,8 @@ function start_workers() {
 	sleep 1
     done
     setup_infra
-    install_kata
+    install_kata_internal
+    install_cnv_internal
 }
 
 # If this is called from the command line it will get passed any arguments.
