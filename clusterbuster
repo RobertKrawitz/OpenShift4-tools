@@ -232,7 +232,7 @@ EOF
 }
 
 function _helpExtended() {
-    _helpmsg
+    _helpmsg "$@"
     cat <<'EOF'
 
 Extended Options:
@@ -434,7 +434,7 @@ EOF
 }
 
 function _helpEverything() {
-    _helpExtended
+    _helpExtended "$@"
     cat <<'EOF'
 
 
@@ -560,12 +560,13 @@ function help() {
 }
 
 function help_extended() {
-    _helpExtended | "${PAGER:-more}"
+    _helpExtended "$@" | "${PAGER:-more}"
     exit 1
 }
 
+# shellcheck disable=SC2120
 function help_everything() {
-    _helpEverything | "${PAGER:-more}"
+    _helpEverything "$@" | "${PAGER:-more}"
     exit 1
 }
 
@@ -689,16 +690,14 @@ function get_logs_poll() {
 	    esac
 	done
 	# shellcheck disable=SC2086
-	local cleanupCommand=
-	if ((cleanup)) ; then
-	    cleanupCommand="; sleep 1; rm -f '$syncFlagFile'"
-	fi
+	local cleanupCommand="; sleep 1; rm -f '$syncFlagFile'"
 	trap 'exec 2>/dev/null; [[ -n "$(jobs -p)" ]] && kill $(jobs -p); return 1' INT TERM HUP
 	trap 'exec 2>/dev/null; kill $(jobs -p); return 1' USR1
 	trap 'exec 3>&2 2>/dev/null ; kill $(jobs -p) && wait ; exec 2>&3 3>&-' USR2
 	local mypid=$BASHPID
 	monitor_pods -p "$mypid" -- -l "${basename}-id=$runUUID" &
-	run_logger -p "$mypid" oc rsh -T "$pod" sh -c "while [[ ! -f '$syncFlagFile' ]] ; do sleep 5; done; cat '$syncFlagFile' $cleanupCommand" &
+	# shellcheck disable=SC2086
+	run_logger -p "$mypid" oc rsh -T $pod sh -c "while [[ ! -f '$syncFlagFile' ]] ; do sleep 5; done; cat '$syncFlagFile' $cleanupCommand" &
 	wait
 	# shellcheck disable=SC2046
 	if [[ -n "$(jobs -p)" ]] ; then
@@ -815,9 +814,9 @@ function process_option() {
     optvalue=${option#*=}
     noptname=${optname//-/_}
     if [[ $option != *'='* ]] ; then
-	if [[ $optname = "no_"* || $optname = "dont_"* ]] ; then
-	    optname=${optname#dont_}
-	    optname=${optname#no_}
+	if [[ $noptname = "no_"* || $optname = "dont_"* ]] ; then
+	    noptname=${noptname#dont_}
+	    noptname=${noptname#no_}
 	    optvalue=0
 	else
 	    optvalue=1
@@ -825,6 +824,7 @@ function process_option() {
     fi
     local noptname1=${noptname//_/}
     # shellcheck disable=SC2206
+    # shellcheck disable=SC2119
     case "$noptname1" in
 	helpall*)		    help_extended				;;
 	helpeverything*)	    help_everything				;;
@@ -833,6 +833,7 @@ function process_option() {
 	basename)		    basename=$optvalue				;;
 	blocksize)		    blocksize=$optvalue				;;
 	containers)		    containers=$optvalue			;;
+	deployments|depspername*)   depsPerNamespace=$optvalue			;;
 	namespaces)		    namespaces=$optvalue			;;
 	datarate)		    dataRate=$optvalue				;;
 	bytes)			    set_xfer "$optvalue"			;;
@@ -952,7 +953,7 @@ function process_option() {
 		help
 	    fi
 	    ;;
-	*) unknown_opts+=("$noptname") ;;
+	*) unknown_opts+=("$noptname ($noptname1)") ;;
     esac
     if [[ $deploymentType != pod && $deploymentType != deployment ]] ; then
 	echo "-T/--deployment_type must be either pod or deployment"
@@ -1105,7 +1106,9 @@ case "${podType,,}" in
     pause|pausepod)        podType=PausePod      ;;
     file|files)            podType=Files         ;;
     log|logger|logging)    podType=Log           ;;
-    *)			   help_extended	 ;;
+    *)
+	help_extended "(Unknown pod type '$podType')"
+	;;
 esac
 
 if [[ -n ${1:-} ]] ; then
