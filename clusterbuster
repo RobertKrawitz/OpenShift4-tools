@@ -66,10 +66,8 @@ declare deploymentType=deployment
 declare -i basetime
 declare opt
 declare -r nl=$'\n'
-declare -a pod_resource_requests=()
-declare -a pod_resource_limits=()
-declare -a container_resource_requests=()
-declare -a container_resource_limits=()
+declare -a resource_requests=()
+declare -a resource_limits=()
 declare -A namespaces_in_use=()
 declare -a namespaces_to_create=()
 declare -i scale_ns=0
@@ -187,6 +185,7 @@ Usage: $0 [options] [name]
        -b blocksize    Number of objects to create in one oc call (default 1)
        -c containers   Number of containers per pod
        -d deployments  Number of deployments per namespace (default 1)
+       -f jobfile      Job file containing settings
        -n              Print what would be done without doing it
        -N namespaces   Number of namespaces to create (default 1)
                        If 0 is specified, then no namespaces are created
@@ -251,6 +250,9 @@ Extended Options:
                         to correct for clock skew.  May be float.
        --report         Print report (client/server, soaker,
                         fio, sysbench only)
+       --sync           Sync start of data transfer or CPU load
+                        (default no) (-Y)
+       --doit=<1,0>     Run the command or not (default 1) (inverse of -n)
        --verbose-report Print detailed report
        --json-report    Print JSON report
        --precleanup     Clean up any prior objects
@@ -258,9 +260,9 @@ Extended Options:
        --timeout=N      Time out reporting
        --image_pull_policy=<policy>
                         Image pull policy (default $imagePullPolicy)
-       --container_image=<image>
-                        Image to use (default $containerImage).
-                        Does not apply to "classic" or "pause" pod types.
+       --report_object_creation=<1,0>
+                        Report creation of individual objects (default 1)
+                        (inverse of -Q)
        --log-strategy={poll,listen}
                         Use the desired logging strategy to retrieve logs.
                         - Poll indicates that sync pods should be polled
@@ -273,6 +275,60 @@ Extended Options:
                         work if pods cannot connect to the host from which
                         this tool is run.  Polling should be used unless
                         there is reason to believe it is not functioning.
+       --uuid=<uuid>    Use the specified UUID for the run.  Default is to
+                        generate a random-based UUID.
+
+    Tuning object creation (short equivalents):
+       --scale-ns=[0,1] Scale up the number of namespaces.
+                        (default 0)
+       --scale-deployments=[0,1]
+                        Scale up the number of deployments.
+                        (default 1) (-S)
+       --first_deployment=N
+                        Specify the index of the first deployment.
+                        Default is 0 (but see --scale_deployments)
+       --first_secret=N
+       --first_namespace=N
+       --first_deployment=N
+       --blocksize=N    Number of objects per oc call (-b)
+                        Below options default to blocksize
+       --blocksize_secrets=N
+       --blocksize_namespaces=N
+       --blocksize_deployments=N
+       --sleep=N        Number of seconds between object creations (-w)
+                        Below options default to sleeptime
+       --sleep_secrets=N
+       --sleep_namespaces=N
+       --sleep_deployments=N
+       --parallel=N     Number of operations in parallel (-p)
+                        Below options default to parallel
+       --parallel_secrets=N
+       --parallel_namespaces=N
+       --parallel_deployments=N
+       --node_selector=selector
+                        Annotate pods with the specified node selector
+                        Default $nodeSelector
+                        Specify empty value to not provide a node selector.
+
+    Pod Options:
+       --container_image=<image>
+                        Image to use (default $containerImage).
+                        Does not apply to "classic" or "pause" pod types.
+       --deployment_type=<pod,deployment>
+                        Deploy via individual pods or deployments (default $deploymentType)
+                        (-T)
+       --external_sync=host:port
+                        Sync to external host rather than internally
+       --<type>=<resource=value>
+                        Resource requests and limits
+                        <type> is request or limit.
+       --runtimeclass=class
+                        Run the pods in the designated runtimeclass.
+       -K
+       --kata           Synonym for --runtimeclass=${kataRuntimeClass}
+       --emptydir=dir   Mount an emptydir volume at the specified mount point.
+       --tolerate=<key:operator:effect>
+                        Apply the specified tolerations to created pods.
 
     Using PBench:
        If pbench is to be used, both arguments below must be provided.
@@ -309,64 +365,19 @@ Extended Options:
                         This should be a divisor of the file size; if not,
                         the results are unspecified.
 
-    Tuning object creation (short equivalents):
-       --scale-ns=[0,1] Scale up the number of namespaces.
-                        (default 0)
-       --scale-deployments=[0,1]
-                        Scale up the number of deployments.
-                        (default 1)
-       --first_deployment=N
-                        Specify the index of the first deployment.
-                        Default is 0 (but see --scale_deployments)
-       --first_secret=N
-       --first_namespace=N
-       --first_deployment=N
-       --blocksize=N    Number of objects per oc call (-b)
-                        Below options default to blocksize
-       --blocksize_secrets=N
-       --blocksize_namespaces=N
-       --blocksize_deployments=N
-       --sleep=N        Number of seconds between object creations (-w)
-                        Below options default to sleeptime
-       --sleep_secrets=N
-       --sleep_namespaces=N
-       --sleep_deployments=N
-       --parallel=N     Number of operations in parallel (-p)
-                        Below options default to parallel
-       --parallel_secrets=N
-       --parallel_namespaces=N
-       --parallel_deployments=N
-       --node_selector=selector
-                        Annotate pods with the specified node selector
-                        Default $nodeSelector
-                        Specify empty value to not provide a node selector.
-
-    Pod Options:
-       --external_sync=host:port
-                        Sync to external host rather than internally
-       --<type>=<resource=value>
-                        Resource requests and limits
-                        <type> is pod_resource_request, pod_resource_limit,
-                        container_resource_request, or container_resource_limit
-       --runtimeclass=class
-                        Run the pods in the designated runtimeclass.
-       -K
-       --kata           Synonym for --runtimeclass=${kataRuntimeClass}
-       --emptydir=dir   Mount an emptydir volume at the specified mount point.
-       --tolerate=<key:operator:effect>
-                        Apply the specified tolerations to created pods.
-
     Client/server options:
        --affinity       Force affinity between client and server pods
-                        in a deployment.
+                        in a deployment.  Default is neither affinity nor 
+                        anti-affinity.
        --anti-affinity  Force anti-affinity between client and server pods
-                        in a deployment.
+                        in a deployment.  Default is neither affinity nor 
+                        anti-affinity.
        --bytes=N[,M]    Number of bytes to transfer
                         Also --kb, --kib, --mb, --mib, --gb, --gib, --tb, --tib
                         (-M is equivalent to --mb)
        --create_routes  Create routes for services (default 0)
        --datarate=N     Data transfer rate (-D)
-       --exit_at_end    Exit upon completion of transfer (-e)
+       --exit_at_end    Exit upon completion of transfer (-e/-E)
        --msgsize=N      Message size for data transfer (-m)
        --poddelay=N     Time in seconds to wait for pods to start data xfer
        --transfertime=N Time to transfer data (-t).  Two comma-separated
@@ -794,6 +805,9 @@ function parse_size() {
 
 function process_option() {
     local option=$1
+    option=${option%% }
+    option=${option## }
+    [[ -n "$option" ]] || return
     local optname
     local optvalue
     optname=${option%%=*}
@@ -809,12 +823,13 @@ function process_option() {
 	    optvalue=1
 	fi
     fi
+    local noptname1=${noptname//_/}
     # shellcheck disable=SC2206
-    case "$noptname" in
-	help_all*)		    help_extended				;;
-	help_everything*)	    help_everything				;;
+    case "$noptname1" in
+	helpall*)		    help_extended				;;
+	helpeverything*)	    help_everything				;;
 	help*)			    help					;;
-	pod_type)		    podType=$optvalue				;;
+	podtype)		    podType=$optvalue				;;
 	basename)		    basename=$optvalue				;;
 	blocksize)		    blocksize=$optvalue				;;
 	containers)		    containers=$optvalue			;;
@@ -832,6 +847,7 @@ function process_option() {
 	msgsize)		    msgSize=$optvalue				;;
 	secrets)		    secrets=$optvalue				;;
 	verbose)		    verbose=$optvalue				;;
+	doit)			    doit=$optvalue				;;
 	quiet)			    verbose=$((!optvalue))			;;
 	processes)		    processes_per_pod=$optvalue			;;
 	replicas)		    replicas=$optvalue				;;
@@ -840,75 +856,73 @@ function process_option() {
 	podsleep)		    podsleeptime=$optvalue			;;
 	poddelay)		    poddelay=$optvalue				;;
 	transfertime)		    set_xfer_time "$optvalue"			;;
-	first_deployment)	    firstDeployment=$optvalue			;;
-	parallel_configmaps)	    parallelConfigMaps=$optvalue		;;
-	parallel_secrets)	    parallelSecrets=$optvalue			;;
-	parallel_namespaces)	    parallelNamespaces=$optvalue		;;
-	parallel_deployments)	    parallelDeployments=$optvalue		;;
-	blocksize_configmaps)	    blocksizeConfigMaps=$optvalue		;;
-	blocksize_secrets)	    blocksizeSecrets=$optvalue			;;
-	blocksize_namespaces)	    blocksizeNamespaces=$optvalue		;;
-	blocksize_deployments)	    blocksizeDeployments=$optvalue		;;
-	container_image)	    containerImage=$optvalue			;;
-	image_pull_policy)	    imagePullPolicy=$optvalue			;;
-	sleep_configmaps)	    sleepConfigMaps=$optvalue			;;
-	sleep_secrets)		    sleepSecrets=$optvalue			;;
-	sleep_namespaces)	    sleepNamespaces=$optvalue			;;
-	sleep_deployments)	    sleepDeployments=$optvalue			;;
+	firstdeployment)	    firstDeployment=$optvalue			;;
+	parallelconfigmaps)	    parallelConfigMaps=$optvalue		;;
+	parallelsecrets)	    parallelSecrets=$optvalue			;;
+	parallelnamespaces)	    parallelNamespaces=$optvalue		;;
+	paralleldeployments)	    parallelDeployments=$optvalue		;;
+	blocksizeconfigmaps)	    blocksizeConfigMaps=$optvalue		;;
+	blocksizesecrets)	    blocksizeSecrets=$optvalue			;;
+	blocksizenamespaces)	    blocksizeNamespaces=$optvalue		;;
+	blocksizedeployments)	    blocksizeDeployments=$optvalue		;;
+	containerimage)		    containerImage=$optvalue			;;
+	imagepullpolicy)	    imagePullPolicy=$optvalue			;;
+	sleepconfigmaps)	    sleepConfigMaps=$optvalue			;;
+	sleepsecrets)		    sleepSecrets=$optvalue			;;
+	sleepnamespaces)	    sleepNamespaces=$optvalue			;;
+	sleepdeployments)	    sleepDeployments=$optvalue			;;
 	nodeselector)		    nodeSelector=$optvalue			;;
-	node_selector)		    nodeSelector=$optvalue			;;
-	exit_at_end)		    exitAtEnd=$optvalue				;;
-	pod_resource_request)	    pod_resource_requests+=("$optvalue")	;;
-	pod_resource_limit)	    pod_resource_limits+=("$optvalue")		;;
-	container_resource_request) container_resource_requests+=("$optvalue")	;;
-	container_resource_limit)   container_resource_limits+=("$optvalue")	;;
-	create_routes)		    createRoutes=$optvalue			;;
-	wait_secrets)		    wait_for_secrets=$optvalue			;;
-	scale_ns)	   	    scale_ns=$optvalue				;;
-	scale_deployments)   	    scale_deployments=$optvalue			;;
-	deployment_type)            deploymentType=$optvalue			;;
-	runtimeclass|runtime_class) runtimeClass=$optvalue			;;
-	report_object_creation)	    reportObjectCreation=$optvalue		;;
+	exitatend)		    exitAtEnd=$optvalue				;;
+	resourcerequest)	    resource_requests+=("$optvalue")		;;
+	resourcelimit)		    resource_limits+=("$optvalue")		;;
+	createroutes)		    createRoutes=$optvalue			;;
+	waitsecrets)		    wait_for_secrets=$optvalue			;;
+	scalens)	   	    scale_ns=$optvalue				;;
+	scaledeployments)   	    scale_deployments=$optvalue			;;
+	deploymenttype)		    deploymentType=$optvalue			;;
+	runtimeclass)		    runtimeClass=$optvalue			;;
+	reportobjectcreation)	    reportObjectCreation=$optvalue		;;
 	kata)			    runtimeClass=${kataRuntimeClass}		;;
 	volumes)		    file_volumes=$optvalue			;;
-	dirs_per_volume)	    file_dirs_per_volume=$optvalue		;;
-	files_per_dir)		    files_per_dir=$optvalue			;;
-	file_block_size)	    file_block_size=$(parse_size $optvalue)	;;
+	dirspervolume)	    	    file_dirs_per_volume=$optvalue		;;
+	filesperdir)		    files_per_dir=$optvalue			;;
+	fileblocksize)	    	    file_block_size=$(parse_size $optvalue)	;;
 	file_size)		    file_size=$(parse_size $optvalue)		;;
-	log_bytes_per_line)	    log_bytes_per_line=$optvalue		;;
-	log_bytes_per_io)	    log_bytes_per_io=$optvalue			;;
-	log_xfer_count)		    log_xfer_count=$optvalue			;;
-	log_processes)		    log_processes=$optvalue			;;
-	log_delay_usec)		    log_delay_usec=$optvalue			;;
-	log_xfertime)		    log_xfertime=$optvalue			;;
-	log_exit_at_end)	    log_exit_at_end=$optvalue			;;
+	logbytesperline)	    log_bytes_per_line=$optvalue		;;
+	logbytesperio)		    log_bytes_per_io=$optvalue			;;
+	logxfercount)		    log_xfer_count=$optvalue			;;
+	logprocesses)		    log_processes=$optvalue			;;
+	logdelayusec)		    log_delay_usec=$optvalue			;;
+	logxfertime)		    log_xfertime=$optvalue			;;
+	logexitatend)		    log_exit_at_end=$optvalue			;;
 	report)		    	    report_format=summary			;;
-	verbose_report)		    report_format=verbose			;;
-	json_report)		    report_format=json				;;
+	verbosereport)		    report_format=verbose			;;
+	jsonreport)		    report_format=json				;;
 	precleanup)		    precleanup=$optvalue			;;
 	cleanup)		    cleanup=$optvalue				;;
-	log*strategy)		    logStrategy=$optvalue			;;
+	logstrategy)		    logStrategy=$optvalue			;;
 	timeout)		    timeout=$optvalue				;;
 	emptydir)		    emptydirs+=("$optvalue")			;;
 	volume)			    process_volume "$optvalue"			;;
-	sync|syncstart|sync_start)  syncStart=$((1-syncStart))			;;
-	baseoffset|base_offset)     baseoffset=$optvalue			;;
+	sync|syncstart)		    syncStart=$((1-syncStart))			;;
+	baseoffset)		    baseoffset=$optvalue			;;
 	configmapfile)		    configMapFiles+=("$optvalue")		;;
 	tolerate|toleration)	    tolerations+=("$optvalue")			;;
-	pbench_controller_port)	    pbenchControllerPort=$optvalue		;;
-	pbench_controller_address)  pbenchControllerAddress=$optvalue		;;
+	pbenchcontrollerport)	    pbenchControllerPort=$optvalue		;;
+	pbenchcontrolleraddress)    pbenchControllerAddress=$optvalue		;;
 	workdir)		    common_workdir=$optvalue			;;
-	sysbench_general_options)   sysbench_generic_options+=(${optvalue//,/ });;
-	sysbench_generic_options)   sysbench_generic_options+=(${optvalue//,/ });;
-	sysbench_fileio_options)    sysbench_fileio_options+=(${optvalue//,/ }) ;;
-	sysbench_fileio_tests)
+	uuid)			    runUUID=$optvalue				;;
+	sysbenchgeneraloptions)     sysbench_generic_options+=(${optvalue//,/ });;
+	sysbenchgenericoptions)     sysbench_generic_options+=(${optvalue//,/ });;
+	sysbenchfileiooptions)      sysbench_fileio_options+=(${optvalue//,/ }) ;;
+	sysbenchfileiotests)
 	    local ftest
 	    for ftest in ${optvalue//,/ } ; do
 		sysbench_fileio_tests[$ftest]=1
 	    done
 	    ;;
-	fio_generic_options)	   fio_generic_options+=(${optvalue//,/ })      ;;
-	fio_jobfile)
+	fiogenericoptions)	   fio_generic_options+=(${optvalue//,/ })      ;;
+	fiojobfile)
 	    configMapFiles+=("$optvalue")
 	    ;;
 	affinity)
@@ -918,13 +932,13 @@ function process_option() {
 		*) affinity=0         ;;
 	    esac
 	    ;;
-	antiaffinity|anti_affinity)
+	antiaffinity)
 	    case "$optvalue" in
 		1|'') affinity=2      ;;
 		*) affinity=0         ;;
 	    esac
 	    ;;
-	external_sync)
+	externalsync)
 	    if [[ $optvalue =~ ^(-|([[:alnum:]][-_[:alnum:]]*[[:alnum:]]\.)*([[:alnum:]][-_[:alnum:]]*[[:alnum:]])):([1-9][[:digit:]]{0,4})$ ]] ; then
 		syncHost=${BASH_REMATCH[1]}
 		syncPort=${BASH_REMATCH[4]}
@@ -959,7 +973,15 @@ function checkConfigMaps() {
     fi
 }
 
-while getopts ":B:b:c:D:d:EeHhKM:m:N:nP:p:QqR:r:Ss:T:t:V:vWw:XxYz:-:" opt ; do
+function process_job_file() {
+    local jobfile="$1"
+    while read -r line ; do
+	line=${line%%#*}
+	process_option "$line"
+    done < "$jobfile"
+}
+
+while getopts ":B:b:c:D:d:Eef:HhKM:m:N:nP:p:QqR:r:Ss:T:t:V:vWw:XxYz:-:" opt ; do
     case "$opt" in
 	B) basename="$OPTARG"		    ;;
 	b) blocksize="$OPTARG"              ;;
@@ -968,6 +990,7 @@ while getopts ":B:b:c:D:d:EeHhKM:m:N:nP:p:QqR:r:Ss:T:t:V:vWw:XxYz:-:" opt ; do
 	d) depsPerNamespace="$OPTARG"       ;;
 	E) exitAtEnd=0			    ;;
 	e) exitAtEnd=1			    ;;
+	f) process_job_file "$OPTARG"	    ;;
 	h) help				    ;;
 	H) help_extended		    ;;
 	K) runtimeClass="$kataRuntimeClass" ;;
@@ -1049,10 +1072,8 @@ function validate_resource() {
 }
 
 resource_validation_failed=0
-validate_resource pod_resource_request "${pod_resource_requests[@]}" || resource_validation_failed=1
-validate_resource pod_resource_limit "${pod_resource_limits[@]}" || resource_validation_failed=1
-validate_resource container_resource_request "${container_resource_requests[@]}" || resource_validation_failed=1
-validate_resource container_resource_limit "${container_resource_limits[@]}" || resource_validation_failed=1
+validate_resource resource_request "${resource_requests[@]}" || resource_validation_failed=1
+validate_resource resource_limit "${resource_limits[@]}" || resource_validation_failed=1
 if ((resource_validation_failed)) ; then
     exit 1
 fi
@@ -1171,31 +1192,16 @@ EOF
     done
 }
 
-function createPodResources() {
-    if (( ${#pod_resource_limits[@]} + ${#pod_resource_requests[@]} )) ; then
-	echo "resources:"
-	if (( ${#pod_resource_limits[@]} )) ; then
-	    echo "  limits:"
-	    indent 4 createResources "${pod_resource_limits[@]}"
-	fi
-	if (( ${#pod_resource_requests[@]} )) ; then
-	    echo "  requests:"
-	    indent 4 createResources "${pod_resource_requests[@]}"
-	fi
-    fi
-    (( ${#tolerations[@]} )) && createTolerations "${tolerations[@]}"
-}
-
 function createContainerResources() {
-    if (( ${#container_resource_limits[@]} + ${#container_resource_requests[@]} )) ; then
+    if (( ${#resource_limits[@]} + ${#resource_requests[@]} )) ; then
 	echo "resources:"
-	if (( ${#container_resource_limits[@]} )) ; then
+	if (( ${#resource_limits[@]} )) ; then
 	    echo "  limits:"
-	    indent 4 createResources "${container_resource_limits[@]}"
+	    indent 4 createResources "${resource_limits[@]}"
 	fi
-	if (( ${#container_resource_requests[@]} )) ; then
+	if (( ${#resource_requests[@]} )) ; then
 	    echo "  requests:"
-	    indent 4 createResources "${container_resource_requests[@]}"
+	    indent 4 createResources "${resource_requests[@]}"
 	fi
     fi
 }
@@ -1561,7 +1567,6 @@ cat <<EOF
 spec:
 $(indent 2 node_selector)
   terminationGracePeriodSeconds: 1
-$(indent 2 createPodResources)
 $(indent 2 <<< "$runtimeClass")
   containers:
 $(indent 2 createContainers${podType}YAML "$@")
@@ -1791,7 +1796,6 @@ function createFilesSpec() {
 spec:
 $(indent 2 node_selector)
   terminationGracePeriodSeconds: 1
-$(indent 2 createPodResources)
 $(indent 2 <<< "$runtimeClass")
   containers:
 $(indent 2 createContainersFilesYAML "$@")
@@ -1930,7 +1934,6 @@ function createSysbenchSpec() {
 spec:
 $(indent 2 node_selector)
   terminationGracePeriodSeconds: 1
-$(indent 2 createPodResources)
 $(indent 2 <<< "$runtimeClass")
   containers:
 $(indent 2 createContainersSysbenchYAML "$@")
@@ -2062,7 +2065,6 @@ function createFioSpec() {
 spec:
 $(indent 2 node_selector)
   terminationGracePeriodSeconds: 1
-$(indent 2 createPodResources)
 $(indent 2 <<< "$runtimeClass")
   containers:
 $(indent 2 createContainersFioYAML "$@")
@@ -2192,7 +2194,6 @@ function createSoakerSpec() {
 spec:
 $(indent 2 node_selector)
   terminationGracePeriodSeconds: 1
-$(indent 2 createPodResources)
 $(indent 2 <<< "$runtimeClass")
   containers:
 $(indent 2 createContainersCPUSoakerYAML "$@")
@@ -2351,7 +2352,6 @@ function createServerSpec() {
 spec:
 $(indent 2 node_selector)
   terminationGracePeriodSeconds: 1
-$(indent 2 createPodResources)
 $(indent 2 <<< "$runtimeClass")
   containers:
 $(indent 2 createServerContainerYAML "$@")
@@ -2521,7 +2521,6 @@ function createClientSpec() {
 spec:
 $(indent 2 node_selector)
   terminationGracePeriodSeconds: 1
-$(indent 2 createPodResources)
 $(indent 2 createClientAffinityYAML "${namespace}-${i}-server")
 $(indent 2 <<< "$runtimeClass")
   containers:
