@@ -217,7 +217,7 @@ Bytes:            $total
 Containers:       $line_count
 Average_elapsed:  $(bc <<< "scale=3; $total_et/$line_count/1000")
 Elapsed_span:     $(bc <<< "scale=3; (($last_end)-($first_start))/1000")
-Data rate MB/sec: $(bc <<< "scale=3; (($total*2/($total_et/$line_count/1000)/1000000))")
+Data rate MB/sec: $(bc <<< "scale=3; (($total/($total_et/$line_count/1000)/1000000))")
 Mean RTT msec:    $(bc <<< "scale=3; $mean_rtt/$line_count/1000")
 Max RTT msec:     $(bc <<< "scale=3; $max_rtt/1000")
 Iterations:       $total_iterations

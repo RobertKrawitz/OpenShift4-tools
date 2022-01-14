@@ -190,8 +190,15 @@ Usage: $0 [options] [name]
        -N namespaces   Number of namespaces to create (default 1)
                        If 0 is specified, then no namespaces are created
                        and the current namespace is used.
-       -P podtype      Pod type (classic, pause, server, cpu, fio, sysbench,
-                       files, log)
+       -P podtype      Pod type, one of:
+                       - cpu
+                       - files
+                       - fio
+                       - log
+                       - pause
+                       - server
+                       - sysbench
+                       - classic
        -p parallel     Number of operations to perform in parallel (default 1)
        -Q              Don't report creation of individual objects (default
                        report them)

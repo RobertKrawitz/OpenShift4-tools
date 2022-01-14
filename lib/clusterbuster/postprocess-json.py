@@ -147,10 +147,10 @@ def process_clientserver(rows):
                                        (last_end - first_end)) / 2) /
                                      (total_et / len(rows)), 5)
     summary['total_iterations'] = total_iterations
-    summary['max_round_trip_time_msec'] = total_max_round_trip_time
+    summary['max_round_trip_time_msec'] = round(total_max_round_trip_time * 1000, 6)
     summary['total_data_xfer_bytes'] = total_data_xfer
     summary['average_data_rate_bytes_sec'] = round(total_data_xfer / (last_end - first_start), 0)
-    summary['average_round_trip_time_msec'] = round(round_trip_time_accumulator / len(rows), 6)
+    summary['average_round_trip_time_msec'] = round(1000 * round_trip_time_accumulator / len(rows), 3)
     summary['total_clients'] = len(rows)
     return answer
 
