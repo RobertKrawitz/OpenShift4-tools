@@ -357,6 +357,26 @@ def process_sysbench(rows):
     return answer
 
 
+def process_fio(rows):
+    answer = {}
+    answer['mode'] = 'fio'
+    answer['rows'] = []
+    for row in rows:
+        rowhash = {}
+#        rowhash['raw_result'] = row[0]
+        rowhash['namespace'] = row[2]
+        rowhash['pod'] = row[3]
+        rowhash['container'] = row[5]
+        rowhash['run_start'] = float(row[12])
+        rowhash['runtime'] = float(row[13])
+        rowhash['user_cpu'] = float(row[14])
+        rowhash['system_cpu'] = float(row[15])
+        rowhash['total_cpu'] = float(row[14]) + float(row[15])
+        rowhash['rundata'] = json.loads(','.join(row[16:]))
+        answer['rows'].append(rowhash)
+    return answer
+
+
 def main():
     mode_func = None
     rows = []
@@ -378,6 +398,8 @@ def main():
                 mode_func = process_sysbench
             elif vals[3].find('-files-') >= 0:
                 mode_func = process_files
+            elif vals[3].find('-fio-') >= 0:
+                mode_func = process_fio
             else:
                 efail("Unrecognized mode from %s" % (vals[3]), file=sys.stderr)
         rows.append(vals)

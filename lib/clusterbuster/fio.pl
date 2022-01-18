@@ -43,7 +43,9 @@ if (! chdir($localrundir)) {
 
 sub cputime() {
     my (@times) = times();
-    return $times[0] + $times[1] + $times[2] + $times[3];
+    my ($usercpu) = $times[0] + $times[2];
+    my ($syscpu) = $times[1] + $times[3];
+    return ($usercpu, $syscpu);
 }
 
 sub ts() {
@@ -125,7 +127,6 @@ sub do_sync($$;$) {
 sub runit(;$) {
     my ($jobfile) = @_;
     my ($basecpu) = cputime();
-    my ($prevcpu) = $basecpu;
     my ($firsttime) = 1;
     my ($avgcpu) = 0;
     my ($weight) = .25;
@@ -139,45 +140,26 @@ sub runit(;$) {
     my ($stime1) = xtime();
     my ($stime) = $stime1;
     my ($prevtime) = $stime;
-    my ($scputime) = cputime();
+    my ($ucpu0, $scpu0) = cputime();
+    my ($answer0) = '';
     timestamp("Running...");
     timestamp("fio $fio_generic_args --output-format=json+ $jobfile");
-    pipe(READER, WRITER) || die "Can't create pipe: $!\n";
-    my ($pid) = fork();
-    if ($pid == -1) {
-        die "Can't fork: $!\n";
-    } elsif ($pid == 0) {
-        close READER;
-	open(STDOUT, ">&WRITER") || die "Can't dup stdout to writer: $!\n";
-	open(STDERR, ">&WRITER") || die "Can't dup stderr to writer: $!\n";
-	exec("/bin/bash", "-c", "fio $fio_generic_args --output-format=json+ $jobfile") || die "Can't run fio: $!\n";
-        # NOTREACHED
-	exit(1);
-    } else {
-        close WRITER;
-	while (<READER>) {
-	    print STDERR $_;
-	}
-	close WRITER;
+    open(RUN, "-|", "fio $fio_generic_args --output-format=json+ $jobfile | jq -c .") || die "Can't run fio: $!\n";
+    while (<RUN>) {
+	$answer0 .= "$_";
     }
-    my ($child) = wait();
-    if ($child < 0) {
-        print STDERR "*** Can't reap child (expected $pid, got $child)!\n";
-    } else {
-        my ($status) = $? >> 8;
-        print STDERR "fio returned $status\n";
+    close(RUN);
+    my ($etime) = xtime();
+    my ($ucpu1, $scpu1) = cputime();
+    $ucpu1 -= $ucpu0;
+    $scpu1 -= $scpu0;
+    my ($answer) = sprintf("-n,%s,%s,-c,%s,terminated,%d,%d,%d,STATS,%d,%.3f,%.3f,%.3f,%.3f,%s",
+			   $namespace, $pod, $container, 0, 0, 0,
+			   $$, $stime - $basetime, $etime - $stime, $ucpu1, $scpu1, $answer0);
+    do_sync($synchost, $syncport, $answer);
+    if ($logport > 0) {
+	do_sync($loghost, $logport, $answer);
     }
-#    my ($answer) =
-#	sprintf("-n,%s,%s,-c,%s,terminated,0,0,0,STATS,%d,%.3f,%.3f,%.3f,%d,%d,%d,%d,%d,%.03f,%.06f,%.06f,%.06f,%.06f",
-#		$namespace, $pod, $container,
-#		$$, $crtime - $basetime, $dstime - $basetime, $stime1 - $basetime,
-#		$readops, $writeops, $fsyncops, $readrate, $writerate, $et, $min_lat, $avg_lat, $max_lat, $p95_lat);
-#    print STDERR "$answer\n";
-#    do_sync($synchost, $syncport, $answer);
-     do_sync($synchost, $syncport);
-#    if ($logport > 0) {
-#	do_sync($loghost, $logport, $answer);
-#    }
 }
 
 sub get_jobfiles($) {

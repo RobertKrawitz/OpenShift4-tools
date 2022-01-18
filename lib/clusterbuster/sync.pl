@@ -48,7 +48,7 @@ while ($syncCount < 0 || $syncCount-- > 0) {
 	    my $peerhost = gethostbyaddr($addr, AF_INET);
 	    my $peeraddr = inet_ntoa($addr);
 	    my ($tbuf) = "NULL";
-	    if (sysread($client, $tbuf, 1024) <= 0) {
+	    if (sysread($client, $tbuf, 1048576) <= 0) {
 		timestamp("Read token from $peerhost failed: $!");
 	    }
 	    timestamp("Accepted connection from $peerhost ($peeraddr) on $port, token $tbuf");

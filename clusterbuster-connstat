@@ -22,7 +22,8 @@ declare -i timeout=-1
 declare -i verbose=0
 declare -i csv=0
 declare -i header=1
-declare -i json_output=0
+declare -i format_json=0
+declare -i format_raw=0
 declare -i use_namespace=1
 declare run_name=
 declare basename=clusterbuster
@@ -51,7 +52,7 @@ if [[ ! -d "$__libdir__" ]] ; then
     exit 1
 fi
 
-while getopts ':p:B:st:f:F:jvqNcnr:l:' opt ; do
+while getopts ':p:B:st:f:F:jvqNcnr:Rl:' opt ; do
     case "$opt" in
 	B) basename=$OPTARG 	  ;;
 	N) use_namespace=0	  ;;
@@ -62,9 +63,10 @@ while getopts ':p:B:st:f:F:jvqNcnr:l:' opt ; do
 	p) parallel=$OPTARG 	  ;;
 	q) verbose=0        	  ;;
 	r) run_name=$OPTARG	  ;;
+	R) format_raw=0		  ;;
 	s) summarize=1	    	  ;;
 	t) timeout=$OPTARG  	  ;;
-	j) json_output=1	  ;;
+	j) format_json=1	  ;;
 	l) selector=$OPTARG	  ;;
 	v) verbose=$((verbose+1)) ;;
 	*) ;;
@@ -253,6 +255,9 @@ Read rate MB/sec:  $(bc <<< "scale=3; $readrate")"
 Write rate MB/sec: $(bc <<< "scale=3; $writerate")"
 EOF
 	    ;;
+	fio)
+	    echo "$jsonoutput"
+	    ;;
 	*)
 	    echo "Unknown mode $mode" 1>&2
 	    ;;
@@ -305,8 +310,13 @@ function process_summary_legacy() {
     local -i file_total_user_cpu=0
     local -i file_total_sys_cpu=0
     local -i file_total_total_cpu=0
+    local jsonoutput=''
     local mode=
     while read -r rawoutput ; do
+	if (( format_raw )) ; then
+	    echo "$rawoutput"
+	    continue
+	fi
 	if [[ $rawoutput = '-n,'* ]] ; then
 	    IFS=, read -r -a output <<< "$rawoutput"
 	else
@@ -320,6 +330,7 @@ function process_summary_legacy() {
 		*'client'*)   mode=server   ;;
 		*'sysbench'*) mode=sysbench ;;
 		*'files'*)    mode=files    ;;
+		*'fio'*)      mode=fio      ;;
 		*)            continue      ;;
 	    esac
 	fi
@@ -393,6 +404,9 @@ function process_summary_legacy() {
 		readrate+=${output[17]}
 		writerate+=${output[18]}
 		;;
+	    fio)
+		output=("${output[@]:15}")
+		jsonoutput="$(IFS=','; echo "${output[*]}")"
 	esac
 	line_count+=1
 	total_et+=$et
@@ -402,7 +416,7 @@ function process_summary_legacy() {
 }
 
 function process_summary() {
-    if ((json_output)) ; then
+    if ((format_json)) ; then
 	local tmp
 	tmp=$(mktemp "/tmp/cbdataXXXXXX.json")
 	# shellcheck disable=SC2064
@@ -563,7 +577,7 @@ function do_summarize() {
     done
 }
 
-if (( summarize || json_output )) ; then
+if (( summarize || format_json )) ; then
     case "$statsfile" in
 	-)  process_summary		   ;;
 	'') do_summarize | process_summary ;;

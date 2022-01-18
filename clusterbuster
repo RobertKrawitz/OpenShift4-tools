@@ -255,13 +255,21 @@ Extended Options:
        --baseoffset=N   Add specified offset to base time
                         for calculation of start time offset
                         to correct for clock skew.  May be float.
-       --report         Print report (client/server, soaker,
-                        fio, sysbench only)
        --sync           Sync start of data transfer or CPU load
                         (default no) (-Y)
        --doit=<1,0>     Run the command or not (default 1) (inverse of -n)
-       --verbose-report Print detailed report
-       --json-report    Print JSON report
+       --report-format=<format>
+                        Print report in specified format.  Meaning of
+                        report types is by type.
+                        - summary
+                        - raw
+                        - json
+                        - verbose
+       --report         Print summary report (client/server, soaker,
+                        fio, sysbench only) (deprecated)
+       --verbose-report Print detailed report (deprecated)
+       --json-report    Print JSON report (deprecated)
+       --raw-report     Print unprocessed report (deprecated)
        --precleanup     Clean up any prior objects
        --cleanup        Clean up generated objects
        --timeout=N      Time out reporting
@@ -374,10 +382,10 @@ Extended Options:
 
     Client/server options:
        --affinity       Force affinity between client and server pods
-                        in a deployment.  Default is neither affinity nor 
+                        in a deployment.  Default is neither affinity nor
                         anti-affinity.
        --anti-affinity  Force anti-affinity between client and server pods
-                        in a deployment.  Default is neither affinity nor 
+                        in a deployment.  Default is neither affinity nor
                         anti-affinity.
        --bytes=N[,M]    Number of bytes to transfer
                         Also --kb, --kib, --mb, --mib, --gb, --gib, --tb, --tib
@@ -624,7 +632,7 @@ function monitor_pods() {
 		    ;;
 		*)  ;;
 	    esac
-	done <<< "$(__OC get pods --no-headers "$@" 2>/dev/null)"
+	done <<< "$(__OC get pods -A --no-headers "$@" 2>/dev/null)"
 	if ((timeout > 0 && $(date +%s) > timeout)) ; then
 	    echo "Monitor pods timeout!" 1>&2
 	    if (( ppid > 0 )) ; then
@@ -725,6 +733,7 @@ function get_logs() {
     case "$report_format" in
 	json)    extra_arg=-j ;;
 	verbose) extra_arg=-v ;;
+	raw)     extra_arg=-R ;;
 	*)                    ;;
     esac
     log_cmd=get_logs_poll
@@ -903,9 +912,11 @@ function process_option() {
 	logdelayusec)		    log_delay_usec=$optvalue			;;
 	logxfertime)		    log_xfertime=$optvalue			;;
 	logexitatend)		    log_exit_at_end=$optvalue			;;
+	reportformat)		    report_format=$optvalue			;;
 	report)		    	    report_format=summary			;;
 	verbosereport)		    report_format=verbose			;;
 	jsonreport)		    report_format=json				;;
+	rawreport)		    report_format=raw				;;
 	precleanup)		    precleanup=$optvalue			;;
 	cleanup)		    cleanup=$optvalue				;;
 	logstrategy)		    logStrategy=$optvalue			;;
@@ -2663,6 +2674,49 @@ ${__libdir__}/sync.pl
 EOF
 }
 
+function calculateLogsRequiredFio() {
+    local -i namespaces=$1
+    local -i depsPerNamespace=${2:-1}
+    local -i replicas=${3:-1}
+    local -i containers=${4:-1}
+    echo $((namespaces * containers * processes_per_pod * replicas * depsPerNamespace))
+}
+
+function createDeploymentFio() {
+    local namespace=$1
+    local count=${2:-1}
+    local secretCount=${3:-1}
+    local replicas=${4:-1}
+    local containers=${5:-1}
+    local log_host=${6:-}
+    local -i log_port=${7:-0}
+    local -i i
+    if [[ syncStart -gt 0 && -z "$syncHost" ]] ; then
+	createService "$namespace" "${namespace}-sync" "$syncPort"
+	createSyncDeployment 2 "$namespace" "$((containers * replicas * count))"
+    fi
+    for i in $(seq $firstDeployment $((count + firstDeployment - 1))) ; do
+	createFioDeployment "$namespace" "$i" "$secretCount"  "$replicas" "$containers" "$log_host" "$log_port"
+    done
+}
+
+function listConfigMapsFio() {
+    cat <<EOF
+${__libdir__}/fio.pl
+${__libdir__}/sync.pl
+EOF
+}
+
+function createSyncFio() {
+    local namespace=$1
+    local count=${2:-1}
+    local secretCount=${3:-1}
+    local replicas=${4:-1}
+    local containers=${5:-1}
+    createService "$namespace" "${namespace}-sync" "$syncPort"
+    createSyncDeployment 2 "$namespace" "$((containers * replicas * count))"
+}
+
 function createDeploymentSysbench() {
     local namespace=$1
     local count=${2:-1}
@@ -2674,7 +2728,7 @@ function createDeploymentSysbench() {
     local -i i
     if [[ syncStart -gt 0 && -z "$syncHost" ]] ; then
 	createService "$namespace" "${namespace}-sync" "$syncPort"
-	createSyncDeployment 3 "$namespace" "$((containers * replicas * count))"
+	createSyncDeployment $((${#configMapFiles[@]} ? ${#configMapFiles[@]} * 2 : 2)) "$namespace" "$((containers * replicas * count))"
     fi
     for i in $(seq $firstDeployment $((count + firstDeployment - 1))) ; do
 	createSysbenchDeployment "$namespace" "$i" "$secretCount"  "$replicas" "$containers" "$log_host" "$log_port"
@@ -2696,41 +2750,6 @@ function createSyncSysbench() {
     local containers=${5:-1}
     createService "$namespace" "${namespace}-sync" "$syncPort"
     createSyncDeployment 3 "$namespace" "$((containers * replicas * count))"
-}
-
-function createDeploymentFio() {
-    local namespace=$1
-    local count=${2:-1}
-    local secretCount=${3:-1}
-    local replicas=${4:-1}
-    local containers=${5:-1}
-    local log_host=${6:-}
-    local -i log_port=${7:-0}
-    local -i i
-    if [[ syncStart -gt 0 && -z "$syncHost" ]] ; then
-	createService "$namespace" "${namespace}-sync" "$syncPort"
-	createSyncDeployment $((${#configMapFiles[@]} ? ${#configMapFiles[@]} * 2 : 2)) "$namespace" "$((containers * replicas * count))"
-    fi
-    for i in $(seq $firstDeployment $((count + firstDeployment - 1))) ; do
-	createFioDeployment "$namespace" "$i" "$secretCount"  "$replicas" "$containers" "$log_host" "$log_port"
-    done
-}
-
-function listConfigMapsFio() {
-    cat <<EOF
-${__libdir__}/fio.pl
-${__libdir__}/sync.pl
-EOF
-}
-
-function createSyncFio() {
-    local namespace=$1
-    local count=${2:-1}
-    local secretCount=${3:-1}
-    local replicas=${4:-1}
-    local containers=${5:-1}
-    createService "$namespace" "${namespace}-sync" "$syncPort"
-    createSyncDeployment $((${#configMapFiles[@]} ? ${#configMapFiles[@]} * 2 : 2)) "$namespace" "$((containers * replicas * count))"
 }
 
 function calculateLogsRequiredSysbench() {
