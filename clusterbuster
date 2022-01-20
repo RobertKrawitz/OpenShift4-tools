@@ -2734,16 +2734,6 @@ ${__libdir__}/sync.pl
 EOF
 }
 
-function createSyncFio() {
-    local namespace=$1
-    local count=${2:-1}
-    local secretCount=${3:-1}
-    local replicas=${4:-1}
-    local containers=${5:-1}
-    createService "$namespace" "${namespace}-sync" "$syncPort"
-    createSyncDeployment 2 "$namespace" "$((containers * replicas * count))"
-}
-
 function createDeploymentSysbench() {
     local namespace=$1
     local count=${2:-1}
@@ -2767,16 +2757,6 @@ function listConfigMapsSysbench() {
 ${__libdir__}/sysbench.pl
 ${__libdir__}/sync.pl
 EOF
-}
-
-function createSyncSysbench() {
-    local namespace=$1
-    local count=${2:-1}
-    local secretCount=${3:-1}
-    local replicas=${4:-1}
-    local containers=${5:-1}
-    createService "$namespace" "${namespace}-sync" "$syncPort"
-    createSyncDeployment $(( (${#sysbench_fileio_tests[@]} * 3) + 1)) "$namespace" "$((containers * replicas * count))"
 }
 
 function calculateLogsRequiredSysbench() {
@@ -2810,16 +2790,6 @@ function listConfigMapsCPUSoaker() {
 ${__libdir__}/cpusoaker.pl
 ${__libdir__}/sync.pl
 EOF
-}
-
-function createSyncCPUSoaker() {
-    local namespace=$1
-    local count=${2:-1}
-    local secretCount=${3:-1}
-    local replicas=${4:-1}
-    local containers=${5:-1}
-    createService "$namespace" "${namespace}-sync" "$syncPort"
-    createSyncDeployment 2 "$namespace" "$((containers * replicas * count))"
 }
 
 function calculateLogsRequiredCPUSoaker() {
@@ -2872,16 +2842,6 @@ function calculateLogsRequiredServer() {
     echo $((namespaces * containers * replicas * depsPerNamespace))
 }
 
-function createSyncServer() {
-    local namespace=$1
-    local count=${2:-1}
-    local secretCount=${3:-1}
-    local replicas=${4:-1}
-    local containers=${5:-1}
-    createService "$namespace" "${namespace}-sync" "$syncPort"
-    createSyncDeployment 2 "$namespace" "$((containers * replicas * count))"
-}
-
 function doSetup() {
     if type -t "doSetup${podType}" >/dev/null ; then
 	"doSetup${podType}"
@@ -2890,14 +2850,6 @@ function doSetup() {
 
 function createDeployment() {
     "createDeployment${podType}" "$@"
-}
-
-function createSync() {
-    if [[ syncStart -gt 0 && -z "$syncHost" ]] ; then
-	if type -t "createSync${podType}" >/dev/null  ; then
-	    "createSync${podType}" "$@"
-	fi
-    fi
 }
 
 function calculateLogsRequired() {
