@@ -37,7 +37,7 @@ declare -i blocksizeConfigMaps=0
 declare -i blocksizeNamespaces=0
 declare -i blocksizeDeployments=0
 declare -i containers=1
-declare -i createRoutes=0
+declare -i createRoutes=0	# Is this even useful?
 declare -i sleeptime=0
 declare -i doit=1
 declare -i blockitemcount=0
@@ -864,7 +864,7 @@ function process_option() {
 	deployments|depspername*)   depsPerNamespace=$optvalue			;;
 	namespaces)		    namespaces=$optvalue			;;
 	datarate)		    dataRate=$optvalue				;;
-	bytes)			    set_xfer $(parse_size "$optvalue")		;;
+	bytes)			    set_xfer "$(parse_size "$optvalue")"	;;
 	kb|kilobytes)		    set_xfer "$optvalue" 1000			;;
 	ki|kib|kibibytes)	    set_xfer "$optvalue" 1024			;;
 	mb|megabytes)		    set_xfer "$optvalue" 1000000		;;
@@ -1513,6 +1513,157 @@ EOF
     fi
 }
 
+function createSyncYAML() {
+    local syncCount=${1:-1}
+    local namespace=$2
+    local expectedClients=$3
+    cat <<EOF
+- name: ${namespace}-sync
+  imagePullPolicy: $imagePullPolicy
+  image: "$containerImage"
+  ports:
+  - containerPort: $port
+$(indent 2 genericCommand sync.pl)
+  - "-f"
+  - "$syncFlagFile"
+  - "$syncPort"
+  - "$expectedClients"
+  - "$syncCount"
+$(indent 2 createVolumeMountsYAML "$namespace" 0 0)
+EOF
+}
+
+function createSyncSpec() {
+    cat <<EOF
+spec:
+$(indent 2 node_selector)
+  terminationGracePeriodSeconds: 1
+$(indent 2 createTolerations ${tolerations+"${tolerations[@]}"})
+$(indent 2 <<< "$runtimeClass")
+  containers:
+$(indent 2 createSyncYAML "$@")
+$(indent 2 createVolumesYAML "$namespace" 0 0)
+EOF
+}
+
+
+function createSyncDeployment() {
+    local syncCount=$1; shift
+    local nsline=${useNamespaces:+  namespace: "$namespace"}
+    if [[ $deploymentType = pod ]] ; then
+	createObject <<EOF
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ${namespace}-sync
+$nsline
+$(indent 2 createPrivilegeYAML)
+$(indent 2 node_selector)
+  selector:
+    matchLabels:
+      app: ${namespace}-sync
+  labels:
+    ${basename}-id: "$runUUID"
+    name: ${namespace}-sync
+    app: ${namespace}-sync
+    k8s-app: ${namespace}-sync
+    ${basename}: "true"
+    ${basename}-sync: "true"
+    clusterbusterbase: "true"
+$(createSyncSpec "$syncCount" "$@")
+  restartPolicy: Never
+EOF
+    else
+	createObject <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ${namespace}-sync
+$(indent 2 createPrivilegeYAML)
+$nsline
+  labels:
+    ${basename}-id: "$runUUID"
+    ${basename}: "true"
+    clusterbusterbase: "true"
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+$(indent 2 node_selector)
+  selector:
+    matchLabels:
+      app: ${namespace}-sync
+  template:
+    metadata:
+      labels:
+        ${basename}-id: "$runUUID"
+        name: ${namespace}-sync
+        app: ${namespace}-sync
+        k8s-app: ${namespace}-sync
+        ${basename}: "true"
+        ${basename}-sync: "true"
+        clusterbusterbase: "true"
+$(indent 4 createSyncSpec -1 "$@")
+EOF
+    fi
+}
+
+function createService() {
+    local namespace=$1
+    local deployment=$2
+    local portnum=$3
+    local nsline=${useNamespaces:+  namespace: "$namespace"}
+    createObject <<EOF
+apiVersion: v1
+kind: Service
+metadata:
+  name: "service-${deployment}"
+$nsline
+  labels:
+    ${basename}-id: "$runUUID"
+    ${basename}: "true"
+    clusterbusterbase: "true"
+spec:
+  ports:
+  - port: $portnum
+    targetPort: $portnum
+  selector:
+    name: "${deployment}"
+EOF
+}
+
+function createRoute() {
+    local namespace=$1
+    local deployment=$2
+    local nsline=${useNamespaces:+  namespace: "$namespace"}
+    createObject <<EOF
+apiVersion: v1
+kind: Route
+metadata:
+  name: "route-${deployment}"
+$nsline
+  labels:
+    ${basename}-id: "$runUUID"
+    ${basename}: "true"
+    clusterbusterbase: "true"
+spec:
+  host: "service-${deployment}"
+  to:
+    kind: Service
+    name: "service-${deployment}"
+  selector:
+    name: "${deployment}"
+EOF
+}
+
+################################################################
+# WORKLOADS ####################################################
+################################################################
+
+################################################################
+# Simple workloads (pause pod, clusterbuster, logging)
+################################################################
+
 function createContainersClusterBusterYAML() {
     local namespace=$1
     local i=$2
@@ -1679,683 +1830,33 @@ EOF
     fi
 }
 
-function createSyncYAML() {
-    local syncCount=${1:-1}
-    local namespace=$2
-    local expectedClients=$3
-    cat <<EOF
-- name: ${namespace}-sync
-  imagePullPolicy: $imagePullPolicy
-  image: "$containerImage"
-  ports:
-  - containerPort: $port
-$(indent 2 genericCommand sync.pl)
-  - "-f"
-  - "$syncFlagFile"
-  - "$syncPort"
-  - "$expectedClients"
-  - "$syncCount"
-$(indent 2 createVolumeMountsYAML "$namespace" 0 0)
-EOF
-}
-
-function createSyncSpec() {
-    cat <<EOF
-spec:
-$(indent 2 node_selector)
-  terminationGracePeriodSeconds: 1
-$(indent 2 createTolerations ${tolerations+"${tolerations[@]}"})
-$(indent 2 <<< "$runtimeClass")
-  containers:
-$(indent 2 createSyncYAML "$@")
-$(indent 2 createVolumesYAML "$namespace" 0 0)
-EOF
-}
-
-
-function createSyncDeployment() {
-    local syncCount=$1; shift
-    local nsline=${useNamespaces:+  namespace: "$namespace"}
-    if [[ $deploymentType = pod ]] ; then
-	createObject <<EOF
-apiVersion: v1
-kind: Pod
-metadata:
-  name: ${namespace}-sync
-$nsline
-$(indent 2 createPrivilegeYAML)
-$(indent 2 node_selector)
-  selector:
-    matchLabels:
-      app: ${namespace}-sync
-  labels:
-    ${basename}-id: "$runUUID"
-    name: ${namespace}-sync
-    app: ${namespace}-sync
-    k8s-app: ${namespace}-sync
-    ${basename}: "true"
-    ${basename}-sync: "true"
-    clusterbusterbase: "true"
-$(createSyncSpec "$syncCount" "$@")
-  restartPolicy: Never
-EOF
-    else
-	createObject <<EOF
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: ${namespace}-sync
-$(indent 2 createPrivilegeYAML)
-$nsline
-  labels:
-    ${basename}-id: "$runUUID"
-    ${basename}: "true"
-    clusterbusterbase: "true"
-spec:
-  replicas: 1
-  strategy:
-    type: RollingUpdate
-$(indent 2 node_selector)
-  selector:
-    matchLabels:
-      app: ${namespace}-sync
-  template:
-    metadata:
-      labels:
-        ${basename}-id: "$runUUID"
-        name: ${namespace}-sync
-        app: ${namespace}-sync
-        k8s-app: ${namespace}-sync
-        ${basename}: "true"
-        ${basename}-sync: "true"
-        clusterbusterbase: "true"
-$(indent 4 createSyncSpec -1 "$@")
-EOF
-    fi
-}
-
-function createContainersFilesYAML() {
+function createDeploymentSimple() {
     local namespace=$1
-    local i=$2
-    local secretCount=$3
-    local -i replicas=$4
-    local -i containers=$5
-    local log_host=${6:-}
-    local -i log_port=${7:-0}
-    local -i j
-    local syncService=
-    local syncPortNum=
-    local -i file_blocks=$((file_size/file_block_size))
-    if (( syncStart )) ; then
-	syncService="${syncHost:-service-${namespace}-sync}"
-	syncPortNum=$syncPort
-    fi
-    # shellcheck disable=1340
-    for j in $(seq 0 $((containers - 1))) ; do
-	# shellcheck disable=2030
-	cat <<EOF
-- name: "c${j}"
-  imagePullPolicy: $imagePullPolicy
-  image: "$containerImage"
-$(indent 2 createContainerResources)
-  env:
-  - name: VERBOSE
-    value: "$verbose"
-$(indent 2 genericCommand files.pl)
-  - "$namespace"
-  - "${namespace}-files-${i}"
-  - "c${j}"
-  - "$basetime"
-  - "$baseoffset"
-  - "$(ts)"
-  - "$poddelay"
-  - "$podsleeptime"
-  - "$syncService"
-  - "$syncPortNum"
-  - "$file_dirs_per_volume"
-  - "$files_per_dir"
-  - "$file_block_size"
-  - "$file_blocks"
-  - "$processes_per_pod"
-  - "$log_host"
-  - "$log_port"
-$(tmp_volume_paths=("${volume_mount_paths[@]/%/\"}"); IFS=$'\n'; echo "${tmp_volume_paths[*]/#/  - \"}")
-$(emptydirs=("${emptydirs[@]/%/\"}"); IFS=$'\n'; echo "${emptydirs[*]/#/  - \"}")
-$(indent 2 createVolumeMountsYAML "$namespace" "$i" "$secretCount")
-EOF
+    local count=${2:-1}
+    local secretCount=${3:-1}
+    local replicas=${4:-1}
+    local containers=${5:-1}
+    local -i i
+    for i in $(seq $firstDeployment $((count + firstDeployment - 1))) ; do
+	createDeploymentClassicYAML "$namespace" "$i" "$secretCount"  "$replicas" "$containers"
     done
 }
 
-function createFilesSpec() {
-    local namespace=$1
-    local i=$2
-    local secretCount=$3
-    local -i processes=$4
-    local -i containers=$5
-    cat <<EOF
-spec:
-$(indent 2 node_selector)
-  terminationGracePeriodSeconds: 1
-$(indent 2 <<< "$runtimeClass")
-  containers:
-$(indent 2 createContainersFilesYAML "$@")
-$(indent 2 createPbenchAgentYAML)
-$(indent 2 createVolumesYAML "$namespace" "$i" "$secretCount")
-EOF
+function createDeploymentPausePod() {
+    createDeploymentSimple "$@"
 }
 
-function createFilesDeployment() {
-    local namespace=$1
-    local i=$2
-    local secretCount=$3
-    local -i replicas=$4
-    local -i containers=$5
-    local nsline=${useNamespaces:+  namespace: "$namespace"}
-    local podname="${namespace}-${i}-files"
-    if [[ $deploymentType = pod ]] ; then
-	local -i j=0
-	while (( j++ < replicas )) ; do
-	    createObject <<EOF
-apiVersion: v1
-kind: Pod
-metadata:
-  name: ${namespace}-files-${i}-${j}
-$nsline
-$(indent 2 createPrivilegeYAML)
-$(indent 2 node_selector)
-  selector:
-    matchLabels:
-      app: ${namespace}-files-${i}
-  labels:
-    ${basename}-id: "$runUUID"
-    ${basename}: "true"
-    clusterbusterbase: "true"
-    name: ${namespace}-files-${i}
-    app: ${namespace}-files-${i}
-    ${basename}-files: "true"
-    ${basename}-client: "true"
-$(createFilesSpec "$@")
-  restartPolicy: Never
-EOF
-	done
-    else
-	createObject <<EOF
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: ${namespace}-files-$i
-$nsline
-$(indent 2 createPrivilegeYAML)
-  labels:
-    ${basename}-id: "$runUUID"
-    ${basename}: "true"
-    clusterbusterbase: "true"
-spec:
-  replicas: $replicas
-$(indent 2 node_selector)
-  selector:
-    matchLabels:
-      app: ${namespace}-$i
-  strategy:
-    type: RollingUpdate
-  template:
-    metadata:
-      labels:
-        ${basename}-id: "$runUUID"
-        ${basename}: "true"
-        clusterbusterbase: "true"
-        name: ${namespace}-files-$i
-        app: ${namespace}-files-$i
-        ${basename}-files: "true"
-        ${basename}-client: "true"
-$(indent 4 createFilesSpec "$@")
-EOF
-    fi
+function createDeploymentClusterBuster() {
+    createDeploymentSimple "$@"
 }
 
-function createContainersSysbenchYAML() {
-    local namespace=$1
-    local i=$2
-    local secretCount=$3
-    local -i processes=$4
-    local -i containers=$5
-    local log_host=${6:-}
-    local -i log_port=${7:-0}
-    local -i j
-    local syncService=
-    local syncPortNum=
-    if (( syncStart )) ; then
-	syncService="${syncHost:-service-${namespace}-sync}"
-	syncPortNum=$syncPort
-    fi
-    # shellcheck disable=2031
-    local workdir=${common_workdir:-${emptydirs[0]:-/tmp}}
-    for j in $(seq 0 $((containers - 1))) ; do
-	cat <<EOF
-- name: "c${j}"
-  imagePullPolicy: $imagePullPolicy
-  image: "$containerImage"
-$(indent 2 createContainerResources)
-  env:
-  - name: VERBOSE
-    value: "$verbose"
-$(indent 2 genericCommand sysbench.pl)
-  - "$namespace"
-  - "${namespace}-sysbench-${i}"
-  - "c${j}"
-  - "$basetime"
-  - "$baseoffset"
-  - "$(ts)"
-  - "$poddelay"
-  - "$processes"
-  - "$workdir"
-  - "$xferTime"
-  - "$exitAtEnd"
-  - "$syncService"
-  - "$syncPortNum"
-  - "$log_host"
-  - "$log_port"
-  - "${sysbench_generic_options[*]:-}"
-  - "fileio"
-  - "${sysbench_fileio_options[*]:-}"
-  - "${!sysbench_fileio_tests[*]}"
-$(indent 2 createVolumeMountsYAML "$namespace" "$i" "$secretCount")
-EOF
-    done
+function createDeploymentLog() {
+    createDeploymentSimple "$@"
 }
 
-function createSysbenchSpec() {
-    local namespace=$1
-    local i=$2
-    local secretCount=$3
-    local -i processes=$4
-    local -i containers=$5
-    cat <<EOF
-spec:
-$(indent 2 node_selector)
-  terminationGracePeriodSeconds: 1
-$(indent 2 <<< "$runtimeClass")
-  containers:
-$(indent 2 createContainersSysbenchYAML "$@")
-$(indent 2 createPbenchAgentYAML)
-$(indent 2 createVolumesYAML "$namespace" "$i" "$secretCount")
-EOF
-}
-
-function createSysbenchDeployment() {
-    local namespace=$1
-    local i=$2
-    local secretCount=$3
-    local -i processes=$4
-    local -i containers=$5
-    local nsline=${useNamespaces:+  namespace: "$namespace"}
-    if [[ $deploymentType = pod ]] ; then
-	createObject <<EOF
-apiVersion: v1
-kind: Pod
-metadata:
-  name: ${namespace}-sysbench-${i}
-$nsline
-$(indent 2 createPrivilegeYAML)
-$(indent 2 node_selector)
-  selector:
-    matchLabels:
-      app: ${namespace}-sysbench-${i}
-  labels:
-    ${basename}-id: "$runUUID"
-    ${basename}: "true"
-    clusterbusterbase: "true"
-    name: ${namespace}-sysbench-${i}
-    app: ${namespace}-sysbench-${i}
-    ${basename}-sysbench: "true"
-    ${basename}-client: "true"
-$(createSysbenchSpec "$@")
-  restartPolicy: Never
-EOF
-    else
-	createObject <<EOF
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: ${namespace}-sysbench-$i
-$nsline
-$(indent 2 createPrivilegeYAML)
-  labels:
-    ${basename}: "true"
-    clusterbusterbase: "true"
-spec:
-  replicas: 1
-$(indent 2 node_selector)
-  selector:
-    matchLabels:
-      app: ${namespace}-sysbench-$i
-  strategy:
-    type: RollingUpdate
-  template:
-    metadata:
-      labels:
-        ${basename}-id: "$runUUID"
-        ${basename}: "true"
-        clusterbusterbase: "true"
-        name: ${namespace}-sysbench-$i
-        app: ${namespace}-sysbench-$i
-        ${basename}-sysbench: "true"
-        ${basename}-client: "true"
-$(indent 4 createSysbenchSpec "$@")
-EOF
-    fi
-}
-
-function createContainersFioYAML() {
-    local namespace=$1
-    local i=$2
-    local secretCount=$3
-    local -i processes=$4
-    local -i containers=$5
-    local log_host=${6:-}
-    local -i log_port=${7:-0}
-    local -i j
-    local syncService=
-    local syncPortNum=
-    if (( syncStart )) ; then
-	syncService="${syncHost:-service-${namespace}-sync}"
-	syncPortNum=$syncPort
-    fi
-    # shellcheck disable=2031
-    local workdir=${common_workdir:-${emptydirs[0]:-/tmp}}
-    for j in $(seq 0 $((containers - 1))) ; do
-	cat <<EOF
-- name: "c${j}"
-  imagePullPolicy: $imagePullPolicy
-  image: "$containerImage"
-$(indent 2 createContainerResources)
-  env:
-  - name: VERBOSE
-    value: "$verbose"
-$(indent 2 genericCommand fio.pl)
-  - "$namespace"
-  - "${namespace}-fio-${i}"
-  - "c${j}"
-  - "$basetime"
-  - "$baseoffset"
-  - "$(ts)"
-  - "$poddelay"
-  - "$processes"
-  - "$workdir"
-  - "$xferTime"
-  - "$exitAtEnd"
-  - "$syncService"
-  - "$syncPortNum"
-  - "$log_host"
-  - "$log_port"
-  - "$configmapMountDir"
-  - "${fio_generic_options[*]:-}"
-$(indent 2 createVolumeMountsYAML "$namespace" "$i" "$secretCount")
-EOF
-    done
-}
-
-function createFioSpec() {
-    local namespace=$1
-    local i=$2
-    local secretCount=$3
-    local -i processes=$4
-    local -i containers=$5
-    cat <<EOF
-spec:
-$(indent 2 node_selector)
-  terminationGracePeriodSeconds: 1
-$(indent 2 <<< "$runtimeClass")
-  containers:
-$(indent 2 createContainersFioYAML "$@")
-$(indent 2 createPbenchAgentYAML)
-$(indent 2 createVolumesYAML "$namespace" "$i" "$secretCount")
-EOF
-}
-
-function createFioDeployment() {
-    local namespace=$1
-    local i=$2
-    local secretCount=$3
-    local -i processes=$4
-    local -i containers=$5
-    local nsline=${useNamespaces:+  namespace: "$namespace"}
-    if [[ $deploymentType = pod ]] ; then
-	createObject <<EOF
-apiVersion: v1
-kind: Pod
-metadata:
-  name: ${namespace}-fio-${i}
-$nsline
-$(indent 2 createPrivilegeYAML)
-$(indent 2 node_selector)
-  selector:
-    matchLabels:
-      app: ${namespace}-fio-${i}
-  labels:
-    ${basename}-id: "$runUUID"
-    ${basename}: "true"
-    clusterbusterbase: "true"
-    name: ${namespace}-fio-${i}
-    app: ${namespace}-fio-${i}
-    ${basename}-fio: "true"
-    ${basename}-client: "true"
-$(createFioSpec "$@")
-  restartPolicy: Never
-EOF
-    else
-	createObject <<EOF
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: ${namespace}-fio-$i
-$nsline
-$(indent 2 createPrivilegeYAML)
-  labels:
-    ${basename}-id: "$runUUID"
-    ${basename}: "true"
-    clusterbusterbase: "true"
-spec:
-  replicas: 1
-$(indent 2 node_selector)
-  selector:
-    matchLabels:
-      app: ${namespace}-fio-$i
-  strategy:
-    type: RollingUpdate
-  template:
-    metadata:
-      labels:
-        ${basename}-id: "$runUUID"
-        ${basename}: "true"
-        clusterbusterbase: "true"
-        name: ${namespace}-fio-$i
-        app: ${namespace}-fio-$i
-        ${basename}-fio: "true"
-        ${basename}-client: "true"
-$(indent 4 createFioSpec "$@")
-EOF
-    fi
-}
-
-function createContainersCPUSoakerYAML() {
-    local podname=$1
-    local namespace=$2
-    local i=$3
-    local secretCount=$4
-    local -i processes=$5
-    local -i containers=$6
-    local log_host=${7:-}
-    local -i log_port=${8:-0}
-    local -i j
-    local syncService=
-    local syncPortNum=
-    if (( syncStart )) ; then
-	syncService="${syncHost:-service-${namespace}-sync}"
-	syncPortNum=$syncPort
-    fi
-    for j in $(seq 0 $((containers - 1))) ; do
-	cat <<EOF
-- name: "c$j"
-  imagePullPolicy: $imagePullPolicy
-  image: "$containerImage"
-$(indent 2 createContainerResources)
-  env:
-  - name: VERBOSE
-    value: "$verbose"
-$(indent 2 genericCommand cpusoaker.pl)
-  - "$namespace"
-  - "$podname"
-  - "c$j"
-  - "$basetime"
-  - "$baseoffset"
-  - "$(ts)"
-  - "$poddelay"
-  - "$processes"
-  - "$xferTime"
-  - "$exitAtEnd"
-  - "$syncService"
-  - "$syncPortNum"
-  - "$log_host"
-  - "$log_port"
-$(indent 2 createVolumeMountsYAML "$namespace" "$i" "$secretCount")
-EOF
-    done
-}
-
-function createSoakerSpec() {
-    local podname=$1
-    local namespace=$2
-    local i=$3
-    local secretCount=$4
-    local -i processes=$5
-    local -i containers=$6
-    cat <<EOF
-spec:
-$(indent 2 node_selector)
-  terminationGracePeriodSeconds: 1
-$(indent 2 <<< "$runtimeClass")
-  containers:
-$(indent 2 createContainersCPUSoakerYAML "$@")
-$(indent 2 createPbenchAgentYAML)
-$(indent 2 createVolumesYAML "$namespace" "$i" "$secretCount")
-EOF
-}
-
-function createSoakerDeployment() {
-    local namespace=$1
-    local i=$2
-    local secretCount=$3
-    local -i processes=$4
-    local -i containers=$5
-    local nsline=${useNamespaces:+  namespace: "$namespace"}
-    if [[ $deploymentType = pod ]] ; then
-	local -i j=0
-	while (( j++ < replicas )) ; do
-	    createObject <<EOF
-apiVersion: v1
-kind: Pod
-metadata:
-  name: ${namespace}-soaker-${i}-${j}
-$nsline
-$(indent 2 createPrivilegeYAML)
-$(indent 2 node_selector)
-  selector:
-    matchLabels:
-      app: ${namespace}-soaker-${i}
-  labels:
-    ${basename}-id: "$runUUID"
-    ${basename}: "true"
-    clusterbusterbase: "true"
-    name: ${namespace}-soaker-${i}
-    app: ${namespace}-soaker-${i}
-    ${basename}-soaker: "true"
-    ${basename}-client: "true"
-$(createSoakerSpec "${namespace}-soaker-${i}-${j}" "$@")
-  restartPolicy: Never
-EOF
-	done
-    else
-	createObject <<EOF
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: ${namespace}-soaker-$i
-$nsline
-$(indent 2 createPrivilegeYAML)
-  labels:
-    ${basename}: "true"
-    clusterbusterbase: "true"
-spec:
-  replicas: $replicas
-$(indent 2 node_selector)
-  selector:
-    matchLabels:
-      app: ${namespace}-soaker-$i
-  strategy:
-    type: RollingUpdate
-  template:
-    metadata:
-      labels:
-        ${basename}-id: "$runUUID"
-        ${basename}: "true"
-        clusterbusterbase: "true"
-        name: ${namespace}-soaker-$i
-        app: ${namespace}-soaker-$i
-        ${basename}-soaker: "true"
-        ${basename}-client: "true"
-$(indent 4 createSoakerSpec "${namespace}-soaker-${i}-deployment" "$@")
-EOF
-    fi
-}
-
-function createService() {
-    local namespace=$1
-    local deployment=$2
-    local portnum=$3
-    local nsline=${useNamespaces:+  namespace: "$namespace"}
-    createObject <<EOF
-apiVersion: v1
-kind: Service
-metadata:
-  name: "service-${deployment}"
-$nsline
-  labels:
-    ${basename}-id: "$runUUID"
-    ${basename}: "true"
-    clusterbusterbase: "true"
-spec:
-  ports:
-  - port: $portnum
-    targetPort: $portnum
-  selector:
-    name: "${deployment}"
-EOF
-}
-
-function createRoute() {
-    local namespace=$1
-    local deployment=$2
-    local nsline=${useNamespaces:+  namespace: "$namespace"}
-    createObject <<EOF
-apiVersion: v1
-kind: Route
-metadata:
-  name: "route-${deployment}"
-$nsline
-  labels:
-    ${basename}-id: "$runUUID"
-    ${basename}: "true"
-    clusterbusterbase: "true"
-spec:
-  host: "service-${deployment}"
-  to:
-    kind: Service
-    name: "service-${deployment}"
-  selector:
-    name: "${deployment}"
-EOF
-}
+################################################################
+# Client/server workload
+################################################################
 
 function createServerContainerYAML() {
     local namespace=$1
@@ -2646,160 +2147,6 @@ EOF
     fi
 }
 
-function createDeploymentSimple() {
-    local namespace=$1
-    local count=${2:-1}
-    local secretCount=${3:-1}
-    local replicas=${4:-1}
-    local containers=${5:-1}
-    local -i i
-    for i in $(seq $firstDeployment $((count + firstDeployment - 1))) ; do
-	createDeploymentClassicYAML "$namespace" "$i" "$secretCount"  "$replicas" "$containers"
-    done
-}
-
-function createDeploymentPausePod() {
-    createDeploymentSimple "$@"
-}
-
-function createDeploymentClusterBuster() {
-    createDeploymentSimple "$@"
-}
-
-function createDeploymentLog() {
-    createDeploymentSimple "$@"
-}
-
-function calculateLogsRequiredFiles() {
-    local -i namespaces=$1
-    local -i depsPerNamespace=${2:-1}
-    local -i replicas=${3:-1}
-    local -i containers=${4:-1}
-    echo $((namespaces * containers * processes_per_pod * replicas * depsPerNamespace))
-}
-
-function createDeploymentFiles() {
-    local namespace=$1
-    local count=${2:-1}
-    local secretCount=${3:-1}
-    local replicas=${4:-1}
-    local containers=${5:-1}
-    local -i i
-    if [[ syncStart -gt 0 && -z "$syncHost" ]] ; then
-	createService "$namespace" "${namespace}-sync" "$syncPort"
-	createSyncDeployment 4 "$namespace" "$((containers * processes_per_pod * replicas * count))"
-    fi
-    for i in $(seq $firstDeployment $((count + firstDeployment - 1))) ; do
-	createFilesDeployment "$namespace" "$i" "$secretCount"  "$replicas" "$containers" "$log_host" "$log_port"
-    done
-}
-
-function listConfigMapsFiles() {
-    cat <<EOF
-${__libdir__}/files.pl
-${__libdir__}/sync.pl
-EOF
-}
-
-function calculateLogsRequiredFio() {
-    local -i namespaces=$1
-    local -i depsPerNamespace=${2:-1}
-    local -i replicas=${3:-1}
-    local -i containers=${4:-1}
-    echo $((namespaces * containers * processes_per_pod * replicas * depsPerNamespace))
-}
-
-function createDeploymentFio() {
-    local namespace=$1
-    local count=${2:-1}
-    local secretCount=${3:-1}
-    local replicas=${4:-1}
-    local containers=${5:-1}
-    local log_host=${6:-}
-    local -i log_port=${7:-0}
-    local -i i
-    if [[ syncStart -gt 0 && -z "$syncHost" ]] ; then
-	createService "$namespace" "${namespace}-sync" "$syncPort"
-	createSyncDeployment 2 "$namespace" "$((containers * replicas * count))"
-    fi
-    for i in $(seq $firstDeployment $((count + firstDeployment - 1))) ; do
-	createFioDeployment "$namespace" "$i" "$secretCount"  "$replicas" "$containers" "$log_host" "$log_port"
-    done
-}
-
-function listConfigMapsFio() {
-    cat <<EOF
-${__libdir__}/fio.pl
-${__libdir__}/sync.pl
-EOF
-}
-
-function createDeploymentSysbench() {
-    local namespace=$1
-    local count=${2:-1}
-    local secretCount=${3:-1}
-    local replicas=${4:-1}
-    local containers=${5:-1}
-    local log_host=${6:-}
-    local -i log_port=${7:-0}
-    local -i i
-    if [[ syncStart -gt 0 && -z "$syncHost" ]] ; then
-	createService "$namespace" "${namespace}-sync" "$syncPort"
-	createSyncDeployment $(( (${#sysbench_fileio_tests[@]} * 3) + 1)) "$namespace" "$((containers * replicas * count))"
-    fi
-    for i in $(seq $firstDeployment $((count + firstDeployment - 1))) ; do
-	createSysbenchDeployment "$namespace" "$i" "$secretCount"  "$replicas" "$containers" "$log_host" "$log_port"
-    done
-}
-
-function listConfigMapsSysbench() {
-    cat <<EOF
-${__libdir__}/sysbench.pl
-${__libdir__}/sync.pl
-EOF
-}
-
-function calculateLogsRequiredSysbench() {
-    local -i namespaces=$1
-    local -i depsPerNamespace=${2:-1}
-    local -i replicas=${3:-1}
-    local -i containers=${4:-1}
-    echo $((namespaces * containers * processes_per_pod * replicas * depsPerNamespace))
-}
-
-function createDeploymentCPUSoaker() {
-    local namespace=$1
-    local count=${2:-1}
-    local secretCount=${3:-1}
-    local replicas=${4:-1}
-    local containers=${5:-1}
-    local log_host=${6:-}
-    local -i log_port=${7:-0}
-    local -i i
-    if [[ syncStart -gt 0 && -z "$syncHost" ]] ; then
-	createService "$namespace" "${namespace}-sync" "$syncPort"
-	createSyncDeployment 2 "$namespace" "$((containers * replicas * processes_per_pod * count))"
-    fi
-    for i in $(seq $firstDeployment $((count + firstDeployment - 1))) ; do
-	createSoakerDeployment "$namespace" "$i" "$secretCount"  "$((processes_per_pod))" "$containers" "$log_host" "$log_port"
-    done
-}
-
-function listConfigMapsCPUSoaker() {
-    cat <<EOF
-${__libdir__}/cpusoaker.pl
-${__libdir__}/sync.pl
-EOF
-}
-
-function calculateLogsRequiredCPUSoaker() {
-    local -i namespaces=$1
-    local -i depsPerNamespace=${2:-1}
-    local -i replicas=${3:-1}
-    local -i containers=${4:-1}
-    echo $((namespaces * processes_per_pod * containers * replicas * depsPerNamespace))
-}
-
 function createDeploymentServer() {
     local namespace=$1
     local count=${2:-1}
@@ -2841,6 +2188,690 @@ function calculateLogsRequiredServer() {
     local -i containers=${4:-1}
     echo $((namespaces * containers * replicas * depsPerNamespace))
 }
+
+################################################################
+# Files workload
+################################################################
+
+function createContainersFilesYAML() {
+    local namespace=$1
+    local i=$2
+    local secretCount=$3
+    local -i replicas=$4
+    local -i containers=$5
+    local log_host=${6:-}
+    local -i log_port=${7:-0}
+    local -i j
+    local syncService=
+    local syncPortNum=
+    local -i file_blocks=$((file_size/file_block_size))
+    if (( syncStart )) ; then
+	syncService="${syncHost:-service-${namespace}-sync}"
+	syncPortNum=$syncPort
+    fi
+    # shellcheck disable=1340
+    for j in $(seq 0 $((containers - 1))) ; do
+	# shellcheck disable=2030
+	cat <<EOF
+- name: "c${j}"
+  imagePullPolicy: $imagePullPolicy
+  image: "$containerImage"
+$(indent 2 createContainerResources)
+  env:
+  - name: VERBOSE
+    value: "$verbose"
+$(indent 2 genericCommand files.pl)
+  - "$namespace"
+  - "${namespace}-files-${i}"
+  - "c${j}"
+  - "$basetime"
+  - "$baseoffset"
+  - "$(ts)"
+  - "$poddelay"
+  - "$podsleeptime"
+  - "$syncService"
+  - "$syncPortNum"
+  - "$file_dirs_per_volume"
+  - "$files_per_dir"
+  - "$file_block_size"
+  - "$file_blocks"
+  - "$processes_per_pod"
+  - "$log_host"
+  - "$log_port"
+$(tmp_volume_paths=("${volume_mount_paths[@]/%/\"}"); IFS=$'\n'; echo "${tmp_volume_paths[*]/#/  - \"}")
+$(emptydirs=("${emptydirs[@]/%/\"}"); IFS=$'\n'; echo "${emptydirs[*]/#/  - \"}")
+$(indent 2 createVolumeMountsYAML "$namespace" "$i" "$secretCount")
+EOF
+    done
+}
+
+function createFilesSpec() {
+    local namespace=$1
+    local i=$2
+    local secretCount=$3
+    local -i processes=$4
+    local -i containers=$5
+    cat <<EOF
+spec:
+$(indent 2 node_selector)
+  terminationGracePeriodSeconds: 1
+$(indent 2 <<< "$runtimeClass")
+  containers:
+$(indent 2 createContainersFilesYAML "$@")
+$(indent 2 createPbenchAgentYAML)
+$(indent 2 createVolumesYAML "$namespace" "$i" "$secretCount")
+EOF
+}
+
+function createFilesDeployment() {
+    local namespace=$1
+    local i=$2
+    local secretCount=$3
+    local -i replicas=$4
+    local -i containers=$5
+    local nsline=${useNamespaces:+  namespace: "$namespace"}
+    local podname="${namespace}-${i}-files"
+    if [[ $deploymentType = pod ]] ; then
+	local -i j=0
+	while (( j++ < replicas )) ; do
+	    createObject <<EOF
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ${namespace}-files-${i}-${j}
+$nsline
+$(indent 2 createPrivilegeYAML)
+$(indent 2 node_selector)
+  selector:
+    matchLabels:
+      app: ${namespace}-files-${i}
+  labels:
+    ${basename}-id: "$runUUID"
+    ${basename}: "true"
+    clusterbusterbase: "true"
+    name: ${namespace}-files-${i}
+    app: ${namespace}-files-${i}
+    ${basename}-files: "true"
+    ${basename}-client: "true"
+$(createFilesSpec "$@")
+  restartPolicy: Never
+EOF
+	done
+    else
+	createObject <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ${namespace}-files-$i
+$nsline
+$(indent 2 createPrivilegeYAML)
+  labels:
+    ${basename}-id: "$runUUID"
+    ${basename}: "true"
+    clusterbusterbase: "true"
+spec:
+  replicas: $replicas
+$(indent 2 node_selector)
+  selector:
+    matchLabels:
+      app: ${namespace}-$i
+  strategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        ${basename}-id: "$runUUID"
+        ${basename}: "true"
+        clusterbusterbase: "true"
+        name: ${namespace}-files-$i
+        app: ${namespace}-files-$i
+        ${basename}-files: "true"
+        ${basename}-client: "true"
+$(indent 4 createFilesSpec "$@")
+EOF
+    fi
+}
+
+function calculateLogsRequiredFiles() {
+    local -i namespaces=$1
+    local -i depsPerNamespace=${2:-1}
+    local -i replicas=${3:-1}
+    local -i containers=${4:-1}
+    echo $((namespaces * containers * processes_per_pod * replicas * depsPerNamespace))
+}
+
+function createDeploymentFiles() {
+    local namespace=$1
+    local count=${2:-1}
+    local secretCount=${3:-1}
+    local replicas=${4:-1}
+    local containers=${5:-1}
+    local -i i
+    if [[ syncStart -gt 0 && -z "$syncHost" ]] ; then
+	createService "$namespace" "${namespace}-sync" "$syncPort"
+	createSyncDeployment 4 "$namespace" "$((containers * processes_per_pod * replicas * count))"
+    fi
+    for i in $(seq $firstDeployment $((count + firstDeployment - 1))) ; do
+	createFilesDeployment "$namespace" "$i" "$secretCount"  "$replicas" "$containers" "$log_host" "$log_port"
+    done
+}
+
+function listConfigMapsFiles() {
+    cat <<EOF
+${__libdir__}/files.pl
+${__libdir__}/sync.pl
+EOF
+}
+
+################################################################
+# FIO workload
+################################################################
+
+function createContainersFioYAML() {
+    local namespace=$1
+    local i=$2
+    local secretCount=$3
+    local -i processes=$4
+    local -i containers=$5
+    local log_host=${6:-}
+    local -i log_port=${7:-0}
+    local -i j
+    local syncService=
+    local syncPortNum=
+    if (( syncStart )) ; then
+	syncService="${syncHost:-service-${namespace}-sync}"
+	syncPortNum=$syncPort
+    fi
+    # shellcheck disable=2031
+    local workdir=${common_workdir:-${emptydirs[0]:-/tmp}}
+    for j in $(seq 0 $((containers - 1))) ; do
+	cat <<EOF
+- name: "c${j}"
+  imagePullPolicy: $imagePullPolicy
+  image: "$containerImage"
+$(indent 2 createContainerResources)
+  env:
+  - name: VERBOSE
+    value: "$verbose"
+$(indent 2 genericCommand fio.pl)
+  - "$namespace"
+  - "${namespace}-fio-${i}"
+  - "c${j}"
+  - "$basetime"
+  - "$baseoffset"
+  - "$(ts)"
+  - "$poddelay"
+  - "$processes"
+  - "$workdir"
+  - "$xferTime"
+  - "$exitAtEnd"
+  - "$syncService"
+  - "$syncPortNum"
+  - "$log_host"
+  - "$log_port"
+  - "$configmapMountDir"
+  - "${fio_generic_options[*]:-}"
+$(indent 2 createVolumeMountsYAML "$namespace" "$i" "$secretCount")
+EOF
+    done
+}
+
+function createFioSpec() {
+    local namespace=$1
+    local i=$2
+    local secretCount=$3
+    local -i processes=$4
+    local -i containers=$5
+    cat <<EOF
+spec:
+$(indent 2 node_selector)
+  terminationGracePeriodSeconds: 1
+$(indent 2 <<< "$runtimeClass")
+  containers:
+$(indent 2 createContainersFioYAML "$@")
+$(indent 2 createPbenchAgentYAML)
+$(indent 2 createVolumesYAML "$namespace" "$i" "$secretCount")
+EOF
+}
+
+function createFioDeployment() {
+    local namespace=$1
+    local i=$2
+    local secretCount=$3
+    local -i processes=$4
+    local -i containers=$5
+    local nsline=${useNamespaces:+  namespace: "$namespace"}
+    if [[ $deploymentType = pod ]] ; then
+	createObject <<EOF
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ${namespace}-fio-${i}
+$nsline
+$(indent 2 createPrivilegeYAML)
+$(indent 2 node_selector)
+  selector:
+    matchLabels:
+      app: ${namespace}-fio-${i}
+  labels:
+    ${basename}-id: "$runUUID"
+    ${basename}: "true"
+    clusterbusterbase: "true"
+    name: ${namespace}-fio-${i}
+    app: ${namespace}-fio-${i}
+    ${basename}-fio: "true"
+    ${basename}-client: "true"
+$(createFioSpec "$@")
+  restartPolicy: Never
+EOF
+    else
+	createObject <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ${namespace}-fio-$i
+$nsline
+$(indent 2 createPrivilegeYAML)
+  labels:
+    ${basename}-id: "$runUUID"
+    ${basename}: "true"
+    clusterbusterbase: "true"
+spec:
+  replicas: 1
+$(indent 2 node_selector)
+  selector:
+    matchLabels:
+      app: ${namespace}-fio-$i
+  strategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        ${basename}-id: "$runUUID"
+        ${basename}: "true"
+        clusterbusterbase: "true"
+        name: ${namespace}-fio-$i
+        app: ${namespace}-fio-$i
+        ${basename}-fio: "true"
+        ${basename}-client: "true"
+$(indent 4 createFioSpec "$@")
+EOF
+    fi
+}
+function calculateLogsRequiredFio() {
+    local -i namespaces=$1
+    local -i depsPerNamespace=${2:-1}
+    local -i replicas=${3:-1}
+    local -i containers=${4:-1}
+    echo $((namespaces * containers * processes_per_pod * replicas * depsPerNamespace))
+}
+
+function createDeploymentFio() {
+    local namespace=$1
+    local count=${2:-1}
+    local secretCount=${3:-1}
+    local replicas=${4:-1}
+    local containers=${5:-1}
+    local log_host=${6:-}
+    local -i log_port=${7:-0}
+    local -i i
+    if [[ syncStart -gt 0 && -z "$syncHost" ]] ; then
+	createService "$namespace" "${namespace}-sync" "$syncPort"
+	createSyncDeployment 2 "$namespace" "$((containers * replicas * count))"
+    fi
+    for i in $(seq $firstDeployment $((count + firstDeployment - 1))) ; do
+	createFioDeployment "$namespace" "$i" "$secretCount"  "$replicas" "$containers" "$log_host" "$log_port"
+    done
+}
+
+function listConfigMapsFio() {
+    cat <<EOF
+${__libdir__}/fio.pl
+${__libdir__}/sync.pl
+EOF
+}
+
+################################################################
+# Sysbench workload
+################################################################
+
+function createContainersSysbenchYAML() {
+    local namespace=$1
+    local i=$2
+    local secretCount=$3
+    local -i processes=$4
+    local -i containers=$5
+    local log_host=${6:-}
+    local -i log_port=${7:-0}
+    local -i j
+    local syncService=
+    local syncPortNum=
+    if (( syncStart )) ; then
+	syncService="${syncHost:-service-${namespace}-sync}"
+	syncPortNum=$syncPort
+    fi
+    # shellcheck disable=2031
+    local workdir=${common_workdir:-${emptydirs[0]:-/tmp}}
+    for j in $(seq 0 $((containers - 1))) ; do
+	cat <<EOF
+- name: "c${j}"
+  imagePullPolicy: $imagePullPolicy
+  image: "$containerImage"
+$(indent 2 createContainerResources)
+  env:
+  - name: VERBOSE
+    value: "$verbose"
+$(indent 2 genericCommand sysbench.pl)
+  - "$namespace"
+  - "${namespace}-sysbench-${i}"
+  - "c${j}"
+  - "$basetime"
+  - "$baseoffset"
+  - "$(ts)"
+  - "$poddelay"
+  - "$processes"
+  - "$workdir"
+  - "$xferTime"
+  - "$exitAtEnd"
+  - "$syncService"
+  - "$syncPortNum"
+  - "$log_host"
+  - "$log_port"
+  - "${sysbench_generic_options[*]:-}"
+  - "fileio"
+  - "${sysbench_fileio_options[*]:-}"
+  - "${!sysbench_fileio_tests[*]}"
+$(indent 2 createVolumeMountsYAML "$namespace" "$i" "$secretCount")
+EOF
+    done
+}
+
+function createSysbenchSpec() {
+    local namespace=$1
+    local i=$2
+    local secretCount=$3
+    local -i processes=$4
+    local -i containers=$5
+    cat <<EOF
+spec:
+$(indent 2 node_selector)
+  terminationGracePeriodSeconds: 1
+$(indent 2 <<< "$runtimeClass")
+  containers:
+$(indent 2 createContainersSysbenchYAML "$@")
+$(indent 2 createPbenchAgentYAML)
+$(indent 2 createVolumesYAML "$namespace" "$i" "$secretCount")
+EOF
+}
+
+function createSysbenchDeployment() {
+    local namespace=$1
+    local i=$2
+    local secretCount=$3
+    local -i processes=$4
+    local -i containers=$5
+    local nsline=${useNamespaces:+  namespace: "$namespace"}
+    if [[ $deploymentType = pod ]] ; then
+	createObject <<EOF
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ${namespace}-sysbench-${i}
+$nsline
+$(indent 2 createPrivilegeYAML)
+$(indent 2 node_selector)
+  selector:
+    matchLabels:
+      app: ${namespace}-sysbench-${i}
+  labels:
+    ${basename}-id: "$runUUID"
+    ${basename}: "true"
+    clusterbusterbase: "true"
+    name: ${namespace}-sysbench-${i}
+    app: ${namespace}-sysbench-${i}
+    ${basename}-sysbench: "true"
+    ${basename}-client: "true"
+$(createSysbenchSpec "$@")
+  restartPolicy: Never
+EOF
+    else
+	createObject <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ${namespace}-sysbench-$i
+$nsline
+$(indent 2 createPrivilegeYAML)
+  labels:
+    ${basename}: "true"
+    clusterbusterbase: "true"
+spec:
+  replicas: 1
+$(indent 2 node_selector)
+  selector:
+    matchLabels:
+      app: ${namespace}-sysbench-$i
+  strategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        ${basename}-id: "$runUUID"
+        ${basename}: "true"
+        clusterbusterbase: "true"
+        name: ${namespace}-sysbench-$i
+        app: ${namespace}-sysbench-$i
+        ${basename}-sysbench: "true"
+        ${basename}-client: "true"
+$(indent 4 createSysbenchSpec "$@")
+EOF
+    fi
+}
+
+function createDeploymentSysbench() {
+    local namespace=$1
+    local count=${2:-1}
+    local secretCount=${3:-1}
+    local replicas=${4:-1}
+    local containers=${5:-1}
+    local log_host=${6:-}
+    local -i log_port=${7:-0}
+    local -i i
+    if [[ syncStart -gt 0 && -z "$syncHost" ]] ; then
+	createService "$namespace" "${namespace}-sync" "$syncPort"
+	createSyncDeployment $(( (${#sysbench_fileio_tests[@]} * 3) + 1)) "$namespace" "$((containers * replicas * count))"
+    fi
+    for i in $(seq $firstDeployment $((count + firstDeployment - 1))) ; do
+	createSysbenchDeployment "$namespace" "$i" "$secretCount"  "$replicas" "$containers" "$log_host" "$log_port"
+    done
+}
+
+function listConfigMapsSysbench() {
+    cat <<EOF
+${__libdir__}/sysbench.pl
+${__libdir__}/sync.pl
+EOF
+}
+
+function calculateLogsRequiredSysbench() {
+    local -i namespaces=$1
+    local -i depsPerNamespace=${2:-1}
+    local -i replicas=${3:-1}
+    local -i containers=${4:-1}
+    echo $((namespaces * containers * processes_per_pod * replicas * depsPerNamespace))
+}
+
+################################################################
+# CPU soaker workload
+################################################################
+
+function createContainersCPUSoakerYAML() {
+    local podname=$1
+    local namespace=$2
+    local i=$3
+    local secretCount=$4
+    local -i processes=$5
+    local -i containers=$6
+    local log_host=${7:-}
+    local -i log_port=${8:-0}
+    local -i j
+    local syncService=
+    local syncPortNum=
+    if (( syncStart )) ; then
+	syncService="${syncHost:-service-${namespace}-sync}"
+	syncPortNum=$syncPort
+    fi
+    for j in $(seq 0 $((containers - 1))) ; do
+	cat <<EOF
+- name: "c$j"
+  imagePullPolicy: $imagePullPolicy
+  image: "$containerImage"
+$(indent 2 createContainerResources)
+  env:
+  - name: VERBOSE
+    value: "$verbose"
+$(indent 2 genericCommand cpusoaker.pl)
+  - "$namespace"
+  - "$podname"
+  - "c$j"
+  - "$basetime"
+  - "$baseoffset"
+  - "$(ts)"
+  - "$poddelay"
+  - "$processes"
+  - "$xferTime"
+  - "$exitAtEnd"
+  - "$syncService"
+  - "$syncPortNum"
+  - "$log_host"
+  - "$log_port"
+$(indent 2 createVolumeMountsYAML "$namespace" "$i" "$secretCount")
+EOF
+    done
+}
+
+function createSoakerSpec() {
+    local podname=$1
+    local namespace=$2
+    local i=$3
+    local secretCount=$4
+    local -i processes=$5
+    local -i containers=$6
+    cat <<EOF
+spec:
+$(indent 2 node_selector)
+  terminationGracePeriodSeconds: 1
+$(indent 2 <<< "$runtimeClass")
+  containers:
+$(indent 2 createContainersCPUSoakerYAML "$@")
+$(indent 2 createPbenchAgentYAML)
+$(indent 2 createVolumesYAML "$namespace" "$i" "$secretCount")
+EOF
+}
+
+function createSoakerDeployment() {
+    local namespace=$1
+    local i=$2
+    local secretCount=$3
+    local -i processes=$4
+    local -i containers=$5
+    local nsline=${useNamespaces:+  namespace: "$namespace"}
+    if [[ $deploymentType = pod ]] ; then
+	local -i j=0
+	while (( j++ < replicas )) ; do
+	    createObject <<EOF
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ${namespace}-soaker-${i}-${j}
+$nsline
+$(indent 2 createPrivilegeYAML)
+$(indent 2 node_selector)
+  selector:
+    matchLabels:
+      app: ${namespace}-soaker-${i}
+  labels:
+    ${basename}-id: "$runUUID"
+    ${basename}: "true"
+    clusterbusterbase: "true"
+    name: ${namespace}-soaker-${i}
+    app: ${namespace}-soaker-${i}
+    ${basename}-soaker: "true"
+    ${basename}-client: "true"
+$(createSoakerSpec "${namespace}-soaker-${i}-${j}" "$@")
+  restartPolicy: Never
+EOF
+	done
+    else
+	createObject <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ${namespace}-soaker-$i
+$nsline
+$(indent 2 createPrivilegeYAML)
+  labels:
+    ${basename}: "true"
+    clusterbusterbase: "true"
+spec:
+  replicas: $replicas
+$(indent 2 node_selector)
+  selector:
+    matchLabels:
+      app: ${namespace}-soaker-$i
+  strategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        ${basename}-id: "$runUUID"
+        ${basename}: "true"
+        clusterbusterbase: "true"
+        name: ${namespace}-soaker-$i
+        app: ${namespace}-soaker-$i
+        ${basename}-soaker: "true"
+        ${basename}-client: "true"
+$(indent 4 createSoakerSpec "${namespace}-soaker-${i}-deployment" "$@")
+EOF
+    fi
+}
+
+function createDeploymentCPUSoaker() {
+    local namespace=$1
+    local count=${2:-1}
+    local secretCount=${3:-1}
+    local replicas=${4:-1}
+    local containers=${5:-1}
+    local log_host=${6:-}
+    local -i log_port=${7:-0}
+    local -i i
+    if [[ syncStart -gt 0 && -z "$syncHost" ]] ; then
+	createService "$namespace" "${namespace}-sync" "$syncPort"
+	createSyncDeployment 2 "$namespace" "$((containers * replicas * processes_per_pod * count))"
+    fi
+    for i in $(seq $firstDeployment $((count + firstDeployment - 1))) ; do
+	createSoakerDeployment "$namespace" "$i" "$secretCount"  "$((processes_per_pod))" "$containers" "$log_host" "$log_port"
+    done
+}
+
+function listConfigMapsCPUSoaker() {
+    cat <<EOF
+${__libdir__}/cpusoaker.pl
+${__libdir__}/sync.pl
+EOF
+}
+
+function calculateLogsRequiredCPUSoaker() {
+    local -i namespaces=$1
+    local -i depsPerNamespace=${2:-1}
+    local -i replicas=${3:-1}
+    local -i containers=${4:-1}
+    echo $((namespaces * processes_per_pod * containers * replicas * depsPerNamespace))
+}
+
+################################################################
+# APIs
+################################################################
 
 function doSetup() {
     if type -t "doSetup${podType}" >/dev/null ; then
@@ -3012,6 +3043,10 @@ function doCleanup() {
 	fi
     done
 }
+
+################################################################
+# Main work loop
+################################################################
 
 function run_clusterbuster_1() {
     local -A expected_secrets=()
