@@ -43,7 +43,6 @@ sub stats() {
     my ($fstring) = <<'EOF';
 {
   "application": "clusterbuster-json",
-  "workload": "%s",
   "namespace": "%s",
   "pod": "%s",
   "container": "%s",
@@ -68,8 +67,7 @@ sub stats() {
 }
 EOF
     $fstring =~ s/[ \n]+//g;
-    return sprintf($fstring, "client-server",
-		   $namespace, $pod, $container, $cfail, $refused, $pass,
+    return sprintf($fstring, $namespace, $pod, $container, $cfail, $refused, $pass,
 		   $crtime - $basetime, $start_time - $basetime, $ghbn_time - $basetime, $etime - $basetime,
 		   $dstime - $basetime, $end_time - $basetime, $user, $sys,
 		   $data_sent, $detime, $data_sent / $detime / 1000000.0, $mean, $max, $stdev, $time_overhead);

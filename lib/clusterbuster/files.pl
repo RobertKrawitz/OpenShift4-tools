@@ -240,7 +240,6 @@ EOF
     my ($fstring) = <<'EOF';
 {
   "application": "clusterbuster-json",
-  "workload": "%s",
   "namespace": "%s",
   "pod": "%s",
   "container": "%s",
@@ -256,8 +255,7 @@ EOF
 }
 EOF
     $fstring =~ s/[ \n]+//g;
-    my ($answer) = sprintf($fstring, "files",
-			   $namespace, $pod, $container, 0, 0, 0,
+    my ($answer) = sprintf($fstring, $namespace, $pod, $container, 0, 0, 0,
 			   $stime0 - $basetime, $etime - $stime0,
 			   $block_count, $blocksize,
 			   $answer0, $answer1);

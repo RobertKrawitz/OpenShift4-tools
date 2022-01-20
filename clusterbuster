@@ -734,7 +734,12 @@ function get_logs_listen() {
 }
 
 function _get_logs() {
-    echo '{"clusterbusterResults": ['
+    echo '{"kind": "clusterbusterResults",'
+    echo "\"runUUID\": \"$runUUID\","
+    echo "\"workload\": \"$podType\","
+    echo '"apiResources":'
+    oc get all -A -l "clusterbuster-id=$runUUID" -ojson | jq -r '[foreach .items[]? as $item ([[],[]];0; {kind: $item.kind, namespace: $item.metadata.namespace, name: $item.metadata.name, nodeName: $item.spec.nodeName})]'
+    echo ', "Results": ['
     "$@"
     echo ']}'
 }
@@ -1199,6 +1204,15 @@ function finishCreation() {
     fi
 }
 
+function standard_labels() {
+    cat <<EOF
+clusterbuster-runUUID: "$runUUID"
+${basename}-id: "$runUUID"
+${basename}: "true"
+clusterbusterbase: "true"
+EOF
+}
+
 function node_selector() {
     if [[ -n "$nodeSelector" ]] ; then
 	cat <<EOF
@@ -1290,7 +1304,7 @@ function createObjectFromFile() {
     done
     if (( doit )) ; then
 	(_OC create ${useNamespaces:+-n "$namespace"} "$objtype" "$objname" "${@/#/--from-file=}" | echoIfDesired 1>&2) || exit 1
-	(_OC label ${useNamespaces:+-n "$namespace"} "$objtype" "$objname" 'clusterbusterbase=true' "${basename}=true" | echoIfDesired 1>&2) || exit 1
+	(_OC label ${useNamespaces:+-n "$namespace"} "$objtype" "$objname" 'clusterbusterbase=true' "clusterbuster-runUUID=${runUUID}" "${basename}-id=$runUUID" "${basename}=true" | echoIfDesired 1>&2) || exit 1
 	totalObjectsCreated=$((totalObjectsCreated+1))
 	if [[ -z ${objectsCreated[$objtype]:-} ]] ; then
 	    objectsCreated[$objtype]=1
@@ -1300,7 +1314,7 @@ function createObjectFromFile() {
 	(( !sleeptime )) || sleep "$sleeptime"
     else
 	echo _OC create ${useNamespaces:+-n "$namespace"} "$objtype" "$objname" "${@/#/--from-file=}"
-	echo _OC label ${useNamespaces:+-n "$namespace"} "$objtype" "$objname" 'clusterbusterbase=true' "${basename}=true" || exit 1
+	echo _OC label ${useNamespaces:+-n "$namespace"} "$objtype" "$objname" 'clusterbusterbase=true' "${basename}=true" "clusterbuster-runUUID=${runUUID}" "${basename}-id=$runUUID" || exit 1
     fi
 }
 
@@ -1313,9 +1327,7 @@ kind: Namespace
 metadata:
   name: "${namespace}"
   labels:
-    ${basename}-id: "$runUUID"
-    ${basename}: "true"
-    clusterbusterbase: "true"
+$(indent 4 standard_labels)
 EOF
 }
 
@@ -1336,9 +1348,7 @@ metadata:
   name: "secret-${namespace}-${i}-${j}"
 $nsline
   labels:
-    ${basename}-id: "$runUUID"
-    ${basename}: "true"
-    clusterbusterbase: "true"
+$(indent 4 standard_labels)
 data:
   key1: "$(base64 <<< "${namespace}X${i}Y${j}Z1")"
   key2: "$(base64 <<< "${namespace}X${i}Y${j}Z2")"
@@ -1563,13 +1573,11 @@ $(indent 2 node_selector)
     matchLabels:
       app: ${namespace}-sync
   labels:
-    ${basename}-id: "$runUUID"
+$(indent 4 standard_labels)
     name: ${namespace}-sync
     app: ${namespace}-sync
     k8s-app: ${namespace}-sync
-    ${basename}: "true"
     ${basename}-sync: "true"
-    clusterbusterbase: "true"
 $(createSyncSpec "$syncCount" "$@")
   restartPolicy: Never
 EOF
@@ -1582,9 +1590,7 @@ metadata:
 $(indent 2 createPrivilegeYAML)
 $nsline
   labels:
-    ${basename}-id: "$runUUID"
-    ${basename}: "true"
-    clusterbusterbase: "true"
+$(indent 4 standard_labels)
 spec:
   replicas: 1
   strategy:
@@ -1596,13 +1602,11 @@ $(indent 2 node_selector)
   template:
     metadata:
       labels:
-        ${basename}-id: "$runUUID"
+$(indent 8 standard_labels)
         name: ${namespace}-sync
         app: ${namespace}-sync
         k8s-app: ${namespace}-sync
-        ${basename}: "true"
         ${basename}-sync: "true"
-        clusterbusterbase: "true"
 $(indent 4 createSyncSpec -1 "$@")
 EOF
     fi
@@ -1620,9 +1624,7 @@ metadata:
   name: "service-${deployment}"
 $nsline
   labels:
-    ${basename}-id: "$runUUID"
-    ${basename}: "true"
-    clusterbusterbase: "true"
+$(indent 4 standard_labels)
 spec:
   ports:
   - port: $portnum
@@ -1643,9 +1645,7 @@ metadata:
   name: "route-${deployment}"
 $nsline
   labels:
-    ${basename}-id: "$runUUID"
-    ${basename}: "true"
-    clusterbusterbase: "true"
+$(indent 4 standard_labels)
 spec:
   host: "service-${deployment}"
   to:
@@ -1788,13 +1788,10 @@ $(indent 2 node_selector)
     matchLabels:
       app: ${namespace}-${i}
   labels:
-    ${basename}-id: "$runUUID"
-    ${basename}: "true"
+$(indent 4 standard_labels)
     name: ${namespace}-${i}
     app: ${namespace}-${i}
-    ${basename}: "true"
     ${basename}-client: "true"
-    clusterbusterbase: "true"
 $(createClassicSpec "$@")
 EOF
 	done
@@ -1807,8 +1804,7 @@ metadata:
 $nsline
 $(indent 2 createPrivilegeYAML)
   labels:
-    ${basename}: "true"
-    clusterbusterbase: "true"
+$(indent 4 standard_labels)
 spec:
   replicas: $replicas
 $(indent 2 node_selector)
@@ -1820,9 +1816,7 @@ $(indent 2 node_selector)
   template:
     metadata:
       labels:
-        ${basename}-id: "$runUUID"
-        ${basename}: "true"
-        clusterbusterbase: "true"
+$(indent 8 standard_labels)
         name: ${namespace}-$i
         app: ${namespace}-$i
 $(indent 4 createClassicSpec "$@")
@@ -1921,13 +1915,11 @@ $(indent 2 createPrivilegeYAML)
     matchLabels:
       app: ${namespace}-${i}
   labels:
-    ${basename}-id: "$runUUID"
+$(indent 4 standard_labels)
     name: ${namespace}-${i}
     app: ${namespace}-${i}
     k8s-app: ${namespace}-${i}-server
-    ${basename}: "true"
     ${basename}-server: "true"
-    clusterbusterbase: "true"
 $(createServerSpec "$@")
   restartPolicy: Never
 EOF
@@ -1940,9 +1932,7 @@ metadata:
 $nsline
 $(indent 2 createPrivilegeYAML)
   labels:
-    ${basename}-id: "$runUUID"
-    ${basename}: "true"
-    clusterbusterbase: "true"
+$(indent 4 standard_labels)
 spec:
   replicas: 1
 $(indent 2 node_selector)
@@ -1954,13 +1944,11 @@ $(indent 2 node_selector)
   template:
     metadata:
       labels:
-        ${basename}-id: "$runUUID"
+$(indent 8 standard_labels)
         name: ${namespace}-${i}
         app: ${namespace}-${i}
         k8s-app: ${namespace}-${i}-server
-        ${basename}: "true"
         ${basename}-server: "true"
-        clusterbusterbase: "true"
 $(indent 4 createServerSpec "$@")
 EOF
     fi
@@ -2100,13 +2088,10 @@ $(indent 2 createPrivilegeYAML)
     matchLabels:
       app: ${namespace}-${i}-client
   labels:
-    ${basename}-id: "$runUUID"
-    ${basename}: "true"
+$(indent 4 standard_labels)
     name: ${namespace}-${i}-client
     app: ${namespace}-${i}-client
-    ${basename}: "true"
     ${basename}-client: "true"
-    clusterbusterbase: "true"
 $(createClientSpec "$@" "$podname" "$j")
   restartPolicy: Never
 EOF
@@ -2121,9 +2106,7 @@ metadata:
 $(indent 2 createPrivilegeYAML)
 $nsline
   labels:
-    ${basename}-id: "$runUUID"
-    ${basename}: "true"
-    clusterbusterbase: "true"
+$(indent 4 standard_labels)
 spec:
   replicas: $replicas
 $(indent 2 node_selector)
@@ -2136,12 +2119,10 @@ $(indent 2 node_selector)
   template:
     metadata:
       labels:
-        ${basename}-id: "$runUUID"
+$(indent 8 standard_labels)
         name: ${namespace}-${i}-client
         app: ${namespace}-${i}-client
-        ${basename}: "true"
         ${basename}-client: "true"
-        clusterbusterbase: "true"
 $(indent 4 createClientSpec "$@" "$podname" "x")
 EOF
     fi
@@ -2286,9 +2267,7 @@ $(indent 2 node_selector)
     matchLabels:
       app: ${namespace}-files-${i}
   labels:
-    ${basename}-id: "$runUUID"
-    ${basename}: "true"
-    clusterbusterbase: "true"
+$(indent 4 standard_labels)
     name: ${namespace}-files-${i}
     app: ${namespace}-files-${i}
     ${basename}-files: "true"
@@ -2306,6 +2285,7 @@ metadata:
 $nsline
 $(indent 2 createPrivilegeYAML)
   labels:
+    clusterbuster-runUUID: "$runUUID"
     ${basename}-id: "$runUUID"
     ${basename}: "true"
     clusterbusterbase: "true"
@@ -2320,9 +2300,7 @@ $(indent 2 node_selector)
   template:
     metadata:
       labels:
-        ${basename}-id: "$runUUID"
-        ${basename}: "true"
-        clusterbusterbase: "true"
+$(indent 4 standard_labels)
         name: ${namespace}-files-$i
         app: ${namespace}-files-$i
         ${basename}-files: "true"
@@ -2454,9 +2432,7 @@ $(indent 2 node_selector)
     matchLabels:
       app: ${namespace}-fio-${i}
   labels:
-    ${basename}-id: "$runUUID"
-    ${basename}: "true"
-    clusterbusterbase: "true"
+$(indent 4 standard_labels)
     name: ${namespace}-fio-${i}
     app: ${namespace}-fio-${i}
     ${basename}-fio: "true"
@@ -2473,9 +2449,7 @@ metadata:
 $nsline
 $(indent 2 createPrivilegeYAML)
   labels:
-    ${basename}-id: "$runUUID"
-    ${basename}: "true"
-    clusterbusterbase: "true"
+$(indent 4 standard_labels)
 spec:
   replicas: 1
 $(indent 2 node_selector)
@@ -2487,9 +2461,7 @@ $(indent 2 node_selector)
   template:
     metadata:
       labels:
-        ${basename}-id: "$runUUID"
-        ${basename}: "true"
-        clusterbusterbase: "true"
+$(indent 8 standard_labels)
         name: ${namespace}-fio-$i
         app: ${namespace}-fio-$i
         ${basename}-fio: "true"
@@ -2624,9 +2596,7 @@ $(indent 2 node_selector)
     matchLabels:
       app: ${namespace}-sysbench-${i}
   labels:
-    ${basename}-id: "$runUUID"
-    ${basename}: "true"
-    clusterbusterbase: "true"
+$(indent 4 standard_labels)
     name: ${namespace}-sysbench-${i}
     app: ${namespace}-sysbench-${i}
     ${basename}-sysbench: "true"
@@ -2643,8 +2613,7 @@ metadata:
 $nsline
 $(indent 2 createPrivilegeYAML)
   labels:
-    ${basename}: "true"
-    clusterbusterbase: "true"
+$(indent 4 standard_labels)
 spec:
   replicas: 1
 $(indent 2 node_selector)
@@ -2656,9 +2625,7 @@ $(indent 2 node_selector)
   template:
     metadata:
       labels:
-        ${basename}-id: "$runUUID"
-        ${basename}: "true"
-        clusterbusterbase: "true"
+$(indent 8 standard_labels)
         name: ${namespace}-sysbench-$i
         app: ${namespace}-sysbench-$i
         ${basename}-sysbench: "true"
@@ -2791,9 +2758,7 @@ $(indent 2 node_selector)
     matchLabels:
       app: ${namespace}-soaker-${i}
   labels:
-    ${basename}-id: "$runUUID"
-    ${basename}: "true"
-    clusterbusterbase: "true"
+$(indent 4 standard_labels)
     name: ${namespace}-soaker-${i}
     app: ${namespace}-soaker-${i}
     ${basename}-soaker: "true"
@@ -2811,8 +2776,7 @@ metadata:
 $nsline
 $(indent 2 createPrivilegeYAML)
   labels:
-    ${basename}: "true"
-    clusterbusterbase: "true"
+$(indent 4 standard_labels)
 spec:
   replicas: $replicas
 $(indent 2 node_selector)
@@ -2824,9 +2788,7 @@ $(indent 2 node_selector)
   template:
     metadata:
       labels:
-        ${basename}-id: "$runUUID"
-        ${basename}: "true"
-        clusterbusterbase: "true"
+$(indent 8 standard_labels)
         name: ${namespace}-soaker-$i
         app: ${namespace}-soaker-$i
         ${basename}-soaker: "true"

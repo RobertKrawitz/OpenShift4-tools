@@ -158,7 +158,6 @@ sub runit(;$) {
     my ($fstring) = <<'EOF';
 {
   "application": "clusterbuster-json",
-  "workload": "%s",
   "namespace": "%s",
   "pod": "%s",
   "container": "%s",
@@ -173,8 +172,7 @@ sub runit(;$) {
   "results": %s
 }
 EOF
-    my ($answer) = sprintf($fstring, "fio",
-			   $namespace, $pod, $container, 0, 0, 0,
+    my ($answer) = sprintf($fstring, $namespace, $pod, $container, 0, 0, 0,
 			   $$, $stime - $basetime, $etime - $stime, $ucpu1, $scpu1, $answer0);
     do_sync($synchost, $syncport, $answer);
     if ($logport > 0) {

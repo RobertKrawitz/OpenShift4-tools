@@ -144,7 +144,6 @@ sub runit() {
     my ($fstring) = <<'EOF';
 {
   "application": "clusterbuster-json",
-  "workload": "%s",
   "namespace": "%s",
   "pod": "%s",
   "container": "%s",
@@ -152,22 +151,27 @@ sub runit() {
   "connections_refused": %d,
   "connections_succeeded": %d,
   "process_id": %d,
-  "start_offset_from_base": %f,
+  "pod_create_time_offset_from_base": %f,
+  "exec_start_time_offset_from_base": %f,
+  "data_start_time_offset_from_base": %f,
   "elapsed_time": %f,
   "data_end_time_offset_from_base": %f,
   "cpu_time": %f,
   "cpu_utilization": %f,
   "work_iterations": %d,
-  "work_iterations_per_second": %f
+  "work_iterations_per_second": %f,
+  "base_time": %f,
+  "exec_start_time": %f,
+  "pod_create_time": %f,
+  "data_start_time": %f
 }
 EOF
     $fstring =~ s/[ \n]+//g;
-    my ($answer) = sprintf($fstring, "cpusoaker",
-			   $namespace, $pod, $container, 0,0,0,
-			   $$, $dstime - $basetime,
+    my ($answer) = sprintf($fstring, $namespace, $pod, $container, 0,0,0,
+			   $$, $crtime - $basetime, $dstime - $basetime, $stime1 - $basetime,
 			   $eltime, $etime - $basetime, $cputime, $cputime / $eltime, $iterations,
-			   $iterations / ($etime - $stime1)
-	);
+			   $iterations / ($etime - $stime1),
+			   $basetime, $dstime, $crtime, $stime1);
     print STDERR "$answer\n";
     do_sync($synchost, $syncport, $answer);
     if ($logport > 0) {
