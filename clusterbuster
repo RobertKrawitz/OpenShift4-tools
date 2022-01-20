@@ -401,9 +401,7 @@ Extended Options:
        --verbose        Print verbose log messages (-v)
        --wait_secrets   Wait for secrets to be created (-W) (default 1)
 
-    Fio and Sysbench Common Options:
-
-    Fio General Options:
+    Fio Options:
        --fio-general-options=<options>
                         Space or comma separated general fio options
        --workdir=<dir>  Use the specified working directory for file I/O
@@ -413,8 +411,6 @@ Extended Options:
     Sysbench General Options:
        --sysbench-general-options=<options>
                         Space or comma separated general Sysbench options
-
-    Sysbench FileIO Options:
        --sysbench-fileio-tests=<modes>
                         Space of comma separated list of file test modes
                         to use (seqwr, seqrewr, seqrd, rndrd, rndwr, rndrw)
@@ -571,20 +567,55 @@ EOF
 }
 
 function help() {
-    _helpmsg "$@" | "${PAGER:-more}"
+    _helpmsg "$@" | "${PAGER:-more}" 1>&2
     exit 1
 }
 
 function help_extended() {
-    _helpExtended "$@" | "${PAGER:-more}"
+    _helpExtended "$@" | "${PAGER:-more}" 1>&2
     exit 1
 }
 
 # shellcheck disable=SC2120
 function help_everything() {
-    _helpEverything "$@" | "${PAGER:-more}"
+    _helpEverything "$@" | "${PAGER:-more}" 1>&2
     exit 1
 }
+
+################################################################
+# APIs
+################################################################
+
+function supportsAPI() {
+    local api=$1
+    type -t "${api}${podType}" >/dev/null
+}
+
+function callAPI() {
+    local api=$1
+    shift
+    supportsAPI "$api" && "${api}${podType}" "$@"
+}
+
+function jsonEncodeSettings() {
+    callAPI jsonEncodeSettings
+}
+
+function createDeployment() {
+    callAPI createDeployment "$@"
+}
+
+function calculateLogsRequired() {
+    callAPI calculateLogsRequired "$@" || echo 0
+}
+
+function listConfigMaps() {
+    callAPI listConfigMaps
+}
+
+################################################################
+# Logging
+################################################################
 
 function ts() {
     local dt
@@ -761,6 +792,10 @@ function get_logs() {
     return $((PIPESTATUS[0] || PIPESTATUS[1]))
 }
 
+################################################################
+# Option processing
+################################################################
+
 function set_xfer() {
     local sizespec=$1
     local -i scale=${2:-1}
@@ -907,8 +942,8 @@ function process_option() {
 	sleepdeployments)	    sleepDeployments=$optvalue			;;
 	nodeselector)		    nodeSelector=$optvalue			;;
 	exitatend)		    exitAtEnd=$optvalue				;;
-	resourcerequest)	    resource_requests+=("$optvalue")		;;
-	resourcelimit)		    resource_limits+=("$optvalue")		;;
+	request)		    resource_requests+=("$optvalue")		;;
+	limit)			    resource_limits+=("$optvalue")		;;
 	createroutes)		    createRoutes=$optvalue			;;
 	waitsecrets)		    wait_for_secrets=$optvalue			;;
 	scalens)	   	    scale_ns=$optvalue				;;
@@ -1160,6 +1195,10 @@ fi
 
 [[ -z "$*" ]] || echo "Warning: extraneous arguments $# after basename will be ignored!" 1>&2
 
+################################################################
+# Helpers
+################################################################
+
 function __OC() {
     if [[ $1 = describe || $1 = get || $1 = status ]] ; then
 	"$OC" "$@"
@@ -1177,6 +1216,260 @@ function _OC() {
 	exit 1
     fi
 }
+
+################################################################
+# YAML fragment generation
+################################################################
+
+function tolerationsYAML() {
+    local toleration
+    (( ${#tolerations[@]} )) || return
+    echo "tolerations:"
+    for toleration in "${tolerations[@]}" ; do
+	# shellcheck disable=SC2206
+	local -a tol=(${toleration//:/ })
+	cat <<EOF
+- key: "${tol[0]:-}"
+  operator: "${tol[1]:-}"
+  effect: "${tol[2]:-}"
+EOF
+    done
+}
+
+function containerResourcesYAML() {
+    function resources() {
+	local token
+	for token in "$@" ; do
+	    local resource=${token%%=*}
+	    local value=${token#*=}
+	    echo "$resource: $value"
+	done
+    }
+    if (( ${#resource_limits[@]} + ${#resource_requests[@]} )) ; then
+	echo "resources:"
+	if (( ${#resource_limits[@]} )) ; then
+	    echo "  limits:"
+	    indent 4 resources "${resource_limits[@]}"
+	fi
+	if (( ${#resource_requests[@]} )) ; then
+	    echo "  requests:"
+	    indent 4 resources "${resource_requests[@]}"
+	fi
+    fi
+}
+
+function standardLabelsYAML() {
+    cat <<EOF
+clusterbuster-runUUID: "$runUUID"
+${basename}-id: "$runUUID"
+${basename}: "true"
+clusterbusterbase: "true"
+EOF
+}
+
+function nodeSelectorYAML() {
+    if [[ -n "$nodeSelector" ]] ; then
+	cat <<EOF
+nodeSelector:
+  $nodeSelector: ""
+EOF
+    fi
+}
+
+function bootstrapCommandYAML() {
+    local command=$1
+    cat <<EOF
+command:
+- bootstrap.sh
+args:
+- "$systemConfigmapMountDir/$command"
+EOF
+}
+
+function volumeMountsYAML() {
+    local namespace=$1
+    local deployment=${2:-1}
+    local secrets=${3:-1}
+    (( secrets + ${#emptydirs[@]} + ${#configMapFiles[@]} + ${#volumes[@]} + hasSystemConfigMap )) || return;
+    local -i i
+    echo volumeMounts:
+    for i in $(seq 0 $((secrets - 1))) ; do
+	local name="secret-${namespace}-${deployment}-$i"
+	cat <<EOF
+- name: $name
+  mountPath: /etc/$name
+  readOnly: true
+EOF
+    done
+    if [[ -n "${emptydirs[*]:-}" ]] ; then
+	local vol
+	for vol in "${emptydirs[@]}" ; do
+	    cat <<EOF
+- name: ${vol##*/}
+  mountPath: "$vol"
+EOF
+	done
+    fi
+    if [[ -n "${configMapFiles[*]:-}" ]] ; then
+	cat <<EOF
+- name: "configmap-${namespace}"
+  mountPath: "${configmapMountDir}"
+  readOnly: true
+EOF
+    fi
+    if [[ -n "${volumes[*]:-}" ]] ; then
+	local vol
+	for vol in "${volumes[@]:-}" ; do
+	    cat <<EOF
+- name: "$vol"
+  mountPath: "${volume_mount_paths[$vol]}"
+EOF
+	done
+    fi
+    if (( hasSystemConfigMap )) ; then
+	cat <<EOF
+- name: "systemconfigmap-${namespace}"
+  mountPath: "${systemConfigmapMountDir}"
+  readOnly: true
+EOF
+    fi
+}
+
+function pbenchAgentYAML() {
+    if (( pbenchControllerPort > 0 )) ; then
+	# This isn't ideal, as there still can be collisions.
+	# Without a port server, this is certainly the most
+	# expeditious.
+	local sshPort=0
+	while (( sshPort < 2023 )) ; do
+	    sshPort=$RANDOM
+	done
+	cat <<EOF
+- name: "pbench-agent"
+  image: "$containerImage"
+  imagePullPolicy: $imagePullPolicy
+  securityContext:
+    privileged: false
+    capabilities:
+      add:
+      - AUDIT_WRITE
+  env:
+  - name: VERBOSE
+    value: "0"
+  command:
+  - "/usr/local/bin/run-pbench-agent-container"
+  args:
+  - "$pbenchControllerPort"
+  - "$pbenchControllerAddress"
+#hostPID: true
+serviceAccount: pbench
+EOF
+    fi
+}
+
+function privilegeYAML() {
+    if (( pbenchControllerPort > 0)) ; then
+	cat <<EOF
+openshift.io/scc: privileged
+EOF
+    fi
+}
+
+function volumesYAML() {
+    local namespace=$1
+    local deployment=${2:-1}
+    local secrets=${3:-1}
+    (( secrets + ${#emptydirs[@]} + ${#configMapFiles[@]} + ${#volumes[@]} + hasSystemConfigMap )) || return;
+    local -i i
+    echo "volumes:"
+    for i in $(seq 0 $((secrets - 1))) ; do
+	local name="secret-${namespace}-${deployment}-$i"
+	cat<<EOF
+- name: $name
+  secret:
+    secretName: $name
+EOF
+    done
+
+    if [[ -n "${emptydirs[*]:-}" ]] ; then
+	local vol
+	for vol in "${emptydirs[@]}" ; do
+	    cat <<EOF
+- name: ${vol##*/}
+  emptydDir: {}
+EOF
+	done
+    fi
+    if [[ -n "${configMapFiles[*]:-}" ]] ; then
+	cat <<EOF
+- name: "configmap-${namespace}"
+  configMap:
+    name: "configmap-${namespace}"
+EOF
+    fi
+    if [[ -n "${volumes[*]:-}" ]] ; then
+	local vol
+	for vol in "${volumes[@]:-}" ; do
+	    cat <<EOF
+- name: "$vol"
+EOF
+	    if [[ -n "${volume_type_keys[$vol]}" ]] ; then
+		cat <<EOF
+  ${volume_types[$vol]}:
+    ${volume_type_keys[$vol]}: "${volume_scoped_names[$vol]}"
+EOF
+	    else
+		cat <<EOF
+  ${volume_types[$vol]}: {}
+EOF
+	    fi
+	done
+    fi
+    if (( hasSystemConfigMap )) ; then
+	cat <<EOF
+- name: "systemconfigmap-${namespace}"
+  configMap:
+    name: "systemconfigmap-${namespace}"
+EOF
+    fi
+}
+
+function syncYAML() {
+    local syncCount=${1:-1}
+    local namespace=$2
+    local expectedClients=$3
+    cat <<EOF
+- name: ${namespace}-sync
+  imagePullPolicy: $imagePullPolicy
+  image: "$containerImage"
+  ports:
+  - containerPort: $port
+$(indent 2 bootstrapCommandYAML sync.pl)
+  - "-f"
+  - "$syncFlagFile"
+  - "$syncPort"
+  - "$expectedClients"
+  - "$syncCount"
+$(indent 2 volumeMountsYAML "$namespace" 0 0)
+EOF
+}
+
+function syncSpec() {
+    cat <<EOF
+spec:
+$(indent 2 nodeSelectorYAML)
+  terminationGracePeriodSeconds: 1
+$(indent 2 tolerationsYAML ${tolerations+"${tolerations[@]}"})
+$(indent 2 <<< "$runtimeClass")
+  containers:
+$(indent 2 syncYAML "$@")
+$(indent 2 volumesYAML "$namespace" 0 0)
+EOF
+}
+
+################################################################
+# Object YAML creation
+################################################################
 
 function indent_1() {
     local -i column="$1"
@@ -1201,62 +1494,6 @@ function finishCreation() {
     if [[ $doit -ne 0 && -n $accumulateddata ]] ; then
 	(_OC ${KUBECTL_VALIDATE} apply -f - <<< "$accumulateddata" | timestamp 1>&2) || exit 1
 	accumulateddata=
-    fi
-}
-
-function standard_labels() {
-    cat <<EOF
-clusterbuster-runUUID: "$runUUID"
-${basename}-id: "$runUUID"
-${basename}: "true"
-clusterbusterbase: "true"
-EOF
-}
-
-function node_selector() {
-    if [[ -n "$nodeSelector" ]] ; then
-	cat <<EOF
-nodeSelector:
-  $nodeSelector: ""
-EOF
-    fi
-}
-
-function createResources() {
-    local token
-    for token in "$@" ; do
-	local resource=${token%%=*}
-	local value=${token#*=}
-	echo "$resource: $value"
-    done
-}
-
-function createTolerations() {
-    local toleration
-    (( ${#tolerations[@]} )) || return
-    echo "tolerations:"
-    for toleration in "${tolerations[@]}" ; do
-	# shellcheck disable=SC2206
-	local -a tol=(${toleration//:/ })
-	cat <<EOF
-- key: "${tol[0]:-}"
-  operator: "${tol[1]:-}"
-  effect: "${tol[2]:-}"
-EOF
-    done
-}
-
-function createContainerResources() {
-    if (( ${#resource_limits[@]} + ${#resource_requests[@]} )) ; then
-	echo "resources:"
-	if (( ${#resource_limits[@]} )) ; then
-	    echo "  limits:"
-	    indent 4 createResources "${resource_limits[@]}"
-	fi
-	if (( ${#resource_requests[@]} )) ; then
-	    echo "  requests:"
-	    indent 4 createResources "${resource_requests[@]}"
-	fi
     fi
 }
 
@@ -1327,7 +1564,7 @@ kind: Namespace
 metadata:
   name: "${namespace}"
   labels:
-$(indent 4 standard_labels)
+$(indent 4 standardLabelsYAML)
 EOF
 }
 
@@ -1348,7 +1585,7 @@ metadata:
   name: "secret-${namespace}-${i}-${j}"
 $nsline
   labels:
-$(indent 4 standard_labels)
+$(indent 4 standardLabelsYAML)
 data:
   key1: "$(base64 <<< "${namespace}X${i}Y${j}Z1")"
   key2: "$(base64 <<< "${namespace}X${i}Y${j}Z2")"
@@ -1365,253 +1602,6 @@ function createConfigMaps() {
     createObjectFromFile configmap "$namespace" "${mapname}-${namespace}" "$@"
 }
 
-function genericCommand() {
-    local command=$1
-    cat <<EOF
-command:
-- bootstrap.sh
-args:
-- "$systemConfigmapMountDir/$command"
-EOF
-}
-
-function createVolumeMountsYAML() {
-    local namespace=$1
-    local deployment=${2:-1}
-    local secrets=${3:-1}
-    (( secrets + ${#emptydirs[@]} + ${#configMapFiles[@]} + ${#volumes[@]} + hasSystemConfigMap )) || return;
-    local -i i
-    echo volumeMounts:
-    for i in $(seq 0 $((secrets - 1))) ; do
-	local name="secret-${namespace}-${deployment}-$i"
-	cat <<EOF
-- name: $name
-  mountPath: /etc/$name
-  readOnly: true
-EOF
-    done
-    if [[ -n "${emptydirs[*]:-}" ]] ; then
-	local vol
-	for vol in "${emptydirs[@]}" ; do
-	    cat <<EOF
-- name: ${vol##*/}
-  mountPath: "$vol"
-EOF
-	done
-    fi
-    if [[ -n "${configMapFiles[*]:-}" ]] ; then
-	cat <<EOF
-- name: "configmap-${namespace}"
-  mountPath: "${configmapMountDir}"
-  readOnly: true
-EOF
-    fi
-    if [[ -n "${volumes[*]:-}" ]] ; then
-	local vol
-	for vol in "${volumes[@]:-}" ; do
-	    cat <<EOF
-- name: "$vol"
-  mountPath: "${volume_mount_paths[$vol]}"
-EOF
-	done
-    fi
-    if (( hasSystemConfigMap )) ; then
-	cat <<EOF
-- name: "systemconfigmap-${namespace}"
-  mountPath: "${systemConfigmapMountDir}"
-  readOnly: true
-EOF
-    fi
-}
-
-function createPbenchAgentYAML() {
-    if (( pbenchControllerPort > 0 )) ; then
-	# This isn't ideal, as there still can be collisions.
-	# Without a port server, this is certainly the most
-	# expeditious.
-	local sshPort=0
-	while (( sshPort < 2023 )) ; do
-	    sshPort=$RANDOM
-	done
-	cat <<EOF
-- name: "pbench-agent"
-  image: "$containerImage"
-  imagePullPolicy: $imagePullPolicy
-  securityContext:
-    privileged: false
-    capabilities:
-      add:
-      - AUDIT_WRITE
-  env:
-  - name: VERBOSE
-    value: "0"
-  command:
-  - "/usr/local/bin/run-pbench-agent-container"
-  args:
-  - "$pbenchControllerPort"
-  - "$pbenchControllerAddress"
-#hostPID: true
-serviceAccount: pbench
-EOF
-    fi
-}
-
-function createPrivilegeYAML() {
-    if (( pbenchControllerPort > 0)) ; then
-	cat <<EOF
-openshift.io/scc: privileged
-EOF
-    fi
-}
-
-function createVolumesYAML() {
-    local namespace=$1
-    local deployment=${2:-1}
-    local secrets=${3:-1}
-    (( secrets + ${#emptydirs[@]} + ${#configMapFiles[@]} + ${#volumes[@]} + hasSystemConfigMap )) || return;
-    local -i i
-    echo "volumes:"
-    for i in $(seq 0 $((secrets - 1))) ; do
-	local name="secret-${namespace}-${deployment}-$i"
-	cat<<EOF
-- name: $name
-  secret:
-    secretName: $name
-EOF
-    done
-
-    if [[ -n "${emptydirs[*]:-}" ]] ; then
-	local vol
-	for vol in "${emptydirs[@]}" ; do
-	    cat <<EOF
-- name: ${vol##*/}
-  emptydDir: {}
-EOF
-	done
-    fi
-    if [[ -n "${configMapFiles[*]:-}" ]] ; then
-	cat <<EOF
-- name: "configmap-${namespace}"
-  configMap:
-    name: "configmap-${namespace}"
-EOF
-    fi
-    if [[ -n "${volumes[*]:-}" ]] ; then
-	local vol
-	for vol in "${volumes[@]:-}" ; do
-	    cat <<EOF
-- name: "$vol"
-EOF
-	    if [[ -n "${volume_type_keys[$vol]}" ]] ; then
-		cat <<EOF
-  ${volume_types[$vol]}:
-    ${volume_type_keys[$vol]}: "${volume_scoped_names[$vol]}"
-EOF
-	    else
-		cat <<EOF
-  ${volume_types[$vol]}: {}
-EOF
-	    fi
-	done
-    fi
-    if (( hasSystemConfigMap )) ; then
-	cat <<EOF
-- name: "systemconfigmap-${namespace}"
-  configMap:
-    name: "systemconfigmap-${namespace}"
-EOF
-    fi
-}
-
-function createSyncYAML() {
-    local syncCount=${1:-1}
-    local namespace=$2
-    local expectedClients=$3
-    cat <<EOF
-- name: ${namespace}-sync
-  imagePullPolicy: $imagePullPolicy
-  image: "$containerImage"
-  ports:
-  - containerPort: $port
-$(indent 2 genericCommand sync.pl)
-  - "-f"
-  - "$syncFlagFile"
-  - "$syncPort"
-  - "$expectedClients"
-  - "$syncCount"
-$(indent 2 createVolumeMountsYAML "$namespace" 0 0)
-EOF
-}
-
-function createSyncSpec() {
-    cat <<EOF
-spec:
-$(indent 2 node_selector)
-  terminationGracePeriodSeconds: 1
-$(indent 2 createTolerations ${tolerations+"${tolerations[@]}"})
-$(indent 2 <<< "$runtimeClass")
-  containers:
-$(indent 2 createSyncYAML "$@")
-$(indent 2 createVolumesYAML "$namespace" 0 0)
-EOF
-}
-
-
-function createSyncDeployment() {
-    local syncCount=$1; shift
-    local nsline=${useNamespaces:+  namespace: "$namespace"}
-    if [[ $deploymentType = pod ]] ; then
-	createObject <<EOF
-apiVersion: v1
-kind: Pod
-metadata:
-  name: ${namespace}-sync
-$nsline
-$(indent 2 createPrivilegeYAML)
-$(indent 2 node_selector)
-  selector:
-    matchLabels:
-      app: ${namespace}-sync
-  labels:
-$(indent 4 standard_labels)
-    name: ${namespace}-sync
-    app: ${namespace}-sync
-    k8s-app: ${namespace}-sync
-    ${basename}-sync: "true"
-$(createSyncSpec "$syncCount" "$@")
-  restartPolicy: Never
-EOF
-    else
-	createObject <<EOF
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: ${namespace}-sync
-$(indent 2 createPrivilegeYAML)
-$nsline
-  labels:
-$(indent 4 standard_labels)
-spec:
-  replicas: 1
-  strategy:
-    type: RollingUpdate
-$(indent 2 node_selector)
-  selector:
-    matchLabels:
-      app: ${namespace}-sync
-  template:
-    metadata:
-      labels:
-$(indent 8 standard_labels)
-        name: ${namespace}-sync
-        app: ${namespace}-sync
-        k8s-app: ${namespace}-sync
-        ${basename}-sync: "true"
-$(indent 4 createSyncSpec -1 "$@")
-EOF
-    fi
-}
-
 function createService() {
     local namespace=$1
     local deployment=$2
@@ -1624,7 +1614,7 @@ metadata:
   name: "service-${deployment}"
 $nsline
   labels:
-$(indent 4 standard_labels)
+$(indent 4 standardLabelsYAML)
 spec:
   ports:
   - port: $portnum
@@ -1645,7 +1635,7 @@ metadata:
   name: "route-${deployment}"
 $nsline
   labels:
-$(indent 4 standard_labels)
+$(indent 4 standardLabelsYAML)
 spec:
   host: "service-${deployment}"
   to:
@@ -1656,6 +1646,61 @@ spec:
 EOF
 }
 
+function createSyncDeployment() {
+    local syncCount=$1; shift
+    local nsline=${useNamespaces:+  namespace: "$namespace"}
+    if [[ $deploymentType = pod ]] ; then
+	createObject <<EOF
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ${namespace}-sync
+$nsline
+$(indent 2 privilegeYAML)
+$(indent 2 nodeSelectorYAML)
+  selector:
+    matchLabels:
+      app: ${namespace}-sync
+  labels:
+$(indent 4 standardLabelsYAML)
+    name: ${namespace}-sync
+    app: ${namespace}-sync
+    k8s-app: ${namespace}-sync
+    ${basename}-sync: "true"
+$(syncSpec "$syncCount" "$@")
+  restartPolicy: Never
+EOF
+    else
+	createObject <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ${namespace}-sync
+$(indent 2 privilegeYAML)
+$nsline
+  labels:
+$(indent 4 standardLabelsYAML)
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+$(indent 2 nodeSelectorYAML)
+  selector:
+    matchLabels:
+      app: ${namespace}-sync
+  template:
+    metadata:
+      labels:
+$(indent 8 standardLabelsYAML)
+        name: ${namespace}-sync
+        app: ${namespace}-sync
+        k8s-app: ${namespace}-sync
+        ${basename}-sync: "true"
+$(indent 4 syncSpec -1 "$@")
+EOF
+    fi
+}
+
 ################################################################
 # WORKLOADS ####################################################
 ################################################################
@@ -1664,7 +1709,7 @@ EOF
 # Simple workloads (pause pod, clusterbuster, logging)
 ################################################################
 
-function createContainersClusterBusterYAML() {
+function _createContainersClusterBusterYAML() {
     local namespace=$1
     local i=$2
     local secretCount=$3
@@ -1676,7 +1721,7 @@ function createContainersClusterBusterYAML() {
 - name: ${namespace}-$i-$j
   imagePullPolicy: $imagePullPolicy
   image: "busybox"
-$(indent 2 createContainerResources)
+$(indent 2 containerResourcesYAML)
   command:
   - /bin/sh
   args:
@@ -1686,12 +1731,12 @@ $(indent 2 createContainerResources)
     (while : ; do date ; sleep 60 ; done)&
     sleep $podsleeptime
     exit 1
-$(indent 2 createVolumeMountsYAML "$namespace" "$i" "$secretCount")
+$(indent 2 volumeMountsYAML "$namespace" "$i" "$secretCount")
 EOF
     done
 }
 
-function createContainersPausePodYAML() {
+function _createContainersPausePodYAML() {
     local namespace=$1
     local i=$2
     local secretCount=$3
@@ -1703,13 +1748,13 @@ function createContainersPausePodYAML() {
 - name: ${namespace}-$i-$j
   imagePullPolicy: $imagePullPolicy
   image: "gcr.io/google_containers/pause-amd64:3.0"
-$(indent 2 createContainerResources)
-$(indent 2 createVolumeMountsYAML "$namespace" "$i" "$secretCount")
+$(indent 2 containerResourcesYAML)
+$(indent 2 volumeMountsYAML "$namespace" "$i" "$secretCount")
 EOF
     done
 }
 
-function createContainersLogYAML() {
+function _createContainersLogYAML() {
     local namespace=$1
     local i=$2
     local secretCount=$3
@@ -1722,11 +1767,11 @@ function createContainersLogYAML() {
 - name: ${namespace}-$i-$j
   imagePullPolicy: $imagePullPolicy
   image: "$containerImage"
-$(indent 2 createContainerResources)
+$(indent 2 containerResourcesYAML)
   env:
   - name: VERBOSE
     value: "$verbose"
-$(indent 2 genericCommand logger.pl)
+$(indent 2 bootstrapCommandYAML logger.pl)
   - "$namespace"
   - "${namespace}-sysbench-${i}"
   - "c${j}"
@@ -1737,18 +1782,12 @@ $(indent 2 genericCommand logger.pl)
   - "$log_delay_usec"
   - "$log_xfertime"
   - "$log_exit_at_end"
-$(indent 2 createVolumeMountsYAML "$namespace" "$i" "$secretCount")
+$(indent 2 volumeMountsYAML "$namespace" "$i" "$secretCount")
 EOF
     done
 }
 
-function listConfigMapsLog() {
-    cat <<EOF
-${__libdir__}/logger.pl
-EOF
-}
-
-function createClassicSpec() {
+function _createClassicSpec() {
     local namespace=$1
     local i=$2
     local secretCount=$3
@@ -1756,17 +1795,17 @@ function createClassicSpec() {
     local -i containers=$5
 cat <<EOF
 spec:
-$(indent 2 node_selector)
+$(indent 2 nodeSelectorYAML)
   terminationGracePeriodSeconds: 1
 $(indent 2 <<< "$runtimeClass")
   containers:
-$(indent 2 createContainers${podType}YAML "$@")
-$(indent 2 createPbenchAgentYAML)
-$(indent 2 createVolumesYAML "$namespace" "$i" "$secretCount")
+$(indent 2 _createContainers${podType}YAML "$@")
+$(indent 2 pbenchAgentYAML)
+$(indent 2 volumesYAML "$namespace" "$i" "$secretCount")
 EOF
 }
 
-function createDeploymentClassicYAML() {
+function _createDeploymentClassicYAML() {
     local namespace=$1
     local i=$2
     local secretCount=$3
@@ -1782,13 +1821,13 @@ kind: Pod
 metadata:
   name: ${namespace}-${i}-${j}
 $nsline
-$(indent 2 createPrivilegeYAML)
-$(indent 2 node_selector)
+$(indent 2 privilegeYAML)
+$(indent 2 nodeSelectorYAML)
   selector:
     matchLabels:
       app: ${namespace}-${i}
   labels:
-$(indent 4 standard_labels)
+$(indent 4 standardLabelsYAML)
     name: ${namespace}-${i}
     app: ${namespace}-${i}
     ${basename}-client: "true"
@@ -1802,12 +1841,12 @@ kind: Deployment
 metadata:
   name: ${namespace}-$i
 $nsline
-$(indent 2 createPrivilegeYAML)
+$(indent 2 privilegeYAML)
   labels:
-$(indent 4 standard_labels)
+$(indent 4 standardLabelsYAML)
 spec:
   replicas: $replicas
-$(indent 2 node_selector)
+$(indent 2 nodeSelectorYAML)
   selector:
     matchLabels:
       app: ${namespace}-$i
@@ -1816,15 +1855,15 @@ $(indent 2 node_selector)
   template:
     metadata:
       labels:
-$(indent 8 standard_labels)
+$(indent 8 standardLabelsYAML)
         name: ${namespace}-$i
         app: ${namespace}-$i
-$(indent 4 createClassicSpec "$@")
+$(indent 4 _createClassicSpec "$@")
 EOF
     fi
 }
 
-function createDeploymentSimple() {
+function _createDeploymentSimple() {
     local namespace=$1
     local count=${2:-1}
     local secretCount=${3:-1}
@@ -1832,27 +1871,36 @@ function createDeploymentSimple() {
     local containers=${5:-1}
     local -i i
     for i in $(seq $firstDeployment $((count + firstDeployment - 1))) ; do
-	createDeploymentClassicYAML "$namespace" "$i" "$secretCount"  "$replicas" "$containers"
+	_createDeploymentClassicYAML "$namespace" "$i" "$secretCount"  "$replicas" "$containers"
     done
 }
 
+# The simple workloads do not support logging or synchronization.
+# The Log workload is about log generation
+
+function listConfigMapsLog() {
+    cat <<EOF
+${__libdir__}/logger.pl
+EOF
+}
+
 function createDeploymentPausePod() {
-    createDeploymentSimple "$@"
+    _createDeploymentSimple "$@"
 }
 
 function createDeploymentClusterBuster() {
-    createDeploymentSimple "$@"
+    _createDeploymentSimple "$@"
 }
 
 function createDeploymentLog() {
-    createDeploymentSimple "$@"
+    _createDeploymentSimple "$@"
 }
 
 ################################################################
 # Client/server workload
 ################################################################
 
-function createServerContainerYAML() {
+function _createServerContainerYAML() {
     local namespace=$1
     local i=$2
     local secretCount=$3
@@ -1862,10 +1910,10 @@ function createServerContainerYAML() {
 - name: server
   image: "$containerImage"
   imagePullPolicy: $imagePullPolicy
-$(indent 2 createContainerResources)
+$(indent 2 containerResourcesYAML)
   ports:
   - containerPort: $port
-$(indent 2 genericCommand server.pl)
+$(indent 2 bootstrapCommandYAML server.pl)
   - "$basetime"
   - "$baseoffset"
   - "$port"
@@ -1873,11 +1921,11 @@ $(indent 2 genericCommand server.pl)
   - "$msgSize"
   - "$(ts)"
   - "$expectedClients"
-$(indent 2 createVolumeMountsYAML "$namespace" "$i" "$secretCount")
+$(indent 2 volumeMountsYAML "$namespace" "$i" "$secretCount")
 EOF
 }
 
-function createServerSpec() {
+function _createServerSpec() {
     local namespace=$1
     local i=$2
     local secretCount=$3
@@ -1885,17 +1933,17 @@ function createServerSpec() {
     local expectedClients=$5
     cat <<EOF
 spec:
-$(indent 2 node_selector)
+$(indent 2 nodeSelectorYAML)
   terminationGracePeriodSeconds: 1
 $(indent 2 <<< "$runtimeClass")
   containers:
-$(indent 2 createServerContainerYAML "$@")
-$(indent 2 createPbenchAgentYAML)
-$(indent 2 createVolumesYAML "$namespace" "$i" "$secretCount")
+$(indent 2 _createServerContainerYAML "$@")
+$(indent 2 pbenchAgentYAML)
+$(indent 2 volumesYAML "$namespace" "$i" "$secretCount")
 EOF
 }
 
-function createServerDeployment() {
+function _createServerDeployment() {
     local namespace=$1
     local i=$2
     local secretCount=$3
@@ -1909,18 +1957,18 @@ kind: Pod
 metadata:
   name: ${namespace}-${i}-server
 $nsline
-$(indent 2 node_selector)
-$(indent 2 createPrivilegeYAML)
+$(indent 2 nodeSelectorYAML)
+$(indent 2 privilegeYAML)
   selector:
     matchLabels:
       app: ${namespace}-${i}
   labels:
-$(indent 4 standard_labels)
+$(indent 4 standardLabelsYAML)
     name: ${namespace}-${i}
     app: ${namespace}-${i}
     k8s-app: ${namespace}-${i}-server
     ${basename}-server: "true"
-$(createServerSpec "$@")
+$(_createServerSpec "$@")
   restartPolicy: Never
 EOF
     else
@@ -1930,12 +1978,12 @@ kind: Deployment
 metadata:
   name: ${namespace}-${i}-server
 $nsline
-$(indent 2 createPrivilegeYAML)
+$(indent 2 privilegeYAML)
   labels:
-$(indent 4 standard_labels)
+$(indent 4 standardLabelsYAML)
 spec:
   replicas: 1
-$(indent 2 node_selector)
+$(indent 2 nodeSelectorYAML)
   selector:
     matchLabels:
       app: ${namespace}-$i
@@ -1944,17 +1992,17 @@ $(indent 2 node_selector)
   template:
     metadata:
       labels:
-$(indent 8 standard_labels)
+$(indent 8 standardLabelsYAML)
         name: ${namespace}-${i}
         app: ${namespace}-${i}
         k8s-app: ${namespace}-${i}-server
         ${basename}-server: "true"
-$(indent 4 createServerSpec "$@")
+$(indent 4 _createServerSpec "$@")
 EOF
     fi
 }
 
-function createClientContainerYAML() {
+function _createClientContainerYAML() {
     local namespace=$1
     local i=$2
     local secretCount=$3
@@ -1978,11 +2026,11 @@ function createClientContainerYAML() {
 - name: c${j}
   image: "$containerImage"
   imagePullPolicy: $imagePullPolicy
-$(indent 2 createContainerResources)
+$(indent 2 containerResourcesYAML)
   env:
   - name: VERBOSE
     value: "$verbose"
-$(indent 2 genericCommand client.pl)
+$(indent 2 bootstrapCommandYAML client.pl)
   - "$namespace"
   - "${namespace}-${i}-client-$replica"
   - "$j"
@@ -2006,12 +2054,12 @@ $(indent 2 genericCommand client.pl)
   - "$log_host"
   - "$log_port"
   - "$podname"
-$(indent 2 createVolumeMountsYAML "$namespace" "$i" "$secretCount")
+$(indent 2 volumeMountsYAML "$namespace" "$i" "$secretCount")
 EOF
     done
 }
 
-function createClientAffinityYAML() {
+function _createClientAffinityYAML() {
     (( affinity )) || return 0
     local server=$1
     local affinityType
@@ -2033,7 +2081,7 @@ affinity:
 EOF
 }
 
-function createClientSpec() {
+function _createClientSpec() {
     local namespace=$1
     local i=$2
     local secretCount=$3
@@ -2048,18 +2096,18 @@ function createClientSpec() {
     local replica=${12}
     cat <<EOF
 spec:
-$(indent 2 node_selector)
+$(indent 2 nodeSelectorYAML)
   terminationGracePeriodSeconds: 1
-$(indent 2 createClientAffinityYAML "${namespace}-${i}-server")
+$(indent 2 _createClientAffinityYAML "${namespace}-${i}-server")
 $(indent 2 <<< "$runtimeClass")
   containers:
-$(indent 2 createClientContainerYAML "$namespace" "$i" "$secretCount" "$dataRate" "$bytes" "$msgSize" "$containers" "$log_host" "$log_port" "$podname" "$replica")
-$(indent 2 createPbenchAgentYAML)
-$(indent 2 createVolumesYAML "$namespace" "$i" "$secretCount")
+$(indent 2 _createClientContainerYAML "$namespace" "$i" "$secretCount" "$dataRate" "$bytes" "$msgSize" "$containers" "$log_host" "$log_port" "$podname" "$replica")
+$(indent 2 pbenchAgentYAML)
+$(indent 2 volumesYAML "$namespace" "$i" "$secretCount")
 EOF
 }
 
-function createClientDeployment() {
+function _createClientDeployment() {
     local namespace=$1
     local i=$2
     local secretCount=$3
@@ -2081,18 +2129,18 @@ kind: Pod
 metadata:
   name: $podname
 $nsline
-$(indent 2 createPrivilegeYAML)
-$(indent 2 node_selector)
-$(indent 2 createPrivilegeYAML)
+$(indent 2 privilegeYAML)
+$(indent 2 nodeSelectorYAML)
+$(indent 2 privilegeYAML)
   selector:
     matchLabels:
       app: ${namespace}-${i}-client
   labels:
-$(indent 4 standard_labels)
+$(indent 4 standardLabelsYAML)
     name: ${namespace}-${i}-client
     app: ${namespace}-${i}-client
     ${basename}-client: "true"
-$(createClientSpec "$@" "$podname" "$j")
+$(_createClientSpec "$@" "$podname" "$j")
   restartPolicy: Never
 EOF
 	done
@@ -2103,13 +2151,13 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: $podname
-$(indent 2 createPrivilegeYAML)
+$(indent 2 privilegeYAML)
 $nsline
   labels:
-$(indent 4 standard_labels)
+$(indent 4 standardLabelsYAML)
 spec:
   replicas: $replicas
-$(indent 2 node_selector)
+$(indent 2 nodeSelectorYAML)
   restartPolicy: Always
   selector:
     matchLabels:
@@ -2119,11 +2167,11 @@ $(indent 2 node_selector)
   template:
     metadata:
       labels:
-$(indent 8 standard_labels)
+$(indent 8 standardLabelsYAML)
         name: ${namespace}-${i}-client
         app: ${namespace}-${i}-client
         ${basename}-client: "true"
-$(indent 4 createClientSpec "$@" "$podname" "x")
+$(indent 4 _createClientSpec "$@" "$podname" "x")
 EOF
     fi
 }
@@ -2146,11 +2194,11 @@ function createDeploymentServer() {
 	createService "$namespace" "$namespace-$i" "$port"
 	(( createRoutes )) && createRoute "$namespace" "$namespace-$i"
 	if [[ $deploymentType = pod ]] ; then
-	    createServerDeployment "$namespace" "$i" "$secretCount" "$msgSize" "$((containers * replicas))"
+	    _createServerDeployment "$namespace" "$i" "$secretCount" "$msgSize" "$((containers * replicas))"
 	else
-	    createServerDeployment "$namespace" "$i" "$secretCount" "$msgSize" "-1"
+	    _createServerDeployment "$namespace" "$i" "$secretCount" "$msgSize" "-1"
 	fi
-	createClientDeployment "$namespace" "$i" "$secretCount" "$replicas" "$dataRate" "$bytes" "$msgSize" "$containers" "$log_host" "$log_port"
+	_createClientDeployment "$namespace" "$i" "$secretCount" "$replicas" "$dataRate" "$bytes" "$msgSize" "$containers" "$log_host" "$log_port"
     done
 }
 
@@ -2174,7 +2222,7 @@ function calculateLogsRequiredServer() {
 # Files workload
 ################################################################
 
-function createContainersFilesYAML() {
+function _createContainersFilesYAML() {
     local namespace=$1
     local i=$2
     local secretCount=$3
@@ -2197,11 +2245,11 @@ function createContainersFilesYAML() {
 - name: "c${j}"
   imagePullPolicy: $imagePullPolicy
   image: "$containerImage"
-$(indent 2 createContainerResources)
+$(indent 2 containerResourcesYAML)
   env:
   - name: VERBOSE
     value: "$verbose"
-$(indent 2 genericCommand files.pl)
+$(indent 2 bootstrapCommandYAML files.pl)
   - "$namespace"
   - "${namespace}-files-${i}"
   - "c${j}"
@@ -2221,12 +2269,12 @@ $(indent 2 genericCommand files.pl)
   - "$log_port"
 $(tmp_volume_paths=("${volume_mount_paths[@]/%/\"}"); IFS=$'\n'; echo "${tmp_volume_paths[*]/#/  - \"}")
 $(emptydirs=("${emptydirs[@]/%/\"}"); IFS=$'\n'; echo "${emptydirs[*]/#/  - \"}")
-$(indent 2 createVolumeMountsYAML "$namespace" "$i" "$secretCount")
+$(indent 2 volumeMountsYAML "$namespace" "$i" "$secretCount")
 EOF
     done
 }
 
-function createFilesSpec() {
+function _createFilesSpec() {
     local namespace=$1
     local i=$2
     local secretCount=$3
@@ -2234,17 +2282,17 @@ function createFilesSpec() {
     local -i containers=$5
     cat <<EOF
 spec:
-$(indent 2 node_selector)
+$(indent 2 nodeSelectorYAML)
   terminationGracePeriodSeconds: 1
 $(indent 2 <<< "$runtimeClass")
   containers:
-$(indent 2 createContainersFilesYAML "$@")
-$(indent 2 createPbenchAgentYAML)
-$(indent 2 createVolumesYAML "$namespace" "$i" "$secretCount")
+$(indent 2 _createContainersFilesYAML "$@")
+$(indent 2 pbenchAgentYAML)
+$(indent 2 volumesYAML "$namespace" "$i" "$secretCount")
 EOF
 }
 
-function createFilesDeployment() {
+function _createFilesDeployment() {
     local namespace=$1
     local i=$2
     local secretCount=$3
@@ -2261,18 +2309,18 @@ kind: Pod
 metadata:
   name: ${namespace}-files-${i}-${j}
 $nsline
-$(indent 2 createPrivilegeYAML)
-$(indent 2 node_selector)
+$(indent 2 privilegeYAML)
+$(indent 2 nodeSelectorYAML)
   selector:
     matchLabels:
       app: ${namespace}-files-${i}
   labels:
-$(indent 4 standard_labels)
+$(indent 4 standardLabelsYAML)
     name: ${namespace}-files-${i}
     app: ${namespace}-files-${i}
     ${basename}-files: "true"
     ${basename}-client: "true"
-$(createFilesSpec "$@")
+$(_createFilesSpec "$@")
   restartPolicy: Never
 EOF
 	done
@@ -2283,7 +2331,7 @@ kind: Deployment
 metadata:
   name: ${namespace}-files-$i
 $nsline
-$(indent 2 createPrivilegeYAML)
+$(indent 2 privilegeYAML)
   labels:
     clusterbuster-runUUID: "$runUUID"
     ${basename}-id: "$runUUID"
@@ -2291,7 +2339,7 @@ $(indent 2 createPrivilegeYAML)
     clusterbusterbase: "true"
 spec:
   replicas: $replicas
-$(indent 2 node_selector)
+$(indent 2 nodeSelectorYAML)
   selector:
     matchLabels:
       app: ${namespace}-$i
@@ -2300,12 +2348,12 @@ $(indent 2 node_selector)
   template:
     metadata:
       labels:
-$(indent 4 standard_labels)
+$(indent 4 standardLabelsYAML)
         name: ${namespace}-files-$i
         app: ${namespace}-files-$i
         ${basename}-files: "true"
         ${basename}-client: "true"
-$(indent 4 createFilesSpec "$@")
+$(indent 4 _createFilesSpec "$@")
 EOF
     fi
 }
@@ -2330,7 +2378,7 @@ function createDeploymentFiles() {
 	createSyncDeployment 4 "$namespace" "$((containers * processes_per_pod * replicas * count))"
     fi
     for i in $(seq $firstDeployment $((count + firstDeployment - 1))) ; do
-	createFilesDeployment "$namespace" "$i" "$secretCount"  "$replicas" "$containers" "$log_host" "$log_port"
+	_createFilesDeployment "$namespace" "$i" "$secretCount"  "$replicas" "$containers" "$log_host" "$log_port"
     done
 }
 
@@ -2345,7 +2393,7 @@ EOF
 # FIO workload
 ################################################################
 
-function createContainersFioYAML() {
+function _createContainersFioYAML() {
     local namespace=$1
     local i=$2
     local secretCount=$3
@@ -2367,11 +2415,11 @@ function createContainersFioYAML() {
 - name: "c${j}"
   imagePullPolicy: $imagePullPolicy
   image: "$containerImage"
-$(indent 2 createContainerResources)
+$(indent 2 containerResourcesYAML)
   env:
   - name: VERBOSE
     value: "$verbose"
-$(indent 2 genericCommand fio.pl)
+$(indent 2 bootstrapCommandYAML fio.pl)
   - "$namespace"
   - "${namespace}-fio-${i}"
   - "c${j}"
@@ -2389,12 +2437,12 @@ $(indent 2 genericCommand fio.pl)
   - "$log_port"
   - "$configmapMountDir"
   - "${fio_generic_options[*]:-}"
-$(indent 2 createVolumeMountsYAML "$namespace" "$i" "$secretCount")
+$(indent 2 volumeMountsYAML "$namespace" "$i" "$secretCount")
 EOF
     done
 }
 
-function createFioSpec() {
+function _createFioSpec() {
     local namespace=$1
     local i=$2
     local secretCount=$3
@@ -2402,17 +2450,17 @@ function createFioSpec() {
     local -i containers=$5
     cat <<EOF
 spec:
-$(indent 2 node_selector)
+$(indent 2 nodeSelectorYAML)
   terminationGracePeriodSeconds: 1
 $(indent 2 <<< "$runtimeClass")
   containers:
-$(indent 2 createContainersFioYAML "$@")
-$(indent 2 createPbenchAgentYAML)
-$(indent 2 createVolumesYAML "$namespace" "$i" "$secretCount")
+$(indent 2 _createContainersFioYAML "$@")
+$(indent 2 pbenchAgentYAML)
+$(indent 2 volumesYAML "$namespace" "$i" "$secretCount")
 EOF
 }
 
-function createFioDeployment() {
+function _createFioDeployment() {
     local namespace=$1
     local i=$2
     local secretCount=$3
@@ -2426,18 +2474,18 @@ kind: Pod
 metadata:
   name: ${namespace}-fio-${i}
 $nsline
-$(indent 2 createPrivilegeYAML)
-$(indent 2 node_selector)
+$(indent 2 privilegeYAML)
+$(indent 2 nodeSelectorYAML)
   selector:
     matchLabels:
       app: ${namespace}-fio-${i}
   labels:
-$(indent 4 standard_labels)
+$(indent 4 standardLabelsYAML)
     name: ${namespace}-fio-${i}
     app: ${namespace}-fio-${i}
     ${basename}-fio: "true"
     ${basename}-client: "true"
-$(createFioSpec "$@")
+$(_createFioSpec "$@")
   restartPolicy: Never
 EOF
     else
@@ -2447,12 +2495,12 @@ kind: Deployment
 metadata:
   name: ${namespace}-fio-$i
 $nsline
-$(indent 2 createPrivilegeYAML)
+$(indent 2 privilegeYAML)
   labels:
-$(indent 4 standard_labels)
+$(indent 4 standardLabelsYAML)
 spec:
   replicas: 1
-$(indent 2 node_selector)
+$(indent 2 nodeSelectorYAML)
   selector:
     matchLabels:
       app: ${namespace}-fio-$i
@@ -2461,12 +2509,12 @@ $(indent 2 node_selector)
   template:
     metadata:
       labels:
-$(indent 8 standard_labels)
+$(indent 8 standardLabelsYAML)
         name: ${namespace}-fio-$i
         app: ${namespace}-fio-$i
         ${basename}-fio: "true"
         ${basename}-client: "true"
-$(indent 4 createFioSpec "$@")
+$(indent 4 _createFioSpec "$@")
 EOF
     fi
 }
@@ -2507,7 +2555,7 @@ EOF
 # Sysbench workload
 ################################################################
 
-function createContainersSysbenchYAML() {
+function _createContainersSysbenchYAML() {
     local namespace=$1
     local i=$2
     local secretCount=$3
@@ -2529,11 +2577,11 @@ function createContainersSysbenchYAML() {
 - name: "c${j}"
   imagePullPolicy: $imagePullPolicy
   image: "$containerImage"
-$(indent 2 createContainerResources)
+$(indent 2 containerResourcesYAML)
   env:
   - name: VERBOSE
     value: "$verbose"
-$(indent 2 genericCommand sysbench.pl)
+$(indent 2 bootstrapCommandYAML sysbench.pl)
   - "$namespace"
   - "${namespace}-sysbench-${i}"
   - "c${j}"
@@ -2553,12 +2601,12 @@ $(indent 2 genericCommand sysbench.pl)
   - "fileio"
   - "${sysbench_fileio_options[*]:-}"
   - "${!sysbench_fileio_tests[*]}"
-$(indent 2 createVolumeMountsYAML "$namespace" "$i" "$secretCount")
+$(indent 2 volumeMountsYAML "$namespace" "$i" "$secretCount")
 EOF
     done
 }
 
-function createSysbenchSpec() {
+function _createSysbenchSpec() {
     local namespace=$1
     local i=$2
     local secretCount=$3
@@ -2566,17 +2614,17 @@ function createSysbenchSpec() {
     local -i containers=$5
     cat <<EOF
 spec:
-$(indent 2 node_selector)
+$(indent 2 nodeSelectorYAML)
   terminationGracePeriodSeconds: 1
 $(indent 2 <<< "$runtimeClass")
   containers:
-$(indent 2 createContainersSysbenchYAML "$@")
-$(indent 2 createPbenchAgentYAML)
-$(indent 2 createVolumesYAML "$namespace" "$i" "$secretCount")
+$(indent 2 _createContainersSysbenchYAML "$@")
+$(indent 2 pbenchAgentYAML)
+$(indent 2 volumesYAML "$namespace" "$i" "$secretCount")
 EOF
 }
 
-function createSysbenchDeployment() {
+function _createSysbenchDeployment() {
     local namespace=$1
     local i=$2
     local secretCount=$3
@@ -2590,18 +2638,18 @@ kind: Pod
 metadata:
   name: ${namespace}-sysbench-${i}
 $nsline
-$(indent 2 createPrivilegeYAML)
-$(indent 2 node_selector)
+$(indent 2 privilegeYAML)
+$(indent 2 nodeSelectorYAML)
   selector:
     matchLabels:
       app: ${namespace}-sysbench-${i}
   labels:
-$(indent 4 standard_labels)
+$(indent 4 standardLabelsYAML)
     name: ${namespace}-sysbench-${i}
     app: ${namespace}-sysbench-${i}
     ${basename}-sysbench: "true"
     ${basename}-client: "true"
-$(createSysbenchSpec "$@")
+$(_createSysbenchSpec "$@")
   restartPolicy: Never
 EOF
     else
@@ -2611,12 +2659,12 @@ kind: Deployment
 metadata:
   name: ${namespace}-sysbench-$i
 $nsline
-$(indent 2 createPrivilegeYAML)
+$(indent 2 privilegeYAML)
   labels:
-$(indent 4 standard_labels)
+$(indent 4 standardLabelsYAML)
 spec:
   replicas: 1
-$(indent 2 node_selector)
+$(indent 2 nodeSelectorYAML)
   selector:
     matchLabels:
       app: ${namespace}-sysbench-$i
@@ -2625,12 +2673,12 @@ $(indent 2 node_selector)
   template:
     metadata:
       labels:
-$(indent 8 standard_labels)
+$(indent 8 standardLabelsYAML)
         name: ${namespace}-sysbench-$i
         app: ${namespace}-sysbench-$i
         ${basename}-sysbench: "true"
         ${basename}-client: "true"
-$(indent 4 createSysbenchSpec "$@")
+$(indent 4 _createSysbenchSpec "$@")
 EOF
     fi
 }
@@ -2649,7 +2697,7 @@ function createDeploymentSysbench() {
 	createSyncDeployment $(( (${#sysbench_fileio_tests[@]} * 3) + 1)) "$namespace" "$((containers * replicas * count))"
     fi
     for i in $(seq $firstDeployment $((count + firstDeployment - 1))) ; do
-	createSysbenchDeployment "$namespace" "$i" "$secretCount"  "$replicas" "$containers" "$log_host" "$log_port"
+	_createSysbenchDeployment "$namespace" "$i" "$secretCount"  "$replicas" "$containers" "$log_host" "$log_port"
     done
 }
 
@@ -2672,7 +2720,7 @@ function calculateLogsRequiredSysbench() {
 # CPU soaker workload
 ################################################################
 
-function createContainersCPUSoakerYAML() {
+function _createContainersCPUSoakerYAML() {
     local podname=$1
     local namespace=$2
     local i=$3
@@ -2693,11 +2741,11 @@ function createContainersCPUSoakerYAML() {
 - name: "c$j"
   imagePullPolicy: $imagePullPolicy
   image: "$containerImage"
-$(indent 2 createContainerResources)
+$(indent 2 containerResourcesYAML)
   env:
   - name: VERBOSE
     value: "$verbose"
-$(indent 2 genericCommand cpusoaker.pl)
+$(indent 2 bootstrapCommandYAML cpusoaker.pl)
   - "$namespace"
   - "$podname"
   - "c$j"
@@ -2712,12 +2760,12 @@ $(indent 2 genericCommand cpusoaker.pl)
   - "$syncPortNum"
   - "$log_host"
   - "$log_port"
-$(indent 2 createVolumeMountsYAML "$namespace" "$i" "$secretCount")
+$(indent 2 volumeMountsYAML "$namespace" "$i" "$secretCount")
 EOF
     done
 }
 
-function createSoakerSpec() {
+function _createSoakerSpec() {
     local podname=$1
     local namespace=$2
     local i=$3
@@ -2726,17 +2774,17 @@ function createSoakerSpec() {
     local -i containers=$6
     cat <<EOF
 spec:
-$(indent 2 node_selector)
+$(indent 2 nodeSelectorYAML)
   terminationGracePeriodSeconds: 1
 $(indent 2 <<< "$runtimeClass")
   containers:
-$(indent 2 createContainersCPUSoakerYAML "$@")
-$(indent 2 createPbenchAgentYAML)
-$(indent 2 createVolumesYAML "$namespace" "$i" "$secretCount")
+$(indent 2 _createContainersCPUSoakerYAML "$@")
+$(indent 2 pbenchAgentYAML)
+$(indent 2 volumesYAML "$namespace" "$i" "$secretCount")
 EOF
 }
 
-function createSoakerDeployment() {
+function _createSoakerDeployment() {
     local namespace=$1
     local i=$2
     local secretCount=$3
@@ -2752,18 +2800,18 @@ kind: Pod
 metadata:
   name: ${namespace}-soaker-${i}-${j}
 $nsline
-$(indent 2 createPrivilegeYAML)
-$(indent 2 node_selector)
+$(indent 2 privilegeYAML)
+$(indent 2 nodeSelectorYAML)
   selector:
     matchLabels:
       app: ${namespace}-soaker-${i}
   labels:
-$(indent 4 standard_labels)
+$(indent 4 standardLabelsYAML)
     name: ${namespace}-soaker-${i}
     app: ${namespace}-soaker-${i}
     ${basename}-soaker: "true"
     ${basename}-client: "true"
-$(createSoakerSpec "${namespace}-soaker-${i}-${j}" "$@")
+$(_createSoakerSpec "${namespace}-soaker-${i}-${j}" "$@")
   restartPolicy: Never
 EOF
 	done
@@ -2774,12 +2822,12 @@ kind: Deployment
 metadata:
   name: ${namespace}-soaker-$i
 $nsline
-$(indent 2 createPrivilegeYAML)
+$(indent 2 privilegeYAML)
   labels:
-$(indent 4 standard_labels)
+$(indent 4 standardLabelsYAML)
 spec:
   replicas: $replicas
-$(indent 2 node_selector)
+$(indent 2 nodeSelectorYAML)
   selector:
     matchLabels:
       app: ${namespace}-soaker-$i
@@ -2788,12 +2836,12 @@ $(indent 2 node_selector)
   template:
     metadata:
       labels:
-$(indent 8 standard_labels)
+$(indent 8 standardLabelsYAML)
         name: ${namespace}-soaker-$i
         app: ${namespace}-soaker-$i
         ${basename}-soaker: "true"
         ${basename}-client: "true"
-$(indent 4 createSoakerSpec "${namespace}-soaker-${i}-deployment" "$@")
+$(indent 4 _createSoakerSpec "${namespace}-soaker-${i}-deployment" "$@")
 EOF
     fi
 }
@@ -2812,7 +2860,7 @@ function createDeploymentCPUSoaker() {
 	createSyncDeployment 2 "$namespace" "$((containers * replicas * processes_per_pod * count))"
     fi
     for i in $(seq $firstDeployment $((count + firstDeployment - 1))) ; do
-	createSoakerDeployment "$namespace" "$i" "$secretCount"  "$((processes_per_pod))" "$containers" "$log_host" "$log_port"
+	_createSoakerDeployment "$namespace" "$i" "$secretCount"  "$((processes_per_pod))" "$containers" "$log_host" "$log_port"
     done
 }
 
@@ -2832,26 +2880,8 @@ function calculateLogsRequiredCPUSoaker() {
 }
 
 ################################################################
-# APIs
+# Object creation
 ################################################################
-
-function doSetup() {
-    if type -t "doSetup${podType}" >/dev/null ; then
-	"doSetup${podType}"
-    fi
-}
-
-function createDeployment() {
-    "createDeployment${podType}" "$@"
-}
-
-function calculateLogsRequired() {
-    if type -t "calculateLogsRequired${podType}" >/dev/null ; then
-	"calculateLogsRequired${podType}" "$@"
-    else
-	echo 0
-    fi
-}
 
 function createObjects_n() {
     trap exit INT
@@ -2927,9 +2957,9 @@ function createAllSecrets() {
 }
 
 function createSystemConfigMap() {
-    if type -t "listConfigMaps${podType}" >/dev/null ; then
+    if supportsAPI listConfigMaps ; then
 	local -a systemfiles
-	readarray -t systemfiles < <(listConfigMaps${podType})
+	readarray -t systemfiles < <(listConfigMaps)
 	trap 'kill -9 $(jobs -p); exit' INT
 	for i in $(seq 0 "$((parallelConfigMaps - 1))") ; do
 	    createObjects_n ConfigMaps "$parallelConfigMaps" "$blocksizeConfigMaps" "$((i * blocksizeConfigMaps))" "$sleepConfigMaps" "systemconfigmap" "${systemfiles[@]}"&
@@ -3044,9 +3074,7 @@ function run_clusterbuster_1() {
     createAllObjects Secrets
     (( ${#configMapFiles[@]} )) && checkConfigMaps "${configMapFiles[@]}"
     createAllObjects ConfigMaps
-    if type -t "listConfigMaps${podType}" >/dev/null ; then
-	hasSystemConfigMap=1
-    fi
+    supportsAPI listConfigMaps && hasSystemConfigMap=1
 
     if (( doit )) ; then
 	local secname=""
