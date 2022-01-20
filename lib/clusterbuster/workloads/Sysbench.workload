@@ -1,0 +1,180 @@
+#!/bin/bash
+
+# Copyright 2019-2022 Robert Krawitz/Red Hat
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+################################################################
+# Sysbench workload
+################################################################
+
+function _createContainersSysbenchYAML() {
+    local namespace=$1
+    local i=$2
+    local secretCount=$3
+    local -i processes=$4
+    local -i containers=$5
+    local log_host=${6:-}
+    local -i log_port=${7:-0}
+    local -i j
+    local syncService=
+    local syncPortNum=
+    if (( syncStart )) ; then
+	syncService="${syncHost:-service-${namespace}-sync}"
+	syncPortNum=$syncPort
+    fi
+    # shellcheck disable=2031
+    local workdir=${common_workdir:-${emptydirs[0]:-/tmp}}
+    for j in $(seq 0 $((containers - 1))) ; do
+	cat <<EOF
+- name: "c${j}"
+  imagePullPolicy: $imagePullPolicy
+  image: "$containerImage"
+$(indent 2 containerResourcesYAML)
+  env:
+  - name: VERBOSE
+    value: "$verbose"
+$(indent 2 bootstrapCommandYAML sysbench.pl)
+  - "$namespace"
+  - "${namespace}-sysbench-${i}"
+  - "c${j}"
+  - "$basetime"
+  - "$baseoffset"
+  - "$(ts)"
+  - "$poddelay"
+  - "$processes"
+  - "$workdir"
+  - "$xferTime"
+  - "$exitAtEnd"
+  - "$syncService"
+  - "$syncPortNum"
+  - "$log_host"
+  - "$log_port"
+  - "${sysbench_generic_options[*]:-}"
+  - "fileio"
+  - "${sysbench_fileio_options[*]:-}"
+  - "${!sysbench_fileio_tests[*]}"
+$(indent 2 volumeMountsYAML "$namespace" "$i" "$secretCount")
+EOF
+    done
+}
+
+function _createSysbenchSpec() {
+    local namespace=$1
+    local i=$2
+    local secretCount=$3
+    local -i processes=$4
+    local -i containers=$5
+    cat <<EOF
+spec:
+$(indent 2 nodeSelectorYAML)
+  terminationGracePeriodSeconds: 1
+$(indent 2 <<< "$runtimeClass")
+  containers:
+$(indent 2 _createContainersSysbenchYAML "$@")
+$(indent 2 pbenchAgentYAML)
+$(indent 2 volumesYAML "$namespace" "$i" "$secretCount")
+EOF
+}
+
+function _createSysbenchDeployment() {
+    local namespace=$1
+    local i=$2
+    local secretCount=$3
+    local -i processes=$4
+    local -i containers=$5
+    local nsline=${useNamespaces:+  namespace: "$namespace"}
+    if [[ $deploymentType = pod ]] ; then
+	createObject <<EOF
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ${namespace}-sysbench-${i}
+$nsline
+$(indent 2 privilegeYAML)
+$(indent 2 nodeSelectorYAML)
+  selector:
+    matchLabels:
+      app: ${namespace}-sysbench-${i}
+  labels:
+$(indent 4 standardLabelsYAML)
+    name: ${namespace}-sysbench-${i}
+    app: ${namespace}-sysbench-${i}
+    ${basename}-sysbench: "true"
+    ${basename}-client: "true"
+$(_createSysbenchSpec "$@")
+  restartPolicy: Never
+EOF
+    else
+	createObject <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ${namespace}-sysbench-$i
+$nsline
+$(indent 2 privilegeYAML)
+  labels:
+$(indent 4 standardLabelsYAML)
+spec:
+  replicas: 1
+$(indent 2 nodeSelectorYAML)
+  selector:
+    matchLabels:
+      app: ${namespace}-sysbench-$i
+  strategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+$(indent 8 standardLabelsYAML)
+        name: ${namespace}-sysbench-$i
+        app: ${namespace}-sysbench-$i
+        ${basename}-sysbench: "true"
+        ${basename}-client: "true"
+$(indent 4 _createSysbenchSpec "$@")
+EOF
+    fi
+}
+
+function createDeploymentSysbench() {
+    local namespace=$1
+    local count=${2:-1}
+    local secretCount=${3:-1}
+    local replicas=${4:-1}
+    local containers=${5:-1}
+    local log_host=${6:-}
+    local -i log_port=${7:-0}
+    local -i i
+    if [[ syncStart -gt 0 && -z "$syncHost" ]] ; then
+	createService "$namespace" "${namespace}-sync" "$syncPort"
+	createSyncDeployment $(( (${#sysbench_fileio_tests[@]} * 3) + 1)) "$namespace" "$((containers * replicas * count))"
+    fi
+    for i in $(seq $firstDeployment $((count + firstDeployment - 1))) ; do
+	_createSysbenchDeployment "$namespace" "$i" "$secretCount"  "$replicas" "$containers" "$log_host" "$log_port"
+    done
+}
+
+function listConfigMapsSysbench() {
+    cat <<EOF
+${__libdir__}/sysbench.pl
+${__libdir__}/sync.pl
+EOF
+}
+
+function calculateLogsRequiredSysbench() {
+    local -i namespaces=$1
+    local -i depsPerNamespace=${2:-1}
+    local -i replicas=${3:-1}
+    local -i containers=${4:-1}
+    echo $((namespaces * containers * processes_per_pod * replicas * depsPerNamespace))
+}

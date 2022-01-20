@@ -1,0 +1,206 @@
+#!/bin/bash
+
+# Copyright 2019-2022 Robert Krawitz/Red Hat
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+################################################################
+# Simple workloads (pause pod, clusterbuster, logging)
+################################################################
+
+function _createContainersClusterBusterYAML() {
+    local namespace=$1
+    local i=$2
+    local secretCount=$3
+    local -i pods=$4
+    local -i containers=$5
+    local -i j
+    for j in $(seq 0 $((containers - 1))) ; do
+	cat <<EOF
+- name: ${namespace}-$i-$j
+  imagePullPolicy: $imagePullPolicy
+  image: "busybox"
+$(indent 2 containerResourcesYAML)
+  command:
+  - /bin/sh
+  args:
+  - -c
+  - |
+    trap 'exit 0' TERM
+    (while : ; do date ; sleep 60 ; done)&
+    sleep $podsleeptime
+    exit 1
+$(indent 2 volumeMountsYAML "$namespace" "$i" "$secretCount")
+EOF
+    done
+}
+
+function _createContainersPausePodYAML() {
+    local namespace=$1
+    local i=$2
+    local secretCount=$3
+    local -i pods=$4
+    local -i containers=$5
+    local -i j
+    for j in $(seq 0 $((containers - 1))) ; do
+	cat <<EOF
+- name: ${namespace}-$i-$j
+  imagePullPolicy: $imagePullPolicy
+  image: "gcr.io/google_containers/pause-amd64:3.0"
+$(indent 2 containerResourcesYAML)
+$(indent 2 volumeMountsYAML "$namespace" "$i" "$secretCount")
+EOF
+    done
+}
+
+function _createContainersLogYAML() {
+    local namespace=$1
+    local i=$2
+    local secretCount=$3
+    # shellcheck disable=2034
+    local -i pods=$4
+    local -i containers=$5
+    local -i j
+    for j in $(seq 0 $((containers - 1))) ; do
+	cat <<EOF
+- name: ${namespace}-$i-$j
+  imagePullPolicy: $imagePullPolicy
+  image: "$containerImage"
+$(indent 2 containerResourcesYAML)
+  env:
+  - name: VERBOSE
+    value: "$verbose"
+$(indent 2 bootstrapCommandYAML logger.pl)
+  - "$namespace"
+  - "${namespace}-sysbench-${i}"
+  - "c${j}"
+  - "$log_bytes_per_line"
+  - "$log_bytes_per_io"
+  - "$log_xfer_count"
+  - "$log_processes"
+  - "$log_delay_usec"
+  - "$log_xfertime"
+  - "$log_exit_at_end"
+$(indent 2 volumeMountsYAML "$namespace" "$i" "$secretCount")
+EOF
+    done
+}
+
+function _createClassicSpec() {
+    local namespace=$1
+    local i=$2
+    local secretCount=$3
+    local -i replicas=$4
+    local -i containers=$5
+cat <<EOF
+spec:
+$(indent 2 nodeSelectorYAML)
+  terminationGracePeriodSeconds: 1
+$(indent 2 <<< "$runtimeClass")
+  containers:
+$(indent 2 _createContainers${podType}YAML "$@")
+$(indent 2 pbenchAgentYAML)
+$(indent 2 volumesYAML "$namespace" "$i" "$secretCount")
+EOF
+}
+
+function _createDeploymentClassicYAML() {
+    local namespace=$1
+    local i=$2
+    local secretCount=$3
+    local -i replicas=$4
+    local -i containers=$5
+    local nsline=${useNamespaces:+  namespace: "$namespace"}
+    if [[ $deploymentType = pod ]] ; then
+	local -i j=0
+	while (( j++ < replicas )) ; do
+	    createObject <<EOF
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ${namespace}-${i}-${j}
+$nsline
+$(indent 2 privilegeYAML)
+$(indent 2 nodeSelectorYAML)
+  selector:
+    matchLabels:
+      app: ${namespace}-${i}
+  labels:
+$(indent 4 standardLabelsYAML)
+    name: ${namespace}-${i}
+    app: ${namespace}-${i}
+    ${basename}-client: "true"
+$(createClassicSpec "$@")
+EOF
+	done
+    else
+	createObject <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ${namespace}-$i
+$nsline
+$(indent 2 privilegeYAML)
+  labels:
+$(indent 4 standardLabelsYAML)
+spec:
+  replicas: $replicas
+$(indent 2 nodeSelectorYAML)
+  selector:
+    matchLabels:
+      app: ${namespace}-$i
+  strategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+$(indent 8 standardLabelsYAML)
+        name: ${namespace}-$i
+        app: ${namespace}-$i
+$(indent 4 _createClassicSpec "$@")
+EOF
+    fi
+}
+
+function _createDeploymentSimple() {
+    local namespace=$1
+    local count=${2:-1}
+    local secretCount=${3:-1}
+    local replicas=${4:-1}
+    local containers=${5:-1}
+    local -i i
+    for i in $(seq $firstDeployment $((count + firstDeployment - 1))) ; do
+	_createDeploymentClassicYAML "$namespace" "$i" "$secretCount"  "$replicas" "$containers"
+    done
+}
+
+# The simple workloads do not support logging or synchronization.
+# The Log workload is about log generation
+
+function listConfigMapsLog() {
+    cat <<EOF
+${__libdir__}/logger.pl
+EOF
+}
+
+function createDeploymentPausePod() {
+    _createDeploymentSimple "$@"
+}
+
+function createDeploymentClusterBuster() {
+    _createDeploymentSimple "$@"
+}
+
+function createDeploymentLog() {
+    _createDeploymentSimple "$@"
+}

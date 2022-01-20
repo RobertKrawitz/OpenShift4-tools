@@ -1,0 +1,186 @@
+#!/bin/bash
+
+# Copyright 2019-2022 Robert Krawitz/Red Hat
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+################################################################
+# Files workload
+################################################################
+
+function _createContainersFilesYAML() {
+    local namespace=$1
+    local i=$2
+    local secretCount=$3
+    local -i replicas=$4
+    local -i containers=$5
+    local log_host=${6:-}
+    local -i log_port=${7:-0}
+    local -i j
+    local syncService=
+    local syncPortNum=
+    local -i file_blocks=$((file_size/file_block_size))
+    if (( syncStart )) ; then
+	syncService="${syncHost:-service-${namespace}-sync}"
+	syncPortNum=$syncPort
+    fi
+    # shellcheck disable=1340
+    for j in $(seq 0 $((containers - 1))) ; do
+	# shellcheck disable=2030
+	cat <<EOF
+- name: "c${j}"
+  imagePullPolicy: $imagePullPolicy
+  image: "$containerImage"
+$(indent 2 containerResourcesYAML)
+  env:
+  - name: VERBOSE
+    value: "$verbose"
+$(indent 2 bootstrapCommandYAML files.pl)
+  - "$namespace"
+  - "${namespace}-files-${i}"
+  - "c${j}"
+  - "$basetime"
+  - "$baseoffset"
+  - "$(ts)"
+  - "$poddelay"
+  - "$podsleeptime"
+  - "$syncService"
+  - "$syncPortNum"
+  - "$file_dirs_per_volume"
+  - "$files_per_dir"
+  - "$file_block_size"
+  - "$file_blocks"
+  - "$processes_per_pod"
+  - "$log_host"
+  - "$log_port"
+$(tmp_volume_paths=("${volume_mount_paths[@]/%/\"}"); IFS=$'\n'; echo "${tmp_volume_paths[*]/#/  - \"}")
+$(emptydirs=("${emptydirs[@]/%/\"}"); IFS=$'\n'; echo "${emptydirs[*]/#/  - \"}")
+$(indent 2 volumeMountsYAML "$namespace" "$i" "$secretCount")
+EOF
+    done
+}
+
+function _createFilesSpec() {
+    local namespace=$1
+    local i=$2
+    local secretCount=$3
+    local -i processes=$4
+    local -i containers=$5
+    cat <<EOF
+spec:
+$(indent 2 nodeSelectorYAML)
+  terminationGracePeriodSeconds: 1
+$(indent 2 <<< "$runtimeClass")
+  containers:
+$(indent 2 _createContainersFilesYAML "$@")
+$(indent 2 pbenchAgentYAML)
+$(indent 2 volumesYAML "$namespace" "$i" "$secretCount")
+EOF
+}
+
+function _createFilesDeployment() {
+    local namespace=$1
+    local i=$2
+    local secretCount=$3
+    local -i replicas=$4
+    local -i containers=$5
+    local nsline=${useNamespaces:+  namespace: "$namespace"}
+    local podname="${namespace}-${i}-files"
+    if [[ $deploymentType = pod ]] ; then
+	local -i j=0
+	while (( j++ < replicas )) ; do
+	    createObject <<EOF
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ${namespace}-files-${i}-${j}
+$nsline
+$(indent 2 privilegeYAML)
+$(indent 2 nodeSelectorYAML)
+  selector:
+    matchLabels:
+      app: ${namespace}-files-${i}
+  labels:
+$(indent 4 standardLabelsYAML)
+    name: ${namespace}-files-${i}
+    app: ${namespace}-files-${i}
+    ${basename}-files: "true"
+    ${basename}-client: "true"
+$(_createFilesSpec "$@")
+  restartPolicy: Never
+EOF
+	done
+    else
+	createObject <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ${namespace}-files-$i
+$nsline
+$(indent 2 privilegeYAML)
+  labels:
+    clusterbuster-runUUID: "$runUUID"
+    ${basename}-id: "$runUUID"
+    ${basename}: "true"
+    clusterbusterbase: "true"
+spec:
+  replicas: $replicas
+$(indent 2 nodeSelectorYAML)
+  selector:
+    matchLabels:
+      app: ${namespace}-$i
+  strategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+$(indent 4 standardLabelsYAML)
+        name: ${namespace}-files-$i
+        app: ${namespace}-files-$i
+        ${basename}-files: "true"
+        ${basename}-client: "true"
+$(indent 4 _createFilesSpec "$@")
+EOF
+    fi
+}
+
+function calculateLogsRequiredFiles() {
+    local -i namespaces=$1
+    local -i depsPerNamespace=${2:-1}
+    local -i replicas=${3:-1}
+    local -i containers=${4:-1}
+    echo $((namespaces * containers * processes_per_pod * replicas * depsPerNamespace))
+}
+
+function createDeploymentFiles() {
+    local namespace=$1
+    local count=${2:-1}
+    local secretCount=${3:-1}
+    local replicas=${4:-1}
+    local containers=${5:-1}
+    local -i i
+    if [[ syncStart -gt 0 && -z "$syncHost" ]] ; then
+	createService "$namespace" "${namespace}-sync" "$syncPort"
+	createSyncDeployment 4 "$namespace" "$((containers * processes_per_pod * replicas * count))"
+    fi
+    for i in $(seq $firstDeployment $((count + firstDeployment - 1))) ; do
+	_createFilesDeployment "$namespace" "$i" "$secretCount"  "$replicas" "$containers" "$log_host" "$log_port"
+    done
+}
+
+function listConfigMapsFiles() {
+    cat <<EOF
+${__libdir__}/files.pl
+${__libdir__}/sync.pl
+EOF
+}
