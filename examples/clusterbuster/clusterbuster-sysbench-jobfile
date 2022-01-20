@@ -1,0 +1,8 @@
+# Run as
+# clusterbuster -f clusterbuster-sysbench-jobfile
+
+pod_type=sysbench
+precleanup
+report-format=raw
+transfertime=30
+exit_at_end

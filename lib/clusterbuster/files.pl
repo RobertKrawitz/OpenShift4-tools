@@ -69,7 +69,9 @@ sub do_sync($$;$) {
 	$addr=`ip route get 1 |awk '{print \$(NF-2); exit}'`;
 	chomp $addr;
     }
-    if (not $token) {
+    if ($token && $token =~ /clusterbuster-json/) {
+	$token =~ s,\n *,,g;
+    } elsif (not $token) {
         $token = sprintf('%d', rand() * 999999999);
     }
     while (1) {
@@ -193,9 +195,21 @@ sub runit($) {
     my ($ucpu1, $scpu1) = cputime();
     $ucpu1 -= $ucpu0;
     $scpu1 -= $scpu0;
-    my ($answer0) = sprintf("CREATE,%.3f,%.3f,%.3f,%.3f,%.3f,%d,%d,%.3f",
-        $stime1 - $stime0, $eltime, $ucpu1,
-	$scpu1, 100.0 * ($ucpu1 + $scpu1) / $eltime, $ops, $iterations,
+    my ($fstring0) = <<'EOF';
+"%s": {
+  "elapsed_time": %f,
+  "user_cpu_time": %f,
+  "system_cpu_time": %f,
+  "cpu_utilization": %f,
+  "operations": %d,
+  "iterations": %d,
+  "iterations_per_second": %f
+}
+EOF
+    $fstring0 =~ s/[ \n]+//g;
+    my ($answer0) = sprintf($fstring0, "create",
+        $eltime, $ucpu1,
+	$scpu1, ($ucpu1 + $scpu1) / $eltime, $ops, $iterations,
         $iterations / ($etime - $stime1));
     timestamp("Created files...");
     do_sync($synchost, $syncport);
@@ -219,12 +233,34 @@ sub runit($) {
     my ($ucpu1, $scpu1) = cputime();
     $ucpu1 -= $ucpu0;
     $scpu1 -= $scpu0;
-    my ($answer1) = sprintf("REMOVE,%.3f,%.3f,%.3f,%.3f,%.3f,%d,%d,%.3f",
-        $stime1 - $stime0, $eltime, $ucpu1,
-	$scpu1, 100.0 * ($ucpu1 + $scpu1) / $eltime, $ops, $iterations,
+    my ($answer1) = sprintf($fstring0, "remove",
+        $eltime, $ucpu1,
+	$scpu1, ($ucpu1 + $scpu1) / $eltime, $ops, $iterations,
         $iterations / ($etime - $stime1));
-    my ($answer_base) = sprintf("%d,%.3f,%.3f,%d,%d", $$, $stime0 - $basetime, $etime - $stime0, $block_count, $blocksize);
-    my ($answer) = "-n,$namespace,$pod,-c,$container,terminated,0,0,0,STATS,$answer_base,$answer0,$answer1";
+    my ($fstring) = <<'EOF';
+{
+  "application": "clusterbuster-json",
+  "workload": "%s",
+  "namespace": "%s",
+  "pod": "%s",
+  "container": "%s",
+  "connections_failed": %d,
+  "connections_refused": %d,
+  "connections_succeeded": %d,
+  "start_time_offset_from_base": %f,
+  "elapsed_time_seconds": %f,
+  "block_count": %d,
+  "block_size": %d,
+%s,
+%s
+}
+EOF
+    $fstring =~ s/[ \n]+//g;
+    my ($answer) = sprintf($fstring, "files",
+			   $namespace, $pod, $container, 0, 0, 0,
+			   $stime0 - $basetime, $etime - $stime0,
+			   $block_count, $blocksize,
+			   $answer0, $answer1);
     print STDERR "$answer\n";
     do_sync($synchost, $syncport, "$answer");
     if ($logport > 0) {

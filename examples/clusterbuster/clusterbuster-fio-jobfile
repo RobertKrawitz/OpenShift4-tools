@@ -1,0 +1,14 @@
+# Run as
+# clusterbuster -f clusterbuster-fio-jobfile
+
+transfertime=10
+report-format=raw
+pod_type=fio
+fio-jobfile=fio-jobfile
+replicas=1
+anti_affinity
+exit_at_end
+precleanup
+blocksize=5
+no-report-object-creation
+depspernamespace=4

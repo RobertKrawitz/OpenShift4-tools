@@ -68,7 +68,9 @@ sub do_sync($$;$) {
 	$addr=`ip route get 1 |awk '{print \$(NF-2); exit}'`;
 	chomp $addr;
     }
-    if (not $token) {
+    if ($token && $token =~ /clusterbuster-json/) {
+	$token =~ s,\n *,,g;
+    } elsif (not $token) {
         $token = sprintf('%d', rand() * 999999999);
     }
     while (1) {
@@ -139,12 +141,32 @@ sub runit() {
     my ($etime) = xtime();
     my ($eltime) = $etime - $stime1;
     my ($cputime) = cputime() - $scputime;
-    my ($answer) = sprintf("-n,%s,%s,-c,%s,terminated,%d,%d,%d,STATS,%d,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%d,%d,%.3f,%.3f",
+    my ($fstring) = <<'EOF';
+{
+  "application": "clusterbuster-json",
+  "workload": "%s",
+  "namespace": "%s",
+  "pod": "%s",
+  "container": "%s",
+  "connections_failed": %d,
+  "connections_refused": %d,
+  "connections_succeeded": %d,
+  "process_id": %d,
+  "start_offset_from_base": %f,
+  "elapsed_time": %f,
+  "data_end_time_offset_from_base": %f,
+  "cpu_time": %f,
+  "cpu_utilization": %f,
+  "work_iterations": %d,
+  "work_iterations_per_second": %f
+}
+EOF
+    $fstring =~ s/[ \n]+//g;
+    my ($answer) = sprintf($fstring, "cpusoaker",
 			   $namespace, $pod, $container, 0,0,0,
-			   $$, $crtime - $basetime, $dstime - $basetime, $stime1 - $basetime,
-			   $eltime, $etime - $basetime, $cputime, 100.0 * $cputime / $eltime, $iterations,
-			   $iterations / ($etime - $stime1),
-			   $basetime, $dstime, $crtime, $stime1
+			   $$, $dstime - $basetime,
+			   $eltime, $etime - $basetime, $cputime, $cputime / $eltime, $iterations,
+			   $iterations / ($etime - $stime1)
 	);
     print STDERR "$answer\n";
     do_sync($synchost, $syncport, $answer);

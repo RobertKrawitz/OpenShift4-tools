@@ -32,9 +32,12 @@ my ($junk, $port, $addr) = unpack($sockaddr, $mysockaddr);
 die "can't get port $port: $!\n" if ($port ne $listen_port);
 my (@clients);
 
-my ($tmpSyncFile) = (defined($syncFile) && $syncFile ne '') ? "${syncFile}.tmp" : undef;
+my ($tmpSyncFileBase) = (defined($syncFile) && $syncFile ne '') ? "${syncFile}-tmp" : undef;
+
+my (@tmpSyncFiles) = map { "${tmpSyncFileBase}-$_" } (1..$expected_clients);
 
 while ($syncCount < 0 || $syncCount-- > 0) {
+    my ($tmpSyncFile) = undef;
     my $child = fork();
     if ($child == 0) {
 	timestamp("Listening on port $listen_port");
@@ -52,11 +55,12 @@ while ($syncCount < 0 || $syncCount-- > 0) {
 		timestamp("Read token from $peerhost failed: $!");
 	    }
 	    timestamp("Accepted connection from $peerhost ($peeraddr) on $port, token $tbuf");
-	    if ($tbuf =~ /,STATS,/ && defined $tmpSyncFile) {
+	    if ($tbuf =~ /clusterbuster-json/ && defined $tmpSyncFileBase) {
+		$tmpSyncFile = sprintf("%s-%d", $tmpSyncFileBase, $expected_clients);
 		chomp $tbuf;
-		open SYNC, ">>", "$tmpSyncFile" || die("Can't open sync file $tmpSyncFile: $!\n");
-		print SYNC "$tbuf\n";
-		close SYNC || die "Can't close sync file: $!\n";
+		open TMP, ">", "$tmpSyncFile" || die("Can't open sync file $tmpSyncFile: $!\n");
+		print TMP "$tbuf\n";
+		close TMP || die "Can't close sync file: $!\n";
 	    }
 	    push @clients, $client;
 	    $expected_clients--;
@@ -72,7 +76,22 @@ while ($syncCount < 0 || $syncCount-- > 0) {
         wait();
     }
 }
-if (defined $syncFile && $syncFile ne "" && -f $tmpSyncFile) {
+if (@tmpSyncFiles) {
+    my ($tmpSyncFile) = "${tmpSyncFileBase}";
+    open (TMP, ">", $tmpSyncFile) || die "Can't open sync file $tmpSyncFile: $!\n";
+    my (@data);
+    foreach my $file (@tmpSyncFiles) {
+	-f $file || next;
+	open FILE, "<", $file || next;
+	my ($datum) = "";
+	while (<FILE>) {
+	    $datum .= $_;
+	}
+	close FILE;
+	push @data, $datum;
+    }
+    print TMP join(",", @data);
+    close TMP || die "Can't close temporary sync file: $!\n";
     rename($tmpSyncFile, $syncFile) || die "Can't rename $syncFile to $tmpSyncFile: $!\n";
     timestamp("Waiting for sync file $syncFile to be removed");
     while (-f $syncFile) {

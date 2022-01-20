@@ -323,7 +323,7 @@ function process_summary_legacy() {
 	    read -r -a output <<< "$rawoutput"
 	fi
 	[[ -n "${output[*]}" ]] || continue
-	[[ ${output[*]} = *'STATS'* ]] || continue
+	[[ ${output[*]} = *'clusterbuster-json'* ]] || continue
 	if [[ -z "$mode" ]] ; then
 	    case "${output[2]}" in
 		*'soaker'*)   mode=soaker   ;;
@@ -411,6 +411,7 @@ function process_summary_legacy() {
 	line_count+=1
 	total_et+=$et
     done
+    (( format_raw )) || return
     (( line_count )) || return
     printit |do_report
 }
@@ -452,7 +453,7 @@ function retrieve_pod_stats() {
 	    connection_refused=$(grep -c 'Connection refused' <<< "$data")
 	    connection_failures=$(grep -c 'Could not connect' <<< "$data")
 	    blocks=$(grep -c 'Write/Read' <<< "$data")
-	    readarray -t statlines < <(grep -E '^STATS' <<< "$data")
+	    readarray -t statlines < <(grep -E '^clusterbuster-json' <<< "$data")
 	    if [[ $data = *"FINIS"* ]] ; then
 		row_prefix=
 	    fi

@@ -54,7 +54,7 @@ declare -i msgSize=32768
 declare -i poddelay=0
 declare -i xferTime=0
 declare -i xferTimeMax=0
-declare -i exitAtEnd=0
+declare -i exitAtEnd=1
 declare -i reportObjectCreation=1
 declare -i defaultBytes=1000000000
 declare -A objectsCreated=()
@@ -62,7 +62,7 @@ declare baseoffset=0
 declare podType=ClusterBuster
 declare podsleeptime=infinity
 declare basename=clusterbuster
-declare deploymentType=deployment
+declare deploymentType=pod
 declare -i basetime
 declare opt
 declare -r nl=$'\n'
@@ -72,7 +72,7 @@ declare -A namespaces_in_use=()
 declare -a namespaces_to_create=()
 declare -i scale_ns=0
 declare -i scale_deployments=1
-declare -i syncStart=0
+declare -i syncStart=1
 declare runtimeClass=
 declare -a emptydirs=()
 declare -a volumes=()
@@ -83,6 +83,7 @@ declare -A volume_scoped_names=()
 declare -a sysbench_generic_options=()
 declare -a sysbench_fileio_options=()
 declare -A sysbench_fileio_tests=()
+declare sysbench_fileio_test_string='seqwr,seqrd,rndwr,rndrd'
 declare -a fio_generic_options=()
 declare common_workdir=
 declare -i report=0
@@ -185,6 +186,8 @@ Usage: $0 [options] [name]
        -b blocksize    Number of objects to create in one oc call (default 1)
        -c containers   Number of containers per pod
        -d deployments  Number of deployments per namespace (default 1)
+       -E              Don't exit after all operations are complete.
+       -e              Exit after all operations are complete (default).
        -f jobfile      Job file containing settings
        -n              Print what would be done without doing it
        -N namespaces   Number of namespaces to create (default 1)
@@ -217,13 +220,11 @@ Usage: $0 [options] [name]
                        constant.
        --opt[=val]     Set the specified option.  Use -H or --help-everything
                        to get a list.
-       -Y              Sync start of data transfer or CPU load (default no)
+       -Y              Sync start of data transfer or CPU load (default yes)
 
     Client/server options:
        -D data rate    Data rate for client/server (MB/sec) (default 0)
                        May be a decimal number.
-       -E              Don't exit after all data transmitted (default)
-       -e              Exit after all data transmitted.
        -M MB[,max]     Amount of data to transfer.  If two values are
                        specified, the amount will be randomly chosen
                        per container.
@@ -671,6 +672,7 @@ function run_logger() {
 function get_logs_poll() {
     local pod
     local status
+    local counter=$#
     for pod in "$@" ; do
 	pod_status_found=0
 	while : ; do
@@ -721,11 +723,20 @@ function get_logs_poll() {
 	    wait
 	    exec 2>&3 3>&-
 	fi
+	if ((--counter > 0)) ; then
+	    echo ','
+	fi
     done
 }
 
 function get_logs_listen() {
-    exec "${__libdir__}/get_logs" "$@"
+    "${__libdir__}/get_logs" "$@"
+}
+
+function _get_logs() {
+    echo '{"clusterbusterResults": ['
+    "$@"
+    echo ']}'
 }
 
 function get_logs() {
@@ -740,7 +751,8 @@ function get_logs() {
     if [[ ${logStrategy,,} = 'listen'* ]] ; then
 	log_cmd=get_logs_listen
     fi
-    "$log_cmd" "$@" | "${pathdir:-.}/clusterbuster-connstat" -l "${basename}-id=$runUUID" -s -f - "$extra_arg"
+#    _get_logs "$log_cmd" "$@" | "${pathdir:-.}/clusterbuster-connstat" -l "${basename}-id=$runUUID" -s -f - "$extra_arg"
+    _get_logs "$log_cmd" "$@"
     return $((PIPESTATUS[0] || PIPESTATUS[1]))
 }
 
@@ -852,7 +864,7 @@ function process_option() {
 	deployments|depspername*)   depsPerNamespace=$optvalue			;;
 	namespaces)		    namespaces=$optvalue			;;
 	datarate)		    dataRate=$optvalue				;;
-	bytes)			    set_xfer "$optvalue"			;;
+	bytes)			    set_xfer $(parse_size "$optvalue")		;;
 	kb|kilobytes)		    set_xfer "$optvalue" 1000			;;
 	ki|kib|kibibytes)	    set_xfer "$optvalue" 1024			;;
 	mb|megabytes)		    set_xfer "$optvalue" 1000000		;;
@@ -904,7 +916,7 @@ function process_option() {
 	dirspervolume)	    	    file_dirs_per_volume=$optvalue		;;
 	filesperdir)		    files_per_dir=$optvalue			;;
 	fileblocksize)	    	    file_block_size=$(parse_size $optvalue)	;;
-	file_size)		    file_size=$(parse_size $optvalue)		;;
+	filesize)		    file_size=$(parse_size $optvalue)		;;
 	logbytesperline)	    log_bytes_per_line=$optvalue		;;
 	logbytesperio)		    log_bytes_per_io=$optvalue			;;
 	logxfercount)		    log_xfer_count=$optvalue			;;
@@ -934,14 +946,13 @@ function process_option() {
 	sysbenchgeneraloptions)     sysbench_generic_options+=(${optvalue//,/ });;
 	sysbenchgenericoptions)     sysbench_generic_options+=(${optvalue//,/ });;
 	sysbenchfileiooptions)      sysbench_fileio_options+=(${optvalue//,/ }) ;;
-	sysbenchfileiotests)
-	    local ftest
-	    for ftest in ${optvalue//,/ } ; do
-		sysbench_fileio_tests[$ftest]=1
-	    done
-	    ;;
+	sysbenchfileiotests)	    sysbench_fileio_test_string=$optvalue	;;
 	fiogenericoptions)	   fio_generic_options+=(${optvalue//,/ })      ;;
 	fiojobfile)
+	    if [[ ! -f "$optvalue" ]] ; then
+	       echo "Job file $optvalue does not exist"
+	       help
+	    fi
 	    configMapFiles+=("$optvalue")
 	    ;;
 	affinity)
@@ -994,7 +1005,11 @@ function checkConfigMaps() {
 
 function process_job_file() {
     local jobfile="$1"
-    while read -r line ; do
+    if [[ ! -f $jobfile || ! -r $jobfile ]] ; then
+	fatal "Job file $jobfile cannot be read"
+    fi
+    while IFS= read -r line ; do
+	if [[ -z "$line" ]] ; then continue; fi
 	line=${line%%#*}
 	process_option "$line"
     done < "$jobfile"
@@ -1075,6 +1090,10 @@ fi
 if [[ -n "$pbenchControllerAddress" && $pbenchControllerPort -eq 0 ]] ; then
     fatal "Both pbench_controller_address and pbench_controller_port must be specified"
 fi
+
+for ftest in ${sysbench_fileio_test_string//,/ } ; do
+    sysbench_fileio_tests[$ftest]=1
+done
 
 function validate_resource() {
     local rtype=$1
@@ -2651,6 +2670,14 @@ function createDeploymentLog() {
     createDeploymentSimple "$@"
 }
 
+function calculateLogsRequiredFiles() {
+    local -i namespaces=$1
+    local -i depsPerNamespace=${2:-1}
+    local -i replicas=${3:-1}
+    local -i containers=${4:-1}
+    echo $((namespaces * containers * processes_per_pod * replicas * depsPerNamespace))
+}
+
 function createDeploymentFiles() {
     local namespace=$1
     local count=${2:-1}
@@ -2660,7 +2687,7 @@ function createDeploymentFiles() {
     local -i i
     if [[ syncStart -gt 0 && -z "$syncHost" ]] ; then
 	createService "$namespace" "${namespace}-sync" "$syncPort"
-	createSyncDeployment 3 "$namespace" "$((containers * processes_per_pod * replicas * count))"
+	createSyncDeployment 4 "$namespace" "$((containers * processes_per_pod * replicas * count))"
     fi
     for i in $(seq $firstDeployment $((count + firstDeployment - 1))) ; do
 	createFilesDeployment "$namespace" "$i" "$secretCount"  "$replicas" "$containers" "$log_host" "$log_port"
@@ -2728,7 +2755,7 @@ function createDeploymentSysbench() {
     local -i i
     if [[ syncStart -gt 0 && -z "$syncHost" ]] ; then
 	createService "$namespace" "${namespace}-sync" "$syncPort"
-	createSyncDeployment $((${#configMapFiles[@]} ? ${#configMapFiles[@]} * 2 : 2)) "$namespace" "$((containers * replicas * count))"
+	createSyncDeployment $(( (${#sysbench_fileio_tests[@]} * 3) + 1)) "$namespace" "$((containers * replicas * count))"
     fi
     for i in $(seq $firstDeployment $((count + firstDeployment - 1))) ; do
 	createSysbenchDeployment "$namespace" "$i" "$secretCount"  "$replicas" "$containers" "$log_host" "$log_port"
@@ -2749,7 +2776,7 @@ function createSyncSysbench() {
     local replicas=${4:-1}
     local containers=${5:-1}
     createService "$namespace" "${namespace}-sync" "$syncPort"
-    createSyncDeployment 3 "$namespace" "$((containers * replicas * count))"
+    createSyncDeployment $(( (${#sysbench_fileio_tests[@]} * 3) + 1)) "$namespace" "$((containers * replicas * count))"
 }
 
 function calculateLogsRequiredSysbench() {

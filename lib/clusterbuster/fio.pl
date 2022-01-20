@@ -100,7 +100,9 @@ sub do_sync($$;$) {
 	$addr=`ip route get 1 |awk '{print \$(NF-2); exit}'`;
 	chomp $addr;
     }
-    if (not $token) {
+    if ($token && $token =~ /clusterbuster-json/) {
+	$token =~ s,\n *,,g;
+    } elsif (not $token) {
         $token = sprintf('%d', rand() * 999999999);
     }
     while (1) {
@@ -153,7 +155,25 @@ sub runit(;$) {
     my ($ucpu1, $scpu1) = cputime();
     $ucpu1 -= $ucpu0;
     $scpu1 -= $scpu0;
-    my ($answer) = sprintf("-n,%s,%s,-c,%s,terminated,%d,%d,%d,STATS,%d,%.3f,%.3f,%.3f,%.3f,%s",
+    my ($fstring) = <<'EOF';
+{
+  "application": "clusterbuster-json",
+  "workload": "%s",
+  "namespace": "%s",
+  "pod": "%s",
+  "container": "%s",
+  "connections_failed": %d,
+  "connections_refused": %d,
+  "connections_succeeded": %d,
+  "process_id": %d,
+  "start_time_offset_from_base": %f,
+  "elapsed_time_seconds": %f,
+  "user_cpu_time": %f,
+  "system_cpu_time": %f,
+  "results": %s
+}
+EOF
+    my ($answer) = sprintf($fstring, "fio",
 			   $namespace, $pod, $container, 0, 0, 0,
 			   $$, $stime - $basetime, $etime - $stime, $ucpu1, $scpu1, $answer0);
     do_sync($synchost, $syncport, $answer);

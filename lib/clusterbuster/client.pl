@@ -38,13 +38,41 @@ sub calibrate_time() {
     }
     $time_overhead /= 1000;
 }
+
 sub stats() {
-    return
-	sprintf("-n,%s,%s,-c,%s,terminated,%d,%d,%d,STATS,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.6f,%.3f,%.3f,%d,%.3f,%.3f,%.6f,%.6f,%.6f,%.6f",
-		$namespace, $pod, $container, $cfail, $refused, $pass,
-		$crtime - $basetime, $start_time - $basetime, $ghbn_time - $basetime, $etime - $basetime,
-		$dstime - $basetime, $end_time - $basetime, $elapsed, $user, $sys,
-		$data_sent, $detime, $data_sent / $detime / 1000000.0, $mean, $max, $stdev, $time_overhead);
+    my ($fstring) = <<'EOF';
+{
+  "application": "clusterbuster-json",
+  "workload": "%s",
+  "namespace": "%s",
+  "pod": "%s",
+  "container": "%s",
+  "connections_failed": %d,
+  "connections_refused": %d,
+  "passes": %d,
+  "init_offset_from_base": %f,
+  "start_offset_from_base": %f,
+  "gethostbyname_offset_from_base": %f,
+  "initial_sync_offset_from_base": %f,
+  "data_start_time_offset_from_base": %f,
+  "data_end_time_offset_from_base": %f,
+  "user_cpu_time": %f,
+  "system_cpu_time": %f,
+  "data_sent_bytes": %d,
+  "data_elapsed_time": %f,
+  "data_rate_mb_sec": %f,
+  "mean_latency_sec": %f,
+  "max_latency_sec": %f,
+  "stdev_latency_sec": %f,
+  "timing_overhead_sec": %f
+}
+EOF
+    $fstring =~ s/[ \n]+//g;
+    return sprintf($fstring, "client-server",
+		   $namespace, $pod, $container, $cfail, $refused, $pass,
+		   $crtime - $basetime, $start_time - $basetime, $ghbn_time - $basetime, $etime - $basetime,
+		   $dstime - $basetime, $end_time - $basetime, $user, $sys,
+		   $data_sent, $detime, $data_sent / $detime / 1000000.0, $mean, $max, $stdev, $time_overhead);
 }
 sub connect_to($$) {
     my ($addr, $port) = @_;
@@ -96,7 +124,9 @@ sub do_sync($$;$) {
 	$addr=`ip route get 1 |awk '{print \$(NF-2); exit}'`;
 	chomp $addr;
     }
-    if (not $token) {
+    if ($token && $token =~ /clusterbuster-json/) {
+	$token =~ s,\n *,,g;
+    } elsif (not $token) {
         $token = sprintf('%d', rand() * 999999999);
     }
     while (1) {
@@ -121,7 +151,6 @@ sub do_sync($$;$) {
 }
 do_sync($synchost, $syncport);
 $etime = xtime();
-$elapsed = $etime - $stime;
 my $peeraddr = getpeername($conn);
 my ($port, $addr) = sockaddr_in($peeraddr);
 my $peerhost = gethostbyaddr($addr, AF_INET);
