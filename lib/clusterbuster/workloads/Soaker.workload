@@ -18,7 +18,7 @@
 # CPU soaker workload
 ################################################################
 
-function _createContainersCPUSoakerYAML() {
+function _createContainersSoakerYAML() {
     local podname=$1
     local namespace=$2
     local i=$3
@@ -76,7 +76,7 @@ $(indent 2 nodeSelectorYAML)
   terminationGracePeriodSeconds: 1
 $(indent 2 <<< "$runtimeClass")
   containers:
-$(indent 2 _createContainersCPUSoakerYAML "$@")
+$(indent 2 _createContainersSoakerYAML "$@")
 $(indent 2 pbenchAgentYAML)
 $(indent 2 volumesYAML "$namespace" "$i" "$secretCount")
 EOF
@@ -143,7 +143,7 @@ EOF
     fi
 }
 
-function createDeploymentCPUSoaker() {
+function createDeploymentSoaker() {
     local namespace=$1
     local count=${2:-1}
     local secretCount=${3:-1}
@@ -161,17 +161,19 @@ function createDeploymentCPUSoaker() {
     done
 }
 
-function listConfigMapsCPUSoaker() {
+function listConfigMapsSoaker() {
     cat <<EOF
 ${__libdir__}/cpusoaker.pl
 ${__libdir__}/sync.pl
 EOF
 }
 
-function calculateLogsRequiredCPUSoaker() {
+function calculateLogsRequiredSoaker() {
     local -i namespaces=$1
     local -i depsPerNamespace=${2:-1}
     local -i replicas=${3:-1}
     local -i containers=${4:-1}
     echo $((namespaces * processes_per_pod * containers * replicas * depsPerNamespace))
 }
+
+register_workload Soaker dispatch_generic cpu cpusoak soak cpusoaker

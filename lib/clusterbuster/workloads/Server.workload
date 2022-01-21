@@ -243,6 +243,7 @@ function _createClientDeployment() {
 apiVersion: v1
 kind: Pod
 metadata:
+  name: $podname
 $(indent 2 namespaceYAML "$namespace")
 $(indent 2 privilegeYAML)
 $(indent 2 nodeSelectorYAML)
@@ -331,3 +332,5 @@ function calculateLogsRequiredServer() {
     local -i containers=${4:-1}
     echo $((namespaces * containers * replicas * depsPerNamespace))
 }
+
+register_workload Server dispatch_generic

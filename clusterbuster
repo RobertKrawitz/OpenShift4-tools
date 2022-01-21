@@ -16,6 +16,8 @@
 
 set -u
 
+declare -A registered_workloads=()
+declare -A workload_aliases=()
 declare -i namespaces=1
 declare -i useNamespaces=1
 declare -i depsPerNamespace=1
@@ -769,7 +771,7 @@ function process_option() {
 	sysbenchgenericoptions)     sysbench_generic_options+=(${optvalue//,/ });;
 	sysbenchfileiooptions)      sysbench_fileio_options+=(${optvalue//,/ }) ;;
 	sysbenchfileiotests)	    sysbench_fileio_test_string=$optvalue	;;
-	fiogenericoptions)	   fio_generic_options+=(${optvalue//,/ })      ;;
+	fiogenericoptions)	    fio_generic_options+=(${optvalue//,/ })     ;;
 	fiojobfile)
 	    if [[ ! -f "$optvalue" ]] ; then
 	       echo "Job file $optvalue does not exist"
@@ -943,6 +945,10 @@ if [[ $dataRate != 0 && $dataRate != '' && $xferTimeMax -eq 0 && bytesMax -eq 0 
     bytesMax=$defaultBytes
 fi
 
+################################################################
+# Workload management
+################################################################
+
 function load_workloads() {
     local workload
     for workload in "${__workloaddir__}"/*.workload ; do
@@ -950,59 +956,84 @@ function load_workloads() {
     done
 }
 
-load_workloads
+function dispatch_generic() {
+    local -i probeOnly=0
+    if [[ $1 = '-p' ]] ; then
+	probeOnly=1
+	shift
+    fi
+    local workload=$1
+    local API=$2
+    shift 2
+    if type -t "${API}${workload}" >/dev/null ; then
+	if ((probeOnly)) ; then
+	    return 0
+	else
+	    "${API}${workload}" "$@"
+	fi
+    else
+	return 1
+    fi
+}
 
-case "${podType,,}" in
-    classic|clusterbuster) podType=ClusterBuster ;;
-    server)                podType=Server        ;;
-    cpu*|soaker)           podType=CPUSoaker     ;;
-    sysbench)              podType=Sysbench      ;;
-    fio)		   podType=Fio           ;;
-    pause|pausepod)        podType=PausePod      ;;
-    file|files)            podType=Files         ;;
-    log|logger|logging)    podType=Log           ;;
-    *)
-	help_extended "(Unknown pod type '$podType')"
-	;;
-esac
-
-if [[ -n ${1:-} ]] ; then
-    basename="$1"
-    shift
-fi
-
-[[ -z "$*" ]] || warn "Warning: extraneous arguments $* after basename will be ignored!"
-
-
-################################################################
-# APIs
-################################################################
+function register_workload() {
+    local workload_name=$1
+    local workload_dispatch_function=$2
+    if [[ ! $workload =~ [[:alpha:]][[:alnum:]_]+ ]] ; then
+	fatal "Illegal workload name $workload"
+    elif [[ -n "${workload_aliases[${workload_name,,}]:-}" ]] ; then
+	fatal "Attempting to re-register workload $workload_name"
+    elif ! type -t "$workload_dispatch_function" >/dev/null ; then
+	fatal "Workload dispatch function $workload_dispatch_function not defined"
+    fi
+    registered_workloads[$workload_name]=$workload_dispatch_function
+    workload_aliases[${workload_name,,}]=$workload_name
+    shift 2
+    local walias
+    for walias in "$@" ; do
+	if [[ -n "${registered_workloads[$walias]:-}" || -n "${workload_aliases[${walias,,}]:-}" ]] ; then
+	    fatal "Attempting to register workload alias that already exists"
+	fi
+	workload_aliases[${walias,,}]=${workload_name}
+    done
+}
 
 function supportsAPI() {
-    local api=$1
-    type -t "${api}${podType}" >/dev/null
+    local workload=$1
+    local api=$2
+    if [[ -z "${registered_workloads[$workload]:-}" ]] ; then
+	fatal "supportsAPI $workload $api: workload not known"
+    fi
+    "${registered_workloads[$workload]}" -p "$workload" "$api"
 }
 
 function callAPI() {
-    local api=$1
-    shift
-    supportsAPI "$api" && "${api}${podType}" "$@"
+    [[ $# < 1 ]] && fatal "callAPI [-w workload] API args..."
+    local workload
+    if [[ $1 = '-w' ]] ; then
+	workload=$2
+	shift
+    else
+	workload="$podType"
+    fi
+    local api=$2
+    supportsAPI "$workload" "$api" && "${registered_workloads[$workload]}" "$@"
 }
 
 function jsonEncodeSettings() {
-    callAPI jsonEncodeSettings
+    callAPI "$podType" jsonEncodeSettings
 }
 
 function createDeployment() {
-    callAPI createDeployment "$@"
+    callAPI "$podType" createDeployment "$@"
 }
 
 function calculateLogsRequired() {
-    callAPI calculateLogsRequired "$@"
+    callAPI "$podType" calculateLogsRequired "$@"
 }
 
 function listConfigMaps() {
-    callAPI listConfigMaps
+    callAPI "$podType" listConfigMaps
 }
 
 ################################################################
@@ -1764,7 +1795,7 @@ function createAllSecrets() {
 }
 
 function createSystemConfigMap() {
-    if supportsAPI listConfigMaps ; then
+    if supportsAPI "$podType" listConfigMaps ; then
 	local -a systemfiles
 	readarray -t systemfiles < <(listConfigMaps)
 	trap 'kill -9 $(jobs -p); exit' INT
@@ -1971,7 +2002,7 @@ function run_clusterbuster_1() {
 
     (( ${#configMapFiles[@]} )) && checkConfigMaps "${configMapFiles[@]}"
     createAllObjects ConfigMaps
-    supportsAPI listConfigMaps && hasSystemConfigMap=1
+    supportsAPI "$podType" listConfigMaps && hasSystemConfigMap=1
 
     create_secrets
 
@@ -1985,5 +2016,34 @@ function run_clusterbuster_1() {
 
     return $status
 }
+
+case "${podType,,}" in
+    classic|clusterbuster) podType=ClusterBuster ;;
+    server)                podType=Server        ;;
+    cpu*|soaker)           podType=CPUSoaker     ;;
+    sysbench)              podType=Sysbench      ;;
+    fio)		   podType=Fio           ;;
+    pause|pausepod)        podType=PausePod      ;;
+    file|files)            podType=Files         ;;
+    log|logger|logging)    podType=Log           ;;
+    *)
+	help_extended "(Unknown pod type '$podType')"
+	;;
+esac
+
+load_workloads
+
+if [[ -n "${workload_aliases[${podType,,}]:-}" ]] ; then
+    podType="${workload_aliases[${podType,,}]:-}"
+else
+    help_extended "(Unknown pod type '$podType')"
+fi
+
+if [[ -n ${1:-} ]] ; then
+    basename="$1"
+    shift
+fi
+
+[[ -z "$*" ]] || warn "Warning: extraneous arguments $* after basename will be ignored!"
 
 (run_clusterbuster_1)

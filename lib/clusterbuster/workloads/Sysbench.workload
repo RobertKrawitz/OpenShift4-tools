@@ -177,3 +177,5 @@ function calculateLogsRequiredSysbench() {
     local -i containers=${4:-1}
     echo $((namespaces * containers * processes_per_pod * replicas * depsPerNamespace))
 }
+
+register_workload Sysbench dispatch_generic

@@ -203,3 +203,7 @@ function createDeploymentClusterBuster() {
 function createDeploymentLog() {
     _createDeploymentSimple "$@"
 }
+
+register_workload PausePod dispatch_generic pause
+register_workload ClusterBuster dispatch_generic classic
+register_workload Log dispatch_generic logger logging

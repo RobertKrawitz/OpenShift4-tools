@@ -6,3 +6,4 @@ precleanup
 report-format=raw
 transfertime=30
 exit_at_end
+no-report-object-creation

@@ -164,7 +164,7 @@ function createDeploymentFio() {
 	createSyncDeployment "$namespace" 2 "$((containers * replicas * count))"
     fi
     for i in $(seq $firstDeployment $((count + firstDeployment - 1))) ; do
-	createFioDeployment "$namespace" "$i" "$secretCount"  "$replicas" "$containers" "$log_host" "$log_port"
+	_createFioDeployment "$namespace" "$i" "$secretCount"  "$replicas" "$containers" "$log_host" "$log_port"
     done
 }
 
@@ -174,3 +174,5 @@ ${__libdir__}/fio.pl
 ${__libdir__}/sync.pl
 EOF
 }
+
+register_workload Fio dispatch_generic

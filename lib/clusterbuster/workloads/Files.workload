@@ -180,3 +180,5 @@ ${__libdir__}/files.pl
 ${__libdir__}/sync.pl
 EOF
 }
+
+register_workload Files dispatch_generic file
