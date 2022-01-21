@@ -17,7 +17,7 @@
 set -u
 
 declare -i namespaces=1
-declare useNamespaces=1
+declare -i useNamespaces=1
 declare -i depsPerNamespace=1
 declare -i secrets=0
 declare -i replicas=1
@@ -37,12 +37,13 @@ declare -i blocksizeConfigMaps=0
 declare -i blocksizeNamespaces=0
 declare -i blocksizeDeployments=0
 declare -i containers=1
-declare -i createRoutes=0	# Is this even useful?
 declare -i sleeptime=0
 declare -i doit=1
 declare -i blockitemcount=0
 declare -i port=7777
 declare -i syncPort=7778
+declare log_host=
+declare -i log_port=0
 declare syncHost=
 declare -i affinity=0
 declare -i verbose=0
@@ -102,7 +103,6 @@ declare configmapMountDir=/etc/map
 declare systemConfigmapMountDir=/etc/bootstrap
 declare -i hasSystemConfigMap=0
 declare nodeSelector='node-role.kubernetes.io/worker'
-declare get_logs_pid
 declare -i pbenchControllerPort=0
 declare pbenchControllerAddress=
 declare -i file_size=1024
@@ -118,7 +118,6 @@ declare -i log_xfer_count=1
 declare -i log_processes=1
 declare -i log_delay_usec=0
 declare -i log_xfertime=0
-declare -i log_exit_at_end=0
 declare -r syncFlagFile="/tmp/syncfile";
 # shellcheck disable=2155
 declare -r runUUID=$(uuidgen -r)
@@ -390,7 +389,6 @@ Extended Options:
        --bytes=N[,M]    Number of bytes to transfer
                         Also --kb, --kib, --mb, --mib, --gb, --gib, --tb, --tib
                         (-M is equivalent to --mb)
-       --create_routes  Create routes for services (default 0)
        --datarate=N     Data transfer rate (-D)
        --exit_at_end    Exit upon completion of transfer (-e/-E)
        --msgsize=N      Message size for data transfer (-m)
@@ -438,9 +436,6 @@ Extended Options:
                         Number of seconds to log.
                         Default $log_xfertime.  If zero, log continuously
                         (subject to log-xfer-count
-       --log-exit-at-end=<bool>
-                        Whether to exit when complete, or just stick around.
-                        Default $log_exit_at_end.
 EOF
 }
 
@@ -581,10 +576,372 @@ function help_everything() {
     exit 1
 }
 
+################################################################
+# Option processing
+################################################################
 
-################################################################
-# WORKLOADS ####################################################
-################################################################
+function set_xfer() {
+    local sizespec=$1
+    local -i scale=${2:-1}
+    if [[ $sizespec = *','* ]] ; then
+	bytes=$((${sizespec#*,} * scale))
+	bytesMax=$((${sizespec%%,*} * scale))
+	if (( bytes > bytesMax )) ; then
+	    local -i tmp=$bytes
+	    bytes=$bytesMax
+	    bytesMax=$tmp
+	fi
+    else
+	bytes=$((sizespec * scale))
+	bytesMax=$((sizespec * scale))
+    fi
+}
+
+function set_xfer_time() {
+    local timespec=$1
+    if [[ $timespec = *','* ]] ; then
+	xferTime=${timespec#*,}
+	xferTimeMax=${timespec%%,*}
+	if (( xferTime > xferTimeMax )) ; then
+	    local -i tmp=$xferTime
+	    xferTime=$xferTimeMax
+	    xferTimeMax=$tmp
+	fi
+    else
+	xferTime=$timespec
+	xferTimeMax=$timespec
+    fi
+}
+
+function parse_volume_spec() {
+    local volspec=$1
+    local vname=
+    local vtype=
+    local vmount_path=
+    IFS=':' read -r vname vtype vmount_path vtype_key vscoped_name <<< "$volspec"
+    if [[ -z "$vname" || -z "$vtype" || -z "$vmount_path" ]] ; then
+	echo "name, type, type_key, scoped name, and mount path must be provided"
+	echo "for volumes"
+	exit 1
+    fi
+    volumes+=("$vname")
+    volume_mount_paths["$vname"]=$vmount_path
+    volume_types["$vname"]=$vtype
+    volume_type_keys["$vname"]=$vtype_key
+    volume_scoped_names["$vname"]=$vscoped_name
+}
+
+function parse_size() {
+    if [[ $1 =~ ([[:digit:]]+)([[:alpha:]]*) ]] ; then
+	local size=${BASH_REMATCH[1]}
+	local size_modifier=${BASH_REMATCH[2],,}
+	local -i size_multiplier=1
+	case "$size_modifier" in
+	    ''|b)          size_multiplier=1                ;;
+	    kb|kilobytes)  size_multiplier=1000             ;;
+	    ki|kib|kibibytes) size_multiplier=1024          ;;
+	    mb|megabytes)  size_multiplier=1000000          ;;
+	    mi|mib|mebibytes) size_multiplier=1048576       ;;
+	    gb|gigabytes)  size_multiplier=1000000000       ;;
+	    gi|gib|gibibytes) size_multiplier=1073741824    ;;
+	    tb|terabytes)  size_multiplier=1000000000000    ;;
+	    ti|tib|tebibytes) size_multiplier=1099511627776 ;;
+	    *) fatal "Cannot parse size $optvalue"          ;;
+	esac
+	echo $((size*size_multiplier))
+    else
+	fatal "Cannot parse filesize $optvalue"
+    fi
+}
+
+function process_option() {
+    local option=$1
+    option=${option%% }
+    option=${option## }
+    [[ -n "$option" ]] || return
+    local optname
+    local optvalue
+    optname=${option%%=*}
+    optname=${optname,,}
+    optvalue=${option#*=}
+    noptname=${optname//-/_}
+    if [[ $option != *'='* ]] ; then
+	if [[ $noptname = "no_"* || $optname = "dont_"* ]] ; then
+	    noptname=${noptname#dont_}
+	    noptname=${noptname#no_}
+	    optvalue=0
+	else
+	    optvalue=1
+	fi
+    fi
+    local noptname1=${noptname//_/}
+    # shellcheck disable=SC2206
+    # shellcheck disable=SC2119
+    case "$noptname1" in
+	helpall*)		    help_extended				;;
+	helpeverything*)	    help_everything				;;
+	help*)			    help					;;
+	podtype)		    podType=$optvalue				;;
+	basename)		    basename=$optvalue				;;
+	blocksize)		    blocksize=$optvalue				;;
+	containers)		    containers=$optvalue			;;
+	deployments|depspername*)   depsPerNamespace=$optvalue			;;
+	namespaces)		    namespaces=$optvalue			;;
+	datarate)		    dataRate=$optvalue				;;
+	bytes)			    set_xfer "$(parse_size "$optvalue")"	;;
+	kb|kilobytes)		    set_xfer "$optvalue" 1000			;;
+	ki|kib|kibibytes)	    set_xfer "$optvalue" 1024			;;
+	mb|megabytes)		    set_xfer "$optvalue" 1000000		;;
+	mi|mib|mebibytes)	    set_xfer "$optvalue" 1048576		;;
+	gb|gigabytes)		    set_xfer "$optvalue" 1000000000		;;
+	gi|gib|gibibytes)	    set_xfer "$optvalue" 1073741824		;;
+	tb|terabytes)		    set_xfer "$optvalue" 1000000000		;;
+	ti|tib|tebibytes)	    set_xfer "$optvalue" 1099511627776		;;
+	msgsize)		    msgSize=$optvalue				;;
+	secrets)		    secrets=$optvalue				;;
+	verbose)		    verbose=$optvalue				;;
+	doit)			    doit=$optvalue				;;
+	quiet)			    verbose=$((!optvalue))			;;
+	processes)		    processes_per_pod=$optvalue			;;
+	replicas)		    replicas=$optvalue				;;
+	parallel)		    parallel=$optvalue				;;
+	sleep)			    sleeptime=$optvalue				;;
+	podsleep)		    podsleeptime=$optvalue			;;
+	poddelay)		    poddelay=$optvalue				;;
+	transfertime)		    set_xfer_time "$optvalue"			;;
+	firstdeployment)	    firstDeployment=$optvalue			;;
+	parallelconfigmaps)	    parallelConfigMaps=$optvalue		;;
+	parallelsecrets)	    parallelSecrets=$optvalue			;;
+	parallelnamespaces)	    parallelNamespaces=$optvalue		;;
+	paralleldeployments)	    parallelDeployments=$optvalue		;;
+	blocksizeconfigmaps)	    blocksizeConfigMaps=$optvalue		;;
+	blocksizesecrets)	    blocksizeSecrets=$optvalue			;;
+	blocksizenamespaces)	    blocksizeNamespaces=$optvalue		;;
+	blocksizedeployments)	    blocksizeDeployments=$optvalue		;;
+	containerimage)		    containerImage=$optvalue			;;
+	imagepullpolicy)	    imagePullPolicy=$optvalue			;;
+	sleepconfigmaps)	    sleepConfigMaps=$optvalue			;;
+	sleepsecrets)		    sleepSecrets=$optvalue			;;
+	sleepnamespaces)	    sleepNamespaces=$optvalue			;;
+	sleepdeployments)	    sleepDeployments=$optvalue			;;
+	nodeselector)		    nodeSelector=$optvalue			;;
+	exitatend)		    exitAtEnd=$optvalue				;;
+	request)		    resource_requests+=("$optvalue")		;;
+	limit)			    resource_limits+=("$optvalue")		;;
+	waitsecrets)		    wait_for_secrets=$optvalue			;;
+	scalens)	   	    scale_ns=$optvalue				;;
+	scaledeployments)   	    scale_deployments=$optvalue			;;
+	deploymenttype)		    deploymentType=$optvalue			;;
+	runtimeclass)		    runtimeClass=$optvalue			;;
+	reportobjectcreation)	    reportObjectCreation=$optvalue		;;
+	kata)			    runtimeClass=${kataRuntimeClass}		;;
+	volumes)		    file_volumes=$optvalue			;;
+	dirspervolume)	    	    file_dirs_per_volume=$optvalue		;;
+	filesperdir)		    files_per_dir=$optvalue			;;
+	fileblocksize)	    	    file_block_size=$(parse_size $optvalue)	;;
+	filesize)		    file_size=$(parse_size $optvalue)		;;
+	logbytesperline)	    log_bytes_per_line=$optvalue		;;
+	logbytesperio)		    log_bytes_per_io=$optvalue			;;
+	logxfercount)		    log_xfer_count=$optvalue			;;
+	logprocesses)		    log_processes=$optvalue			;;
+	logdelayusec)		    log_delay_usec=$optvalue			;;
+	logxfertime)		    log_xfertime=$optvalue			;;
+	reportformat)		    report_format=$optvalue			;;
+	report)		    	    report_format=summary			;;
+	verbosereport)		    report_format=verbose			;;
+	jsonreport)		    report_format=json				;;
+	rawreport)		    report_format=raw				;;
+	precleanup)		    precleanup=$optvalue			;;
+	cleanup)		    cleanup=$optvalue				;;
+	logstrategy)		    logStrategy=$optvalue			;;
+	timeout)		    timeout=$optvalue				;;
+	emptydir)		    emptydirs+=("$optvalue")			;;
+	volume)			    parse_volume_spec "$optvalue"		;;
+	sync|syncstart)		    syncStart=$((1-syncStart))			;;
+	baseoffset)		    baseoffset=$optvalue			;;
+	configmapfile)		    configMapFiles+=("$optvalue")		;;
+	tolerate|toleration)	    tolerations+=("$optvalue")			;;
+	pbenchcontrollerport)	    pbenchControllerPort=$optvalue		;;
+	pbenchcontrolleraddress)    pbenchControllerAddress=$optvalue		;;
+	workdir)		    common_workdir=$optvalue			;;
+	uuid)			    runUUID=$optvalue				;;
+	sysbenchgeneraloptions)     sysbench_generic_options+=(${optvalue//,/ });;
+	sysbenchgenericoptions)     sysbench_generic_options+=(${optvalue//,/ });;
+	sysbenchfileiooptions)      sysbench_fileio_options+=(${optvalue//,/ }) ;;
+	sysbenchfileiotests)	    sysbench_fileio_test_string=$optvalue	;;
+	fiogenericoptions)	   fio_generic_options+=(${optvalue//,/ })      ;;
+	fiojobfile)
+	    if [[ ! -f "$optvalue" ]] ; then
+	       echo "Job file $optvalue does not exist"
+	       help
+	    fi
+	    configMapFiles+=("$optvalue")
+	    ;;
+	affinity)
+	    case "$optvalue" in
+		1|'') affinity=1      ;;
+		2|anti) affinity=2    ;;
+		*) affinity=0         ;;
+	    esac
+	    ;;
+	antiaffinity)
+	    case "$optvalue" in
+		1|'') affinity=2      ;;
+		*) affinity=0         ;;
+	    esac
+	    ;;
+	externalsync)
+	    if [[ $optvalue =~ ^(-|([[:alnum:]][-_[:alnum:]]*[[:alnum:]]\.)*([[:alnum:]][-_[:alnum:]]*[[:alnum:]])):([1-9][[:digit:]]{0,4})$ ]] ; then
+		syncHost=${BASH_REMATCH[1]}
+		syncPort=${BASH_REMATCH[4]}
+		if (( syncPort > 65535 )) ; then
+		    echo "Illegal external sync port (must be 1 <= port <= 65535)"
+		    help
+		fi
+		syncStart=1
+	    else
+		echo "Undecipherable external sync host:port $optvalue"
+		help
+	    fi
+	    ;;
+	*) unknown_opts+=("$noptname ($noptname1)") ;;
+    esac
+    if [[ $deploymentType != pod && $deploymentType != deployment ]] ; then
+	echo "-T/--deployment_type must be either pod or deployment"
+	help
+    fi
+}
+
+function process_job_file() {
+    local jobfile="$1"
+    if [[ ! -f $jobfile || ! -r $jobfile ]] ; then
+	fatal "Job file $jobfile cannot be read"
+    fi
+    while IFS= read -r line ; do
+	if [[ -z "$line" ]] ; then continue; fi
+	line=${line%%#*}
+	process_option "$line"
+    done < "$jobfile"
+}
+
+while getopts ":B:b:c:D:d:Eef:HhKM:m:N:nP:p:QqR:r:Ss:T:t:V:vWw:XxYz:-:" opt ; do
+    case "$opt" in
+	B) basename="$OPTARG"		    ;;
+	b) blocksize="$OPTARG"              ;;
+	c) containers="$OPTARG"             ;;
+	D) dataRate="$OPTARG"               ;;
+	d) depsPerNamespace="$OPTARG"       ;;
+	E) exitAtEnd=0			    ;;
+	e) exitAtEnd=1			    ;;
+	f) process_job_file "$OPTARG"	    ;;
+	h) help				    ;;
+	H) help_extended		    ;;
+	K) runtimeClass="$kataRuntimeClass" ;;
+	m) msgSize="$OPTARG"		    ;;
+	M) set_xfer "$OPTARG" 1000000	    ;;
+	n) doit=0			    ;;
+	N) namespaces="$OPTARG"             ;;
+	p) parallel="$OPTARG"               ;;
+	P) podType="$OPTARG"		    ;;
+	Q) reportObjectCreation=0	    ;;
+	q) verbose=0			    ;;
+	R) processes_per_pod="$OPTARG"	    ;;
+	r) replicas="$OPTARG"               ;;
+	S) scale_ns=1			    ;;
+	s) secrets="$OPTARG"                ;;
+	T) deploymentType="$OPTARG"	    ;;
+	t) set_xfer_time "$OPTARG"	    ;;
+	V) parse_volume_spec "$OPTARG"	    ;;
+	v) verbose=1			    ;;
+	w) sleeptime="$OPTARG"              ;;
+	W) wait_for_secrets=0		    ;;
+	x) affinity=1			    ;;
+	X) affinity=2			    ;;
+	Y) syncStart=$((1-syncStart))	    ;;
+	z) podsleeptime="$OPTARG"	    ;;
+	-) process_option "$OPTARG"	    ;;
+	*) help "$OPTARG"                   ;;
+    esac
+done
+[[ -n "${unknown_opts[*]:-}" ]] && help "${unknown_opts[@]}"
+
+if (( namespaces <= 0 )) ; then
+    namespaces=1
+    useNamespaces=0
+fi
+(( !parallelConfigMaps )) && parallelConfigMaps=$parallel
+(( !parallelSecrets )) && parallelSecrets=$parallel
+(( !parallelNamespaces )) && parallelNamespaces=$parallel
+(( !parallelDeployments )) && parallelDeployments=$parallel
+
+(( !blocksizeConfigMaps )) && blocksizeConfigMaps=$blocksize
+(( !blocksizeSecrets )) && blocksizeSecrets=$blocksize
+(( !blocksizeNamespaces )) && blocksizeNamespaces=$blocksize
+(( !blocksizeDeployments )) && blocksizeDeployments=$blocksize
+
+[[ -n $runtimeClass ]] && runtimeClass="runtimeClassName: \"$runtimeClass\""
+[[ -n "$report_format" ]] && report=1
+
+shift $((OPTIND - 1))
+
+if [[ -z $OC && $doit -gt 0 ]] ; then
+    fatal "Cannot find oc or kubectl command, exiting!"
+fi
+
+if (( msgSize <= 0 )) ; then
+    fatal "Message size must be positive, exiting!"
+fi
+
+if [[ -z "$pbenchControllerAddress" && $pbenchControllerPort -ne 0 ]] ; then
+    fatal "Both pbench_controller_address and pbench_controller_port must be specified"
+fi
+
+if [[ -n "$pbenchControllerAddress" && $pbenchControllerPort -eq 0 ]] ; then
+    fatal "Both pbench_controller_address and pbench_controller_port must be specified"
+fi
+
+for ftest in ${sysbench_fileio_test_string//,/ } ; do
+    sysbench_fileio_tests[$ftest]=1
+done
+
+function validate_resource() {
+    local rtype=$1
+    local token
+    local status=0
+    shift
+    for token in "$@" ; do
+	if [[ $token != *'='* ]] ; then
+	    warn "Invalid $rtype specification $token (must be <resource>=<quantity>)"
+	    status=1
+	fi
+    done
+    return $status
+}
+
+resource_validation_failed=0
+validate_resource resource_request "${resource_requests[@]}" || resource_validation_failed=1
+validate_resource resource_limit "${resource_limits[@]}" || resource_validation_failed=1
+if ((resource_validation_failed)) ; then
+    exit 1
+fi
+
+if (( file_block_size <= 0)) ; then
+    file_block_size=file_size
+fi
+
+for i in $(seq 0 $((file_volumes-1)) ) ; do
+    emptydirs+=("/mnt/volume-$i")
+done
+
+logStrategy=${logStrategy,,}
+if [[ $logStrategy != poll && $logStrategy != listen ]] ; then
+    fatal "Unknown --log_stragey (must be 'poll' or 'listen')"
+fi
+
+if [[ $dataRate != 0 && $dataRate != '' && $xferTimeMax -eq 0 && bytesMax -eq 0 ]] ; then
+    bytes=$defaultBytes
+    bytesMax=$defaultBytes
+fi
 
 function load_workloads() {
     local workload
@@ -592,6 +949,30 @@ function load_workloads() {
 	. "$workload" || fatal "Can't load workload $workload"
     done
 }
+
+load_workloads
+
+case "${podType,,}" in
+    classic|clusterbuster) podType=ClusterBuster ;;
+    server)                podType=Server        ;;
+    cpu*|soaker)           podType=CPUSoaker     ;;
+    sysbench)              podType=Sysbench      ;;
+    fio)		   podType=Fio           ;;
+    pause|pausepod)        podType=PausePod      ;;
+    file|files)            podType=Files         ;;
+    log|logger|logging)    podType=Log           ;;
+    *)
+	help_extended "(Unknown pod type '$podType')"
+	;;
+esac
+
+if [[ -n ${1:-} ]] ; then
+    basename="$1"
+    shift
+fi
+
+[[ -z "$*" ]] || warn "Warning: extraneous arguments $* after basename will be ignored!"
+
 
 ################################################################
 # APIs
@@ -617,11 +998,35 @@ function createDeployment() {
 }
 
 function calculateLogsRequired() {
-    callAPI calculateLogsRequired "$@" || echo 0
+    callAPI calculateLogsRequired "$@"
 }
 
 function listConfigMaps() {
     callAPI listConfigMaps
+}
+
+################################################################
+# Helpers
+################################################################
+
+function __OC() {
+    if ((! doit)) ; then
+	echo "$OC" "$@" 1>&2
+    elif [[ $1 = describe || $1 = get || $1 = status ]] ; then
+	"$OC" "$@"
+    elif ((reportObjectCreation)) ; then
+	"$OC" "$@" 2>&1
+    else
+	"$OC" "$@" 2>&1 |grep -v -E '(^No resources found|deleted|created|labeled)$'
+    fi
+    return "${PIPESTATUS[0]}"
+}
+
+function _OC() {
+    if ! __OC "$@" ; then
+	echo "__KUBEFAIL__ $OC $* failed!"
+	exit 1
+    fi
 }
 
 ################################################################
@@ -804,433 +1209,27 @@ function get_logs() {
 }
 
 ################################################################
-# Option processing
-################################################################
-
-function set_xfer() {
-    local sizespec=$1
-    local -i scale=${2:-1}
-    if [[ $sizespec = *','* ]] ; then
-	bytes=$((${sizespec#*,} * scale))
-	bytesMax=$((${sizespec%%,*} * scale))
-	if (( bytes > bytesMax )) ; then
-	    local -i tmp=$bytes
-	    bytes=$bytesMax
-	    bytesMax=$tmp
-	fi
-    else
-	bytes=$((sizespec * scale))
-	bytesMax=$((sizespec * scale))
-    fi
-}
-
-function set_xfer_time() {
-    local timespec=$1
-    if [[ $timespec = *','* ]] ; then
-	xferTime=${timespec#*,}
-	xferTimeMax=${timespec%%,*}
-	if (( xferTime > xferTimeMax )) ; then
-	    local -i tmp=$xferTime
-	    xferTime=$xferTimeMax
-	    xferTimeMax=$tmp
-	fi
-    else
-	xferTime=$timespec
-	xferTimeMax=$timespec
-    fi
-}
-
-function process_volume() {
-    local volspec=$1
-    local vname=
-    local vtype=
-    local vmount_path=
-    IFS=':' read -r vname vtype vmount_path vtype_key vscoped_name <<< "$volspec"
-    if [[ -z "$vname" || -z "$vtype" || -z "$vmount_path" ]] ; then
-	echo "name, type, type_key, scoped name, and mount path must be provided"
-	echo "for volumes"
-	exit 1
-    fi
-    volumes+=("$vname")
-    volume_mount_paths["$vname"]=$vmount_path
-    volume_types["$vname"]=$vtype
-    volume_type_keys["$vname"]=$vtype_key
-    volume_scoped_names["$vname"]=$vscoped_name
-}
-
-function parse_size() {
-    if [[ $1 =~ ([[:digit:]]+)([[:alpha:]]*) ]] ; then
-	local size=${BASH_REMATCH[1]}
-	local size_modifier=${BASH_REMATCH[2],,}
-	local -i size_multiplier=1
-	case "$size_modifier" in
-	    ''|b)          size_multiplier=1                ;;
-	    kb|kilobytes)  size_multiplier=1000             ;;
-	    ki|kib|kibibytes) size_multiplier=1024          ;;
-	    mb|megabytes)  size_multiplier=1000000          ;;
-	    mi|mib|mebibytes) size_multiplier=1048576       ;;
-	    gb|gigabytes)  size_multiplier=1000000000       ;;
-	    gi|gib|gibibytes) size_multiplier=1073741824    ;;
-	    tb|terabytes)  size_multiplier=1000000000000    ;;
-	    ti|tib|tebibytes) size_multiplier=1099511627776 ;;
-	    *) fatal "Cannot parse size $optvalue"          ;;
-	esac
-	echo $((size*size_multiplier))
-    else
-	fatal "Cannot parse filesize $optvalue"
-    fi
-}
-
-function process_option() {
-    local option=$1
-    option=${option%% }
-    option=${option## }
-    [[ -n "$option" ]] || return
-    local optname
-    local optvalue
-    optname=${option%%=*}
-    optname=${optname,,}
-    optvalue=${option#*=}
-    noptname=${optname//-/_}
-    if [[ $option != *'='* ]] ; then
-	if [[ $noptname = "no_"* || $optname = "dont_"* ]] ; then
-	    noptname=${noptname#dont_}
-	    noptname=${noptname#no_}
-	    optvalue=0
-	else
-	    optvalue=1
-	fi
-    fi
-    local noptname1=${noptname//_/}
-    # shellcheck disable=SC2206
-    # shellcheck disable=SC2119
-    case "$noptname1" in
-	helpall*)		    help_extended				;;
-	helpeverything*)	    help_everything				;;
-	help*)			    help					;;
-	podtype)		    podType=$optvalue				;;
-	basename)		    basename=$optvalue				;;
-	blocksize)		    blocksize=$optvalue				;;
-	containers)		    containers=$optvalue			;;
-	deployments|depspername*)   depsPerNamespace=$optvalue			;;
-	namespaces)		    namespaces=$optvalue			;;
-	datarate)		    dataRate=$optvalue				;;
-	bytes)			    set_xfer "$(parse_size "$optvalue")"	;;
-	kb|kilobytes)		    set_xfer "$optvalue" 1000			;;
-	ki|kib|kibibytes)	    set_xfer "$optvalue" 1024			;;
-	mb|megabytes)		    set_xfer "$optvalue" 1000000		;;
-	mi|mib|mebibytes)	    set_xfer "$optvalue" 1048576		;;
-	gb|gigabytes)		    set_xfer "$optvalue" 1000000000		;;
-	gi|gib|gibibytes)	    set_xfer "$optvalue" 1073741824		;;
-	tb|terabytes)		    set_xfer "$optvalue" 1000000000		;;
-	ti|tib|tebibytes)	    set_xfer "$optvalue" 1099511627776		;;
-	msgsize)		    msgSize=$optvalue				;;
-	secrets)		    secrets=$optvalue				;;
-	verbose)		    verbose=$optvalue				;;
-	doit)			    doit=$optvalue				;;
-	quiet)			    verbose=$((!optvalue))			;;
-	processes)		    processes_per_pod=$optvalue			;;
-	replicas)		    replicas=$optvalue				;;
-	parallel)		    parallel=$optvalue				;;
-	sleep)			    sleeptime=$optvalue				;;
-	podsleep)		    podsleeptime=$optvalue			;;
-	poddelay)		    poddelay=$optvalue				;;
-	transfertime)		    set_xfer_time "$optvalue"			;;
-	firstdeployment)	    firstDeployment=$optvalue			;;
-	parallelconfigmaps)	    parallelConfigMaps=$optvalue		;;
-	parallelsecrets)	    parallelSecrets=$optvalue			;;
-	parallelnamespaces)	    parallelNamespaces=$optvalue		;;
-	paralleldeployments)	    parallelDeployments=$optvalue		;;
-	blocksizeconfigmaps)	    blocksizeConfigMaps=$optvalue		;;
-	blocksizesecrets)	    blocksizeSecrets=$optvalue			;;
-	blocksizenamespaces)	    blocksizeNamespaces=$optvalue		;;
-	blocksizedeployments)	    blocksizeDeployments=$optvalue		;;
-	containerimage)		    containerImage=$optvalue			;;
-	imagepullpolicy)	    imagePullPolicy=$optvalue			;;
-	sleepconfigmaps)	    sleepConfigMaps=$optvalue			;;
-	sleepsecrets)		    sleepSecrets=$optvalue			;;
-	sleepnamespaces)	    sleepNamespaces=$optvalue			;;
-	sleepdeployments)	    sleepDeployments=$optvalue			;;
-	nodeselector)		    nodeSelector=$optvalue			;;
-	exitatend)		    exitAtEnd=$optvalue				;;
-	request)		    resource_requests+=("$optvalue")		;;
-	limit)			    resource_limits+=("$optvalue")		;;
-	createroutes)		    createRoutes=$optvalue			;;
-	waitsecrets)		    wait_for_secrets=$optvalue			;;
-	scalens)	   	    scale_ns=$optvalue				;;
-	scaledeployments)   	    scale_deployments=$optvalue			;;
-	deploymenttype)		    deploymentType=$optvalue			;;
-	runtimeclass)		    runtimeClass=$optvalue			;;
-	reportobjectcreation)	    reportObjectCreation=$optvalue		;;
-	kata)			    runtimeClass=${kataRuntimeClass}		;;
-	volumes)		    file_volumes=$optvalue			;;
-	dirspervolume)	    	    file_dirs_per_volume=$optvalue		;;
-	filesperdir)		    files_per_dir=$optvalue			;;
-	fileblocksize)	    	    file_block_size=$(parse_size $optvalue)	;;
-	filesize)		    file_size=$(parse_size $optvalue)		;;
-	logbytesperline)	    log_bytes_per_line=$optvalue		;;
-	logbytesperio)		    log_bytes_per_io=$optvalue			;;
-	logxfercount)		    log_xfer_count=$optvalue			;;
-	logprocesses)		    log_processes=$optvalue			;;
-	logdelayusec)		    log_delay_usec=$optvalue			;;
-	logxfertime)		    log_xfertime=$optvalue			;;
-	logexitatend)		    log_exit_at_end=$optvalue			;;
-	reportformat)		    report_format=$optvalue			;;
-	report)		    	    report_format=summary			;;
-	verbosereport)		    report_format=verbose			;;
-	jsonreport)		    report_format=json				;;
-	rawreport)		    report_format=raw				;;
-	precleanup)		    precleanup=$optvalue			;;
-	cleanup)		    cleanup=$optvalue				;;
-	logstrategy)		    logStrategy=$optvalue			;;
-	timeout)		    timeout=$optvalue				;;
-	emptydir)		    emptydirs+=("$optvalue")			;;
-	volume)			    process_volume "$optvalue"			;;
-	sync|syncstart)		    syncStart=$((1-syncStart))			;;
-	baseoffset)		    baseoffset=$optvalue			;;
-	configmapfile)		    configMapFiles+=("$optvalue")		;;
-	tolerate|toleration)	    tolerations+=("$optvalue")			;;
-	pbenchcontrollerport)	    pbenchControllerPort=$optvalue		;;
-	pbenchcontrolleraddress)    pbenchControllerAddress=$optvalue		;;
-	workdir)		    common_workdir=$optvalue			;;
-	uuid)			    runUUID=$optvalue				;;
-	sysbenchgeneraloptions)     sysbench_generic_options+=(${optvalue//,/ });;
-	sysbenchgenericoptions)     sysbench_generic_options+=(${optvalue//,/ });;
-	sysbenchfileiooptions)      sysbench_fileio_options+=(${optvalue//,/ }) ;;
-	sysbenchfileiotests)	    sysbench_fileio_test_string=$optvalue	;;
-	fiogenericoptions)	   fio_generic_options+=(${optvalue//,/ })      ;;
-	fiojobfile)
-	    if [[ ! -f "$optvalue" ]] ; then
-	       echo "Job file $optvalue does not exist"
-	       help
-	    fi
-	    configMapFiles+=("$optvalue")
-	    ;;
-	affinity)
-	    case "$optvalue" in
-		1|'') affinity=1      ;;
-		2|anti) affinity=2    ;;
-		*) affinity=0         ;;
-	    esac
-	    ;;
-	antiaffinity)
-	    case "$optvalue" in
-		1|'') affinity=2      ;;
-		*) affinity=0         ;;
-	    esac
-	    ;;
-	externalsync)
-	    if [[ $optvalue =~ ^(-|([[:alnum:]][-_[:alnum:]]*[[:alnum:]]\.)*([[:alnum:]][-_[:alnum:]]*[[:alnum:]])):([1-9][[:digit:]]{0,4})$ ]] ; then
-		syncHost=${BASH_REMATCH[1]}
-		syncPort=${BASH_REMATCH[4]}
-		if (( syncPort > 65535 )) ; then
-		    echo "Illegal external sync port (must be 1 <= port <= 65535)"
-		    help
-		fi
-		syncStart=1
-	    else
-		echo "Undecipherable external sync host:port $optvalue"
-		help
-	    fi
-	    ;;
-	*) unknown_opts+=("$noptname ($noptname1)") ;;
-    esac
-    if [[ $deploymentType != pod && $deploymentType != deployment ]] ; then
-	echo "-T/--deployment_type must be either pod or deployment"
-	help
-    fi
-}
-
-function checkConfigMaps() {
-    local errors=0
-    for mapfile in "$@" ; do
-	if [[ ! -r "$mapfile" ]] ; then
-	    echo "Can't find configmap file $mapfile"
-	    errors=$((errors+1))
-	fi
-    done
-    if (( errors )) ; then
-	exit 1
-    fi
-}
-
-function process_job_file() {
-    local jobfile="$1"
-    if [[ ! -f $jobfile || ! -r $jobfile ]] ; then
-	fatal "Job file $jobfile cannot be read"
-    fi
-    while IFS= read -r line ; do
-	if [[ -z "$line" ]] ; then continue; fi
-	line=${line%%#*}
-	process_option "$line"
-    done < "$jobfile"
-}
-
-while getopts ":B:b:c:D:d:Eef:HhKM:m:N:nP:p:QqR:r:Ss:T:t:V:vWw:XxYz:-:" opt ; do
-    case "$opt" in
-	B) basename="$OPTARG"		    ;;
-	b) blocksize="$OPTARG"              ;;
-	c) containers="$OPTARG"             ;;
-	D) dataRate="$OPTARG"               ;;
-	d) depsPerNamespace="$OPTARG"       ;;
-	E) exitAtEnd=0			    ;;
-	e) exitAtEnd=1			    ;;
-	f) process_job_file "$OPTARG"	    ;;
-	h) help				    ;;
-	H) help_extended		    ;;
-	K) runtimeClass="$kataRuntimeClass" ;;
-	m) msgSize="$OPTARG"		    ;;
-	M) set_xfer "$OPTARG" 1000000	    ;;
-	n) doit=0			    ;;
-	N) namespaces="$OPTARG"             ;;
-	p) parallel="$OPTARG"               ;;
-	P) podType="$OPTARG"		    ;;
-	Q) reportObjectCreation=0	    ;;
-	q) verbose=0			    ;;
-	R) processes_per_pod="$OPTARG"	    ;;
-	r) replicas="$OPTARG"               ;;
-	S) scale_ns=1			    ;;
-	s) secrets="$OPTARG"                ;;
-	T) deploymentType="$OPTARG"	    ;;
-	t) set_xfer_time "$OPTARG"	    ;;
-	V) process_volume "$OPTARG"	    ;;
-	v) verbose=1			    ;;
-	w) sleeptime="$OPTARG"              ;;
-	W) wait_for_secrets=0		    ;;
-	x) affinity=1			    ;;
-	X) affinity=2			    ;;
-	Y) syncStart=$((1-syncStart))	    ;;
-	z) podsleeptime="$OPTARG"	    ;;
-	-) process_option "$OPTARG"	    ;;
-	*) help "$OPTARG"                   ;;
-    esac
-done
-[[ -n "${unknown_opts[*]:-}" ]] && help "${unknown_opts[@]}"
-
-if (( namespaces <= 0 )) ; then
-    namespaces=1
-    useNamespaces=
-fi
-(( !parallelConfigMaps )) && parallelConfigMaps=$parallel
-(( !parallelSecrets )) && parallelSecrets=$parallel
-(( !parallelNamespaces )) && parallelNamespaces=$parallel
-(( !parallelDeployments )) && parallelDeployments=$parallel
-
-(( !blocksizeConfigMaps )) && blocksizeConfigMaps=$blocksize
-(( !blocksizeSecrets )) && blocksizeSecrets=$blocksize
-(( !blocksizeNamespaces )) && blocksizeNamespaces=$blocksize
-(( !blocksizeDeployments )) && blocksizeDeployments=$blocksize
-
-[[ -n $runtimeClass ]] && runtimeClass="runtimeClassName: \"$runtimeClass\""
-[[ -n "$report_format" ]] && report=1
-
-shift $((OPTIND - 1))
-
-if [[ -z $OC && $doit -gt 0 ]] ; then
-    fatal "Cannot find oc or kubectl command, exiting!"
-fi
-
-if (( msgSize <= 0 )) ; then
-    fatal "Message size must be positive, exiting!"
-fi
-
-if [[ -z "$pbenchControllerAddress" && $pbenchControllerPort -ne 0 ]] ; then
-    fatal "Both pbench_controller_address and pbench_controller_port must be specified"
-fi
-
-if [[ -n "$pbenchControllerAddress" && $pbenchControllerPort -eq 0 ]] ; then
-    fatal "Both pbench_controller_address and pbench_controller_port must be specified"
-fi
-
-for ftest in ${sysbench_fileio_test_string//,/ } ; do
-    sysbench_fileio_tests[$ftest]=1
-done
-
-function validate_resource() {
-    local rtype=$1
-    local token
-    local status=0
-    shift
-    for token in "$@" ; do
-	if [[ $token != *'='* ]] ; then
-	    warn "Invalid $rtype specification $token (must be <resource>=<quantity>)"
-	    status=1
-	fi
-    done
-    return $status
-}
-
-resource_validation_failed=0
-validate_resource resource_request "${resource_requests[@]}" || resource_validation_failed=1
-validate_resource resource_limit "${resource_limits[@]}" || resource_validation_failed=1
-if ((resource_validation_failed)) ; then
-    exit 1
-fi
-
-if (( file_block_size <= 0)) ; then
-    file_block_size=file_size
-fi
-
-for i in $(seq 0 $((file_volumes-1)) ) ; do
-    emptydirs+=("/mnt/volume-$i")
-done
-
-logStrategy=${logStrategy,,}
-if [[ $logStrategy != poll && $logStrategy != listen ]] ; then
-    fatal "Unknown --log_stragey (must be 'poll' or 'listen')"
-fi
-
-if [[ $dataRate != 0 && $dataRate != '' && $xferTimeMax -eq 0 && bytesMax -eq 0 ]] ; then
-    bytes=$defaultBytes
-    bytesMax=$defaultBytes
-fi
-
-case "${podType,,}" in
-    classic|clusterbuster) podType=ClusterBuster ;;
-    server)                podType=Server        ;;
-    cpu*|soaker)           podType=CPUSoaker     ;;
-    sysbench)              podType=Sysbench      ;;
-    fio)		   podType=Fio           ;;
-    pause|pausepod)        podType=PausePod      ;;
-    file|files)            podType=Files         ;;
-    log|logger|logging)    podType=Log           ;;
-    *)
-	help_extended "(Unknown pod type '$podType')"
-	;;
-esac
-
-if [[ -n ${1:-} ]] ; then
-    basename="$1"
-    shift
-fi
-
-[[ -z "$*" ]] || echo "Warning: extraneous arguments $# after basename will be ignored!" 1>&2
-
-################################################################
-# Helpers
-################################################################
-
-function __OC() {
-    if [[ $1 = describe || $1 = get || $1 = status ]] ; then
-	"$OC" "$@"
-    elif ((reportObjectCreation)) ; then
-	"$OC" "$@" 2>&1
-    else
-	"$OC" "$@" 2>&1 |grep -v -E '(^No resources found|deleted|created|labeled)$'
-    fi
-    return "${PIPESTATUS[0]}"
-}
-
-function _OC() {
-    if ! __OC "$@" ; then
-	echo "__KUBEFAIL__ $OC $* failed!"
-	exit 1
-    fi
-}
-
-################################################################
 # YAML fragment generation
 ################################################################
+
+function _indent() {
+    local -i column="$1"
+    local line
+    while IFS='' read -r 'line' ; do
+	[[ -z "$line" ]] || printf "%${column}s%s\n" ' ' "$line"
+    done
+}
+
+function indent() {
+    local -i column="$1"
+    shift
+    if [[ -n "$*" ]] ; then
+	# "$@" | _indent "$column" strips whitespace with bash 4.2
+	_indent "$column" < <("$@")
+    else
+	_indent "$column"
+    fi
+}
 
 function tolerationsYAML() {
     local toleration
@@ -1386,6 +1385,11 @@ EOF
     fi
 }
 
+function namespaceYAML() {
+    local namespace=$1
+    (( useNamespaces )) && echo "namespace: \"$namespace\""
+}
+
 function volumesYAML() {
     local namespace=$1
     local deployment=${2:-1}
@@ -1445,61 +1449,9 @@ EOF
     fi
 }
 
-function syncYAML() {
-    local syncCount=${1:-1}
-    local namespace=$2
-    local expectedClients=$3
-    cat <<EOF
-- name: ${namespace}-sync
-  imagePullPolicy: $imagePullPolicy
-  image: "$containerImage"
-  ports:
-  - containerPort: $port
-$(indent 2 bootstrapCommandYAML sync.pl)
-  - "-f"
-  - "$syncFlagFile"
-  - "$syncPort"
-  - "$expectedClients"
-  - "$syncCount"
-$(indent 2 volumeMountsYAML "$namespace" 0 0)
-EOF
-}
-
-function syncSpec() {
-    cat <<EOF
-spec:
-$(indent 2 nodeSelectorYAML)
-  terminationGracePeriodSeconds: 1
-$(indent 2 tolerationsYAML ${tolerations+"${tolerations[@]}"})
-$(indent 2 <<< "$runtimeClass")
-  containers:
-$(indent 2 syncYAML "$@")
-$(indent 2 volumesYAML "$namespace" 0 0)
-EOF
-}
-
 ################################################################
 # Object YAML creation
 ################################################################
-
-function indent_1() {
-    local -i column="$1"
-    local line
-    while IFS='' read -r 'line' ; do
-	[[ -z "$line" ]] || printf "%${column}s%s\n" ' ' "$line"
-    done
-}
-
-function indent() {
-    local -i column="$1"
-    shift
-    if [[ -n "$*" ]] ; then
-	# "$@" | indent_1 "$column" strips whitespace with bash 4.2
-	indent_1 "$column" < <("$@")
-    else
-	indent_1 "$column"
-    fi
-}
 
 function finishCreation() {
     if [[ $doit -ne 0 && -n $accumulateddata ]] ; then
@@ -1540,19 +1492,20 @@ function echoIfDesired() {
 }
 
 function createObjectFromFile() {
+    function _ns() {
+	((useNamespaces)) && echo -n "-n $namespace"
+    }
     local objtype=$1; shift
     local namespace=$1; shift
     local objname=$1; shift
+    local ns=${useNamespaces:+-n "$namespace"}
     local file
     for file in "$@" ; do
-	if [[ ! -r "$file" ]] ; then
-	    echo "Can't read file $file!"
-	    exit 1
-	fi
+	[[ -r "$file" ]] || fatal "Can't read file $file!"
     done
+    (_OC create "$objtype" $(_ns) "$objname" "${@/#/--from-file=}" | echoIfDesired 1>&2) || exit 1
+    (_OC label "$objtype" $(_ns) "$objname" 'clusterbusterbase=true' "clusterbuster-runUUID=${runUUID}" "${basename}-id=$runUUID" "${basename}=true" | echoIfDesired 1>&2) || exit 1
     if (( doit )) ; then
-	(_OC create ${useNamespaces:+-n "$namespace"} "$objtype" "$objname" "${@/#/--from-file=}" | echoIfDesired 1>&2) || exit 1
-	(_OC label ${useNamespaces:+-n "$namespace"} "$objtype" "$objname" 'clusterbusterbase=true' "clusterbuster-runUUID=${runUUID}" "${basename}-id=$runUUID" "${basename}=true" | echoIfDesired 1>&2) || exit 1
 	totalObjectsCreated=$((totalObjectsCreated+1))
 	if [[ -z ${objectsCreated[$objtype]:-} ]] ; then
 	    objectsCreated[$objtype]=1
@@ -1560,16 +1513,13 @@ function createObjectFromFile() {
 	    objectsCreated[$objtype]=$((${objectsCreated[$objtype]}+1))
 	fi
 	(( !sleeptime )) || sleep "$sleeptime"
-    else
-	echo _OC create ${useNamespaces:+-n "$namespace"} "$objtype" "$objname" "${@/#/--from-file=}"
-	echo _OC label ${useNamespaces:+-n "$namespace"} "$objtype" "$objname" 'clusterbusterbase=true' "${basename}=true" "clusterbuster-runUUID=${runUUID}" "${basename}-id=$runUUID" || exit 1
     fi
 }
 
 function createNamespace() {
     local namespace=$1
-    [[ -z "$useNamespaces" ]] && return
-    createObject <<EOF
+    if ((useNamespaces)) ; then
+	createObject <<EOF
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -1577,6 +1527,7 @@ metadata:
   labels:
 $(indent 4 standardLabelsYAML)
 EOF
+    fi
 }
 
 function createSecrets() {
@@ -1585,7 +1536,6 @@ function createSecrets() {
     local secrets=${3:-1}
     local -i i
     local -i j
-    local nsline=${useNamespaces:+  namespace: "$namespace"}
     (( secrets )) || return;
     for i in $(seq $firstDeployment $((depsPerNamespace + firstDeployment - 1))) ; do
 	for j in $(seq 0 $((secrets - 1))) ; do
@@ -1594,7 +1544,7 @@ apiVersion: v1
 kind: Secret
 metadata:
   name: "secret-${namespace}-${i}-${j}"
-$nsline
+$(indent 2 namespaceYAML "$namespace")
   labels:
 $(indent 4 standardLabelsYAML)
 data:
@@ -1604,6 +1554,19 @@ type: Opaque
 EOF
 	done
     done
+}
+
+function checkConfigMaps() {
+    local errors=0
+    for mapfile in "$@" ; do
+	if [[ ! -r "$mapfile" ]] ; then
+	    echo "Can't find configmap file $mapfile"
+	    errors=$((errors+1))
+	fi
+    done
+    if (( errors )) ; then
+	exit 1
+    fi
 }
 
 function createConfigMaps() {
@@ -1617,13 +1580,12 @@ function createService() {
     local namespace=$1
     local deployment=$2
     local portnum=$3
-    local nsline=${useNamespaces:+  namespace: "$namespace"}
     createObject <<EOF
 apiVersion: v1
 kind: Service
 metadata:
   name: "service-${deployment}"
-$nsline
+$(indent 2 namespaceYAML "$namespace")
   labels:
 $(indent 4 standardLabelsYAML)
 spec:
@@ -1635,38 +1597,50 @@ spec:
 EOF
 }
 
-function createRoute() {
+function syncYAML() {
     local namespace=$1
-    local deployment=$2
-    local nsline=${useNamespaces:+  namespace: "$namespace"}
-    createObject <<EOF
-apiVersion: v1
-kind: Route
-metadata:
-  name: "route-${deployment}"
-$nsline
-  labels:
-$(indent 4 standardLabelsYAML)
+    local syncCount=${2:-1}
+    local expectedClients=$3
+    cat <<EOF
+- name: ${namespace}-sync
+  imagePullPolicy: $imagePullPolicy
+  image: "$containerImage"
+  ports:
+  - containerPort: $port
+$(indent 2 bootstrapCommandYAML sync.pl)
+  - "-f"
+  - "$syncFlagFile"
+  - "$syncPort"
+  - "$expectedClients"
+  - "$syncCount"
+$(indent 2 volumeMountsYAML "$namespace" 0 0)
+EOF
+}
+
+function syncSpec() {
+    local namespace=$1
+    cat <<EOF
 spec:
-  host: "service-${deployment}"
-  to:
-    kind: Service
-    name: "service-${deployment}"
-  selector:
-    name: "${deployment}"
+$(indent 2 nodeSelectorYAML)
+  terminationGracePeriodSeconds: 1
+$(indent 2 tolerationsYAML ${tolerations+"${tolerations[@]}"})
+$(indent 2 <<< "$runtimeClass")
+  containers:
+$(indent 2 syncYAML "$@")
+$(indent 2 volumesYAML "$namespace" 0 0)
 EOF
 }
 
 function createSyncDeployment() {
+    local namespace=$1; shift
     local syncCount=$1; shift
-    local nsline=${useNamespaces:+  namespace: "$namespace"}
     if [[ $deploymentType = pod ]] ; then
 	createObject <<EOF
 apiVersion: v1
 kind: Pod
 metadata:
   name: ${namespace}-sync
-$nsline
+$(indent 2 namespaceYAML "$namespace")
 $(indent 2 privilegeYAML)
 $(indent 2 nodeSelectorYAML)
   selector:
@@ -1678,7 +1652,7 @@ $(indent 4 standardLabelsYAML)
     app: ${namespace}-sync
     k8s-app: ${namespace}-sync
     ${basename}-sync: "true"
-$(syncSpec "$syncCount" "$@")
+$(syncSpec "$namespace" "$syncCount" "$@")
   restartPolicy: Never
 EOF
     else
@@ -1687,8 +1661,8 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: ${namespace}-sync
+$(indent 2 namespaceYAML "$namespace")
 $(indent 2 privilegeYAML)
-$nsline
   labels:
 $(indent 4 standardLabelsYAML)
 spec:
@@ -1707,13 +1681,13 @@ $(indent 8 standardLabelsYAML)
         app: ${namespace}-sync
         k8s-app: ${namespace}-sync
         ${basename}-sync: "true"
-$(indent 4 syncSpec -1 "$@")
+$(indent 4 syncSpec "$namespace" -1 "$@")
 EOF
     fi
 }
 
 ################################################################
-# Object creation
+# Generic Object creation
 ################################################################
 
 function createObjects_n() {
@@ -1851,10 +1825,10 @@ function doCleanup() {
     local -a objectsToClean
     local objtype
     (( doit )) || return
-    if [[ -n "$useNamespaces" ]] ; then
+    if ((useNamespaces)) ; then
 	objectsToClean=(namespace)
     else
-	objectsToClean=("$deploymentType" configmap secret route service)
+	objectsToClean=("$deploymentType" configmap secret service)
     fi
     for objtype in "${objectsToClean[@]}" ; do
 	if (( reportObjectCreation )) ; then
@@ -1873,19 +1847,7 @@ function doCleanup() {
 # Main work loop
 ################################################################
 
-function run_clusterbuster_1() {
-    load_workloads
-    local -A expected_secrets=()
-    local -i i
-    local -i status=0
-    if (( precleanup )) ; then
-	doCleanup
-    fi
-    allocate_namespaces
-    find_first_deployment
-    trap 'if [[ -n "$(jobs -p)" ]] ; then kill -INT $(jobs -p); fi; exit' INT
-    createAllObjects Namespaces
-
+function create_secrets() {
     # If previous secrets weren't all created, this will yield
     # the wrong result.
     if (( doit && wait_for_secrets )) ; then
@@ -1904,12 +1866,7 @@ function run_clusterbuster_1() {
 	    done
 	done
     fi
-
     createAllObjects Secrets
-    (( ${#configMapFiles[@]} )) && checkConfigMaps "${configMapFiles[@]}"
-    createAllObjects ConfigMaps
-    supportsAPI listConfigMaps && hasSystemConfigMap=1
-
     if (( doit )) ; then
 	local secname=""
 	while (( ${#expected_secrets[@]} )) ; do
@@ -1924,39 +1881,34 @@ function run_clusterbuster_1() {
 	    fi
 	done
     fi
+}
 
+function do_logging() {
+    ((report)) || return 0
     local -i logs_expected=0
-    local log_host=
-    local -i log_port=0
-    basetime=$(printf '%(%s)T' -1)
-    createAllObjects Deployments || exit 1
-    if ((doit && report)) ; then
-	logs_expected="$("calculateLogsRequired" "$namespaces" "$depsPerNamespace" "$replicas" "$containers")"
-	if ((logs_expected)) ; then
-	    if [[ $logStrategy = poll ]] ; then
-		local -a syncPods=()
-		if [[ -n "$useNamespaces" ]] ; then
-		    local -i i
-		    for i in $(seq 0 $((namespaces - 1))) ; do
-			syncPods+=("-n ${basename}-${i} ${basename}-${i}-sync")
-		    done
-		else
-		    syncPods=("${basename}-0-sync")
-		fi
-		get_logs "${syncPods[@]}" &
-	    else
-		log_host=$(hostname -f)
-		log_port=$("${__libdir__}/find_free_port")
-		(( log_port )) || fatal "Can't get port to listen for logs on!"
-		get_logs -p "$log_port" -c "$logs_expected" &
-	    fi
-	    get_logs_pid=$!
-	    trap '[[ -n "$(jobs -p)" ]] && kill -HUP $(jobs -p)' INT TERM HUP
-	fi
-    fi
+    logs_expected="$(calculateLogsRequired "$namespaces" "$depsPerNamespace" "$replicas" "$containers")"
+    ((logs_expected > 0)) || return 0
 
-    (( doit )) || return
-    if ((report && logs_expected && timeout > 0)) ; then
+    if [[ $logStrategy = poll ]] ; then
+	local -a syncPods=()
+	if ((useNamespaces)) ; then
+	    local -i i
+	    for i in $(seq 0 $((namespaces - 1))) ; do
+		syncPods+=("-n ${basename}-${i} ${basename}-${i}-sync")
+	    done
+	else
+	    syncPods=("${basename}-0-sync")
+	fi
+	get_logs "${syncPods[@]}" &
+    else
+	log_host=$(hostname -f)
+	log_port=$("${__libdir__}/find_free_port")
+	(( log_port )) || fatal "Can't get port to listen for logs on!"
+	get_logs -p "$log_port" -c "$logs_expected" &
+    fi
+    local -i get_logs_pid=$!
+    trap '[[ -n "$(jobs -p)" ]] && kill -HUP $(jobs -p)' INT TERM HUP
+    if ((timeout > 0)) ; then
 	local -i finis=0
 	while (( timeout < 0 || timeout-- )) ; do
 	    # CreateContainerError is not necessarily fatal
@@ -1965,9 +1917,11 @@ function run_clusterbuster_1() {
 		_OC get pods -A -l "$basename" |grep -E -e '([^r]Error|Evicted|Crash)'
 		break
 	    fi
-	    # This appears to be needed for the shell to actually reap
-	    # any terminated jobs.  Without this, the test below always
-	    # succeeds so the job doesn't exit.
+	    # Commands in a pipeline are each run in subshells.  Background jobs are child
+	    # of the parent, not any children, so running "jobs -l" inside the pipeline
+	    # will not reap any exited subjobs.  The child still has the job table, so
+	    # it knows what subjobs exist, but the "jobs -l" must be run at top level
+	    # to actually reap them.
 	    jobs -l >/dev/null
 	    if jobs -l |grep -q . ; then
 		sleep 1
@@ -1995,16 +1949,39 @@ function run_clusterbuster_1() {
 	wait "$get_logs_pid"
 	status=$?
     fi
+}
+
+function report_object_creation() {
+    (( reportObjectCreation )) || return
     local objtype
-    if (( reportObjectCreation )) ; then
-	while read -r objtype ; do
-	    [[ -n "${objtype:-}" ]] && printf "Created %${#totalObjectsCreated}d %s%s\n" "${objectsCreated[$objtype]}" "$objtype" "${plurals[$((${objectsCreated[$objtype]} == 1))]}" 1>&2
-	done < <( (IFS=$'\n'; echo "${!objectsCreated[*]}") | sort)
-	printf "Created %d object%s total\n" "$totalObjectsCreated" "${plurals[$((totalObjectsCreated == 1))]}" 1>&2
-    fi
-    if ((cleanup)) ; then
-	doCleanup
-    fi
+    while read -r objtype ; do
+	[[ -n "${objtype:-}" ]] && printf "Created %${#totalObjectsCreated}d %s%s\n" "${objectsCreated[$objtype]}" "$objtype" "${plurals[$((${objectsCreated[$objtype]} == 1))]}" 1>&2
+    done < <( (IFS=$'\n'; echo "${!objectsCreated[*]}") | sort)
+    printf "Created %d object%s total\n" "$totalObjectsCreated" "${plurals[$((totalObjectsCreated == 1))]}" 1>&2
+}
+
+function run_clusterbuster_1() {
+    local -A expected_secrets=()
+    local -i status=0
+    (( precleanup && doit )) && doCleanup
+    allocate_namespaces
+    find_first_deployment
+    trap 'if [[ -n "$(jobs -p)" ]] ; then kill -INT $(jobs -p); fi; exit' INT
+    createAllObjects Namespaces
+
+    (( ${#configMapFiles[@]} )) && checkConfigMaps "${configMapFiles[@]}"
+    createAllObjects ConfigMaps
+    supportsAPI listConfigMaps && hasSystemConfigMap=1
+
+    create_secrets
+
+    basetime=$(printf '%(%s)T' -1)
+    createAllObjects Deployments || exit 1
+    (( doit )) || return
+
+    do_logging || status=1
+    report_object_creation
+    ((cleanup)) && doCleanup
 
     return $status
 }

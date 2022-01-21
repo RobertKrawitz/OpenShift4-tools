@@ -67,14 +67,13 @@ function _createServerDeployment() {
     local secretCount=$3
     local msgSize=$4
     local expectedClients=$5
-    local nsline=${useNamespaces:+  namespace: "$namespace"}
     if [[ $deploymentType = pod ]] ; then
 	createObject <<EOF
 apiVersion: v1
 kind: Pod
 metadata:
   name: ${namespace}-${i}-server
-$nsline
+$(indent 2 namespaceYAML "$namespace")
 $(indent 2 nodeSelectorYAML)
 $(indent 2 privilegeYAML)
   selector:
@@ -95,7 +94,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: ${namespace}-${i}-server
-$nsline
+$(indent 2 namespaceYAML "$namespace")
 $(indent 2 privilegeYAML)
   labels:
 $(indent 4 standardLabelsYAML)
@@ -236,7 +235,6 @@ function _createClientDeployment() {
     local containers=$8
     local log_host=${9:-}
     local -i log_port=${10:-0}
-    local nsline=${useNamespaces:+  namespace: "$namespace"}
     if [[ $deploymentType = pod ]] ; then
 	local -i j=0
 	while (( j++ < replicas )) ; do
@@ -245,8 +243,7 @@ function _createClientDeployment() {
 apiVersion: v1
 kind: Pod
 metadata:
-  name: $podname
-$nsline
+$(indent 2 namespaceYAML "$namespace")
 $(indent 2 privilegeYAML)
 $(indent 2 nodeSelectorYAML)
 $(indent 2 privilegeYAML)
@@ -270,7 +267,7 @@ kind: Deployment
 metadata:
   name: $podname
 $(indent 2 privilegeYAML)
-$nsline
+$(indent 2 namespaceYAML "$namespace")
   labels:
 $(indent 4 standardLabelsYAML)
 spec:
@@ -305,12 +302,11 @@ function createDeploymentServer() {
     local -i i
     if [[ syncStart -gt 0 && -z "$syncHost" ]] ; then
 	createService "$namespace" "${namespace}-sync" "$syncPort"
-	createSyncDeployment 2 "$namespace" "$((containers * replicas * count))"
+	createSyncDeployment "$namespace" 2 "$((containers * replicas * count))"
     fi
 
     for i in $(seq $firstDeployment $((count + firstDeployment - 1))) ; do
 	createService "$namespace" "$namespace-$i" "$port"
-	(( createRoutes )) && createRoute "$namespace" "$namespace-$i"
 	if [[ $deploymentType = pod ]] ; then
 	    _createServerDeployment "$namespace" "$i" "$secretCount" "$msgSize" "$((containers * replicas))"
 	else

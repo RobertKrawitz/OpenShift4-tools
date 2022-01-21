@@ -94,7 +94,6 @@ function _createFilesDeployment() {
     local secretCount=$3
     local -i replicas=$4
     local -i containers=$5
-    local nsline=${useNamespaces:+  namespace: "$namespace"}
     local podname="${namespace}-${i}-files"
     if [[ $deploymentType = pod ]] ; then
 	local -i j=0
@@ -104,7 +103,7 @@ apiVersion: v1
 kind: Pod
 metadata:
   name: ${namespace}-files-${i}-${j}
-$nsline
+$(indent 2 namespaceYAML "$namespace")
 $(indent 2 privilegeYAML)
 $(indent 2 nodeSelectorYAML)
   selector:
@@ -126,7 +125,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: ${namespace}-files-$i
-$nsline
+$(indent 2 namespaceYAML "$namespace")
 $(indent 2 privilegeYAML)
   labels:
     clusterbuster-runUUID: "$runUUID"
@@ -171,7 +170,7 @@ function createDeploymentFiles() {
     local -i i
     if [[ syncStart -gt 0 && -z "$syncHost" ]] ; then
 	createService "$namespace" "${namespace}-sync" "$syncPort"
-	createSyncDeployment 4 "$namespace" "$((containers * processes_per_pod * replicas * count))"
+	createSyncDeployment "$namespace" 4 "$((containers * processes_per_pod * replicas * count))"
     fi
     for i in $(seq $firstDeployment $((count + firstDeployment - 1))) ; do
 	_createFilesDeployment "$namespace" "$i" "$secretCount"  "$replicas" "$containers" "$log_host" "$log_port"

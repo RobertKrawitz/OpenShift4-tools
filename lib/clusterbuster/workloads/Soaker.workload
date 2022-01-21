@@ -88,7 +88,6 @@ function _createSoakerDeployment() {
     local secretCount=$3
     local -i processes=$4
     local -i containers=$5
-    local nsline=${useNamespaces:+  namespace: "$namespace"}
     if [[ $deploymentType = pod ]] ; then
 	local -i j=0
 	while (( j++ < replicas )) ; do
@@ -97,7 +96,7 @@ apiVersion: v1
 kind: Pod
 metadata:
   name: ${namespace}-soaker-${i}-${j}
-$nsline
+$(indent 2 namespaceYAML "$namespace")
 $(indent 2 privilegeYAML)
 $(indent 2 nodeSelectorYAML)
   selector:
@@ -119,7 +118,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: ${namespace}-soaker-$i
-$nsline
+$(indent 2 namespaceYAML "$namespace")
 $(indent 2 privilegeYAML)
   labels:
 $(indent 4 standardLabelsYAML)
@@ -155,7 +154,7 @@ function createDeploymentCPUSoaker() {
     local -i i
     if [[ syncStart -gt 0 && -z "$syncHost" ]] ; then
 	createService "$namespace" "${namespace}-sync" "$syncPort"
-	createSyncDeployment 2 "$namespace" "$((containers * replicas * processes_per_pod * count))"
+	createSyncDeployment "$namespace" 2 "$((containers * replicas * processes_per_pod * count))"
     fi
     for i in $(seq $firstDeployment $((count + firstDeployment - 1))) ; do
 	_createSoakerDeployment "$namespace" "$i" "$secretCount"  "$((processes_per_pod))" "$containers" "$log_host" "$log_port"

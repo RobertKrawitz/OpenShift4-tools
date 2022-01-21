@@ -91,14 +91,13 @@ function _createFioDeployment() {
     local secretCount=$3
     local -i processes=$4
     local -i containers=$5
-    local nsline=${useNamespaces:+  namespace: "$namespace"}
     if [[ $deploymentType = pod ]] ; then
 	createObject <<EOF
 apiVersion: v1
 kind: Pod
 metadata:
   name: ${namespace}-fio-${i}
-$nsline
+$(indent 2 namespaceYAML "$namespace")
 $(indent 2 privilegeYAML)
 $(indent 2 nodeSelectorYAML)
   selector:
@@ -119,7 +118,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: ${namespace}-fio-$i
-$nsline
+$(indent 2 namespaceYAML "$namespace")
 $(indent 2 privilegeYAML)
   labels:
 $(indent 4 standardLabelsYAML)
@@ -162,7 +161,7 @@ function createDeploymentFio() {
     local -i i
     if [[ syncStart -gt 0 && -z "$syncHost" ]] ; then
 	createService "$namespace" "${namespace}-sync" "$syncPort"
-	createSyncDeployment 2 "$namespace" "$((containers * replicas * count))"
+	createSyncDeployment "$namespace" 2 "$((containers * replicas * count))"
     fi
     for i in $(seq $firstDeployment $((count + firstDeployment - 1))) ; do
 	createFioDeployment "$namespace" "$i" "$secretCount"  "$replicas" "$containers" "$log_host" "$log_port"
