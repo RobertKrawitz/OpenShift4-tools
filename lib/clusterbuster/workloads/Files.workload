@@ -74,8 +74,6 @@ function _createFilesSpec() {
     local namespace=$1
     local i=$2
     local secretCount=$3
-    local -i processes=$4
-    local -i containers=$5
     cat <<EOF
 spec:
 $(indent 2 nodeSelectorYAML)
@@ -94,7 +92,6 @@ function _createFilesDeployment() {
     local secretCount=$3
     local -i replicas=$4
     local -i containers=$5
-    local podname="${namespace}-${i}-files"
     if [[ $deploymentType = pod ]] ; then
 	local -i j=0
 	while (( j++ < replicas )) ; do
