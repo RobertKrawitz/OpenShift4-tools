@@ -19,24 +19,23 @@
 ################################################################
 
 function _createContainersSoakerYAML() {
-    local podname=$1
-    local namespace=$2
-    local i=$3
-    local secretCount=$4
-    local -i processes=$5
-    local -i containers=$6
-    local log_host=${7:-}
-    local -i log_port=${8:-0}
-    local -i j
+    local namespace=$1
+    local instance=$2
+    local secretCount=$3
+    local -i processes=$4
+    local -i containers=$5
+    local log_host=${6:-}
+    local -i log_port=${7:-0}
+    local -i container
     local syncService=
     local syncPortNum=
     if (( syncStart )) ; then
 	syncService="${syncHost:-service-${namespace}-sync}"
 	syncPortNum=$syncPort
     fi
-    for j in $(seq 0 $((containers - 1))) ; do
+    for container in $(seq 0 $((containers - 1))) ; do
 	cat <<EOF
-- name: "c$j"
+- name: "c$container"
   imagePullPolicy: $imagePullPolicy
   image: "$containerImage"
 $(indent 2 containerResourcesYAML)
@@ -45,8 +44,7 @@ $(indent 2 containerResourcesYAML)
     value: "$verbose"
 $(indent 2 bootstrapCommandYAML cpusoaker.pl)
   - "$namespace"
-  - "$podname"
-  - "c$j"
+  - "c$container"
   - "$basetime"
   - "$baseoffset"
   - "$(ts)"
@@ -58,18 +56,15 @@ $(indent 2 bootstrapCommandYAML cpusoaker.pl)
   - "$syncPortNum"
   - "$log_host"
   - "$log_port"
-$(indent 2 volumeMountsYAML "$namespace" "$i" "$secretCount")
+$(indent 2 volumeMountsYAML "$namespace" "${instance}" "$secretCount")
 EOF
     done
 }
 
 function _createSoakerSpec() {
-    local podname=$1
-    local namespace=$2
-    local i=$3
-    local secretCount=$4
-    local -i processes=$5
-    local -i containers=$6
+    local namespace=$1
+    local instance=$2
+    local secretCount=$3
     cat <<EOF
 spec:
 $(indent 2 nodeSelectorYAML)
@@ -78,37 +73,34 @@ $(indent 2 <<< "$runtimeClass")
   containers:
 $(indent 2 _createContainersSoakerYAML "$@")
 $(indent 2 pbenchAgentYAML)
-$(indent 2 volumesYAML "$namespace" "$i" "$secretCount")
+$(indent 2 volumesYAML "$namespace" "${instance}" "$secretCount")
 EOF
 }
 
 function _createSoakerDeployment() {
     local namespace=$1
-    local i=$2
-    local secretCount=$3
-    local -i processes=$4
-    local -i containers=$5
+    local instance=$2
     if [[ $deploymentType = pod ]] ; then
-	local -i j=0
-	while (( j++ < replicas )) ; do
+	local -i replica=0
+	while (( replica++ < replicas )) ; do
 	    createObject <<EOF
 apiVersion: v1
 kind: Pod
 metadata:
-  name: ${namespace}-soaker-${i}-${j}
+  name: ${namespace}-soaker-${instance}-${replica}
 $(indent 2 namespaceYAML "$namespace")
 $(indent 2 privilegeYAML)
 $(indent 2 nodeSelectorYAML)
   selector:
     matchLabels:
-      app: ${namespace}-soaker-${i}
+      app: ${namespace}-soaker-${instance}
   labels:
 $(indent 4 standardLabelsYAML)
-    name: ${namespace}-soaker-${i}
-    app: ${namespace}-soaker-${i}
+    name: ${namespace}-soaker-${instance}
+    app: ${namespace}-soaker-${instance}
     ${basename}-soaker: "true"
     ${basename}-client: "true"
-$(_createSoakerSpec "${namespace}-soaker-${i}-${j}" "$@")
+$(_createSoakerSpec "$@")
   restartPolicy: Never
 EOF
 	done
@@ -117,7 +109,7 @@ EOF
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: ${namespace}-soaker-$i
+  name: ${namespace}-soaker-${instance}
 $(indent 2 namespaceYAML "$namespace")
 $(indent 2 privilegeYAML)
   labels:
@@ -127,18 +119,18 @@ spec:
 $(indent 2 nodeSelectorYAML)
   selector:
     matchLabels:
-      app: ${namespace}-soaker-$i
+      app: ${namespace}-soaker-${instance}
   strategy:
     type: RollingUpdate
   template:
     metadata:
       labels:
 $(indent 8 standardLabelsYAML)
-        name: ${namespace}-soaker-$i
-        app: ${namespace}-soaker-$i
+        name: ${namespace}-soaker-${instance}
+        app: ${namespace}-soaker-${instance}
         ${basename}-soaker: "true"
         ${basename}-client: "true"
-$(indent 4 _createSoakerSpec "${namespace}-soaker-${i}-deployment" "$@")
+$(indent 4 _createSoakerSpec "$@")
 EOF
     fi
 }
@@ -151,13 +143,13 @@ function createDeploymentSoaker() {
     local containers=${5:-1}
     local log_host=${6:-}
     local -i log_port=${7:-0}
-    local -i i
+    local -i instance
     if [[ syncStart -gt 0 && -z "$syncHost" ]] ; then
 	createService "$namespace" "${namespace}-sync" "$syncPort"
 	createSyncDeployment "$namespace" 2 "$((containers * replicas * processes_per_pod * count))"
     fi
-    for i in $(seq $firstDeployment $((count + firstDeployment - 1))) ; do
-	_createSoakerDeployment "$namespace" "$i" "$secretCount"  "$((processes_per_pod))" "$containers" "$log_host" "$log_port"
+    for instance in $(seq $firstDeployment $((count + firstDeployment - 1))) ; do
+	_createSoakerDeployment "$namespace" "$instance" "$secretCount"  "$((processes_per_pod))" "$containers" "$log_host" "$log_port"
     done
 }
 

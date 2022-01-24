@@ -7,9 +7,9 @@ use Time::Piece;
 use Time::HiRes qw(gettimeofday);
 use File::Path qw(make_path remove_tree);
 use Sys::Hostname;
-our ($namespace, $pod, $container, $basetime, $baseoffset, $crtime, $poddelay, $processes, $rundir, $runtime, $exit_at_end, $synchost, $syncport, $loghost, $logport, $sysbench_generic_args, $sysbench_cmd, $sysbench_fileio_args, $sysbench_modes) = @ARGV;
-my ($local_hostname) = hostname;
-my ($localrundir) = "$rundir/$local_hostname/$$";
+our ($namespace, $container, $basetime, $baseoffset, $crtime, $poddelay, $processes, $rundir, $runtime, $exit_at_end, $synchost, $syncport, $loghost, $logport, $sysbench_generic_args, $sysbench_cmd, $sysbench_fileio_args, $sysbench_modes) = @ARGV;
+my ($pod) = hostname;
+my ($localrundir) = "$rundir/$pod/$$";
 
 sub removeRundir() {
     if (-d "$localrundir") {
@@ -91,7 +91,7 @@ sub do_sync($$;$) {
     if ($token && $token =~ /clusterbuster-json/) {
 	$token =~ s,\n *,,g;
     } elsif (not $token) {
-        $token = sprintf('%d', rand() * 999999999);
+        $token = sprintf('%s-%d', $pod, rand() * 999999999);
     }
     while (1) {
 	timestamp("Waiting for sync on $addr:$port");

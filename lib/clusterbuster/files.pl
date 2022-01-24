@@ -5,11 +5,13 @@ use POSIX;
 use strict;
 use Time::Piece;
 use Time::HiRes qw(gettimeofday);
+use Sys::Hostname;
 #use File::Sync qw(sync);
-our ($namespace, $pod, $container, $basetime, $baseoffset, $crtime, $poddelay, $exit_delay, $synchost, $syncport, $dirs, $files_per_dir, $blocksize, $block_count, $processes, $loghost, $logport, @dirs) = @ARGV;
+our ($namespace, $container, $basetime, $baseoffset, $crtime, $poddelay, $exit_delay, $synchost, $syncport, $dirs, $files_per_dir, $blocksize, $block_count, $processes, $loghost, $logport, @dirs) = @ARGV;
 $SIG{TERM} = sub { POSIX::_exit(0); };
 $basetime += $baseoffset;
 $crtime += $baseoffset;
+my ($pod) = hostname;
 
 sub cputime() {
     my (@times) = times();
@@ -72,7 +74,7 @@ sub do_sync($$;$) {
     if ($token && $token =~ /clusterbuster-json/) {
 	$token =~ s,\n *,,g;
     } elsif (not $token) {
-        $token = sprintf('%d', rand() * 999999999);
+        $token = sprintf('%s-%d', $pod, rand() * 999999999);
     }
     while (1) {
 	timestamp("Waiting for sync on $addr:$port");

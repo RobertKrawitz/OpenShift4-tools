@@ -5,8 +5,9 @@ use POSIX;
 use strict;
 use Time::HiRes qw(gettimeofday usleep);
 use Time::Piece;
+use Sys::Hostname;
 $SIG{TERM} = sub { kill 'KILL', -1; POSIX::_exit(0); };
-my ($namespace, $pod, $container, $basetime, $baseoffset, $poddelay, $connect_port, $container, $srvhost, $data_rate, $bytes, $bytesMax, $msgSize, $xfertime, $xfertimeMax, $crtime, $exit_at_end, $synchost, $syncport, $namespace, $loghost, $logport, $podname) = @ARGV;
+my ($namespace, $container, $basetime, $baseoffset, $poddelay, $connect_port, $container, $srvhost, $data_rate, $bytes, $bytesMax, $msgSize, $xfertime, $xfertimeMax, $crtime, $exit_at_end, $synchost, $syncport, $namespace, $loghost, $logport) = @ARGV;
 $basetime += $baseoffset;
 $crtime += $baseoffset;
 my ($etime, $data_sent, $detime, $stime, $end_time, $dstime, $mean, $max, $stdev, $user, $sys, $cuser, $csys, $elapsed);
@@ -18,6 +19,7 @@ my $ex2 = 0;
 my ($cfail) = 0;
 my ($refused) = 0;
 my $time_overhead = 0;
+my ($pod) = hostname;
 sub ts() {
     my (@now) = gettimeofday();
     return sprintf("%s.%06d", gmtime($now[0])->strftime("%Y-%m-%dT%T"), $now[1]);
@@ -125,7 +127,7 @@ sub do_sync($$;$) {
     if ($token && $token =~ /clusterbuster-json/) {
 	$token =~ s,\n *,,g;
     } elsif (not $token) {
-        $token = sprintf('%d', rand() * 999999999);
+        $token = sprintf('%s-%d', $pod, rand() * 999999999);
     }
     while (1) {
 	timestamp("Waiting for sync on $addr:$port");

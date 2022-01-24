@@ -20,7 +20,7 @@
 
 function _createServerContainerYAML() {
     local namespace=$1
-    local i=$2
+    local instance=$2
     local secretCount=$3
     local msgSize=$4
     local expectedClients=$5
@@ -35,17 +35,17 @@ $(indent 2 bootstrapCommandYAML server.pl)
   - "$basetime"
   - "$baseoffset"
   - "$port"
-  - "${namespace}-${i}-server"
+  - "${namespace}-${instance}-server"
   - "$msgSize"
   - "$(ts)"
   - "$expectedClients"
-$(indent 2 volumeMountsYAML "$namespace" "$i" "$secretCount")
+$(indent 2 volumeMountsYAML "$namespace" "$instance" "$secretCount")
 EOF
 }
 
 function _createServerSpec() {
     local namespace=$1
-    local i=$2
+    local instance=$2
     local secretCount=$3
     local msgSize=$4
     local expectedClients=$5
@@ -57,13 +57,13 @@ $(indent 2 <<< "$runtimeClass")
   containers:
 $(indent 2 _createServerContainerYAML "$@")
 $(indent 2 pbenchAgentYAML)
-$(indent 2 volumesYAML "$namespace" "$i" "$secretCount")
+$(indent 2 volumesYAML "$namespace" "$instance" "$secretCount")
 EOF
 }
 
 function _createServerDeployment() {
     local namespace=$1
-    local i=$2
+    local instance=$2
     local secretCount=$3
     local msgSize=$4
     local expectedClients=$5
@@ -72,18 +72,18 @@ function _createServerDeployment() {
 apiVersion: v1
 kind: Pod
 metadata:
-  name: ${namespace}-${i}-server
+  name: ${namespace}-${instance}-server
 $(indent 2 namespaceYAML "$namespace")
 $(indent 2 nodeSelectorYAML)
 $(indent 2 privilegeYAML)
   selector:
     matchLabels:
-      app: ${namespace}-${i}
+      app: ${namespace}-${instance}
   labels:
 $(indent 4 standardLabelsYAML)
-    name: ${namespace}-${i}
-    app: ${namespace}-${i}
-    k8s-app: ${namespace}-${i}-server
+    name: ${namespace}-${instance}
+    app: ${namespace}-${instance}
+    k8s-app: ${namespace}-${instance}-server
     ${basename}-server: "true"
 $(_createServerSpec "$@")
   restartPolicy: Never
@@ -93,7 +93,7 @@ EOF
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: ${namespace}-${i}-server
+  name: ${namespace}-${instance}-server
 $(indent 2 namespaceYAML "$namespace")
 $(indent 2 privilegeYAML)
   labels:
@@ -103,16 +103,16 @@ spec:
 $(indent 2 nodeSelectorYAML)
   selector:
     matchLabels:
-      app: ${namespace}-$i
+      app: ${namespace}-$instance
   strategy:
     type: RollingUpdate
   template:
     metadata:
       labels:
 $(indent 8 standardLabelsYAML)
-        name: ${namespace}-${i}
-        app: ${namespace}-${i}
-        k8s-app: ${namespace}-${i}-server
+        name: ${namespace}-${instance}
+        app: ${namespace}-${instance}
+        k8s-app: ${namespace}-${instance}-server
         ${basename}-server: "true"
 $(indent 4 _createServerSpec "$@")
 EOF
@@ -121,26 +121,24 @@ EOF
 
 function _createClientContainerYAML() {
     local namespace=$1
-    local i=$2
+    local instance=$2
     local secretCount=$3
-    local dataRate=$4
-    local bytes=$5
-    local msgSize=$6
-    local containers=$7
-    local log_host=$8
-    local log_port=$9
-    local podname=${10}
-    local replica=${11}
-    local -i j
+    local dataRate=$5
+    local bytes=$6
+    local msgSize=$7
+    local containers=$8
+    local log_host=$9
+    local log_port=$10
+    local -i container
     local syncService=
     local syncPortNum=
     if (( syncStart )) ; then
 	syncService="${syncHost:-service-${namespace}-sync}"
 	syncPortNum=$syncPort
     fi
-    for j in $(seq 0 $((containers - 1))) ; do
+    for container in $(seq 0 $((containers - 1))) ; do
 	cat <<EOF
-- name: c${j}
+- name: c${container}
   image: "$containerImage"
   imagePullPolicy: $imagePullPolicy
 $(indent 2 containerResourcesYAML)
@@ -149,14 +147,13 @@ $(indent 2 containerResourcesYAML)
     value: "$verbose"
 $(indent 2 bootstrapCommandYAML client.pl)
   - "$namespace"
-  - "${namespace}-${i}-client-$replica"
-  - "$j"
+  - "$container"
   - "$basetime"
   - "$baseoffset"
   - "$poddelay"
   - "$port"
-  - "c${j}"
-  - "service-${namespace}-$i"
+  - "c${container}"
+  - "service-${namespace}-$instance"
   - "$dataRate"
   - "$bytes"
   - "$bytesMax"
@@ -170,8 +167,7 @@ $(indent 2 bootstrapCommandYAML client.pl)
   - "$namespace"
   - "$log_host"
   - "$log_port"
-  - "$podname"
-$(indent 2 volumeMountsYAML "$namespace" "$i" "$secretCount")
+$(indent 2 volumeMountsYAML "$namespace" "$instance" "$secretCount")
 EOF
     done
 }
@@ -200,33 +196,30 @@ EOF
 
 function _createClientSpec() {
     local namespace=$1
-    local i=$2
+    local instance=$2
     local secretCount=$3
-    local replicas=$4
     local dataRate=$5
     local bytes=$6
     local msgSize=$7
     local containers=$8
     local log_host=${9:-}
     local -i log_port=${10:-0}
-    local podname=${11}
-    local replica=${12}
     cat <<EOF
 spec:
 $(indent 2 nodeSelectorYAML)
   terminationGracePeriodSeconds: 1
-$(indent 2 _createClientAffinityYAML "${namespace}-${i}-server")
+$(indent 2 _createClientAffinityYAML "${namespace}-${instance}-server")
 $(indent 2 <<< "$runtimeClass")
   containers:
-$(indent 2 _createClientContainerYAML "$namespace" "$i" "$secretCount" "$dataRate" "$bytes" "$msgSize" "$containers" "$log_host" "$log_port" "$podname" "$replica")
+$(indent 2 _createClientContainerYAML "$@")
 $(indent 2 pbenchAgentYAML)
-$(indent 2 volumesYAML "$namespace" "$i" "$secretCount")
+$(indent 2 volumesYAML "$namespace" "$instance" "$secretCount")
 EOF
 }
 
 function _createClientDeployment() {
     local namespace=$1
-    local i=$2
+    local instance=$2
     local secretCount=$3
     local replicas=$4
     local dataRate=$5
@@ -236,32 +229,30 @@ function _createClientDeployment() {
     local log_host=${9:-}
     local -i log_port=${10:-0}
     if [[ $deploymentType = pod ]] ; then
-	local -i j=0
-	while (( j++ < replicas )) ; do
-	    local podname="${namespace}-${i}-client-${j}"
+	local -i replica=0
+	while (( replica++ < replicas )) ; do
 	    createObject <<EOF
 apiVersion: v1
 kind: Pod
 metadata:
-  name: $podname
+  name: ${namespace}-${instance}-client-${replica}
 $(indent 2 namespaceYAML "$namespace")
 $(indent 2 privilegeYAML)
 $(indent 2 nodeSelectorYAML)
 $(indent 2 privilegeYAML)
   selector:
     matchLabels:
-      app: ${namespace}-${i}-client
+      app: ${namespace}-${instance}-client
   labels:
 $(indent 4 standardLabelsYAML)
-    name: ${namespace}-${i}-client
-    app: ${namespace}-${i}-client
+    name: ${namespace}-${instance}-client
+    app: ${namespace}-${instance}-client
     ${basename}-client: "true"
-$(_createClientSpec "$@" "$podname" "$j")
+$(_createClientSpec "$@" "$replica")
   restartPolicy: Never
 EOF
 	done
     else
-	local podname="${namespace}-${i}-client"
 	createObject <<EOF
 apiVersion: apps/v1
 kind: Deployment
@@ -277,17 +268,17 @@ $(indent 2 nodeSelectorYAML)
   restartPolicy: Always
   selector:
     matchLabels:
-      app: ${namespace}-${i}-client
+      app: ${namespace}-${instance}-client
   strategy:
     type: RollingUpdate
   template:
     metadata:
       labels:
 $(indent 8 standardLabelsYAML)
-        name: ${namespace}-${i}-client
-        app: ${namespace}-${i}-client
+        name: ${namespace}-${instance}-client
+        app: ${namespace}-${instance}-client
         ${basename}-client: "true"
-$(indent 4 _createClientSpec "$@" "$podname" "x")
+$(indent 4 _createClientSpec "$@" "x")
 EOF
     fi
 }
@@ -300,20 +291,21 @@ function createDeploymentServer() {
     local containers=${5:-1}
     local log_host=${6:-}
     local -i log_port=${7:-0}
-    local -i i
+    local -i instance
     if [[ syncStart -gt 0 && -z "$syncHost" ]] ; then
 	createService "$namespace" "${namespace}-sync" "$syncPort"
 	createSyncDeployment "$namespace" 2 "$((containers * replicas * count))"
     fi
 
-    for i in $(seq $firstDeployment $((count + firstDeployment - 1))) ; do
-	createService "$namespace" "$namespace-$i" "$port"
+    for instance in $(seq $firstDeployment $((count + firstDeployment - 1))) ; do
+	createService "$namespace" "$namespace-$instance" "$port"
 	if [[ $deploymentType = pod ]] ; then
-	    _createServerDeployment "$namespace" "$i" "$secretCount" "$msgSize" "$((containers * replicas))"
+	    echo ">>>>> create server deployment containers $containers replicas $replicas" 1>&2
+	    _createServerDeployment "$namespace" "$instance" "$secretCount" "$msgSize" "$((containers * replicas))"
 	else
-	    _createServerDeployment "$namespace" "$i" "$secretCount" "$msgSize" "-1"
+	    _createServerDeployment "$namespace" "$instance" "$secretCount" "$msgSize" "-1"
 	fi
-	_createClientDeployment "$namespace" "$i" "$secretCount" "$replicas" "$dataRate" "$bytes" "$msgSize" "$containers" "$log_host" "$log_port"
+	_createClientDeployment "$namespace" "$instance" "$secretCount" "$replicas" "$dataRate" "$bytes" "$msgSize" "$containers" "$log_host" "$log_port"
     done
 }
 

@@ -5,7 +5,8 @@ use POSIX;
 use strict;
 use Time::Piece;
 use Time::HiRes qw(gettimeofday);
-our ($namespace, $pod, $container, $basetime, $baseoffset, $crtime, $poddelay, $processes, $runtime, $exit_at_end, $synchost, $syncport, $loghost, $logport) = @ARGV;
+use Sys::Hostname;
+our ($namespace, $container, $basetime, $baseoffset, $crtime, $poddelay, $processes, $runtime, $exit_at_end, $synchost, $syncport, $loghost, $logport) = @ARGV;
 $SIG{TERM} = sub { kill 'KILL', -1; POSIX::_exit(0); };
 $basetime += $baseoffset;
 $crtime += $baseoffset;
@@ -29,6 +30,7 @@ sub xtime() {
     return $now[0] + ($now[1] / 1000000.0);
 }
 my ($dstime) = xtime();
+my ($pod) = hostname;
 sub connect_to($$) {
     my ($addr, $port) = @_;
     my ($connected) = 0;
@@ -71,7 +73,7 @@ sub do_sync($$;$) {
     if ($token && $token =~ /clusterbuster-json/) {
 	$token =~ s,\n *,,g;
     } elsif (not $token) {
-        $token = sprintf('%d', rand() * 999999999);
+        $token = sprintf('%s-%d', $pod, rand() * 999999999);
     }
     while (1) {
 	timestamp("Waiting for sync on $addr:$port");

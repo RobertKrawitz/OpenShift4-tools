@@ -5,8 +5,9 @@ use POSIX;
 use strict;
 use Time::Piece;
 use Time::HiRes qw(gettimeofday usleep);
+use Sys::Hostname;
 $SIG{TERM} = sub { POSIX::_exit(0); };
-our ($namespace, $pod, $container, $bytes_per_line, $bytes_per_io, $xfer_count, $processes, $delay_usecs, $xfer_time, $exit_at_end) = @ARGV;
+our ($namespace, $container, $bytes_per_line, $bytes_per_io, $xfer_count, $processes, $delay_usecs, $xfer_time, $exit_at_end) = @ARGV;
 sub timestamp($) {
     my ($str) = @_;
     my (@now) = gettimeofday();
@@ -17,6 +18,7 @@ sub xtime() {
     return $now[0] + ($now[1] / 1000000.0);
 }
 timestamp("Clusterbuster logger starting");
+my ($pod) = hostname;
 
 while ($processes-- > 0) {
     if ((my $child = fork()) == 0) {

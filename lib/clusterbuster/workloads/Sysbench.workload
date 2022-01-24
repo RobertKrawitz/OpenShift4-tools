@@ -20,13 +20,13 @@
 
 function _createContainersSysbenchYAML() {
     local namespace=$1
-    local i=$2
+    local instance=$2
     local secretCount=$3
     local -i processes=$4
     local -i containers=$5
     local log_host=${6:-}
     local -i log_port=${7:-0}
-    local -i j
+    local -i container
     local syncService=
     local syncPortNum=
     if (( syncStart )) ; then
@@ -35,9 +35,9 @@ function _createContainersSysbenchYAML() {
     fi
     # shellcheck disable=2031
     local workdir=${common_workdir:-${emptydirs[0]:-/tmp}}
-    for j in $(seq 0 $((containers - 1))) ; do
+    for container in $(seq 0 $((containers - 1))) ; do
 	cat <<EOF
-- name: "c${j}"
+- name: "c${container}"
   imagePullPolicy: $imagePullPolicy
   image: "$containerImage"
 $(indent 2 containerResourcesYAML)
@@ -46,8 +46,7 @@ $(indent 2 containerResourcesYAML)
     value: "$verbose"
 $(indent 2 bootstrapCommandYAML sysbench.pl)
   - "$namespace"
-  - "${namespace}-sysbench-${i}"
-  - "c${j}"
+  - "c${container}"
   - "$basetime"
   - "$baseoffset"
   - "$(ts)"
@@ -64,17 +63,15 @@ $(indent 2 bootstrapCommandYAML sysbench.pl)
   - "fileio"
   - "${sysbench_fileio_options[*]:-}"
   - "${!sysbench_fileio_tests[*]}"
-$(indent 2 volumeMountsYAML "$namespace" "$i" "$secretCount")
+$(indent 2 volumeMountsYAML "$namespace" "$instance" "$secretCount")
 EOF
     done
 }
 
 function _createSysbenchSpec() {
     local namespace=$1
-    local i=$2
+    local instance=$2
     local secretCount=$3
-    local -i processes=$4
-    local -i containers=$5
     cat <<EOF
 spec:
 $(indent 2 nodeSelectorYAML)
@@ -83,16 +80,14 @@ $(indent 2 <<< "$runtimeClass")
   containers:
 $(indent 2 _createContainersSysbenchYAML "$@")
 $(indent 2 pbenchAgentYAML)
-$(indent 2 volumesYAML "$namespace" "$i" "$secretCount")
+$(indent 2 volumesYAML "$namespace" "$instance" "$secretCount")
 EOF
 }
 
 function _createSysbenchDeployment() {
     local namespace=$1
-    local i=$2
+    local instance=$2
     local secretCount=$3
-    local -i processes=$4
-    local -i containers=$5
     if [[ $deploymentType = pod ]] ; then
 	createObject <<EOF
 apiVersion: v1
@@ -119,7 +114,7 @@ EOF
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: ${namespace}-sysbench-$i
+  name: ${namespace}-sysbench-$instance
 $(indent 2 namespaceYAML "$namespace")
 $(indent 2 privilegeYAML)
   labels:
@@ -129,15 +124,15 @@ spec:
 $(indent 2 nodeSelectorYAML)
   selector:
     matchLabels:
-      app: ${namespace}-sysbench-$i
+      app: ${namespace}-sysbench-$instance
   strategy:
     type: RollingUpdate
   template:
     metadata:
       labels:
 $(indent 8 standardLabelsYAML)
-        name: ${namespace}-sysbench-$i
-        app: ${namespace}-sysbench-$i
+        name: ${namespace}-sysbench-$instance
+        app: ${namespace}-sysbench-$instance
         ${basename}-sysbench: "true"
         ${basename}-client: "true"
 $(indent 4 _createSysbenchSpec "$@")
@@ -153,13 +148,13 @@ function createDeploymentSysbench() {
     local containers=${5:-1}
     local log_host=${6:-}
     local -i log_port=${7:-0}
-    local -i i
+    local -i instance
     if [[ syncStart -gt 0 && -z "$syncHost" ]] ; then
 	createService "$namespace" "${namespace}-sync" "$syncPort"
 	createSyncDeployment "$namespace" "$(( (${#sysbench_fileio_tests[@]} * 3) + 1))" "$((containers * replicas * count))"
     fi
-    for i in $(seq $firstDeployment $((count + firstDeployment - 1))) ; do
-	_createSysbenchDeployment "$namespace" "$i" "$secretCount"  "$replicas" "$containers" "$log_host" "$log_port"
+    for instance in $(seq $firstDeployment $((count + firstDeployment - 1))) ; do
+	_createSysbenchDeployment "$namespace" "$instance" "$secretCount"  "$replicas" "$containers" "$log_host" "$log_port"
     done
 }
 

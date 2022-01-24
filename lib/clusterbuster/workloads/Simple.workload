@@ -20,14 +20,14 @@
 
 function _createContainersClusterBusterYAML() {
     local namespace=$1
-    local i=$2
+    local instance=$2
     local secretCount=$3
     local -i pods=$4
     local -i containers=$5
-    local -i j
-    for j in $(seq 0 $((containers - 1))) ; do
+    local -i container
+    for container in $(seq 0 $((containers - 1))) ; do
 	cat <<EOF
-- name: ${namespace}-$i-$j
+- name: ${namespace}-${instance}-$container
   imagePullPolicy: $imagePullPolicy
   image: "busybox"
 $(indent 2 containerResourcesYAML)
@@ -40,40 +40,40 @@ $(indent 2 containerResourcesYAML)
     (while : ; do date ; sleep 60 ; done)&
     sleep $podsleeptime
     exit 1
-$(indent 2 volumeMountsYAML "$namespace" "$i" "$secretCount")
+$(indent 2 volumeMountsYAML "$namespace" "${instance}" "$secretCount")
 EOF
     done
 }
 
 function _createContainersPausePodYAML() {
     local namespace=$1
-    local i=$2
+    local instance=$2
     local secretCount=$3
     local -i pods=$4
     local -i containers=$5
-    local -i j
-    for j in $(seq 0 $((containers - 1))) ; do
+    local -i container
+    for container in $(seq 0 $((containers - 1))) ; do
 	cat <<EOF
-- name: ${namespace}-$i-$j
+- name: ${namespace}-${instance}-$container
   imagePullPolicy: $imagePullPolicy
   image: "gcr.io/google_containers/pause-amd64:3.0"
 $(indent 2 containerResourcesYAML)
-$(indent 2 volumeMountsYAML "$namespace" "$i" "$secretCount")
+$(indent 2 volumeMountsYAML "$namespace" "${instance}" "$secretCount")
 EOF
     done
 }
 
 function _createContainersLogYAML() {
     local namespace=$1
-    local i=$2
+    local instance=$2
     local secretCount=$3
     # shellcheck disable=2034
     local -i pods=$4
     local -i containers=$5
-    local -i j
-    for j in $(seq 0 $((containers - 1))) ; do
+    local -i container
+    for container in $(seq 0 $((containers - 1))) ; do
 	cat <<EOF
-- name: ${namespace}-$i-$j
+- name: ${namespace}-${instance}-$container
   imagePullPolicy: $imagePullPolicy
   image: "$containerImage"
 $(indent 2 containerResourcesYAML)
@@ -82,8 +82,7 @@ $(indent 2 containerResourcesYAML)
     value: "$verbose"
 $(indent 2 bootstrapCommandYAML logger.pl)
   - "$namespace"
-  - "${namespace}-sysbench-${i}"
-  - "c${j}"
+  - "c${container}"
   - "$log_bytes_per_line"
   - "$log_bytes_per_io"
   - "$log_xfer_count"
@@ -91,14 +90,14 @@ $(indent 2 bootstrapCommandYAML logger.pl)
   - "$log_delay_usec"
   - "$log_xfertime"
   - "$log_exit_at_end"
-$(indent 2 volumeMountsYAML "$namespace" "$i" "$secretCount")
+$(indent 2 volumeMountsYAML "$namespace" "${instance}" "$secretCount")
 EOF
     done
 }
 
 function _createClassicSpec() {
     local namespace=$1
-    local i=$2
+    local instance=$2
     local secretCount=$3
     local -i replicas=$4
     local -i containers=$5
@@ -110,34 +109,34 @@ $(indent 2 <<< "$runtimeClass")
   containers:
 $(indent 2 _createContainers${podType}YAML "$@")
 $(indent 2 pbenchAgentYAML)
-$(indent 2 volumesYAML "$namespace" "$i" "$secretCount")
+$(indent 2 volumesYAML "$namespace" "${instance}" "$secretCount")
 EOF
 }
 
 function _createDeploymentClassicYAML() {
     local namespace=$1
-    local i=$2
+    local instance=$2
     local secretCount=$3
     local -i replicas=$4
     local -i containers=$5
     if [[ $deploymentType = pod ]] ; then
-	local -i j=0
-	while (( j++ < replicas )) ; do
+	local -i container=0
+	while (( container++ < replicas )) ; do
 	    createObject <<EOF
 apiVersion: v1
 kind: Pod
 metadata:
-  name: ${namespace}-${i}-${j}
+  name: ${namespace}-${instance}-${container}
 $(indent 2 namespaceYAML "$namespace")
 $(indent 2 privilegeYAML)
 $(indent 2 nodeSelectorYAML)
   selector:
     matchLabels:
-      app: ${namespace}-${i}
+      app: ${namespace}-${instance}
   labels:
 $(indent 4 standardLabelsYAML)
-    name: ${namespace}-${i}
-    app: ${namespace}-${i}
+    name: ${namespace}-${instance}
+    app: ${namespace}-${instance}
     ${basename}-client: "true"
 $(createClassicSpec "$@")
 EOF
@@ -147,7 +146,7 @@ EOF
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: ${namespace}-$i
+  name: ${namespace}-${instance}
 $(indent 2 namespaceYAML "$namespace")
 $(indent 2 privilegeYAML)
   labels:
@@ -157,15 +156,15 @@ spec:
 $(indent 2 nodeSelectorYAML)
   selector:
     matchLabels:
-      app: ${namespace}-$i
+      app: ${namespace}-${instance}
   strategy:
     type: RollingUpdate
   template:
     metadata:
       labels:
 $(indent 8 standardLabelsYAML)
-        name: ${namespace}-$i
-        app: ${namespace}-$i
+        name: ${namespace}-${instance}
+        app: ${namespace}-${instance}
 $(indent 4 _createClassicSpec "$@")
 EOF
     fi
@@ -177,9 +176,9 @@ function _createDeploymentSimple() {
     local secretCount=${3:-1}
     local replicas=${4:-1}
     local containers=${5:-1}
-    local -i i
-    for i in $(seq $firstDeployment $((count + firstDeployment - 1))) ; do
-	_createDeploymentClassicYAML "$namespace" "$i" "$secretCount"  "$replicas" "$containers"
+    local -i instance
+    for instance in $(seq $firstDeployment $((count + firstDeployment - 1))) ; do
+	_createDeploymentClassicYAML "$namespace" "${instance}" "$secretCount"  "$replicas" "$containers"
     done
 }
 

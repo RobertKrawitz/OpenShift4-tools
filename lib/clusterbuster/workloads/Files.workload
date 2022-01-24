@@ -20,13 +20,13 @@
 
 function _createContainersFilesYAML() {
     local namespace=$1
-    local i=$2
+    local instance=$2
     local secretCount=$3
     local -i replicas=$4
     local -i containers=$5
     local log_host=${6:-}
     local -i log_port=${7:-0}
-    local -i j
+    local -i container
     local syncService=
     local syncPortNum=
     local -i file_blocks=$((file_size/file_block_size))
@@ -35,10 +35,10 @@ function _createContainersFilesYAML() {
 	syncPortNum=$syncPort
     fi
     # shellcheck disable=1340
-    for j in $(seq 0 $((containers - 1))) ; do
+    for container in $(seq 0 $((containers - 1))) ; do
 	# shellcheck disable=2030
 	cat <<EOF
-- name: "c${j}"
+- name: "c${container}"
   imagePullPolicy: $imagePullPolicy
   image: "$containerImage"
 $(indent 2 containerResourcesYAML)
@@ -47,8 +47,7 @@ $(indent 2 containerResourcesYAML)
     value: "$verbose"
 $(indent 2 bootstrapCommandYAML files.pl)
   - "$namespace"
-  - "${namespace}-files-${i}"
-  - "c${j}"
+  - "c${container}"
   - "$basetime"
   - "$baseoffset"
   - "$(ts)"
@@ -65,14 +64,14 @@ $(indent 2 bootstrapCommandYAML files.pl)
   - "$log_port"
 $(tmp_volume_paths=("${volume_mount_paths[@]/%/\"}"); IFS=$'\n'; echo "${tmp_volume_paths[*]/#/  - \"}")
 $(emptydirs=("${emptydirs[@]/%/\"}"); IFS=$'\n'; echo "${emptydirs[*]/#/  - \"}")
-$(indent 2 volumeMountsYAML "$namespace" "$i" "$secretCount")
+$(indent 2 volumeMountsYAML "$namespace" "$instance" "$secretCount")
 EOF
     done
 }
 
 function _createFilesSpec() {
     local namespace=$1
-    local i=$2
+    local instance=$2
     local secretCount=$3
     cat <<EOF
 spec:
@@ -82,34 +81,34 @@ $(indent 2 <<< "$runtimeClass")
   containers:
 $(indent 2 _createContainersFilesYAML "$@")
 $(indent 2 pbenchAgentYAML)
-$(indent 2 volumesYAML "$namespace" "$i" "$secretCount")
+$(indent 2 volumesYAML "$namespace" "$instance" "$secretCount")
 EOF
 }
 
 function _createFilesDeployment() {
     local namespace=$1
-    local i=$2
+    local instance=$2
     local secretCount=$3
     local -i replicas=$4
     local -i containers=$5
     if [[ $deploymentType = pod ]] ; then
-	local -i j=0
-	while (( j++ < replicas )) ; do
+	local -i replica=0
+	while (( replica++ < replicas )) ; do
 	    createObject <<EOF
 apiVersion: v1
 kind: Pod
 metadata:
-  name: ${namespace}-files-${i}-${j}
+  name: ${namespace}-files-${instance}-${replica}
 $(indent 2 namespaceYAML "$namespace")
 $(indent 2 privilegeYAML)
 $(indent 2 nodeSelectorYAML)
   selector:
     matchLabels:
-      app: ${namespace}-files-${i}
+      app: ${namespace}-files-${instance}
   labels:
 $(indent 4 standardLabelsYAML)
-    name: ${namespace}-files-${i}
-    app: ${namespace}-files-${i}
+    name: ${namespace}-files-${instance}
+    app: ${namespace}-files-${instance}
     ${basename}-files: "true"
     ${basename}-client: "true"
 $(_createFilesSpec "$@")
@@ -121,7 +120,7 @@ EOF
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: ${namespace}-files-$i
+  name: ${namespace}-files-$instance
 $(indent 2 namespaceYAML "$namespace")
 $(indent 2 privilegeYAML)
   labels:
@@ -134,15 +133,15 @@ spec:
 $(indent 2 nodeSelectorYAML)
   selector:
     matchLabels:
-      app: ${namespace}-$i
+      app: ${namespace}-$instance
   strategy:
     type: RollingUpdate
   template:
     metadata:
       labels:
 $(indent 4 standardLabelsYAML)
-        name: ${namespace}-files-$i
-        app: ${namespace}-files-$i
+        name: ${namespace}-files-$instance
+        app: ${namespace}-files-$instance
         ${basename}-files: "true"
         ${basename}-client: "true"
 $(indent 4 _createFilesSpec "$@")
@@ -164,13 +163,13 @@ function createDeploymentFiles() {
     local secretCount=${3:-1}
     local replicas=${4:-1}
     local containers=${5:-1}
-    local -i i
+    local -i instance
     if [[ syncStart -gt 0 && -z "$syncHost" ]] ; then
 	createService "$namespace" "${namespace}-sync" "$syncPort"
 	createSyncDeployment "$namespace" 4 "$((containers * processes_per_pod * replicas * count))"
     fi
-    for i in $(seq $firstDeployment $((count + firstDeployment - 1))) ; do
-	_createFilesDeployment "$namespace" "$i" "$secretCount"  "$replicas" "$containers" "$log_host" "$log_port"
+    for instance in $(seq $firstDeployment $((count + firstDeployment - 1))) ; do
+	_createFilesDeployment "$namespace" "$instance" "$secretCount"  "$replicas" "$containers" "$log_host" "$log_port"
     done
 }
 
