@@ -29,10 +29,7 @@ function _createContainersSysbenchYAML() {
     local -i container
     local syncService=
     local syncPortNum=
-    if (( syncStart )) ; then
-	syncService="${syncHost:-service-${namespace}-sync}"
-	syncPortNum=$syncPort
-    fi
+    IFS=: read -r syncService syncPortNum <<< $(getSync)
     # shellcheck disable=2031
     local workdir=${common_workdir:-${emptydirs[0]:-/tmp}}
     for container in $(seq 0 $((containers - 1))) ; do
@@ -122,10 +119,7 @@ function createDeploymentSysbench() {
     local log_host=${6:-}
     local -i log_port=${7:-0}
     local -i instance
-    if [[ syncStart -gt 0 && -z "$syncHost" ]] ; then
-	createService "$namespace" "${namespace}-sync" "$syncPort"
-	createSyncDeployment "$namespace" "$(( (${#sysbench_fileio_tests[@]} * 3) + 1))" "$((containers * replicas * count))"
-    fi
+    createSyncServiceIfNeeded "$namespace" "$(( (${#sysbench_fileio_tests[@]} * 3) + 1))" "$((containers * replicas * count))"
     for instance in $(seq $firstDeployment $((count + firstDeployment - 1))) ; do
 	_createSysbenchDeployment "$namespace" "$instance" "$secretCount"  "$replicas" "$containers" "$log_host" "$log_port"
     done

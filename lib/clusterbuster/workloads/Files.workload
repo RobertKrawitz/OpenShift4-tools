@@ -30,10 +30,7 @@ function _createContainersFilesYAML() {
     local syncService=
     local syncPortNum=
     local -i file_blocks=$((file_size/file_block_size))
-    if (( syncStart )) ; then
-	syncService="${syncHost:-service-${namespace}-sync}"
-	syncPortNum=$syncPort
-    fi
+    IFS=: read -r syncService syncPortNum <<< $(getSync)
     # shellcheck disable=1340
     for container in $(seq 0 $((containers - 1))) ; do
 	# shellcheck disable=2030
@@ -127,10 +124,7 @@ function createDeploymentFiles() {
     local log_host=${6:-}
     local -i log_port=${7:-0}
     local -i instance
-    if [[ syncStart -gt 0 && -z "$syncHost" ]] ; then
-	createService "$namespace" "${namespace}-sync" "$syncPort"
-	createSyncDeployment "$namespace" 4 "$((containers * processes_per_pod * replicas * count))"
-    fi
+    createSyncServiceIfNeeded "$namespace" 4 "$((containers * processes_per_pod * replicas * count))"
     for instance in $(seq $firstDeployment $((count + firstDeployment - 1))) ; do
 	_createFilesDeployment "$namespace" "$instance" "$secretCount"  "$replicas" "$containers" "$log_host" "$log_port"
     done

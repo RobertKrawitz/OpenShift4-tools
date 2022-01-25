@@ -958,6 +958,27 @@ function _OC() {
     fi
 }
 
+function getSync() {
+    if (( syncStart )) ; then
+	if [[ ${1:-} != -q ]] ; then
+	    echo "${syncHost:-service-${namespace}-sync}:$syncPort"
+	fi
+	return 0
+    else
+	return 1
+    fi
+}
+
+function createSyncServiceIfNeeded() {
+    local namespace=$1
+    local syncCount=$2
+    local syncClients=$3
+    if getSync -q ; then
+	createService "$namespace" "${namespace}-sync" "$syncPort"
+	createSyncDeployment "$namespace" "$syncCount" "$syncClients"
+    fi
+}
+
 ################################################################
 # Logging
 ################################################################

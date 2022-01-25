@@ -38,6 +38,9 @@ my (@tmpSyncFiles) = map { "${tmpSyncFileBase}-$_" } (1..$expected_clients);
 
 while ($syncCount < 0 || $syncCount-- > 0) {
     my ($tmpSyncFile) = undef;
+    # Ensure that all of the accepted connections get closed by exiting
+    # a child process.  This way we don't have to keep track of all of the
+    # clients and close them manually.
     my $child = fork();
     if ($child == 0) {
 	timestamp("Listening on port $listen_port");

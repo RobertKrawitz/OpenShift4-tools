@@ -102,10 +102,7 @@ function _createClientContainerYAML() {
     local -i container
     local syncService=
     local syncPortNum=
-    if (( syncStart )) ; then
-	syncService="${syncHost:-service-${namespace}-sync}"
-	syncPortNum=$syncPort
-    fi
+    IFS=: read -r syncService syncPortNum <<< $(getSync)
     for container in $(seq 0 $((containers - 1))) ; do
 	cat <<EOF
 - name: c${container}
@@ -225,10 +222,7 @@ function createDeploymentServer() {
     local log_host=${6:-}
     local -i log_port=${7:-0}
     local -i instance
-    if [[ syncStart -gt 0 && -z "$syncHost" ]] ; then
-	createService "$namespace" "${namespace}-sync" "$syncPort"
-	createSyncDeployment "$namespace" 2 "$((containers * replicas * count))"
-    fi
+    createSyncServiceIfNeeded "$namespace" 2 "$((containers * replicas * count))"
 
     for instance in $(seq $firstDeployment $((count + firstDeployment - 1))) ; do
 	createService "$namespace" "${namespace}-server-${instance}" "$port"

@@ -29,10 +29,7 @@ function _createContainersFioYAML() {
     local -i container
     local syncService=
     local syncPortNum=
-    if (( syncStart )) ; then
-	syncService="${syncHost:-service-${namespace}-sync}"
-	syncPortNum=$syncPort
-    fi
+    IFS=: read -r syncService syncPortNum <<< $(getSync)
     # shellcheck disable=2031
     local workdir=${common_workdir:-${emptydirs[0]:-/tmp}}
     for container in $(seq 0 $((containers - 1))) ; do
@@ -120,10 +117,7 @@ function createDeploymentFio() {
     local log_host=${6:-}
     local -i log_port=${7:-0}
     local -i instance
-    if [[ syncStart -gt 0 && -z "$syncHost" ]] ; then
-	createService "$namespace" "${namespace}-sync" "$syncPort"
-	createSyncDeployment "$namespace" 2 "$((containers * replicas * count))"
-    fi
+    createSyncServiceIfNeeded "$namespace" 2 "$((containers * replicas * count))"
     for instance in $(seq $firstDeployment $((count + firstDeployment - 1))) ; do
 	_createFioDeployment "$namespace" "${instance}" "$secretCount"  "$replicas" "$containers" "$log_host" "$log_port"
     done
