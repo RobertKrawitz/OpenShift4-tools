@@ -69,28 +69,11 @@ EOF
     done
 }
 
-function _createFilesSpec() {
-    local namespace=$1
-    local instance=$2
-    local secretCount=$3
-    cat <<EOF
-spec:
-$(indent 2 nodeSelectorYAML)
-  terminationGracePeriodSeconds: 1
-$(indent 2 <<< "$runtimeClass")
-  containers:
-$(indent 2 _createContainersFilesYAML "$@")
-$(indent 2 pbenchAgentYAML)
-$(indent 2 volumesYAML "$namespace" "$instance" "$secretCount")
-EOF
-}
-
 function _createFilesDeployment() {
     local namespace=$1
     local instance=$2
     local secretCount=$3
     local -i replicas=$4
-    local -i containers=$5
     if [[ $deploymentType = pod ]] ; then
 	local -i replica=0
 	while (( replica++ < replicas )) ; do
@@ -105,13 +88,8 @@ $(indent 2 nodeSelectorYAML)
   selector:
     matchLabels:
       app: ${namespace}-files-${instance}
-  labels:
-$(indent 4 standardLabelsYAML)
-    name: ${namespace}-files-${instance}
-    app: ${namespace}-files-${instance}
-    ${basename}-files: "true"
-    ${basename}-client: "true"
-$(_createFilesSpec "$@")
+$(indent 2 standardLabelsYAML files "$namespace" "$instance" 1)
+$(createSpec _createContainersFilesYAML "$@")
   restartPolicy: Never
 EOF
 	done
@@ -123,38 +101,21 @@ metadata:
   name: ${namespace}-files-$instance
 $(indent 2 namespaceYAML "$namespace")
 $(indent 2 privilegeYAML)
-  labels:
-    clusterbuster-runUUID: "$runUUID"
-    ${basename}-id: "$runUUID"
-    ${basename}: "true"
-    clusterbusterbase: "true"
+$(indent 2 standardLabelsYAML)
 spec:
   replicas: $replicas
 $(indent 2 nodeSelectorYAML)
   selector:
     matchLabels:
-      app: ${namespace}-$instance
+      app: ${namespace}-files-$instance
   strategy:
     type: RollingUpdate
   template:
     metadata:
-      labels:
-$(indent 4 standardLabelsYAML)
-        name: ${namespace}-files-$instance
-        app: ${namespace}-files-$instance
-        ${basename}-files: "true"
-        ${basename}-client: "true"
-$(indent 4 _createFilesSpec "$@")
+$(indent 2 standardLabelsYAML files "$namespace" "$instance" 1)
+$(indent 4 createSpec _createContainersFilesYAML "$@")
 EOF
     fi
-}
-
-function calculateLogsRequiredFiles() {
-    local -i namespaces=$1
-    local -i depsPerNamespace=${2:-1}
-    local -i replicas=${3:-1}
-    local -i containers=${4:-1}
-    echo $((namespaces * containers * processes_per_pod * replicas * depsPerNamespace))
 }
 
 function createDeploymentFiles() {
@@ -163,6 +124,8 @@ function createDeploymentFiles() {
     local secretCount=${3:-1}
     local replicas=${4:-1}
     local containers=${5:-1}
+    local log_host=${6:-}
+    local -i log_port=${7:-0}
     local -i instance
     if [[ syncStart -gt 0 && -z "$syncHost" ]] ; then
 	createService "$namespace" "${namespace}-sync" "$syncPort"
@@ -171,6 +134,14 @@ function createDeploymentFiles() {
     for instance in $(seq $firstDeployment $((count + firstDeployment - 1))) ; do
 	_createFilesDeployment "$namespace" "$instance" "$secretCount"  "$replicas" "$containers" "$log_host" "$log_port"
     done
+}
+
+function calculateLogsRequiredFiles() {
+    local -i namespaces=$1
+    local -i depsPerNamespace=${2:-1}
+    local -i replicas=${3:-1}
+    local -i containers=${4:-1}
+    echo $((namespaces * containers * processes_per_pod * replicas * depsPerNamespace))
 }
 
 function listConfigMapsFiles() {

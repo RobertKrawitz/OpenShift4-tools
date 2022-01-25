@@ -484,10 +484,10 @@ function get_all_pods() {
 	local ns
 	while read -r ns ; do
 	    ns=${ns##*/}
-	    "${OC}" get pods -ojson -l "${basename}-client" -n "$ns"
+	    "${OC}" get pods -ojson -l "${basename}-logger" -n "$ns"
 	done < <("${OC}" get ns -l "$basename" --no-headers | awk '{print $1}')
     else
-	"${OC}" get pods -ojson -l "${basename}-client"
+	"${OC}" get pods -ojson -l "${basename}-logger"
     fi
 }
 

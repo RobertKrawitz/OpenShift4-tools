@@ -68,22 +68,6 @@ EOF
     done
 }
 
-function _createSysbenchSpec() {
-    local namespace=$1
-    local instance=$2
-    local secretCount=$3
-    cat <<EOF
-spec:
-$(indent 2 nodeSelectorYAML)
-  terminationGracePeriodSeconds: 1
-$(indent 2 <<< "$runtimeClass")
-  containers:
-$(indent 2 _createContainersSysbenchYAML "$@")
-$(indent 2 pbenchAgentYAML)
-$(indent 2 volumesYAML "$namespace" "$instance" "$secretCount")
-EOF
-}
-
 function _createSysbenchDeployment() {
     local namespace=$1
     local instance=$2
@@ -93,20 +77,15 @@ function _createSysbenchDeployment() {
 apiVersion: v1
 kind: Pod
 metadata:
-  name: ${namespace}-sysbench-${i}
+  name: ${namespace}-sysbench-${instance}
 $(indent 2 namespaceYAML "$namespace")
 $(indent 2 privilegeYAML)
 $(indent 2 nodeSelectorYAML)
   selector:
     matchLabels:
-      app: ${namespace}-sysbench-${i}
-  labels:
-$(indent 4 standardLabelsYAML)
-    name: ${namespace}-sysbench-${i}
-    app: ${namespace}-sysbench-${i}
-    ${basename}-sysbench: "true"
-    ${basename}-client: "true"
-$(_createSysbenchSpec "$@")
+      app: ${namespace}-sysbench-${instance}
+$(indent 2 standardLabelsYAML sysbench "$namespace" "$instance" 1)
+$(createSpec _createContainersSysbenchYAML "$@")
   restartPolicy: Never
 EOF
     else
@@ -117,8 +96,7 @@ metadata:
   name: ${namespace}-sysbench-$instance
 $(indent 2 namespaceYAML "$namespace")
 $(indent 2 privilegeYAML)
-  labels:
-$(indent 4 standardLabelsYAML)
+$(indent 2 standardLabelsYAML)
 spec:
   replicas: 1
 $(indent 2 nodeSelectorYAML)
@@ -129,13 +107,8 @@ $(indent 2 nodeSelectorYAML)
     type: RollingUpdate
   template:
     metadata:
-      labels:
-$(indent 8 standardLabelsYAML)
-        name: ${namespace}-sysbench-$instance
-        app: ${namespace}-sysbench-$instance
-        ${basename}-sysbench: "true"
-        ${basename}-client: "true"
-$(indent 4 _createSysbenchSpec "$@")
+$(indent 6 standardLabelsYAML sysbench "$namespace" "$instance" 1)
+$(indent 4 createSpec _createContainersSysbenchYAML "$@")
 EOF
     fi
 }

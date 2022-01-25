@@ -22,8 +22,8 @@ function _createContainersFioYAML() {
     local namespace=$1
     local instance=$2
     local secretCount=$3
-    local -i processes=$4
-    local -i containers=$5
+    local -i containers=$4
+    local -i processes=$5
     local log_host=${6:-}
     local -i log_port=${7:-0}
     local -i container
@@ -66,30 +66,10 @@ EOF
     done
 }
 
-function _createFioSpec() {
-    local namespace=$1
-    local instance=$2
-    local secretCount=$3
-    local -i processes=$4
-    local -i containers=$5
-    cat <<EOF
-spec:
-$(indent 2 nodeSelectorYAML)
-  terminationGracePeriodSeconds: 1
-$(indent 2 <<< "$runtimeClass")
-  containers:
-$(indent 2 _createContainersFioYAML "$@")
-$(indent 2 pbenchAgentYAML)
-$(indent 2 volumesYAML "$namespace" "${instance}" "$secretCount")
-EOF
-}
-
 function _createFioDeployment() {
     local namespace=$1
     local instance=$2
     local secretCount=$3
-    local -i processes=$4
-    local -i containers=$5
     if [[ $deploymentType = pod ]] ; then
 	createObject <<EOF
 apiVersion: v1
@@ -102,13 +82,8 @@ $(indent 2 nodeSelectorYAML)
   selector:
     matchLabels:
       app: ${namespace}-fio-${instance}
-  labels:
-$(indent 4 standardLabelsYAML)
-    name: ${namespace}-fio-${instance}
-    app: ${namespace}-fio-${instance}
-    ${basename}-fio: "true"
-    ${basename}-client: "true"
-$(_createFioSpec "$@")
+$(indent 2 standardLabelsYAML fio "$namespace" $instance 1)
+$(createSpec _createContainersFioYAML "$@")
   restartPolicy: Never
 EOF
     else
@@ -119,8 +94,7 @@ metadata:
   name: ${namespace}-fio-${instance}
 $(indent 2 namespaceYAML "$namespace")
 $(indent 2 privilegeYAML)
-  labels:
-$(indent 4 standardLabelsYAML)
+$(indent 2 standardLabelsYAML)
 spec:
   replicas: 1
 $(indent 2 nodeSelectorYAML)
@@ -131,22 +105,10 @@ $(indent 2 nodeSelectorYAML)
     type: RollingUpdate
   template:
     metadata:
-      labels:
-$(indent 8 standardLabelsYAML)
-        name: ${namespace}-fio-${instance}
-        app: ${namespace}-fio-${instance}
-        ${basename}-fio: "true"
-        ${basename}-client: "true"
-$(indent 4 _createFioSpec "$@")
+$(indent 6 standardLabelsYAML fio "$namespace" $instance 1)
+$(indent 4 createSpec _createContainersFioYAML "$@")
 EOF
     fi
-}
-function calculateLogsRequiredFio() {
-    local -i namespaces=$1
-    local -i depsPerNamespace=${2:-1}
-    local -i replicas=${3:-1}
-    local -i containers=${4:-1}
-    echo $((namespaces * containers * processes_per_pod * replicas * depsPerNamespace))
 }
 
 function createDeploymentFio() {
@@ -165,6 +127,14 @@ function createDeploymentFio() {
     for instance in $(seq $firstDeployment $((count + firstDeployment - 1))) ; do
 	_createFioDeployment "$namespace" "${instance}" "$secretCount"  "$replicas" "$containers" "$log_host" "$log_port"
     done
+}
+
+function calculateLogsRequiredFio() {
+    local -i namespaces=$1
+    local -i depsPerNamespace=${2:-1}
+    local -i replicas=${3:-1}
+    local -i containers=${4:-1}
+    echo $((namespaces * containers * processes_per_pod * replicas * depsPerNamespace))
 }
 
 function listConfigMapsFio() {

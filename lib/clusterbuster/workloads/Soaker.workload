@@ -61,22 +61,6 @@ EOF
     done
 }
 
-function _createSoakerSpec() {
-    local namespace=$1
-    local instance=$2
-    local secretCount=$3
-    cat <<EOF
-spec:
-$(indent 2 nodeSelectorYAML)
-  terminationGracePeriodSeconds: 1
-$(indent 2 <<< "$runtimeClass")
-  containers:
-$(indent 2 _createContainersSoakerYAML "$@")
-$(indent 2 pbenchAgentYAML)
-$(indent 2 volumesYAML "$namespace" "${instance}" "$secretCount")
-EOF
-}
-
 function _createSoakerDeployment() {
     local namespace=$1
     local instance=$2
@@ -94,13 +78,8 @@ $(indent 2 nodeSelectorYAML)
   selector:
     matchLabels:
       app: ${namespace}-soaker-${instance}
-  labels:
-$(indent 4 standardLabelsYAML)
-    name: ${namespace}-soaker-${instance}
-    app: ${namespace}-soaker-${instance}
-    ${basename}-soaker: "true"
-    ${basename}-client: "true"
-$(_createSoakerSpec "$@")
+$(indent 2 standardLabelsYAML soaker "$namespace" "$instance" 1)
+$(createSpec _createContainersSoakerYAML "$@")
   restartPolicy: Never
 EOF
 	done
@@ -112,8 +91,7 @@ metadata:
   name: ${namespace}-soaker-${instance}
 $(indent 2 namespaceYAML "$namespace")
 $(indent 2 privilegeYAML)
-  labels:
-$(indent 4 standardLabelsYAML)
+$(indent 2 standardLabelsYAML)
 spec:
   replicas: $replicas
 $(indent 2 nodeSelectorYAML)
@@ -124,13 +102,8 @@ $(indent 2 nodeSelectorYAML)
     type: RollingUpdate
   template:
     metadata:
-      labels:
-$(indent 8 standardLabelsYAML)
-        name: ${namespace}-soaker-${instance}
-        app: ${namespace}-soaker-${instance}
-        ${basename}-soaker: "true"
-        ${basename}-client: "true"
-$(indent 4 _createSoakerSpec "$@")
+$(indent 6 standardLabelsYAML soaker "$namespace" "$instance" 1)
+$(indent 4 createSpec _createContainersSoakerYAML "$@")
 EOF
     fi
 }

@@ -95,24 +95,6 @@ EOF
     done
 }
 
-function _createClassicSpec() {
-    local namespace=$1
-    local instance=$2
-    local secretCount=$3
-    local -i replicas=$4
-    local -i containers=$5
-cat <<EOF
-spec:
-$(indent 2 nodeSelectorYAML)
-  terminationGracePeriodSeconds: 1
-$(indent 2 <<< "$runtimeClass")
-  containers:
-$(indent 2 _createContainers${podType}YAML "$@")
-$(indent 2 pbenchAgentYAML)
-$(indent 2 volumesYAML "$namespace" "${instance}" "$secretCount")
-EOF
-}
-
 function _createDeploymentClassicYAML() {
     local namespace=$1
     local instance=$2
@@ -133,12 +115,8 @@ $(indent 2 nodeSelectorYAML)
   selector:
     matchLabels:
       app: ${namespace}-${instance}
-  labels:
-$(indent 4 standardLabelsYAML)
-    name: ${namespace}-${instance}
-    app: ${namespace}-${instance}
-    ${basename}-client: "true"
-$(createClassicSpec "$@")
+$(indent 2 standardLabelsYAML "${podType}" "$namespace" "$instance")
+$(createSpec _createContainers${podType}YAML "$@")
 EOF
 	done
     else
@@ -149,8 +127,7 @@ metadata:
   name: ${namespace}-${instance}
 $(indent 2 namespaceYAML "$namespace")
 $(indent 2 privilegeYAML)
-  labels:
-$(indent 4 standardLabelsYAML)
+$(indent 2 standardLabelsYAML)
 spec:
   replicas: $replicas
 $(indent 2 nodeSelectorYAML)
@@ -161,11 +138,8 @@ $(indent 2 nodeSelectorYAML)
     type: RollingUpdate
   template:
     metadata:
-      labels:
-$(indent 8 standardLabelsYAML)
-        name: ${namespace}-${instance}
-        app: ${namespace}-${instance}
-$(indent 4 _createClassicSpec "$@")
+$(indent 6 standardLabelsYAML "${podType}" "$namespace" "$instance")
+$(indent 4 createSpec _createContainers${podType}YAML "$@")
 EOF
     fi
 }

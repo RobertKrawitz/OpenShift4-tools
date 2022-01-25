@@ -166,6 +166,16 @@ declare __workloaddir__=${__libdir__}/workloads
 [[ -d "$__libdir__" ]] || fatal "Can't find my library dir!"
 [[ -d "$__workloaddir__" ]] || fatal "Can't find my workload directory $__workloaddir__!"
 
+function print_workloads() {
+    local prefix="$1"
+    local workloads
+    while read -r workload ; do
+	if [[ -n "$workload" ]] ; then
+	    echo "$prefix$workload"
+	fi
+    done <<< $(IFS=$'\n'; echo "${!registered_workloads[*]}" |sort)
+}
+
 function _helpmsg() {
     local opt
     for opt in "$@" ; do
@@ -194,14 +204,7 @@ Usage: $0 [options] [name]
                        If 0 is specified, then no namespaces are created
                        and the current namespace is used.
        -P podtype      Pod type, one of:
-                       - cpu
-                       - files
-                       - fio
-                       - log
-                       - pause
-                       - server
-                       - sysbench
-                       - classic
+$(print_workloads '                       - ')
        -p parallel     Number of operations to perform in parallel (default 1)
        -Q              Don't report creation of individual objects (default
                        report them)
@@ -826,86 +829,6 @@ function process_job_file() {
     done < "$jobfile"
 }
 
-while getopts ":B:b:c:D:d:Eef:HhKM:m:N:nP:p:QqR:r:Ss:T:t:V:vWw:XxYz:-:" opt ; do
-    case "$opt" in
-	B) basename="$OPTARG"		    ;;
-	b) blocksize="$OPTARG"              ;;
-	c) containers="$OPTARG"             ;;
-	D) dataRate="$OPTARG"               ;;
-	d) depsPerNamespace="$OPTARG"       ;;
-	E) exitAtEnd=0			    ;;
-	e) exitAtEnd=1			    ;;
-	f) process_job_file "$OPTARG"	    ;;
-	h) help				    ;;
-	H) help_extended		    ;;
-	K) runtimeClass="$kataRuntimeClass" ;;
-	m) msgSize="$OPTARG"		    ;;
-	M) set_xfer "$OPTARG" 1000000	    ;;
-	n) doit=0			    ;;
-	N) namespaces="$OPTARG"             ;;
-	p) parallel="$OPTARG"               ;;
-	P) podType="$OPTARG"		    ;;
-	Q) reportObjectCreation=0	    ;;
-	q) verbose=0			    ;;
-	R) processes_per_pod="$OPTARG"	    ;;
-	r) replicas="$OPTARG"               ;;
-	S) scale_ns=1			    ;;
-	s) secrets="$OPTARG"                ;;
-	T) deploymentType="$OPTARG"	    ;;
-	t) set_xfer_time "$OPTARG"	    ;;
-	V) parse_volume_spec "$OPTARG"	    ;;
-	v) verbose=1			    ;;
-	w) sleeptime="$OPTARG"              ;;
-	W) wait_for_secrets=0		    ;;
-	x) affinity=1			    ;;
-	X) affinity=2			    ;;
-	Y) syncStart=$((1-syncStart))	    ;;
-	z) podsleeptime="$OPTARG"	    ;;
-	-) process_option "$OPTARG"	    ;;
-	*) help "$OPTARG"                   ;;
-    esac
-done
-[[ -n "${unknown_opts[*]:-}" ]] && help "${unknown_opts[@]}"
-
-if (( namespaces <= 0 )) ; then
-    namespaces=1
-    useNamespaces=0
-fi
-(( !parallelConfigMaps )) && parallelConfigMaps=$parallel
-(( !parallelSecrets )) && parallelSecrets=$parallel
-(( !parallelNamespaces )) && parallelNamespaces=$parallel
-(( !parallelDeployments )) && parallelDeployments=$parallel
-
-(( !blocksizeConfigMaps )) && blocksizeConfigMaps=$blocksize
-(( !blocksizeSecrets )) && blocksizeSecrets=$blocksize
-(( !blocksizeNamespaces )) && blocksizeNamespaces=$blocksize
-(( !blocksizeDeployments )) && blocksizeDeployments=$blocksize
-
-[[ -n $runtimeClass ]] && runtimeClass="runtimeClassName: \"$runtimeClass\""
-[[ -n "$report_format" ]] && report=1
-
-shift $((OPTIND - 1))
-
-if [[ -z $OC && $doit -gt 0 ]] ; then
-    fatal "Cannot find oc or kubectl command, exiting!"
-fi
-
-if (( msgSize <= 0 )) ; then
-    fatal "Message size must be positive, exiting!"
-fi
-
-if [[ -z "$pbenchControllerAddress" && $pbenchControllerPort -ne 0 ]] ; then
-    fatal "Both pbench_controller_address and pbench_controller_port must be specified"
-fi
-
-if [[ -n "$pbenchControllerAddress" && $pbenchControllerPort -eq 0 ]] ; then
-    fatal "Both pbench_controller_address and pbench_controller_port must be specified"
-fi
-
-for ftest in ${sysbench_fileio_test_string//,/ } ; do
-    sysbench_fileio_tests[$ftest]=1
-done
-
 function validate_resource() {
     local rtype=$1
     local token
@@ -919,31 +842,6 @@ function validate_resource() {
     done
     return $status
 }
-
-resource_validation_failed=0
-validate_resource resource_request "${resource_requests[@]}" || resource_validation_failed=1
-validate_resource resource_limit "${resource_limits[@]}" || resource_validation_failed=1
-if ((resource_validation_failed)) ; then
-    exit 1
-fi
-
-if (( file_block_size <= 0)) ; then
-    file_block_size=file_size
-fi
-
-for i in $(seq 0 $((file_volumes-1)) ) ; do
-    emptydirs+=("/mnt/volume-$i")
-done
-
-logStrategy=${logStrategy,,}
-if [[ $logStrategy != poll && $logStrategy != listen ]] ; then
-    fatal "Unknown --log_stragey (must be 'poll' or 'listen')"
-fi
-
-if [[ $dataRate != 0 && $dataRate != '' && $xferTimeMax -eq 0 && bytesMax -eq 0 ]] ; then
-    bytes=$defaultBytes
-    bytesMax=$defaultBytes
-fi
 
 ################################################################
 # Workload management
@@ -1300,12 +1198,25 @@ function containerResourcesYAML() {
 }
 
 function standardLabelsYAML() {
+    local workload=${1:-}
+    local namespace=${2:-}
+    local instance=${3:-}
+    local logger=${4:+logger}
     cat <<EOF
-clusterbuster-runUUID: "$runUUID"
-${basename}-id: "$runUUID"
-${basename}: "true"
-clusterbusterbase: "true"
+labels:
+  clusterbuster-runUUID: "$runUUID"
+  ${basename}-id: "$runUUID"
+  ${basename}: "true"
+  clusterbusterbase: "true"
 EOF
+    if [[ -n "$workload" ]] ; then
+	cat <<EOF
+  name: "${namespace}-${workload}-${instance}"
+  app: "${namespace}-${workload}-${instance}"
+  ${basename}-${workload}: "true"
+${logger:+  ${basename}-logger: \"true\"}
+EOF
+    fi
 }
 
 function nodeSelectorYAML() {
@@ -1480,6 +1391,33 @@ EOF
     fi
 }
 
+function createSpec() {
+    local affinityYAML=
+    if [[ ${1:-} = '-A' ]] ; then
+	affinityYAML="${2:-}"
+	shift 2
+    fi
+    if (( $# < 4 )) ; then
+	echo "Usage: createSpec <container_func> namespace instance secretCount args..." 1>&2
+	exit 1
+    fi
+    local createContainerFunction=$1; shift
+    local namespace=$1
+    local instance=$2
+    local secretCount=$3
+    cat <<EOF
+spec:
+$(indent 2 nodeSelectorYAML)
+  terminationGracePeriodSeconds: 1
+$(indent 2 <<< "$affinityYAML")
+$(indent 2 <<< "$runtimeClass")
+  containers:
+$(indent 2 "$createContainerFunction" "$@")
+$(indent 2 pbenchAgentYAML)
+$(indent 2 volumesYAML "$namespace" "$instance" "$secretCount")
+EOF
+}
+
 ################################################################
 # Object YAML creation
 ################################################################
@@ -1555,8 +1493,7 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: "${namespace}"
-  labels:
-$(indent 4 standardLabelsYAML)
+$(indent 2 standardLabelsYAML)
 EOF
     fi
 }
@@ -1576,8 +1513,7 @@ kind: Secret
 metadata:
   name: "secret-${namespace}-${i}-${j}"
 $(indent 2 namespaceYAML "$namespace")
-  labels:
-$(indent 4 standardLabelsYAML)
+$(indent 2 standardLabelsYAML)
 data:
   key1: "$(base64 <<< "${namespace}X${i}Y${j}Z1")"
   key2: "$(base64 <<< "${namespace}X${i}Y${j}Z2")"
@@ -1617,8 +1553,7 @@ kind: Service
 metadata:
   name: "service-${deployment}"
 $(indent 2 namespaceYAML "$namespace")
-  labels:
-$(indent 4 standardLabelsYAML)
+$(indent 2 standardLabelsYAML)
 spec:
   ports:
   - port: $portnum
@@ -1677,8 +1612,7 @@ $(indent 2 nodeSelectorYAML)
   selector:
     matchLabels:
       app: ${namespace}-sync
-  labels:
-$(indent 4 standardLabelsYAML)
+$(indent 2 standardLabelsYAML)
     name: ${namespace}-sync
     app: ${namespace}-sync
     k8s-app: ${namespace}-sync
@@ -1706,8 +1640,7 @@ $(indent 2 nodeSelectorYAML)
       app: ${namespace}-sync
   template:
     metadata:
-      labels:
-$(indent 8 standardLabelsYAML)
+$(indent 6 standardLabelsYAML)
         name: ${namespace}-sync
         app: ${namespace}-sync
         k8s-app: ${namespace}-sync
@@ -2017,6 +1950,117 @@ function run_clusterbuster_1() {
     return $status
 }
 
+################################################################
+# Top level
+################################################################
+
+load_workloads
+
+while getopts ":B:b:c:D:d:Eef:HhKM:m:N:nP:p:QqR:r:Ss:T:t:V:vWw:XxYz:-:" opt ; do
+    case "$opt" in
+	B) basename="$OPTARG"		    ;;
+	b) blocksize="$OPTARG"              ;;
+	c) containers="$OPTARG"             ;;
+	D) dataRate="$OPTARG"               ;;
+	d) depsPerNamespace="$OPTARG"       ;;
+	E) exitAtEnd=0			    ;;
+	e) exitAtEnd=1			    ;;
+	f) process_job_file "$OPTARG"	    ;;
+	h) help				    ;;
+	H) help_extended		    ;;
+	K) runtimeClass="$kataRuntimeClass" ;;
+	m) msgSize="$OPTARG"		    ;;
+	M) set_xfer "$OPTARG" 1000000	    ;;
+	n) doit=0			    ;;
+	N) namespaces="$OPTARG"             ;;
+	p) parallel="$OPTARG"               ;;
+	P) podType="$OPTARG"		    ;;
+	Q) reportObjectCreation=0	    ;;
+	q) verbose=0			    ;;
+	R) processes_per_pod="$OPTARG"	    ;;
+	r) replicas="$OPTARG"               ;;
+	S) scale_ns=1			    ;;
+	s) secrets="$OPTARG"                ;;
+	T) deploymentType="$OPTARG"	    ;;
+	t) set_xfer_time "$OPTARG"	    ;;
+	V) parse_volume_spec "$OPTARG"	    ;;
+	v) verbose=1			    ;;
+	w) sleeptime="$OPTARG"              ;;
+	W) wait_for_secrets=0		    ;;
+	x) affinity=1			    ;;
+	X) affinity=2			    ;;
+	Y) syncStart=$((1-syncStart))	    ;;
+	z) podsleeptime="$OPTARG"	    ;;
+	-) process_option "$OPTARG"	    ;;
+	*) help "$OPTARG"                   ;;
+    esac
+done
+[[ -n "${unknown_opts[*]:-}" ]] && help "${unknown_opts[@]}"
+
+if (( namespaces <= 0 )) ; then
+    namespaces=1
+    useNamespaces=0
+fi
+(( !parallelConfigMaps )) && parallelConfigMaps=$parallel
+(( !parallelSecrets )) && parallelSecrets=$parallel
+(( !parallelNamespaces )) && parallelNamespaces=$parallel
+(( !parallelDeployments )) && parallelDeployments=$parallel
+
+(( !blocksizeConfigMaps )) && blocksizeConfigMaps=$blocksize
+(( !blocksizeSecrets )) && blocksizeSecrets=$blocksize
+(( !blocksizeNamespaces )) && blocksizeNamespaces=$blocksize
+(( !blocksizeDeployments )) && blocksizeDeployments=$blocksize
+
+[[ -n $runtimeClass ]] && runtimeClass="runtimeClassName: \"$runtimeClass\""
+[[ -n "$report_format" ]] && report=1
+
+shift $((OPTIND - 1))
+
+if [[ -z $OC && $doit -gt 0 ]] ; then
+    fatal "Cannot find oc or kubectl command, exiting!"
+fi
+
+if (( msgSize <= 0 )) ; then
+    fatal "Message size must be positive, exiting!"
+fi
+
+if [[ -z "$pbenchControllerAddress" && $pbenchControllerPort -ne 0 ]] ; then
+    fatal "Both pbench_controller_address and pbench_controller_port must be specified"
+fi
+
+if [[ -n "$pbenchControllerAddress" && $pbenchControllerPort -eq 0 ]] ; then
+    fatal "Both pbench_controller_address and pbench_controller_port must be specified"
+fi
+
+for ftest in ${sysbench_fileio_test_string//,/ } ; do
+    sysbench_fileio_tests[$ftest]=1
+done
+
+resource_validation_failed=0
+validate_resource resource_request "${resource_requests[@]}" || resource_validation_failed=1
+validate_resource resource_limit "${resource_limits[@]}" || resource_validation_failed=1
+if ((resource_validation_failed)) ; then
+    exit 1
+fi
+
+if (( file_block_size <= 0)) ; then
+    file_block_size=file_size
+fi
+
+for i in $(seq 0 $((file_volumes-1)) ) ; do
+    emptydirs+=("/mnt/volume-$i")
+done
+
+logStrategy=${logStrategy,,}
+if [[ $logStrategy != poll && $logStrategy != listen ]] ; then
+    fatal "Unknown --log_stragey (must be 'poll' or 'listen')"
+fi
+
+if [[ $dataRate != 0 && $dataRate != '' && $xferTimeMax -eq 0 && bytesMax -eq 0 ]] ; then
+    bytes=$defaultBytes
+    bytesMax=$defaultBytes
+fi
+
 case "${podType,,}" in
     classic|clusterbuster) podType=ClusterBuster ;;
     server)                podType=Server        ;;
@@ -2030,8 +2074,6 @@ case "${podType,,}" in
 	help_extended "(Unknown pod type '$podType')"
 	;;
 esac
-
-load_workloads
 
 if [[ -n "${workload_aliases[${podType,,}]:-}" ]] ; then
     podType="${workload_aliases[${podType,,}]:-}"
