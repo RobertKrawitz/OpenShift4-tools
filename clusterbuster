@@ -1991,7 +1991,7 @@ while getopts ":B:b:c:D:d:Eef:HhKM:N:nP:p:QqR:r:Ss:T:t:V:vWw:XxYz:-:" opt ; do
 	n) doit=0			    ;;
 	N) namespaces="$OPTARG"             ;;
 	p) parallel="$OPTARG"               ;;
-	P) requestedWorkload="$OPTARG"		    ;;
+	P) requestedWorkload="$OPTARG"	    ;;
 	Q) reportObjectCreation=0	    ;;
 	q) verbose=0			    ;;
 	R) processes_per_pod="$OPTARG"	    ;;
@@ -2077,20 +2077,6 @@ if [[ $serverDataRate != 0 && $serverDataRate != '' && $workloadRunTimeMax -eq 0
     bytes=$defaultBytes
     bytesMax=$defaultBytes
 fi
-
-case "${requestedWorkload,,}" in
-    classic|clusterbuster) requestedWorkload=ClusterBuster ;;
-    server)                requestedWorkload=Server        ;;
-    cpu*|soaker)           requestedWorkload=CPUSoaker     ;;
-    sysbench)              requestedWorkload=Sysbench      ;;
-    fio)		   requestedWorkload=Fio           ;;
-    pause|pausepod)        requestedWorkload=PausePod      ;;
-    file|files)            requestedWorkload=Files         ;;
-    log|logger|logging)    requestedWorkload=Log           ;;
-    *)
-	help_extended "(Unknown pod type '$requestedWorkload')"
-	;;
-esac
 
 if [[ -n "${workload_aliases[${requestedWorkload,,}]:-}" ]] ; then
     requestedWorkload="${workload_aliases[${requestedWorkload,,}]:-}"
