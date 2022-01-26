@@ -22,7 +22,7 @@ function _createContainersFioYAML() {
     local namespace=$1
     local instance=$2
     local secretCount=$3
-    local -i containers=$4
+    local -i containersPerPod=$4
     local -i processes=$5
     local log_host=${6:-}
     local -i log_port=${7:-0}
@@ -32,7 +32,7 @@ function _createContainersFioYAML() {
     IFS=: read -r syncService syncPortNum <<< $(getSync)
     # shellcheck disable=2031
     local workdir=${common_workdir:-${emptydirs[0]:-/tmp}}
-    for container in $(seq 0 $((containers - 1))) ; do
+    for container in $(seq 0 $((containersPerPod - 1))) ; do
 	cat <<EOF
 - name: "c${container}"
   imagePullPolicy: $imagePullPolicy
@@ -50,7 +50,7 @@ $(indent 2 bootstrapCommandYAML fio.pl)
   - "$poddelay"
   - "$processes"
   - "$workdir"
-  - "$xferTime"
+  - "$workloadRunTime"
   - "$exitAtEnd"
   - "$syncService"
   - "$syncPortNum"
@@ -113,13 +113,13 @@ function createDeploymentFio() {
     local count=${2:-1}
     local secretCount=${3:-1}
     local replicas=${4:-1}
-    local containers=${5:-1}
+    local containersPerPod=${5:-1}
     local log_host=${6:-}
     local -i log_port=${7:-0}
     local -i instance
-    createSyncServiceIfNeeded "$namespace" 2 "$((containers * replicas * count))"
+    createSyncServiceIfNeeded "$namespace" 2 "$((containersPerPod * replicas * count))"
     for instance in $(seq $firstDeployment $((count + firstDeployment - 1))) ; do
-	_createFioDeployment "$namespace" "${instance}" "$secretCount"  "$replicas" "$containers" "$log_host" "$log_port"
+	_createFioDeployment "$namespace" "${instance}" "$secretCount"  "$replicas" "$containersPerPod" "$log_host" "$log_port"
     done
 }
 
@@ -127,14 +127,24 @@ function calculateLogsRequiredFio() {
     local -i namespaces=$1
     local -i depsPerNamespace=${2:-1}
     local -i replicas=${3:-1}
-    local -i containers=${4:-1}
-    echo $((namespaces * containers * processes_per_pod * replicas * depsPerNamespace))
+    local -i containersPerPod=${4:-1}
+    echo $((namespaces * containersPerPod * processes_per_pod * replicas * depsPerNamespace))
 }
 
 function listConfigMapsFio() {
     cat <<EOF
 ${__libdir__}/fio.pl
 ${__libdir__}/sync.pl
+EOF
+}
+
+function helpOptionsFio() {
+    cat <<'EOF'
+    Fio Options:
+       --fio-general-options=<options>
+                        Space or comma separated general fio options
+       --fio-jobfile=<file>
+                        Name of fio job file to use.  May be repeated.
 EOF
 }
 

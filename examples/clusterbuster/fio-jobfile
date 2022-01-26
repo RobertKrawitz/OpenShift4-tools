@@ -1,8 +1,3 @@
-# Syntax:
-#   $target : expands to the fio target file
-#   $@ : expands to the value of the option as passed to
-#        pbench-fio
-#
 # For python2 without the latest configparser installed, lines
 # cannot be indented.
 
@@ -12,7 +7,6 @@ runtime = 10
 #ioengine = sync
 iodepth = 32
 direct = 1
-sync = 0
 time_based = 1
 #clocksource = gettimeofday
 ramp_time = 5
@@ -27,7 +21,6 @@ fdatasync = 1
 
 [job-tmp]
 #filename = /tmp
-#rw = $@
 size = 4194304
 numjobs = 1
 

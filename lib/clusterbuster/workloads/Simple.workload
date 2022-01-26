@@ -23,9 +23,9 @@ function _createContainersClusterBusterYAML() {
     local instance=$2
     local secretCount=$3
     local -i pods=$4
-    local -i containers=$5
+    local -i containersPerPod=$5
     local -i container
-    for container in $(seq 0 $((containers - 1))) ; do
+    for container in $(seq 0 $((containersPerPod - 1))) ; do
 	cat <<EOF
 - name: ${namespace}-${instance}-$container
   imagePullPolicy: $imagePullPolicy
@@ -50,13 +50,13 @@ function _createContainersPausePodYAML() {
     local instance=$2
     local secretCount=$3
     local -i pods=$4
-    local -i containers=$5
+    local -i containersPerPod=$5
     local -i container
-    for container in $(seq 0 $((containers - 1))) ; do
+    for container in $(seq 0 $((containersPerPod - 1))) ; do
 	cat <<EOF
 - name: ${namespace}-${instance}-$container
   imagePullPolicy: $imagePullPolicy
-  image: "gcr.io/google_containers/pause-amd64:3.0"
+  image: "gcr.io/google_containersPerPod/pause-amd64:3.0"
 $(indent 2 containerResourcesYAML)
 $(indent 2 volumeMountsYAML "$namespace" "${instance}" "$secretCount")
 EOF
@@ -69,9 +69,9 @@ function _createContainersLogYAML() {
     local secretCount=$3
     # shellcheck disable=2034
     local -i pods=$4
-    local -i containers=$5
+    local -i containersPerPod=$5
     local -i container
-    for container in $(seq 0 $((containers - 1))) ; do
+    for container in $(seq 0 $((containersPerPod - 1))) ; do
 	cat <<EOF
 - name: ${namespace}-${instance}-$container
   imagePullPolicy: $imagePullPolicy
@@ -100,7 +100,7 @@ function _createDeploymentClassicYAML() {
     local instance=$2
     local secretCount=$3
     local -i replicas=$4
-    local -i containers=$5
+    local -i containersPerPod=$5
     if [[ $deploymentType = pod ]] ; then
 	local -i container=0
 	while (( container++ < replicas )) ; do
@@ -115,8 +115,8 @@ $(indent 2 nodeSelectorYAML)
   selector:
     matchLabels:
       app: ${namespace}-${instance}
-$(indent 2 standardLabelsYAML "${podType}" "$namespace" "$instance")
-$(createSpec _createContainers${podType}YAML "$@")
+$(indent 2 standardLabelsYAML "${requestedWorkload}" "$namespace" "$instance")
+$(createSpec _createContainers${requestedWorkload}YAML "$@")
 EOF
 	done
     else
@@ -138,8 +138,8 @@ $(indent 2 nodeSelectorYAML)
     type: RollingUpdate
   template:
     metadata:
-$(indent 6 standardLabelsYAML "${podType}" "$namespace" "$instance")
-$(indent 4 createSpec _createContainers${podType}YAML "$@")
+$(indent 6 standardLabelsYAML "${requestedWorkload}" "$namespace" "$instance")
+$(indent 4 createSpec _createContainers${requestedWorkload}YAML "$@")
 EOF
     fi
 }
@@ -149,10 +149,10 @@ function _createDeploymentSimple() {
     local count=${2:-1}
     local secretCount=${3:-1}
     local replicas=${4:-1}
-    local containers=${5:-1}
+    local containersPerPod=${5:-1}
     local -i instance
     for instance in $(seq $firstDeployment $((count + firstDeployment - 1))) ; do
-	_createDeploymentClassicYAML "$namespace" "${instance}" "$secretCount"  "$replicas" "$containers"
+	_createDeploymentClassicYAML "$namespace" "${instance}" "$secretCount"  "$replicas" "$containersPerPod"
     done
 }
 
@@ -175,6 +175,31 @@ function createDeploymentClusterBuster() {
 
 function createDeploymentLog() {
     _createDeploymentSimple "$@"
+}
+
+function helpOptionsLog() {
+    cat <<EOF
+    Log Options:
+       --log-bytes-per-line=<bytes_per_line>
+                        Number of bytes per line to log.
+                        Default $log_bytes_per_line.
+       --log-bytes-per-io=<bytes_per_io>
+                        Number of bytes per message to log.
+                        Rounded up to full lines.  Default $log_bytes_per_io.
+       --log-xfer-count=<count>
+                        Number of messages to log (in I/Os)
+                        Default $log_xfer_count.  If zero, log
+                        continuously (subject to log-xfertime).
+       --log-processes=<processes>
+                        Number of processes per pod.
+                        Default $log_processes.
+       --log-delay-usec=<usecs>
+                        Time in microseconds to delay between I/O.
+       --log-xfertime=<time>
+                        Number of seconds to log.
+                        Default $log_xfertime.  If zero, log continuously
+                        (subject to log-xfer-count
+EOF
 }
 
 register_workload PausePod dispatch_generic pause

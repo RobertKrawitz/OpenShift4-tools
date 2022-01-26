@@ -93,17 +93,14 @@ function _createClientContainerYAML() {
     local namespace=$1
     local instance=$2
     local secretCount=$3
-    local containers=$5
+    local containersPerPod=$5
     local log_host=$6
     local log_port=$7
-    local dataRate=$8
-    local bytes=$9
-    local msgSize=${10}
     local -i container
     local syncService=
     local syncPortNum=
     IFS=: read -r syncService syncPortNum <<< $(getSync)
-    for container in $(seq 0 $((containers - 1))) ; do
+    for container in $(seq 0 $((containersPerPod - 1))) ; do
 	cat <<EOF
 - name: c${container}
   image: "$containerImage"
@@ -121,12 +118,12 @@ $(indent 2 bootstrapCommandYAML client.pl)
   - "$port"
   - "c${container}"
   - "service-${namespace}-server-$instance"
-  - "$dataRate"
-  - "$bytes"
-  - "$bytesMax"
+  - "$serverDataRate"
+  - "$bytesTransfer"
+  - "$bytesTransferMax"
   - "$msgSize"
-  - "$xferTime"
-  - "$xferTimeMax"
+  - "$workloadRunTime"
+  - "$workloadRunTimeMax"
   - "$(ts)"
   - "$exitAtEnd"
   - "$syncService"
@@ -218,20 +215,20 @@ function createDeploymentServer() {
     local count=${2:-1}
     local secretCount=${3:-1}
     local replicas=${4:-1}
-    local containers=${5:-1}
+    local containersPerPod=${5:-1}
     local log_host=${6:-}
     local -i log_port=${7:-0}
     local -i instance
-    createSyncServiceIfNeeded "$namespace" 2 "$((containers * replicas * count))"
+    createSyncServiceIfNeeded "$namespace" 2 "$((containersPerPod * replicas * count))"
 
     for instance in $(seq $firstDeployment $((count + firstDeployment - 1))) ; do
 	createService "$namespace" "${namespace}-server-${instance}" "$port"
 	if [[ $deploymentType = pod ]] ; then
-	    _createServerDeployment "$namespace" "$instance" "$secretCount" "$msgSize" "$((containers * replicas))"
+	    _createServerDeployment "$namespace" "$instance" "$secretCount" "$msgSize" "$((containersPerPod * replicas))"
 	else
 	    _createServerDeployment "$namespace" "$instance" "$secretCount" "$msgSize" "-1"
 	fi
-	_createClientDeployment "$namespace" "$instance" "$secretCount" "$replicas" "$containers" "$log_host" "$log_port" "$dataRate" "$bytes" "$msgSize"
+	_createClientDeployment "$namespace" "$instance" "$secretCount" "$replicas" "$containersPerPod" "$log_host" "$log_port"
     done
 }
 
@@ -247,8 +244,22 @@ function calculateLogsRequiredServer() {
     local -i namespaces=$1
     local -i depsPerNamespace=${2:-1}
     local -i replicas=${3:-1}
-    local -i containers=${4:-1}
-    echo $((namespaces * containers * replicas * depsPerNamespace))
+    local -i containersPerPod=${4:-1}
+    echo $((namespaces * containersPerPod * replicas * depsPerNamespace))
+}
+
+function helpOptionsServer() {
+    cat <<'EOF'
+    Client/server options:
+       --serverdatarate=N
+                        Data transfer rate (-D)
+       -D data rate    Data rate for client/server (MB/sec) (default 0)
+                       May be a decimal number.
+       -M MB[,max]     Amount of data to transfer.  If two values are
+                       specified, the amount will be randomly chosen
+                       per container.
+       msgsize         Message size in data transfer
+EOF
 }
 
 register_workload Server dispatch_generic

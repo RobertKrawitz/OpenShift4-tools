@@ -23,7 +23,7 @@ function _createContainersSysbenchYAML() {
     local instance=$2
     local secretCount=$3
     local -i processes=$4
-    local -i containers=$5
+    local -i containersPerPod=$5
     local log_host=${6:-}
     local -i log_port=${7:-0}
     local -i container
@@ -32,7 +32,7 @@ function _createContainersSysbenchYAML() {
     IFS=: read -r syncService syncPortNum <<< $(getSync)
     # shellcheck disable=2031
     local workdir=${common_workdir:-${emptydirs[0]:-/tmp}}
-    for container in $(seq 0 $((containers - 1))) ; do
+    for container in $(seq 0 $((containersPerPod - 1))) ; do
 	cat <<EOF
 - name: "c${container}"
   imagePullPolicy: $imagePullPolicy
@@ -50,7 +50,7 @@ $(indent 2 bootstrapCommandYAML sysbench.pl)
   - "$poddelay"
   - "$processes"
   - "$workdir"
-  - "$xferTime"
+  - "$workloadRunTime"
   - "$exitAtEnd"
   - "$syncService"
   - "$syncPortNum"
@@ -115,13 +115,13 @@ function createDeploymentSysbench() {
     local count=${2:-1}
     local secretCount=${3:-1}
     local replicas=${4:-1}
-    local containers=${5:-1}
+    local containersPerPod=${5:-1}
     local log_host=${6:-}
     local -i log_port=${7:-0}
     local -i instance
-    createSyncServiceIfNeeded "$namespace" "$(( (${#sysbench_fileio_tests[@]} * 3) + 1))" "$((containers * replicas * count))"
+    createSyncServiceIfNeeded "$namespace" "$(( (${#sysbench_fileio_tests[@]} * 3) + 1))" "$((containersPerPod * replicas * count))"
     for instance in $(seq $firstDeployment $((count + firstDeployment - 1))) ; do
-	_createSysbenchDeployment "$namespace" "$instance" "$secretCount"  "$replicas" "$containers" "$log_host" "$log_port"
+	_createSysbenchDeployment "$namespace" "$instance" "$secretCount"  "$replicas" "$containersPerPod" "$log_host" "$log_port"
     done
 }
 
@@ -136,8 +136,23 @@ function calculateLogsRequiredSysbench() {
     local -i namespaces=$1
     local -i depsPerNamespace=${2:-1}
     local -i replicas=${3:-1}
-    local -i containers=${4:-1}
-    echo $((namespaces * containers * processes_per_pod * replicas * depsPerNamespace))
+    local -i containersPerPod=${4:-1}
+    echo $((namespaces * containersPerPod * processes_per_pod * replicas * depsPerNamespace))
+}
+
+function helpOptionsSysbench() {
+    cat <<'EOF'
+    Sysbench General Options:
+       --sysbench-general-options=<options>
+                        Space or comma separated general Sysbench options
+       --sysbench-fileio-tests=<modes>
+                        Space of comma separated list of file test modes
+                        to use (seqwr, seqrewr, seqrd, rndrd, rndwr, rndrw)
+                        If multiple modes are specified, modes are
+                        spread around.
+       --sysbench-fileio-options=<options>
+                        Space or comma separated fileio Sysbench options
+EOF
 }
 
 register_workload Sysbench dispatch_generic
