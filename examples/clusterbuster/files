@@ -1,7 +1,8 @@
 # Run as
 # clusterbuster -f clusterbuster-files-jobfile
 
-pod-type=files
+cleanup
+workload=files
 dirs_per_volume=256
 files_per_dir=256
 file_block_size=1024

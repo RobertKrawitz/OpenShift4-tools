@@ -56,7 +56,7 @@ function _createContainersPausePodYAML() {
 	cat <<EOF
 - name: ${namespace}-${instance}-$container
   imagePullPolicy: $imagePullPolicy
-  image: "gcr.io/google_containersPerPod/pause-amd64:3.0"
+  image: "gcr.io/google_containersPerPod/pause-amd64:3.2"
 $(indent 2 containerResourcesYAML)
 $(indent 2 volumeMountsYAML "$namespace" "${instance}" "$secretCount")
 EOF
@@ -199,6 +199,27 @@ function helpOptionsLog() {
                         Number of seconds to log.
                         Default $log_xfertime.  If zero, log continuously
                         (subject to log-xfer-count
+EOF
+}
+
+function documentPausePod() {
+    cat <<'EOF'
+* pausepod: a minimal pod that does nothing.  Useful for stressing
+  the control plane.  See
+  https://console.cloud.google.com/gcr/images/google-containers/global/pause-amd64
+EOF
+}
+
+function documentClusterBuster() {
+    cat <<'EOF'
+* clusterbuster: a simple pod based on busybox that logs the date
+  once per minute.  Useful for testing the control plane.
+EOF
+}
+
+function documentLog() {
+    cat <<'EOF'
+* log: a pod that emits log messages at a controllable rate.
 EOF
 }
 

@@ -1,0 +1,7 @@
+# Example for creating 500 pods/node on a 30 node cluster, using pause
+# pods
+
+precleanup
+cleanup
+workload = pausepod
+deployments = 15000

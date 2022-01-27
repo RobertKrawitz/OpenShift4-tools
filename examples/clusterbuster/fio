@@ -1,10 +1,11 @@
 # Run as
 # clusterbuster -f clusterbuster-fio-jobfile
 
+cleanup
 workloadruntime=10
 report-format=raw
-pod_type=fio
-fio-jobfile=fio-jobfile
+workload=fio
+fio-jobfile=fio.jobfile
 replicas=1
 anti_affinity
 exit_at_end

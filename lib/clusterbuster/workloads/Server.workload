@@ -118,7 +118,7 @@ $(indent 2 bootstrapCommandYAML client.pl)
   - "$port"
   - "c${container}"
   - "service-${namespace}-server-$instance"
-  - "$serverDataRate"
+  - "$targetDataRate"
   - "$bytesTransfer"
   - "$bytesTransferMax"
   - "$msgSize"
@@ -251,14 +251,14 @@ function calculateLogsRequiredServer() {
 function helpOptionsServer() {
     cat <<'EOF'
     Client/server options:
-       --serverdatarate=N
-                        Data transfer rate (-D)
-       -D data rate    Data rate for client/server (MB/sec) (default 0)
-                       May be a decimal number.
-       -M MB[,max]     Amount of data to transfer.  If two values are
-                       specified, the amount will be randomly chosen
-                       per container.
        msgsize         Message size in data transfer
+EOF
+}
+
+function documentServer() {
+    cat <<'EOF'
+* server: a client-server workload with optional bidirectional data
+  trasfer, optionally at a specified data rate.
 EOF
 }
 

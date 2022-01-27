@@ -164,4 +164,11 @@ function helpOptionsFiles() {
 EOF
 }
 
+function documentFiles() {
+    cat <<'EOF'
+* files: a simple filesystem stressor that creates and removes a large
+  number of files.
+EOF
+}
+
 register_workload Files dispatch_generic file

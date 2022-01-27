@@ -155,4 +155,12 @@ function helpOptionsSysbench() {
 EOF
 }
 
+function documentSysbench() {
+    cat <<'EOF'
+* sysbench: scriptable multi-threaded benchmark tool based on LuaJIT.
+  Currently supports only file I/O operations.
+  See https://github.com/akopytov/sysbench
+EOF
+}
+
 register_workload Sysbench dispatch_generic

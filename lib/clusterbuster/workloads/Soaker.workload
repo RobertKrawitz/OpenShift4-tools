@@ -135,4 +135,10 @@ function calculateLogsRequiredSoaker() {
     echo $((namespaces * processes_per_pod * containersPerPod * replicas * depsPerNamespace))
 }
 
+function documentSoaker() {
+    cat <<'EOF'
+* soaker: a simple CPU soaker running a continuous tight loop.
+EOF
+}
+
 register_workload Soaker dispatch_generic cpu cpusoak soak cpusoaker

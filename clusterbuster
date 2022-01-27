@@ -14,6 +14,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Unfortunate that there's no way to tell shellcheck to always source
+# specific files.
+# shellcheck disable=SC2034
+# shellcheck source-path=./lib/clusterbuster/workloads
+# shellcheck source=Fio.workload
+# shellcheck source=Simple.workload
+# shellcheck source=Files.workload
+# shellcheck source=Sysbench.workload
+# shellcheck source=Server.workload
+# shellcheck source=Soaker.workload
+
 set -u
 
 declare -A registered_workloads=()
@@ -136,7 +147,7 @@ declare -i file_dirs_per_volume=1
 declare -i files_per_dir=1
 
 # Server options
-declare serverDataRate=0
+declare targetDataRate=0
 
 declare accumulateddata=
 declare -a plurals=('s' '')
@@ -183,10 +194,10 @@ function print_workloads() {
 	if [[ -n "$workload" ]] ; then
 	    echo "$prefix$workload"
 	fi
-    done <<< $(IFS=$'\n'; echo "${!registered_workloads[*]}" |sort)
+    done <<< "$(IFS=$'\n'; echo "${!registered_workloads[*]}" |sort)"
 }
 
-function _help_workloads() {
+function _help_options_workloads() {
     local workload
     while read -r workload ; do
 	if [[ -n "$workload" ]] ; then
@@ -196,205 +207,125 @@ function _help_workloads() {
     done <<< "$(workloadsSupportingAPI helpOptions)"
 }
 
+function _document_workloads() {
+    local workload
+    while read -r workload ; do
+	if [[ -n "$workload" ]] ; then
+	    echo
+	    callAPI -w "$workload" document
+	fi
+    done <<< "$(workloadsSupportingAPI document)"
+}
+
 function _helpmsg() {
     local opt
     for opt in "$@" ; do
 	echo "Unknown option $opt"
     done
 cat <<EOF
+Clusterbuster is a tool to permit you to load a configurable workload
+onto an OpenShift cluster.  ClusterBuster focuses primarily on workload
+scalability, including synchronization of multi-instance workloads.
+
 Usage: $0 [options] [name]
+
     Help:
        -h              Print basic help information.
        -H              Print extended help.
-       --help-everything
-                       Print extended help, and in addition print a detailed
-                       description including examples.
 
     Options:
        -B basename     Base name of pods (default clusterbuster).
                        All objects are labeled with this name.
-       -b objsPerCall  Number of objects to create in one oc call (default 1)
-       -c containers   Number of containers per pod
-       -d deployments  Number of deployments per namespace (default 1)
        -E              Don't exit after all operations are complete.
        -e              Exit after all operations are complete (default).
        -f jobfile      Job file containing settings
+                       A number of examples are provided in the
+                       examples/clusterbuster directory.
        -n              Print what would be done without doing it
-       -N namespaces   Number of namespaces to create (default 1)
-                       If 0 is specified, then no namespaces are created
-                       and the current namespace is used.
-       -P podtype      Pod type, one of:
+       -P workload     workload (mandatory), one of:
 $(print_workloads '                       - ')
-       -p parallel     Number of operations to perform in parallel (default 1)
+       -q              Do not print verbose log messages (default)
        -Q              Don't report creation of individual objects (default
                        report them)
-       -R processes    Number of processes per pod (default 1)
-                       Applies to cpu and files only.
-       -r replicas     Number of replicas per deployment (default 1)
-       -S              Scale up (add namespaces to existing load) (default no)
-       -s secrets      Number of secrets per deployment (default 0)
-       -T type         Use the specified deployment type:
-                       pod or deployment (default $deploymentType)
-       -t time[,max]   Time (in seconds) to run the workload (default 0
-                       means no time limit).  If two values are specified,
-                       the amount will be randomly chosen per container.
        -v              Print verbose log messages.
-       -w wait         Number of seconds to wait between ops (default 0)
-       -W              Wait for secrets to be created (default 1)
-       -x              Use pod affinity for client/server workloads
-                       (default no)
-       -X              Use pod anti-affinity for client/server workloads
-                       (default no)
-       -Y              Sync start of data transfer or CPU load (default yes)
-       -z podsleep     Amount of time in seconds for pod to sleep before exit
-                       (default infinity).  This may be an expression
-                       evaluated as an argument to sleep(1) and need not be
-                       a numeric constant.
-       --opt[=val]     Set the specified option.  Use -H or --help-everything
-                       to get a list.
-
-    Client/server options:
-       -D data rate    Data rate for client/server (MB/sec) (default 0)
-                       May be a decimal number.
-       -M MB[,max]     Amount of data to transfer.  If two values are
-                       specified, the amount will be randomly chosen
-                       per container.
-       -m msgsize      Message size in data transfer
+       --opt[=val]     Set the specified option.
+                       Use $0 -H to list the available options.
 EOF
 }
 
 function _helpExtended() {
     _helpmsg "$@"
-    cat <<'EOF'
+    cat <<EOF
 
 Extended Options:
-    General Extended Options (short equivalents):
-       --pod_type=type  Specify the type of pod (-P)
-       --basename=name  Specify the base name (-B)
-       --containersPerPod=N   Number of containers per pod (-c)
-       --namespaces=N   Number of namespaces (-N)
-       --secrets=N      Number of secrets (-s)
-       --processes=N    Number of processes per pod (-R)
-       --replicas=N     Number of replicas per deployment (-r)
-       --podsleep=N     Time for pod to sleep before exit (-z)
-       --baseoffset=N   Add specified offset to base time
-                        for calculation of start time offset
-                        to correct for clock skew.  May be float.
-       --sync           Sync start of data transfer or CPU load
-                        (default no) (-Y)
+    General Options (short equivalents):
        --doit=<1,0>     Run the command or not (default 1) (inverse of -n)
+       --workload=type  Specify the workload (-P) (mandatory)
+       --basename=name  Specify the base name for any namespaces (-B)
+       --namespaces=N   Number of namespaces
+       --sync           Sync start of data transfer or CPU load
+                        (default yes)
+       --precleanup     Clean up any prior objects
+       --cleanup        Clean up generated objects
+       --timeout=N      Time out reporting after N seconds
+       --report_object_creation=<1,0>
+                        Report creation of individual objects (default 1)
+                        (inverse of -Q)
+       --uuid=<uuid>    Use the specified UUID for the run.  Default is to
+                        generate a random-based UUID.
+       --exit_at_end    Exit upon completion of workload (-e/-E)
+       --verbose        Print verbose log messages (-v)
+
+    Reporting Options:
        --report-format=<format>
                         Print report in specified format.  Meaning of
-                        report types is by type.
-                        - summary
-                        - raw
+                        report types is by type.  Currently only "raw"
+                        works.
                         - json
+                        - raw
+                        - summary
                         - verbose
        --report         Print summary report (client/server, soaker,
                         fio, sysbench only) (deprecated)
        --verbose-report Print detailed report (deprecated)
        --json-report    Print JSON report (deprecated)
        --raw-report     Print unprocessed report (deprecated)
-       --precleanup     Clean up any prior objects
-       --cleanup        Clean up generated objects
-       --timeout=N      Time out reporting
-       --image_pull_policy=<policy>
-                        Image pull policy (default $imagePullPolicy)
-       --report_object_creation=<1,0>
-                        Report creation of individual objects (default 1)
-                        (inverse of -Q)
-       --log-strategy={poll,listen}
-                        Use the desired logging strategy to retrieve logs.
-                        - Poll indicates that sync pods should be polled
-                          for logs.
-                        - Listen indicates that pods should report log
-                          data directly to this tool, which will listen
-                          for the data.
-                        The default strategy is polling, which should work
-                        in all cases.  The older listen strategy will not
-                        work if pods cannot connect to the host from which
-                        this tool is run.  Polling should be used unless
-                        there is reason to believe it is not functioning.
-       --uuid=<uuid>    Use the specified UUID for the run.  Default is to
-                        generate a random-based UUID.
-       --exit_at_end    Exit upon completion of workload (-e/-E)
-       --verbose        Print verbose log messages (-v)
-       --wait_secrets   Wait for secrets to be created (-W) (default 1)
 
-    General workload options (options not specific to one workload):
-       --workloadruntime=N
-			Time to run the workload (-t).  Two comma-separated
-                        numbers may be used to specify maximum time.
+    Workload sizing options:
+       --containersPerPod=N
+                        Number of containers per pod
+       --deployments=N  Number of deployments or pods per namespace
+       --processes=N    Number of processes per pod
+       --replicas=N     Number of replicas per deployment
+       --secrets=N      Number of secrets
+
+    Generic workload rate options:
        --bytestransfer=N[,M]
-			Number of bytes for workloads operating on
-       			fixed amounts of data.  May have suffixes of K, Ki,
-			M, Mi, G, Gi, T, or Ti.
-       --workdir=<dir>  Use the specified working directory for file I/O
+                        Number of bytes for workloads operating on
+                        fixed amounts of data.
+       --datarate=N     Target data rate for workloads operating at fixed
+                        data rates.  May have suffixes of K, Ki,
+                        M, Mi, G, Gi, T, or Ti.
+       --workloadruntime=N
+                        Time to run the workload where applicable
+                        Two comma-separated numbers may be used to
+                        specify maximum time.
+
+    Workload placement options:
        --affinity       Force affinity between client and server pods
                         in a client-server workload.  Default is neither
-			affinity nor anti-affinity.
+                        affinity nor anti-affinity.
        --anti-affinity  Force anti-affinity between client and server pods
                         in a client-server workload.  Default is neither
-			affinity nor anti-affinity.
+                        affinity nor anti-affinity.
+
+    Generic workload storage options:
        --emptydir=dir   Mount an emptydir volume at the specified mount point.
-
-    Tuning object creation (short equivalents):
-       --scale-ns=[0,1] Scale up the number of namespaces.
-                        (default 0)
-       --scale-deployments=[0,1]
-                        Scale up the number of deployments.
-                        (default 1) (-S)
-       --first_deployment=N
-                        Specify the index of the first deployment.
-                        Default is 0 (but see --scale_deployments)
-       --first_secret=N
-       --first_namespace=N
-       --first_deployment=N
-       --objsPerCall=N    Number of objects per oc call (-b)
-                        Below options default to objsPerCall
-       --objsPerCall_secrets=N
-       --objsPerCall_namespaces=N
-       --objsPerCall_deployments=N
-       --sleep=N        Number of seconds between object creations (-w)
-                        Below options default to sleeptime
-       --sleep_secrets=N
-       --sleep_namespaces=N
-       --sleep_deployments=N
-       --parallel=N     Number of operations in parallel (-p)
-                        Below options default to parallel
-       --parallel_secrets=N
-       --parallel_namespaces=N
-       --parallel_deployments=N
-       --node_selector=selector
-                        Annotate pods with the specified node selector
-                        Default $nodeSelector
-                        Specify empty value to not provide a node selector.
-
-    Pod Options:
-       --container_image=<image>
-                        Image to use (default $containerImage).
-                        Does not apply to "classic" or "pause" pod types.
-       --deployment_type=<pod,deployment>
-                        Deploy via individual pods or deployments (default $deploymentType)
-                        (-T)
-       --external_sync=host:port
-                        Sync to external host rather than internally
-       --<type>=<resource=value>
-                        Resource requests and limits
-                        <type> is request or limit.
-       --runtimeclass=class
-                        Run the pods in the designated runtimeclass.
-       -K
-       --kata           Synonym for --runtimeclass=${kataRuntimeClass}
-       --tolerate=<key:operator:effect>
-                        Apply the specified tolerations to created pods.
-       --poddelay=N     Time in seconds to wait for pods to start data xfer
        --volumes=N      Mount the specified number of emptydir volumes.
                         If this is not provided, file-based workloads will
                         use a default location, generally /tmp.
-       -V name:type:name_type:mount_name:mount_path
        --volume=name:type:name_type:mount_name:mount_path
-                        Mount a specified persistent volume.
+                        Mount a specified persistent volume
                         name is the name of the volume (required).
                         type is the type of volume (required).
                         mount_path is the path on which to mount the volume
@@ -407,6 +338,66 @@ Extended Options:
                             mounting the volume; all instances of %i
                             are replaced by the instance of the pod
                             within the namespace.
+       --workdir=<dir>  Use the specified working directory for file I/O
+
+    Pod Options:
+       --container_image=<image>
+                        Image to use (default $containerImage).
+                        Does not apply to "classic" or "pause" workloads.
+       --deployment_type=<pod,deployment>
+                        Deploy via individual pods or deployments (default $deploymentType)
+       --external_sync=host:port
+                        Sync to external host rather than internally
+       --request=<resource=value>
+                        Resource requests
+       --limit=<resource=value>
+                        Resource limits
+       --runtimeclass=class
+                        Run the pods in the designated runtimeclass.
+       -K
+       --kata           Synonym for --runtimeclass=${kataRuntimeClass}
+       --tolerate=<key:operator:effect>
+                        Apply the specified tolerations to created pods.
+       --image_pull_policy=<policy>
+                        Image pull policy (default $imagePullPolicy)
+       --node_selector=selector
+                        Annotate pods with the specified node selector
+                        Default $nodeSelector
+                        Specify empty value to not provide a node selector.
+
+    Tuning object creation (short equivalents):
+       --scale-ns=[0,1] Scale up the number of namespaces vs.
+                        create new ones (default 0).
+       --scale-deployments=[0,1]
+                        Scale up the number of deployments vs.
+                        create new ones (default 1)
+       --first_deployment=N
+                        Specify the index of the first deployment.
+                        Default is 0 (but see --scale_deployments)
+       --first_secret=N
+                        Index number of first secret to be created
+       --first_namespace=N
+                        Index number of first namespace to be created
+       --first_deployment=N
+                        Index number of first pod to be created
+       --objsPerCall=N  Number of objects per oc call
+                        Below options default to objsPerCall
+       --objsPerCall_secrets=N
+       --objsPerCall_namespaces=N
+       --objsPerCall_deployments=N
+
+       --sleep=N        Number of seconds between object creations
+                        Below options default to sleeptime
+       --sleep_secrets=N
+       --sleep_namespaces=N
+       --sleep_deployments=N
+
+       --parallel=N     Number of operations in parallel
+                        Below options default to parallel
+       --parallel_secrets=N
+       --parallel_namespaces=N
+       --parallel_deployments=N
+       --wait_secrets   Wait for secrets to be created (default 1)
 
     Using PBench:
        If pbench is to be used, both arguments below must be provided.
@@ -414,127 +405,29 @@ Extended Options:
                         Use the specified address to connect to the controller.
        --pbench_controller_port=port
                         Use the specified port to connect to the controller.
-EOF
-_help_workloads
-}
+$(_help_options_workloads)
 
-function _helpEverything() {
-    _helpExtended "$@"
-    cat <<'EOF'
+    Advanced options (generally not required):
+       --baseoffset=N   Add specified offset to base time
+                        for calculation of start time offset
+                        to correct for clock skew.  May be float.
+       --log-strategy={poll,listen}
+                        Use the desired logging strategy to retrieve logs.
+                        - Poll indicates that sync pods should be polled
+                          for logs.
+                        - Listen indicates that pods should report log
+                          data directly to this tool, which will listen
+                          for the data.
+                        The default strategy is polling, which should work
+                        in all cases.  The older listen strategy will not
+                        work if pods cannot connect to the host from which
+                        this tool is run.  Polling should be used unless
+                        there is reason to believe it is not functioning.
+       --poddelay=N     Time in seconds to wait for pods to start data xfer
+       --podsleep=N     Time for pod to sleep before exit
 
-
-Clusterbuster is a tool to permit you to load a configurable workload
-onto an OpenShift cluster.  This is not a full-featured workload
-generator like clusterloader; it generates very specific types of load
-that for the most part focus on API objects.
-
-Clusterbuster allows you to create three kinds of pods (via
-deployments).  The type of pod is selected by the -P option.
-
-- A simple pause-type implementation written in perl that emits a log
-  heartbeat once a minute.
-
-- Pause pod (uses the least resources).  Useful for testing the control
-  plane, but not the data plane.
-
-- A client-server workload, with optional bidirectional data transfer
-  at a specified data rate.  Allows load testing of the data plane.
-
-
-All three types allow you to configure the following load parameters:
-
-- Number of namespaces created (-N)
-
-- Number of deployments per namespace (-d)
-
-- Number of replicas per deployment (-r)
-
-- Number of containers per replica (-c)
-
-- Number of secrets per deployment (-s)
-
-The total number of pods created is (N * d * r) and the total number
-of containers is (N * d * r * c).  The number of secrets is (N * d).
-This is useful for testing of scaling of both nodes and apiserver/etcd
-combination on the control plane.
-
-
-The client-server workload consists of one server pod, with one
-container, per deployment.  The clients and server can optionally
-engage in ping-pong data transfer.  The number of client pods is
-controlled by the number of replicas.  Therefore, each server will
-service (r * c) connections.  Each container will attempt to transmit
-up to the specified data rate (-D) megabytes/second, and then receive
-the amount of data.  The amount of data to be sent can be specified
-via -M, in megabytes; the size of each message can be specified via
--m, in bytes.  By default, no data is sent.  The amount of time to
-perform data transfer can be specified by -t (default is none).
-
-Via -x and -X it is possible to specify whether clients will be
-colocated with their server (-x) or forced onto different nodes (-X).
-If neither option is specified, clusterbuster allows OpenShift to
-place pods as it sees fit.  You can use `oc logs` on a client pod (or
-use Prometheus metrics) to get data transfer information; with -v,
-verbose information about each transfer is printed.
-
-The client logs the following at the end of any data transfer:
-
-STATS <atime> <stime> <gtime> <etime> <endtime> <user> <sys> <interval> <data> <detime> <rate> <mean> <stdev>
-
-defined as:
-
-atime           Time (seconds from start of run) of "oc apply" to
-                create the client
-stime           Time when the client started running
-gtime           Time when "gethostbyname" completed
-etime           Time when connection to server succeeded
-endtime         Time when client completed
-user            User CPU time
-system          System CPU time
-interval        Duration between first attempt to connect and
-                successful connection
-data            Number of data bytes sent and received
-detime          Elapsed time for data transmission/reception
-rate            Rate (MB/sec) of data transfer, if any
-mean            Mean time sleeping between messages to attempt to
-                achieve the desired transmission rate
-stdev           Standard deviation of sleep interval between messages
-
-You can use `clusterbuster-connstat` to extract client information about a
-running or completed test run, including the above data.  Running
-`clusterbuster -v` allows `clusterbuster-connstat` to extract data about
-transfers completed thus far.
-
-
-You can run multiple concurrent clusterbusters by choosing different
-basenames for each instance (-B).  All objects created by that run
-will be tagged with the basename, in addition to 'clusterbusterbase'
-(to allow you to easily find or delete all objects created by
-clusterbuster).
-
-
-Examples:
-
-- You have a 30 node cluster and wish to test 500 pods per node, all
-  in one namespace:
-
-  clusterbuster -d 15000
-
-- You wish to use 1000 namespaces for the same test:
-
-  clusterbuster -N 1000 -d 15
-
-- You wish to add 150,000 secrets to further stress the apiserver and
-  etcd:
-
-  clusterbuster -N 1000 -d 15 -s 10
-
-- You wish to exchange data at 10 MB/sec with a total of 2 GB per client,
-  with 5 deployments in 2 namespaces each of which uses 4 replica clients
-  and 3 containers.  You wish to place the clients on nodes other than the
-  servers:
-
-  clusterbuster -P server -N 2 -d 5 -r 4 -c 3 -X -v
+Here is a brief description of all available workloads:
+$(_document_workloads)
 
 EOF
 }
@@ -546,12 +439,6 @@ function help() {
 
 function help_extended() {
     _helpExtended "$@" | "${PAGER:-more}" 1>&2
-    exit 1
-}
-
-# shellcheck disable=SC2120
-function help_everything() {
-    _helpEverything "$@" | "${PAGER:-more}" 1>&2
     exit 1
 }
 
@@ -633,12 +520,16 @@ function parse_size() {
     fi
 }
 
-
-
 function process_option() {
+    function bool() {
+	local value=${1:-}
+	case "${value,,}" in
+	    ''|1|y|yes|tru*) echo 1 ;;
+	    *)               echo 0 ;;
+	esac
+    }
     local option=$1
-    option=${option%% }
-    option=${option## }
+    option=${option// /}
     [[ -n "$option" ]] || return
     local optname
     local optvalue
@@ -660,25 +551,26 @@ function process_option() {
     # shellcheck disable=SC2119
     case "$noptname1" in
 	helpall*)		    help_extended				;;
-	helpeverything*)	    help_everything				;;
+	helpeverything*)	    help_extended				;;
 	help*)			    help					;;
-	podtype)		    requestedWorkload=$optvalue				;;
+	workload)		    requestedWorkload=$optvalue			;;
 	basename)		    basename=$optvalue				;;
 	objspercall)		    objsPerCall=$optvalue			;;
+	containers)		    containersPerPod=$optvalue			;;
 	containersperpod)	    containersPerPod=$optvalue			;;
 	deployments|depspername*)   depsPerNamespace=$optvalue			;;
 	namespaces)		    namespaces=$optvalue			;;
 	workload_size)		    set_workload_bytes "$optvalue"		;;
 	msgsize)		    msgSize=$optvalue				;;
 	secrets)		    secrets=$optvalue				;;
-	verbose)		    verbose=$optvalue				;;
-	doit)			    doit=$optvalue				;;
-	quiet)			    verbose=$((!optvalue))			;;
+	verbose)		    verbose=$(bool "$optvalue")			;;
+	doit)			    doit=$(bool "$optvalue")			;;
+	quiet)			    verbose=$((! $(bool "$optvalue")))		;;
 	processes|processesperpod)  processes_per_pod=$optvalue			;;
 	replicas)		    replicas=$optvalue				;;
 	parallel)		    parallel=$optvalue				;;
 	sleep)			    sleeptime=$optvalue				;;
-	podsleep)		    podsleeptime=$optvalue			;;
+	podsleep|podsleeptime)	    podsleeptime=$optvalue			;;
 	poddelay)		    poddelay=$optvalue				;;
 	workloadruntime)	    set_runtime "$optvalue"			;;
 	firstdeployment)	    firstDeployment=$optvalue			;;
@@ -697,15 +589,15 @@ function process_option() {
 	sleepnamespaces)	    sleepNamespaces=$optvalue			;;
 	sleepdeployments)	    sleepDeployments=$optvalue			;;
 	nodeselector)		    nodeSelector=$optvalue			;;
-	exitatend)		    exitAtEnd=$optvalue				;;
+	exitatend)		    exitAtEnd=$(bool "$optvalue")		;;
 	request)		    resource_requests+=("$optvalue")		;;
 	limit)			    resource_limits+=("$optvalue")		;;
-	waitsecrets)		    wait_for_secrets=$optvalue			;;
-	scalens)	   	    scale_ns=$optvalue				;;
-	scaledeployments)   	    scale_deployments=$optvalue			;;
+	waitsecrets)		    wait_for_secrets=$(bool "$optvalue")	;;
+	scalens)	   	    scale_ns=$(bool "$optvalue")		;;
+	scaledeployments)   	    scale_deployments=$(bool "$optvalue")	;;
 	deploymenttype)		    deploymentType=$optvalue			;;
 	runtimeclass)		    runtimeClass=$optvalue			;;
-	reportobjectcreation)	    reportObjectCreation=$optvalue		;;
+	reportobjectcreation)	    reportObjectCreation=$(bool "$optvalue")	;;
 	kata)			    runtimeClass=${kataRuntimeClass}		;;
 	volumes)		    emptydir_volumes=$optvalue			;;
 	reportformat)		    report_format=$optvalue			;;
@@ -713,8 +605,8 @@ function process_option() {
 	verbosereport)		    report_format=verbose			;;
 	jsonreport)		    report_format=json				;;
 	rawreport)		    report_format=raw				;;
-	precleanup)		    precleanup=$optvalue			;;
-	cleanup)		    cleanup=$optvalue				;;
+	precleanup)		    precleanup=$(bool "$optvalue")		;;
+	cleanup)		    cleanup=$(bool "$optvalue")			;;
 	logstrategy)		    logStrategy=$optvalue			;;
 	timeout)		    timeout=$optvalue				;;
 	emptydir)		    emptydirs+=("$optvalue")			;;
@@ -781,7 +673,7 @@ function process_option() {
 	fileblocksize)	    	    file_block_size=$(parse_size $optvalue)	;;
 	filesize)		    file_size=$(parse_size $optvalue)		;;
 	# Server options
-	serverdatarate)		    serverDataRate=$optvalue			;;
+	serverdatarate)		    targetDataRate=$optvalue			;;
 	# Unknown options
 	*) unknown_opts+=("$noptname ($noptname1)") ;;
     esac
@@ -838,11 +730,8 @@ function dispatch_generic() {
     local API=$2
     shift 2
     if type -t "${API}${workload}" >/dev/null ; then
-	if ((probeOnly)) ; then
-	    return 0
-	else
-	    "${API}${workload}" "$@"
-	fi
+	((probeOnly)) && return 0
+	 "${API}${workload}" "$@"
     else
 	return 1
     fi
@@ -873,12 +762,8 @@ function register_workload() {
 function supportsAPI() {
     local workload=$1
     local api=$2
-    if [[ -z "$workload" ]] ; then
-	return 1
-    fi
-    if [[ -z "${registered_workloads[$workload]:-}" ]] ; then
-	fatal "supportsAPI $workload $api: workload not known"
-    fi
+    [[ -z "$workload" ]] && return 1
+    [[ -z "${registered_workloads[$workload]:-}" ]] && fatal "supportsAPI $workload $api: workload not known"
     "${registered_workloads[$workload]}" -p "$workload" "$api"
 }
 
@@ -891,7 +776,7 @@ function workloadsSupportingAPI() {
 }
 
 function callAPI() {
-    [[ $# < 1 ]] && fatal "callAPI [-w workload] API args..."
+    (( $# < 1 )) && fatal "callAPI [-w workload] API args..."
     local workload
     if [[ $1 = '-w' ]] ; then
 	workload=$2
@@ -1490,7 +1375,9 @@ function createObjectFromFile() {
     for file in "$@" ; do
 	[[ -r "$file" ]] || fatal "Can't read file $file!"
     done
+    # shellcheck disable=SC2046
     (_OC create "$objtype" $(_ns) "$objname" "${@/#/--from-file=}" | echoIfDesired 1>&2) || exit 1
+    # shellcheck disable=SC2046
     (_OC label "$objtype" $(_ns) "$objname" 'clusterbusterbase=true' "clusterbuster-runUUID=${runUUID}" "${basename}-id=$runUUID" "${basename}=true" | echoIfDesired 1>&2) || exit 1
     if (( doit )) ; then
 	totalObjectsCreated=$((totalObjectsCreated+1))
@@ -1974,42 +1861,22 @@ function run_clusterbuster_1() {
 
 load_workloads
 
-while getopts ":B:b:c:D:d:Eef:HhKM:N:nP:p:QqR:r:Ss:T:t:V:vWw:XxYz:-:" opt ; do
+while getopts ":B:Eef:HhKnP:Qqv-:" opt ; do
     case "$opt" in
-	B) basename="$OPTARG"		    ;;
-	b) objsPerCall="$OPTARG"            ;;
-	c) containersPerPod="$OPTARG"       ;;
-	D) serverDataRate="$OPTARG"         ;;
-	d) depsPerNamespace="$OPTARG"       ;;
-	E) exitAtEnd=0			    ;;
-	e) exitAtEnd=1			    ;;
-	f) process_job_file "$OPTARG"	    ;;
-	h) help				    ;;
-	H) help_extended		    ;;
-	K) runtimeClass="$kataRuntimeClass" ;;
-	m) msgSize="$OPTARG"		    ;;
-	n) doit=0			    ;;
-	N) namespaces="$OPTARG"             ;;
-	p) parallel="$OPTARG"               ;;
-	P) requestedWorkload="$OPTARG"	    ;;
-	Q) reportObjectCreation=0	    ;;
-	q) verbose=0			    ;;
-	R) processes_per_pod="$OPTARG"	    ;;
-	r) replicas="$OPTARG"               ;;
-	S) scale_ns=1			    ;;
-	s) secrets="$OPTARG"                ;;
-	T) deploymentType="$OPTARG"	    ;;
-	t) set_runtime "$OPTARG"	    ;;
-	V) parse_volume_spec "$OPTARG"	    ;;
-	v) verbose=1			    ;;
-	w) sleeptime="$OPTARG"              ;;
-	W) wait_for_secrets=0		    ;;
-	x) affinity=1			    ;;
-	X) affinity=2			    ;;
-	Y) syncStart=$((1-syncStart))	    ;;
-	z) podsleeptime="$OPTARG"	    ;;
-	-) process_option "$OPTARG"	    ;;
-	*) help "$OPTARG"                   ;;
+	B) process_option "basename=$OPTARG"	;;
+	E) processOption "exitAtEnd=0"		;;
+	e) processOption "exitAtEnd=1"		;;
+	f) process_job_file "$OPTARG"		;;
+	h) help					;;
+	H) help_extended			;;
+	K) processOption "kata"			;;
+	n) processOption "doit=0"		;;
+	P) processOption "workload=$OPTARG"     ;;
+	Q) processOption "reportobjectcreate=0" ;;
+	q) processOption "verbose=0"		;;
+	v) processOption "verbose=1"		;;
+	-) process_option "$OPTARG"		;;
+	*) help "$OPTARG"			;;
     esac
 done
 [[ -n "${unknown_opts[*]:-}" ]] && help "${unknown_opts[@]}"
@@ -2073,15 +1940,15 @@ if [[ $logStrategy != poll && $logStrategy != listen ]] ; then
     fatal "Unknown --log_stragey (must be 'poll' or 'listen')"
 fi
 
-if [[ $serverDataRate != 0 && $serverDataRate != '' && $workloadRunTimeMax -eq 0 && bytesMax -eq 0 ]] ; then
-    bytes=$defaultBytes
-    bytesMax=$defaultBytes
+if [[ $targetDataRate != 0 && $targetDataRate != '' && $workloadRunTimeMax -eq 0 && bytesMax -eq 0 ]] ; then
+    bytes=$defaultBytesTransfer
+    bytesMax=$defaultBytesTransfer
 fi
 
 if [[ -n "${workload_aliases[${requestedWorkload,,}]:-}" ]] ; then
     requestedWorkload="${workload_aliases[${requestedWorkload,,}]:-}"
 else
-    help_extended "(Unknown pod type '$requestedWorkload')"
+    help_extended "(Unknown workload '$requestedWorkload')"
 fi
 
 if [[ -n ${1:-} ]] ; then

@@ -148,4 +148,12 @@ function helpOptionsFio() {
 EOF
 }
 
+function documentFio() {
+    cat <<'EOF'
+* fio: a front end for the Flexible I/O tester.
+  See https://fio.readthedocs.io/en/latest/fio_doc.html for more
+  details.
+EOF
+}
+
 register_workload Fio dispatch_generic
