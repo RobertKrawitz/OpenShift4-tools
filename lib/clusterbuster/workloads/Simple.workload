@@ -18,6 +18,13 @@
 # Simple workloads (pause pod, clusterbuster, logging)
 ################################################################
 
+declare -ig ___log_bytes_per_line=1
+declare -ig ___log_bytes_per_io=1
+declare -ig ___log_xfer_count=1
+declare -ig ___log_processes=1
+declare -ig ___log_delay_usec=0
+declare -ig ___log_xfertime=0
+
 function _createContainersClusterBusterYAML() {
     local namespace=$1
     local instance=$2
@@ -83,13 +90,13 @@ $(indent 2 containerResourcesYAML)
 $(indent 2 bootstrapCommandYAML logger.pl)
   - "$namespace"
   - "c${container}"
-  - "$log_bytes_per_line"
-  - "$log_bytes_per_io"
-  - "$log_xfer_count"
-  - "$log_processes"
-  - "$log_delay_usec"
-  - "$log_xfertime"
-  - "$log_exit_at_end"
+  - "$___log_bytes_per_line"
+  - "$___log_bytes_per_io"
+  - "$___log_xfer_count"
+  - "$___log_processes"
+  - "$___log_delay_usec"
+  - "$___log_xfertime"
+  - "$___log_exit_at_end"
 $(indent 2 volumeMountsYAML "$namespace" "${instance}" "$secretCount")
 EOF
     done
@@ -182,22 +189,22 @@ function helpOptionsLog() {
     Log Options:
        --log-bytes-per-line=<bytes_per_line>
                         Number of bytes per line to log.
-                        Default $log_bytes_per_line.
+                        Default $___log_bytes_per_line.
        --log-bytes-per-io=<bytes_per_io>
                         Number of bytes per message to log.
-                        Rounded up to full lines.  Default $log_bytes_per_io.
+                        Rounded up to full lines.  Default $___log_bytes_per_io.
        --log-xfer-count=<count>
                         Number of messages to log (in I/Os)
-                        Default $log_xfer_count.  If zero, log
+                        Default $___log_xfer_count.  If zero, log
                         continuously (subject to log-xfertime).
        --log-processes=<processes>
                         Number of processes per pod.
-                        Default $log_processes.
+                        Default $___log_processes.
        --log-delay-usec=<usecs>
                         Time in microseconds to delay between I/O.
        --log-xfertime=<time>
                         Number of seconds to log.
-                        Default $log_xfertime.  If zero, log continuously
+                        Default $___log_xfertime.  If zero, log continuously
                         (subject to log-xfer-count
 EOF
 }
@@ -221,6 +228,26 @@ function documentLog() {
     cat <<'EOF'
 * log: a pod that emits log messages at a controllable rate.
 EOF
+}
+
+function processOptionsLog() {
+    local opt
+    local -a unknown_opts=()
+    for opt in "$@" ; do
+	read -r noptname1 noptname optvalue <<< "$(process_option "$opt")"
+	case "$noptname1" in
+	    logbytesperline)	___log_bytes_per_line=$optvalue	;;
+	    logbytesperio)	___log_bytes_per_io=$optvalue	;;
+	    logxfercount)	___log_xfer_count=$optvalue	;;
+	    logprocesses)	___log_processes=$optvalue	;;
+	    logdelayusec)	___log_delay_usec=$optvalue	;;
+	    logxfertime)	___log_xfertime=$optvalue	;;
+	    *) 			unknown_opts+=("$noptname ($noptname1)") ;;
+	esac
+    done
+    if [[ -n "${unknown_opts[*]:-}" ]] ; then
+	help "${unknown_opts[@]}"
+    fi
 }
 
 register_workload PausePod dispatch_generic pause

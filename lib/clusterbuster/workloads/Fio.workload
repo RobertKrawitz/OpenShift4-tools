@@ -18,6 +18,9 @@
 # FIO workload
 ################################################################
 
+declare -Ag ___fio_generic_options=()
+declare -g ___fio_job_file
+
 function _createContainersFioYAML() {
     local namespace=$1
     local instance=$2
@@ -57,7 +60,7 @@ $(indent 2 bootstrapCommandYAML fio.pl)
   - "$log_host"
   - "$log_port"
   - "$configmapMountDir"
-  - "${fio_generic_options[*]:-}"
+  - "${_fio_generic_options[*]:-}"
 $(indent 2 volumeMountsYAML "$namespace" "${instance}" "$secretCount")
 EOF
     done
@@ -135,6 +138,7 @@ function listConfigMapsFio() {
     cat <<EOF
 ${__libdir__}/fio.pl
 ${__libdir__}/sync.pl
+${___fio_job_file}
 EOF
 }
 
@@ -154,6 +158,32 @@ function documentFio() {
   See https://fio.readthedocs.io/en/latest/fio_doc.html for more
   details.
 EOF
+}
+
+function processOptionsFio() {
+    local opt
+    local -a unknown_opts=()
+    for opt in "$@" ; do
+	read -r noptname1 noptname optvalue <<< "$(parse_option "$opt")"
+	case "$noptname1" in
+	    fiogenericoptions)	    ___fio_generic_options+=(${optvalue//,/ })     ;;
+	    fiojobfile)
+		if [[ ! -f "$optvalue" ]] ; then
+		    echo "Job file $optvalue does not exist"
+		    help
+		fi
+		___fio_job_file=$optvalue
+		;;
+	    *) 			unknown_opts+=("$noptname ($noptname1)") ;;
+	esac
+    done
+    if [[ -n "${unknown_opts[*]:-}" ]] ; then
+	help "${unknown_opts[@]}"
+    fi
+}
+
+function supportsReportingFio() {
+    :
 }
 
 register_workload Fio dispatch_generic

@@ -17,13 +17,6 @@
 # Unfortunate that there's no way to tell shellcheck to always source
 # specific files.
 # shellcheck disable=SC2034
-# shellcheck source-path=./lib/clusterbuster/workloads
-# shellcheck source=Fio.workload
-# shellcheck source=Simple.workload
-# shellcheck source=Files.workload
-# shellcheck source=Sysbench.workload
-# shellcheck source=Server.workload
-# shellcheck source=Soaker.workload
 
 set -u
 
@@ -64,7 +57,6 @@ declare -i wait_for_secrets=1
 declare -i bytesTransfer=0
 declare -i bytesTransferMax=0
 declare -i defaultBytesTransfer=1000000000
-declare -i msgSize=32768
 declare -i poddelay=0
 declare -i workloadRunTime=0
 declare -i workloadRunTimeMax=0
@@ -102,6 +94,7 @@ declare -i cleanup=0
 declare -i timeout=-1
 declare pathdir=${0%/*}
 declare -a unknown_opts=()
+declare -a unknown_opt_names=()
 declare -i totalObjectsCreated=0
 # <name, filename with contents>
 declare -a configMapFiles=()
@@ -114,6 +107,7 @@ declare -i pbenchControllerPort=0
 declare pbenchControllerAddress=
 declare -i processes_per_pod=1
 declare -i emptydir_volumes=0
+declare targetDataRate=''
 
 declare -r syncFlagFile="/tmp/syncfile";
 # shellcheck disable=2155
@@ -122,32 +116,6 @@ declare -r runUUID=$(uuidgen -r)
 declare kataRuntimeClass=kata
 declare imagePullPolicy=Always
 declare containerImage=quay.io/rkrawitz/bench-army-knife
-
-# Fio options
-declare -a fio_generic_options=()
-
-# Sysbench options
-declare -a sysbench_generic_options=()
-declare -a sysbench_fileio_options=()
-declare -A sysbench_fileio_tests=()
-declare sysbench_fileio_test_string='seqwr,seqrd,rndwr,rndrd'
-
-# Logger options
-declare -i log_bytes_per_line=1
-declare -i log_bytes_per_io=1
-declare -i log_xfer_count=1
-declare -i log_processes=1
-declare -i log_delay_usec=0
-declare -i log_xfertime=0
-
-# Files options
-declare -i file_size=1024
-declare -i file_block_size=0
-declare -i file_dirs_per_volume=1
-declare -i files_per_dir=1
-
-# Server options
-declare targetDataRate=0
 
 declare accumulateddata=
 declare -a plurals=('s' '')
@@ -191,29 +159,31 @@ function print_workloads() {
     local prefix="${1:-}"
     local workloads
     while read -r workload ; do
-	if [[ -n "$workload" ]] ; then
-	    echo "$prefix$workload"
-	fi
+	echo "$prefix$workload"
     done <<< "$(IFS=$'\n'; echo "${!registered_workloads[*]}" |sort)"
+}
+
+function print_workloads_supporting_reporting() {
+    local prefix="${1:-}"
+    local workloads
+    while read -r workload ; do
+	echo "$prefix$workload"
+    done <<< "$(workloadsSupportingAPI supportsReporting)"
 }
 
 function _help_options_workloads() {
     local workload
     while read -r workload ; do
-	if [[ -n "$workload" ]] ; then
-	    echo
-	    callAPI -w "$workload" helpOptions
-	fi
+	echo
+	callAPI -w "$workload" helpOptions
     done <<< "$(workloadsSupportingAPI helpOptions)"
 }
 
 function _document_workloads() {
     local workload
     while read -r workload ; do
-	if [[ -n "$workload" ]] ; then
-	    echo
-	    callAPI -w "$workload" document
-	fi
+	echo
+	callAPI -w "$workload" document
     done <<< "$(workloadsSupportingAPI document)"
 }
 
@@ -263,8 +233,9 @@ Extended Options:
        --workload=type  Specify the workload (-P) (mandatory)
        --basename=name  Specify the base name for any namespaces (-B)
        --namespaces=N   Number of namespaces
-       --sync           Sync start of data transfer or CPU load
-                        (default yes)
+       --jobfile=jobfile
+			Process job file (-f)
+       --sync           Synchronize start of workload instances (default yes)
        --precleanup     Clean up any prior objects
        --cleanup        Clean up generated objects
        --timeout=N      Time out reporting after N seconds
@@ -285,8 +256,9 @@ Extended Options:
                         - raw
                         - summary
                         - verbose
-       --report         Print summary report (client/server, soaker,
-                        fio, sysbench only) (deprecated)
+                        The following workloads support reporting:
+$(print_workloads_supporting_reporting '                        - ')
+       --report         Print summary report (deprecated)
        --verbose-report Print detailed report (deprecated)
        --json-report    Print JSON report (deprecated)
        --raw-report     Print unprocessed report (deprecated)
@@ -303,7 +275,8 @@ Extended Options:
        --bytestransfer=N[,M]
                         Number of bytes for workloads operating on
                         fixed amounts of data.
-       --datarate=N     Target data rate for workloads operating at fixed
+       --targetdatarate=N
+                        Target data rate for workloads operating at fixed
                         data rates.  May have suffixes of K, Ki,
                         M, Mi, G, Gi, T, or Ti.
        --workloadruntime=N
@@ -405,6 +378,8 @@ Extended Options:
                         Use the specified address to connect to the controller.
        --pbench_controller_port=port
                         Use the specified port to connect to the controller.
+
+Workload-specific options:
 $(_help_options_workloads)
 
     Advanced options (generally not required):
@@ -445,6 +420,29 @@ function help_extended() {
 ################################################################
 # Option processing
 ################################################################
+
+function parse_size() {
+    if [[ $1 =~ ([[:digit:]]+)([[:alpha:]]*) ]] ; then
+	local size=${BASH_REMATCH[1]}
+	local size_modifier=${BASH_REMATCH[2],,}
+	local -i size_multiplier=1
+	case "$size_modifier" in
+	    ''|b)          size_multiplier=1                ;;
+	    k|kb|kilobytes)  size_multiplier=1000           ;;
+	    ki|kib|kibibytes) size_multiplier=1024          ;;
+	    m|mb|megabytes)  size_multiplier=1000000        ;;
+	    mi|mib|mebibytes) size_multiplier=1048576       ;;
+	    g|gb|gigabytes)  size_multiplier=1000000000     ;;
+	    gi|gib|gibibytes) size_multiplier=1073741824    ;;
+	    t|tb|terabytes)  size_multiplier=1000000000000  ;;
+	    ti|tib|tebibytes) size_multiplier=1099511627776 ;;
+	    *) fatal "Cannot parse size $optvalue"          ;;
+	esac
+	echo $((size*size_multiplier))
+    else
+	fatal "Cannot parse filesize $optvalue"
+    fi
+}
 
 function set_workload_bytes() {
     local sizespec=$1
@@ -497,37 +495,15 @@ function parse_volume_spec() {
     volume_scoped_names["$vname"]=$vscoped_name
 }
 
-function parse_size() {
-    if [[ $1 =~ ([[:digit:]]+)([[:alpha:]]*) ]] ; then
-	local size=${BASH_REMATCH[1]}
-	local size_modifier=${BASH_REMATCH[2],,}
-	local -i size_multiplier=1
-	case "$size_modifier" in
-	    ''|b)          size_multiplier=1                ;;
-	    k|kb|kilobytes)  size_multiplier=1000           ;;
-	    ki|kib|kibibytes) size_multiplier=1024          ;;
-	    m|mb|megabytes)  size_multiplier=1000000        ;;
-	    mi|mib|mebibytes) size_multiplier=1048576       ;;
-	    g|gb|gigabytes)  size_multiplier=1000000000     ;;
-	    gi|gib|gibibytes) size_multiplier=1073741824    ;;
-	    t|tb|terabytes)  size_multiplier=1000000000000  ;;
-	    ti|tib|tebibytes) size_multiplier=1099511627776 ;;
-	    *) fatal "Cannot parse size $optvalue"          ;;
-	esac
-	echo $((size*size_multiplier))
-    else
-	fatal "Cannot parse filesize $optvalue"
-    fi
+function bool() {
+    local value=${1:-}
+    case "${value,,}" in
+	''|1|y|yes|tru*) echo 1 ;;
+	*)               echo 0 ;;
+    esac
 }
 
-function process_option() {
-    function bool() {
-	local value=${1:-}
-	case "${value,,}" in
-	    ''|1|y|yes|tru*) echo 1 ;;
-	    *)               echo 0 ;;
-	esac
-    }
+function parse_option() {
     local option=$1
     option=${option// /}
     [[ -n "$option" ]] || return
@@ -547,6 +523,14 @@ function process_option() {
 	fi
     fi
     local noptname1=${noptname//_/}
+    echo "$noptname1 $noptname $optvalue"
+}
+
+function process_option() {
+    local noptname
+    local noptname1
+    local optvalue
+    read -r noptname1 noptname optvalue <<< "$(parse_option "$1")"
     # shellcheck disable=SC2206
     # shellcheck disable=SC2119
     case "$noptname1" in
@@ -561,7 +545,6 @@ function process_option() {
 	deployments|depspername*)   depsPerNamespace=$optvalue			;;
 	namespaces)		    namespaces=$optvalue			;;
 	workload_size)		    set_workload_bytes "$optvalue"		;;
-	msgsize)		    msgSize=$optvalue				;;
 	secrets)		    secrets=$optvalue				;;
 	verbose)		    verbose=$(bool "$optvalue")			;;
 	doit)			    doit=$(bool "$optvalue")			;;
@@ -618,7 +601,9 @@ function process_option() {
 	pbenchcontrollerport)	    pbenchControllerPort=$optvalue		;;
 	pbenchcontrolleraddress)    pbenchControllerAddress=$optvalue		;;
 	workdir)		    common_workdir=$optvalue			;;
+	targetdatarate)		    targetDataRate=$(parse_size "$optvalue")	;;
 	uuid)			    runUUID=$optvalue				;;
+	jobfile)		    process_job_file "$optvalue"		;;
 	affinity)
 	    case "$optvalue" in
 		1|'') affinity=1      ;;
@@ -646,41 +631,11 @@ function process_option() {
 		help
 	    fi
 	    ;;
-	# Fio options
-	fiogenericoptions)	    fio_generic_options+=(${optvalue//,/ })     ;;
-	fiojobfile)
-	    if [[ ! -f "$optvalue" ]] ; then
-	       echo "Job file $optvalue does not exist"
-	       help
-	    fi
-	    configMapFiles+=("$optvalue")
-	    ;;
-	# Sysbench options
-	sysbenchgeneraloptions)     sysbench_generic_options+=(${optvalue//,/ });;
-	sysbenchgenericoptions)     sysbench_generic_options+=(${optvalue//,/ });;
-	sysbenchfileiooptions)      sysbench_fileio_options+=(${optvalue//,/ }) ;;
-	sysbenchfileiotests)	    sysbench_fileio_test_string=$optvalue	;;
-	# Logging options
-	logbytesperline)	    log_bytes_per_line=$optvalue		;;
-	logbytesperio)		    log_bytes_per_io=$optvalue			;;
-	logxfercount)		    log_xfer_count=$optvalue			;;
-	logprocesses)		    log_processes=$optvalue			;;
-	logdelayusec)		    log_delay_usec=$optvalue			;;
-	logxfertime)		    log_xfertime=$optvalue			;;
-	# Files options
-	dirspervolume)	    	    file_dirs_per_volume=$optvalue		;;
-	filesperdir)		    files_per_dir=$optvalue			;;
-	fileblocksize)	    	    file_block_size=$(parse_size $optvalue)	;;
-	filesize)		    file_size=$(parse_size $optvalue)		;;
-	# Server options
-	serverdatarate)		    targetDataRate=$optvalue			;;
 	# Unknown options
-	*) unknown_opts+=("$noptname ($noptname1)") ;;
+	*)
+	    unknown_opts+=("$1")
+	    unknown_opt_names+=("$noptname ($noptname1)") ;;
     esac
-    if [[ $deploymentType != pod && $deploymentType != deployment ]] ; then
-	echo "-T/--deployment_type must be either pod or deployment"
-	help
-    fi
 }
 
 function process_job_file() {
@@ -689,8 +644,10 @@ function process_job_file() {
 	fatal "Job file $jobfile cannot be read"
     fi
     while IFS= read -r line ; do
-	if [[ -z "$line" ]] ; then continue; fi
 	line=${line%%#*}
+	line=${line## }
+	line=${line##	}
+	if [[ -z "$line" ]] ; then continue; fi
 	process_option "$line"
     done < "$jobfile"
 }
@@ -778,14 +735,25 @@ function workloadsSupportingAPI() {
 function callAPI() {
     (( $# < 1 )) && fatal "callAPI [-w workload] API args..."
     local workload
-    if [[ $1 = '-w' ]] ; then
-	workload=$2
-	shift
-    else
-	workload="$requestedWorkload"
-    fi
+    local -i safe=0
+    local OPTIND=0
+    workload="$requestedWorkload"
+    while getopts 'w:s' opt "$@" ; do
+	case "$opt" in
+	    w) workload=$OPTARG ;;
+	    s) safe=1		;;
+	    *)			;;
+	esac
+    done
+    shift $((OPTIND - 1))
     local api=$2
-    supportsAPI "$workload" "$api" && "${registered_workloads[$workload]}" "$@"
+    if supportsAPI "$workload" "$api" ; then
+	"${registered_workloads[$workload]}" "$@"
+    elif ((safe)) ; then
+	return 0
+    else
+	return 1
+    fi
 }
 
 function jsonEncodeSettings() {
@@ -874,7 +842,7 @@ function monitor_pods() {
     local arg
     local -i timeout=-1
     local -i ppid=0
-    OPTIND=0
+    local OPTIND=0
     while getopts "t:p:" arg "$@" ; do
 	case "$arg" in
 	    p) ppid="$OPTARG"    ;;
@@ -915,7 +883,7 @@ function monitor_pods() {
 
 function run_logger() {
     local -a pids_to_kill=()
-    OPTIND=0
+    local OPTIND=0
     while getopts "p:" arg "$@" ; do
 	case "$arg" in
 	    p) pids_to_kill+=("$OPTARG") ;;
@@ -1410,7 +1378,7 @@ function createSecrets() {
     local -i i
     local -i j
     (( secrets )) || return;
-    for i in $(seq $firstDeployment $((depsPerNamespace + firstDeployment - 1))) ; do
+    for i in $(seq "$firstDeployment" $((depsPerNamespace + firstDeployment - 1))) ; do
 	for j in $(seq 0 $((secrets - 1))) ; do
 	    createObject <<EOF
 apiVersion: v1
@@ -1606,6 +1574,8 @@ function find_first_deployment() {
 	    if [[ -n "$deployment" ]] ; then
 		deployment=${deployment#${ns}-}
 		deployment=${deployment%-*}
+		echo _OC get deployments -l "$basename" -A --no-headers 1>&2
+		echo "|$basename|$deployment|$firstDeployment|" 1>&2
 		if (( deployment + 1 > firstDeployment )) ; then
 		    firstDeployment=$((deployment + 1))
 		fi
@@ -1727,7 +1697,7 @@ function create_secrets() {
 	local nsd
 	for i in $(seq 0 $((namespaces - 1))) ; do
 	    ns="secret/secret-${basename}-${namespaces_to_create[$i]##*-}"
-	    for j in $(seq $firstDeployment $((depsPerNamespace + firstDeployment - 1))) ; do
+	    for j in $(seq "$firstDeployment" $((depsPerNamespace + firstDeployment - 1))) ; do
 		nsd="${ns}-$j"
 		for k in $(seq 0 $((secrets - 1))) ; do
 		    expected_secrets["${nsd}-$k"]=1
@@ -1861,25 +1831,31 @@ function run_clusterbuster_1() {
 
 load_workloads
 
-while getopts ":B:Eef:HhKnP:Qqv-:" opt ; do
+while getopts ":B:Eef:HhnP:Qqv-:" opt ; do
     case "$opt" in
-	B) process_option "basename=$OPTARG"	;;
-	E) processOption "exitAtEnd=0"		;;
-	e) processOption "exitAtEnd=1"		;;
-	f) process_job_file "$OPTARG"		;;
-	h) help					;;
-	H) help_extended			;;
-	K) processOption "kata"			;;
-	n) processOption "doit=0"		;;
-	P) processOption "workload=$OPTARG"     ;;
-	Q) processOption "reportobjectcreate=0" ;;
-	q) processOption "verbose=0"		;;
-	v) processOption "verbose=1"		;;
-	-) process_option "$OPTARG"		;;
-	*) help "$OPTARG"			;;
+	B) process_option "basename=$OPTARG"	 ;;
+	E) process_option "exitAtEnd=0"		 ;;
+	e) process_option "exitAtEnd=1"		 ;;
+	f) process_job_file "$OPTARG"		 ;;
+	h) help					 ;;
+	H) help_extended			 ;;
+	n) process_option "doit=0"		 ;;
+	P) process_option "workload=$OPTARG"     ;;
+	Q) process_option "reportobjectcreate=0" ;;
+	q) process_option "verbose=0"		 ;;
+	v) process_option "verbose=1"		 ;;
+	-) process_option "$OPTARG"		 ;;
+	*) help "$OPTARG"			 ;;
     esac
 done
-[[ -n "${unknown_opts[*]:-}" ]] && help "${unknown_opts[@]}"
+
+if [[ -n "${workload_aliases[${requestedWorkload,,}]:-}" ]] ; then
+    requestedWorkload="${workload_aliases[${requestedWorkload,,}]:-}"
+else
+    help_extended "(Unknown workload '$requestedWorkload')"
+fi
+
+callAPI -s "$requestedWorkload" "processOptions" "${unknown_opts[@]}" || help "${unknown_opt_names[@]}"
 
 if (( namespaces <= 0 )) ; then
     namespaces=1
@@ -1900,12 +1876,13 @@ fi
 
 shift $((OPTIND - 1))
 
-if [[ -z $OC && $doit -gt 0 ]] ; then
-    fatal "Cannot find oc or kubectl command, exiting!"
+if [[ $deploymentType != pod && $deploymentType != deployment ]] ; then
+    echo "--deployment_type must be either pod or deployment"
+    help
 fi
 
-if (( msgSize <= 0 )) ; then
-    fatal "Message size must be positive, exiting!"
+if [[ -z $OC && $doit -gt 0 ]] ; then
+    fatal "Cannot find oc or kubectl command, exiting!"
 fi
 
 if [[ -z "$pbenchControllerAddress" && $pbenchControllerPort -ne 0 ]] ; then
@@ -1916,9 +1893,10 @@ if [[ -n "$pbenchControllerAddress" && $pbenchControllerPort -eq 0 ]] ; then
     fatal "Both pbench_controller_address and pbench_controller_port must be specified"
 fi
 
-for ftest in ${sysbench_fileio_test_string//,/ } ; do
-    sysbench_fileio_tests[$ftest]=1
-done
+logStrategy=${logStrategy,,}
+if [[ $logStrategy != poll && $logStrategy != listen ]] ; then
+    fatal "Unknown --log_strategy (must be 'poll' or 'listen')"
+fi
 
 resource_validation_failed=0
 validate_resource resource_request "${resource_requests[@]}" || resource_validation_failed=1
@@ -1927,29 +1905,9 @@ if ((resource_validation_failed)) ; then
     exit 1
 fi
 
-if (( file_block_size <= 0)) ; then
-    file_block_size=file_size
-fi
-
 for i in $(seq 0 $((emptydir_volumes-1)) ) ; do
     emptydirs+=("/mnt/volume-$i")
 done
-
-logStrategy=${logStrategy,,}
-if [[ $logStrategy != poll && $logStrategy != listen ]] ; then
-    fatal "Unknown --log_stragey (must be 'poll' or 'listen')"
-fi
-
-if [[ $targetDataRate != 0 && $targetDataRate != '' && $workloadRunTimeMax -eq 0 && bytesMax -eq 0 ]] ; then
-    bytes=$defaultBytesTransfer
-    bytesMax=$defaultBytesTransfer
-fi
-
-if [[ -n "${workload_aliases[${requestedWorkload,,}]:-}" ]] ; then
-    requestedWorkload="${workload_aliases[${requestedWorkload,,}]:-}"
-else
-    help_extended "(Unknown workload '$requestedWorkload')"
-fi
 
 if [[ -n ${1:-} ]] ; then
     basename="$1"

@@ -141,4 +141,8 @@ function documentSoaker() {
 EOF
 }
 
+function supportsReportingSoaker() {
+    :
+}
+
 register_workload Soaker dispatch_generic cpu cpusoak soak cpusoaker

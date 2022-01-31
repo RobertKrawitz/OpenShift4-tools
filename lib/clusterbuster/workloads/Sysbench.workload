@@ -18,6 +18,12 @@
 # Sysbench workload
 ################################################################
 
+# Sysbench options
+declare -ag ___sysbench_generic_options=()
+declare -ag ___sysbench_fileio_options=()
+declare -Ag ___sysbench_fileio_tests=()
+declare -g ___sysbench_fileio_test_string='seqwr,seqrd,rndwr,rndrd'
+
 function _createContainersSysbenchYAML() {
     local namespace=$1
     local instance=$2
@@ -56,10 +62,10 @@ $(indent 2 bootstrapCommandYAML sysbench.pl)
   - "$syncPortNum"
   - "$log_host"
   - "$log_port"
-  - "${sysbench_generic_options[*]:-}"
+  - "${___sysbench_generic_options[*]:-}"
   - "fileio"
-  - "${sysbench_fileio_options[*]:-}"
-  - "${!sysbench_fileio_tests[*]}"
+  - "${___sysbench_fileio_options[*]:-}"
+  - "${!___sysbench_fileio_tests[*]}"
 $(indent 2 volumeMountsYAML "$namespace" "$instance" "$secretCount")
 EOF
     done
@@ -119,7 +125,7 @@ function createDeploymentSysbench() {
     local log_host=${6:-}
     local -i log_port=${7:-0}
     local -i instance
-    createSyncServiceIfNeeded "$namespace" "$(( (${#sysbench_fileio_tests[@]} * 3) + 1))" "$((containersPerPod * replicas * count))"
+    createSyncServiceIfNeeded "$namespace" "$(( (${#___sysbench_fileio_tests[@]} * 3) + 1))" "$((containersPerPod * replicas * count))"
     for instance in $(seq $firstDeployment $((count + firstDeployment - 1))) ; do
 	_createSysbenchDeployment "$namespace" "$instance" "$secretCount"  "$replicas" "$containersPerPod" "$log_host" "$log_port"
     done
@@ -145,6 +151,8 @@ function helpOptionsSysbench() {
     Sysbench General Options:
        --sysbench-general-options=<options>
                         Space or comma separated general Sysbench options
+       --sysbench-generic-options=<options>
+                        Space or comma separated generic Sysbench options
        --sysbench-fileio-tests=<modes>
                         Space of comma separated list of file test modes
                         to use (seqwr, seqrewr, seqrd, rndrd, rndwr, rndrw)
@@ -161,6 +169,33 @@ function documentSysbench() {
   Currently supports only file I/O operations.
   See https://github.com/akopytov/sysbench
 EOF
+}
+
+function processOptionsSysbench() {
+    local opt
+    local -a unknown_opts=()
+    local ftest
+    for opt in "$@" ; do
+	read -r noptname1 noptname optvalue <<< "$(parse_option "$opt")"
+	case "$noptname1" in
+	# Sysbench options
+	    sysbenchgeneraloptions)     ___sysbench_generic_options+=(${optvalue//,/ })	;;
+	    sysbenchgenericoptions)     ___sysbench_generic_options+=(${optvalue//,/ })	;;
+	    sysbenchfileiooptions)      ___sysbench_fileio_options+=(${optvalue//,/ })	;;
+	    sysbenchfileiotests)	___sysbench_fileio_test_string=$optvalue	;;
+	    *) 				unknown_opts+=("$noptname ($noptname1)")	;;
+	esac
+    done
+    if [[ -n "${unknown_opts[*]:-}" ]] ; then
+	help "${unknown_opts[@]}"
+    fi
+    for ftest in ${___sysbench_fileio_test_string//,/ } ; do
+	___sysbench_fileio_tests[$ftest]=1
+    done
+}
+
+function supportsReportingSysbench() {
+    :
 }
 
 register_workload Sysbench dispatch_generic

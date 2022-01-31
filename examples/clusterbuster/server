@@ -3,7 +3,7 @@
 
 cleanup
 workload=server
-server-data-rate=-1
+target-data-rate=-1
 workloadruntime=10
 report-format=raw
 precleanup=1

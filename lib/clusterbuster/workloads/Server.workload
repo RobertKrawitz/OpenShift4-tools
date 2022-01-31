@@ -18,12 +18,13 @@
 # Client/server workload
 ################################################################
 
+declare -ig ___msgSize=32768
+
 function _createServerContainerYAML() {
     local namespace=$1
     local instance=$2
     local secretCount=$3
-    local msgSize=$4
-    local expectedClients=$5
+    local expectedClients=$4
     cat <<EOF
 - name: server
   image: "$containerImage"
@@ -36,7 +37,7 @@ $(indent 2 bootstrapCommandYAML server.pl)
   - "$baseoffset"
   - "$port"
   - "${namespace}-${instance}-server"
-  - "$msgSize"
+  - "$___msgSize"
   - "$(ts)"
   - "$expectedClients"
 $(indent 2 volumeMountsYAML "$namespace" "$instance" "$secretCount")
@@ -100,6 +101,10 @@ function _createClientContainerYAML() {
     local syncService=
     local syncPortNum=
     IFS=: read -r syncService syncPortNum <<< $(getSync)
+    if [[ $targetDataRate != 0 && $targetDataRate != '' && $workloadRunTimeMax -eq 0 && bytesTransferMax -eq 0 ]] ; then
+	bytesTransfer=$defaultBytesTransfer
+	bytesTransferMax=$defaultBytesTransfer
+    fi
     for container in $(seq 0 $((containersPerPod - 1))) ; do
 	cat <<EOF
 - name: c${container}
@@ -121,7 +126,7 @@ $(indent 2 bootstrapCommandYAML client.pl)
   - "$targetDataRate"
   - "$bytesTransfer"
   - "$bytesTransferMax"
-  - "$msgSize"
+  - "$___msgSize"
   - "$workloadRunTime"
   - "$workloadRunTimeMax"
   - "$(ts)"
@@ -224,9 +229,9 @@ function createDeploymentServer() {
     for instance in $(seq $firstDeployment $((count + firstDeployment - 1))) ; do
 	createService "$namespace" "${namespace}-server-${instance}" "$port"
 	if [[ $deploymentType = pod ]] ; then
-	    _createServerDeployment "$namespace" "$instance" "$secretCount" "$msgSize" "$((containersPerPod * replicas))"
+	    _createServerDeployment "$namespace" "$instance" "$secretCount" "$((containersPerPod * replicas))"
 	else
-	    _createServerDeployment "$namespace" "$instance" "$secretCount" "$msgSize" "-1"
+	    _createServerDeployment "$namespace" "$instance" "$secretCount" "-1"
 	fi
 	_createClientDeployment "$namespace" "$instance" "$secretCount" "$replicas" "$containersPerPod" "$log_host" "$log_port"
     done
@@ -260,6 +265,29 @@ function documentServer() {
 * server: a client-server workload with optional bidirectional data
   trasfer, optionally at a specified data rate.
 EOF
+}
+
+function processOptionsServer() {
+    local opt
+    local -a unknown_opts=()
+    local ftest
+    for opt in "$@" ; do
+	read -r noptname1 noptname optvalue <<< "$(parse_option "$opt")"
+	case "$noptname1" in
+	    msgSize) ___msgSize=$optvalue ;;
+	    *) unknown_opts+=("$noptname ($noptname1)")	;;
+	esac
+    done
+    if [[ -n "${unknown_opts[*]:-}" ]] ; then
+	help "${unknown_opts[@]}"
+    fi
+    if (( ___msgSize <= 0 )) ; then
+	fatal "Message size must be positive, exiting!"
+    fi
+}
+
+function supportsReportingServer() {
+    :
 }
 
 register_workload Server dispatch_generic
