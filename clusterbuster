@@ -765,7 +765,11 @@ function createDeployment() {
 }
 
 function calculateLogsRequired() {
-    callAPI "$requestedWorkload" calculateLogsRequired "$@"
+    if supportsAPI "$requestedWorkload" supportsReporting ; then
+	callAPI "$requestedWorkload" calculateLogsRequired "$@"
+    else
+	echo 1
+    fi
 }
 
 function listConfigMaps() {
@@ -972,7 +976,7 @@ function _get_logs() {
     echo '{"kind": "clusterbusterResults",'
     echo "\"runUUID\": \"$runUUID\","
     echo "\"workload\": \"$requestedWorkload\","
-    echo '"apiResources":'
+    echo '"api_objects":'
     oc get all -A -l "clusterbuster-id=$runUUID" -ojson | jq -r '[foreach .items[]? as $item ([[],[]];0; {kind: $item.kind, namespace: $item.metadata.namespace, name: $item.metadata.name, nodeName: $item.spec.nodeName})]'
     echo ', "Results": ['
     "$@"
@@ -987,9 +991,14 @@ function get_logs() {
 	raw)     extra_arg=-R ;;
 	*)                    ;;
     esac
-    log_cmd=get_logs_poll
-    if [[ ${logStrategy,,} = 'listen'* ]] ; then
-	log_cmd=get_logs_listen
+    local log_cmd
+    if supportsAPI "$requestedWorkload" supportsReporting ; then
+	log_cmd=get_logs_poll
+	if [[ ${logStrategy,,} = 'listen'* ]] ; then
+	    log_cmd=get_logs_listen
+	fi
+    else
+	log_cmd=true
     fi
 #    _get_logs "$log_cmd" "$@" | "${pathdir:-.}/clusterbuster-connstat" -l "${basename}-id=$runUUID" -s -f - "$extra_arg"
     _get_logs "$log_cmd" "$@"
