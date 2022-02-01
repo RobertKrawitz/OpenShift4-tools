@@ -111,6 +111,7 @@ declare -i take_prometheus_snapshot=0
 declare prometheusStartingTimestamp=
 declare prometheusEndingTimestamp=
 declare targetDataRate=''
+declare metrics_file=
 
 declare -r syncFlagFile="/tmp/syncfile";
 # shellcheck disable=2155
@@ -250,11 +251,6 @@ Extended Options:
                         generate a random-based UUID.
        --exit_at_end    Exit upon completion of workload (-e/-E)
        --verbose        Print verbose log messages (-v)
-       --artifactdir=<dir>
-                        Save artifacts to <dir>
-       --prometheus-snapshot
-                        Take a Prometheus snapshot and save to the
-                        artifacts directory
 
     Reporting Options:
        --report-format=<format>
@@ -262,11 +258,21 @@ Extended Options:
                         report types is by type.  Currently only "raw"
                         works.
                         - json
+                        - promextract
                         - raw
                         - summary
                         - verbose
                         The following workloads support reporting:
 $(print_workloads_supporting_reporting '                        - ')
+       --artifactdir=<dir>
+                        Save artifacts to <dir>
+       --prometheus-snapshot
+                        Take a Prometheus snapshot and save to the
+                        artifacts directory
+       --metrics-file=<file>
+                        benchmark-runner compatible metrics file
+                        for metrics extraction if promextract
+                        reporting is in use.
        --report         Print summary report (deprecated)
        --verbose-report Print detailed report (deprecated)
        --json-report    Print JSON report (deprecated)
@@ -615,6 +621,7 @@ function process_option() {
 	jobfile)		    process_job_file "$optvalue"		;;
 	artifactdir)		    artifactdir="$optvalue"			;;
 	prometheussnapshot)	    take_prometheus_snapshot=$(bool "$optvalue");;
+	metricsfile)		    metrics_file="$optvalue"			;;
 	affinity)
 	    case "$optvalue" in
 		1|'') affinity=1      ;;
@@ -837,8 +844,11 @@ function createSyncServiceIfNeeded() {
 ################################################################
 
 function get_prometheus_pod_timestamp() {
-    local rawtime
-    rawtime=$(_OC exec -n openshift-monitoring prometheus-k8s-0 -c prometheus -- /bin/sh -c 'date +%s')
+    _OC exec -n openshift-monitoring prometheus-k8s-0 -c prometheus -- /bin/sh -c 'date +%s'
+}
+
+function readable_timestamp() {
+    local rawtime=$1
     date -u '+%Y_%m_%dT%H_%M_%S%z' "--date=@$rawtime"
 }
 
@@ -848,16 +858,16 @@ function start_prometheus_snapshot() {
     _OC wait --for=condition=Ready -n openshift-monitoring pod/prometheus-k8s-0 || fatal "Prometheus pod did not go ready"
     prometheusStartingTimestamp=$(get_prometheus_pod_timestamp)
     # Wait for prometheus pod to fully initialize
-#    sleep 60
+    sleep 60
     echo "Prometheus snapshot started" | echoIfDesired 1>&2
 }
 
 function retrieve_prometheus_snapshot() {
     echo "Retrieving Prometheus snapshot" | echoIfDesired 1>&2
     local dir=${1:-$artifactdir}
-#    sleep 60
+    sleep 60
     prometheusEndingTimestamp=$(get_prometheus_pod_timestamp)
-    local promdb_name="promdb_${prometheusStartingTimestamp}_${prometheusEndingTimestamp}"
+    local promdb_name="promdb_$(readable_timestamp "$prometheusStartingTimestamp")_$(readable_timestamp "$prometheusEndingTimestamp")"
     local promdb_path="${dir:+${dir}/}${promdb_name}.tar"
     __OC exec -n openshift-monitoring prometheus-k8s-0 -c prometheus -- /bin/sh -c "tar cf - . -C /prometheus --transform 's,^[.],./${promdb_name},' .; true" > "$promdb_path"
     echo "Prometheus snapshot retrieved" | echoIfDesired 1>&2
@@ -1018,11 +1028,17 @@ function _get_logs() {
     __OC get all -A -l "clusterbuster-id=$runUUID" -ojson | jq -r '[foreach .items[]? as $item ([[],[]];0; {kind: $item.kind, namespace: $item.metadata.namespace, name: $item.metadata.name, nodeName: $item.spec.nodeName})]'
     echo ', "Results": ['
     "$@"
-    echo ']}'
-    if [[ -n "$artifactdir" ]] ; then
-	if [[ ! -d "$artifactdir" ]] ; then
-	    mkdir "$artifactdir" || fatal "Can't create log directory $artifactdir"
+    echo ']'
+    if [[ $report_format = promextract ]] ; then
+	if [[ -z "$metrics_file" ]] ; then
+	    warn "Metrics file must be specified with promextract"
+	else
+	    echo ', "metrics": '
+	    "${__mydir__}/experimental/prom-extract" -m "$metrics_file" --metrics-only --start_time="$prometheusStartingTimestamp" --post-settling-time=0
 	fi
+    fi
+    echo '}'
+    if [[ -n "$artifactdir" ]] ; then
 	while read -r namespace pod container ; do
 	    __OC logs -n "$namespace" -c "$container" "$pod" > "$artifactdir/${namespace}:${pod}:${container}"
 	done <<< "$(_OC get pod -A -l "clusterbuster-id=$runUUID" -ojson | jq -r '[foreach .items[]? as $item ([[],[]];0; (if ($item.kind == "Pod") then ([foreach $item.spec.containers[]? as $container ([[],[]];0; $item.metadata.namespace + " " + $item.metadata.name + " " + $container.name)]) else null end))] | flatten | map (select (. != null))[]')"
@@ -1047,7 +1063,11 @@ function get_logs() {
 	log_cmd=true
     fi
 #    _get_logs "$log_cmd" "$@" | "${pathdir:-.}/clusterbuster-connstat" -l "${basename}-id=$runUUID" -s -f - "$extra_arg"
-    _get_logs "$log_cmd" "$@"
+    if [[ -n "$artifactdir" ]] ; then
+	_get_logs "$log_cmd" "$@" > "$artifactdir/clusterbuster-report.json"
+    else
+	_get_logs "$log_cmd" "$@"
+    fi
     return $((PIPESTATUS[0] || PIPESTATUS[1]))
 }
 
@@ -1860,6 +1880,14 @@ function run_clusterbuster_1() {
     (( precleanup && doit )) && doCleanup
     if [[ $take_prometheus_snapshot -gt 0 && -n "$artifactdir" ]] ; then
 	start_prometheus_snapshot
+    else
+	prometheusStartingTimestamp=$(get_prometheus_pod_timestamp)
+    fi
+    if [[ -n "${artifactdir:-}" ]] ; then
+	artifactdir=${artifactdir//%s/$(readable_timestamp "$prometheusStartingTimestamp")}
+	if [[ ! -d "$artifactdir" ]] ; then
+	    mkdir "$artifactdir" || fatal "Can't create log directory $artifactdir"
+	fi
     fi
     allocate_namespaces
     find_first_deployment
