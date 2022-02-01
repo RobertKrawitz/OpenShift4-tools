@@ -107,6 +107,9 @@ declare -i pbenchControllerPort=0
 declare pbenchControllerAddress=
 declare -i processes_per_pod=1
 declare -i emptydir_volumes=0
+declare -i take_prometheus_snapshot=0
+declare prometheusStartingTimestamp=
+declare prometheusEndingTimestamp=
 declare targetDataRate=''
 
 declare -r syncFlagFile="/tmp/syncfile";
@@ -120,6 +123,7 @@ declare containerImage=quay.io/rkrawitz/bench-army-knife
 declare accumulateddata=
 declare -a plurals=('s' '')
 declare KUBECTL_VALIDATE=
+declare artifactdir=
 
 declare OC=${OC:-${KUBECTL:-}}
 OC=${OC:-$(type -p oc)}
@@ -246,6 +250,11 @@ Extended Options:
                         generate a random-based UUID.
        --exit_at_end    Exit upon completion of workload (-e/-E)
        --verbose        Print verbose log messages (-v)
+       --artifactdir=<dir>
+                        Save artifacts to <dir>
+       --prometheus-snapshot
+                        Take a Prometheus snapshot and save to the
+                        artifacts directory
 
     Reporting Options:
        --report-format=<format>
@@ -353,7 +362,7 @@ $(print_workloads_supporting_reporting '                        - ')
                         Index number of first namespace to be created
        --first_deployment=N
                         Index number of first pod to be created
-       --objsPerCall=N  Number of objects per oc call
+       --objsPerCall=N  Number of objects per CLI call
                         Below options default to objsPerCall
        --objsPerCall_secrets=N
        --objsPerCall_namespaces=N
@@ -604,6 +613,8 @@ function process_option() {
 	targetdatarate)		    targetDataRate=$(parse_size "$optvalue")	;;
 	uuid)			    runUUID=$optvalue				;;
 	jobfile)		    process_job_file "$optvalue"		;;
+	artifactdir)		    artifactdir="$optvalue"			;;
+	prometheussnapshot)	    take_prometheus_snapshot=$(bool "$optvalue");;
 	affinity)
 	    case "$optvalue" in
 		1|'') affinity=1      ;;
@@ -783,12 +794,12 @@ function listConfigMaps() {
 function __OC() {
     if ((! doit)) ; then
 	echo "$OC" "$@" 1>&2
-    elif [[ $1 = describe || $1 = get || $1 = status ]] ; then
+    elif [[ $1 = describe || $1 = get || $1 = status || $1 = exec || $1 = logs ]] ; then
 	"$OC" "$@"
     elif ((reportObjectCreation)) ; then
 	"$OC" "$@" 2>&1
     else
-	"$OC" "$@" 2>&1 |grep -v -E '(^No resources found|deleted|created|labeled)$'
+	"$OC" "$@" 2>&1 |grep -v -E '(^No resources found|deleted|created|labeled|condition met)$'
     fi
     return "${PIPESTATUS[0]}"
 }
@@ -824,6 +835,33 @@ function createSyncServiceIfNeeded() {
 ################################################################
 # Logging
 ################################################################
+
+function get_prometheus_pod_timestamp() {
+    local rawtime
+    rawtime=$(_OC exec -n openshift-monitoring prometheus-k8s-0 -c prometheus -- /bin/sh -c 'date +%s')
+    date -u '+%Y_%m_%dT%H_%M_%S%z' "--date=@$rawtime"
+}
+
+function start_prometheus_snapshot() {
+    echo "Starting Prometheus snapshot" | echoIfDesired 1>&2
+    _OC delete pod -n openshift-monitoring prometheus-k8s-0
+    _OC wait --for=condition=Ready -n openshift-monitoring pod/prometheus-k8s-0 || fatal "Prometheus pod did not go ready"
+    prometheusStartingTimestamp=$(get_prometheus_pod_timestamp)
+    # Wait for prometheus pod to fully initialize
+#    sleep 60
+    echo "Prometheus snapshot started" | echoIfDesired 1>&2
+}
+
+function retrieve_prometheus_snapshot() {
+    echo "Retrieving Prometheus snapshot" | echoIfDesired 1>&2
+    local dir=${1:-$artifactdir}
+#    sleep 60
+    prometheusEndingTimestamp=$(get_prometheus_pod_timestamp)
+    local promdb_name="promdb_${prometheusStartingTimestamp}_${prometheusEndingTimestamp}"
+    local promdb_path="${dir:+${dir}/}${promdb_name}.tar"
+    __OC exec -n openshift-monitoring prometheus-k8s-0 -c prometheus -- /bin/sh -c "tar cf - . -C /prometheus --transform 's,^[.],./${promdb_name},' .; true" > "$promdb_path"
+    echo "Prometheus snapshot retrieved" | echoIfDesired 1>&2
+}
 
 function ts() {
     local dt
@@ -916,7 +954,7 @@ function get_logs_poll() {
 	pod_status_found=0
 	while : ; do
 	    # shellcheck disable=SC2086
-	    status=$(oc get pod $pod -o jsonpath="{.status.phase}" 2>/dev/null)
+	    status=$(__OC get pod $pod -o jsonpath="{.status.phase}" 2>/dev/null)
 	    case "$status" in
 		Running)
 		    break
@@ -953,7 +991,7 @@ function get_logs_poll() {
 	local mypid=$BASHPID
 	monitor_pods -p "$mypid" -- -l "${basename}-id=$runUUID" &
 	# shellcheck disable=SC2086
-	run_logger -p "$mypid" oc rsh -T $pod sh -c "while [[ ! -f '$syncFlagFile' ]] ; do sleep 5; done; cat '$syncFlagFile' $cleanupCommand" &
+	run_logger -p "$mypid" __OC exec $pod -- sh -c "while [[ ! -f '$syncFlagFile' ]] ; do sleep 5; done; cat '$syncFlagFile' $cleanupCommand" &
 	wait
 	# shellcheck disable=SC2046
 	if [[ -n "$(jobs -p)" ]] ; then
@@ -977,10 +1015,18 @@ function _get_logs() {
     echo "\"runUUID\": \"$runUUID\","
     echo "\"workload\": \"$requestedWorkload\","
     echo '"api_objects":'
-    oc get all -A -l "clusterbuster-id=$runUUID" -ojson | jq -r '[foreach .items[]? as $item ([[],[]];0; {kind: $item.kind, namespace: $item.metadata.namespace, name: $item.metadata.name, nodeName: $item.spec.nodeName})]'
+    __OC get all -A -l "clusterbuster-id=$runUUID" -ojson | jq -r '[foreach .items[]? as $item ([[],[]];0; {kind: $item.kind, namespace: $item.metadata.namespace, name: $item.metadata.name, nodeName: $item.spec.nodeName})]'
     echo ', "Results": ['
     "$@"
     echo ']}'
+    if [[ -n "$artifactdir" ]] ; then
+	if [[ ! -d "$artifactdir" ]] ; then
+	    mkdir "$artifactdir" || fatal "Can't create log directory $artifactdir"
+	fi
+	while read -r namespace pod container ; do
+	    __OC logs -n "$namespace" -c "$container" "$pod" > "$artifactdir/${namespace}:${pod}:${container}"
+	done <<< "$(_OC get pod -A -l "clusterbuster-id=$runUUID" -ojson | jq -r '[foreach .items[]? as $item ([[],[]];0; (if ($item.kind == "Pod") then ([foreach $item.spec.containers[]? as $container ([[],[]];0; $item.metadata.namespace + " " + $item.metadata.name + " " + $container.name)]) else null end))] | flatten | map (select (. != null))[]')"
+    fi
 }
 
 function get_logs() {
@@ -1812,6 +1858,9 @@ function run_clusterbuster_1() {
     local -A expected_secrets=()
     local -i status=0
     (( precleanup && doit )) && doCleanup
+    if [[ $take_prometheus_snapshot -gt 0 && -n "$artifactdir" ]] ; then
+	start_prometheus_snapshot
+    fi
     allocate_namespaces
     find_first_deployment
     trap 'if [[ -n "$(jobs -p)" ]] ; then kill -INT $(jobs -p); fi; exit' INT
@@ -1830,6 +1879,9 @@ function run_clusterbuster_1() {
     do_logging || status=1
     report_object_creation
     ((cleanup)) && doCleanup
+    if [[ $take_prometheus_snapshot -gt 0 && -n "$artifactdir" ]] ; then
+	retrieve_prometheus_snapshot "$artifactdir"
+    fi
 
     return $status
 }
