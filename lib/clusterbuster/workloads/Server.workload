@@ -48,12 +48,13 @@ function _createServerDeployment() {
     local namespace=$1
     local instance=$2
     local secretCount=$3
+    local name=${namespace}-${instance}-server
     if [[ $deploymentType = pod ]] ; then
-	createObject <<EOF
+	createObject -n "$namespace" "$name" <<EOF
 apiVersion: v1
 kind: Pod
 metadata:
-  name: ${namespace}-${instance}-server
+  name: "$name"
 $(indent 2 namespaceYAML "$namespace")
 $(indent 2 nodeSelectorYAML)
 $(indent 2 privilegeYAML)
@@ -65,11 +66,11 @@ $(createSpec _createServerContainerYAML "$@")
   restartPolicy: Never
 EOF
     else
-	createObject <<EOF
+	createObject -n "$namespace" "$name" <<EOF
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: ${namespace}-${instance}-server
+  name: "$name"
 $(indent 2 namespaceYAML "$namespace")
 $(indent 2 privilegeYAML)
 $(indent 2 standardLabelsYAML)
@@ -172,11 +173,12 @@ function _createClientDeployment() {
     if [[ $deploymentType = pod ]] ; then
 	local -i replica=0
 	while (( replica++ < replicas )) ; do
-	    createObject <<EOF
+	    local name=${namespace}-${instance}-client-${replica}
+	    createObject -n "$namespace" "$name" <<EOF
 apiVersion: v1
 kind: Pod
 metadata:
-  name: ${namespace}-${instance}-client-${replica}
+  name: $name
 $(indent 2 namespaceYAML "$namespace")
 $(indent 2 privilegeYAML)
 $(indent 2 nodeSelectorYAML)
@@ -190,11 +192,12 @@ $(createSpec ${affinityYAML:+-A "$affinityYAML"} _createClientContainerYAML "$@"
 EOF
 	done
     else
-	createObject <<EOF
+	local name=${namespace}-${instance}-client
+	createObject -n "$namespace" "$name" <<EOF
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: $podname
+  name: $name
 $(indent 2 privilegeYAML)
 $(indent 2 namespaceYAML "$namespace")
 $(indent 2 standardLabelsYAML)
@@ -288,6 +291,12 @@ function processOptionsServer() {
 
 function supportsReportingServer() {
     :
+}
+
+function reportOptionsServer() {
+    cat <<EOF
+"msgSize": $___msgSize
+EOF
 }
 
 register_workload Server dispatch_generic

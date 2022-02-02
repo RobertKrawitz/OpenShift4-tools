@@ -64,11 +64,12 @@ function _createSoakerDeployment() {
     if [[ $deploymentType = pod ]] ; then
 	local -i replica=0
 	while (( replica++ < replicas )) ; do
-	    createObject <<EOF
+	    local name=${namespace}-soaker-${instance}-${replica}
+	    createObject -n "$namespace" "$name" <<EOF
 apiVersion: v1
 kind: Pod
 metadata:
-  name: ${namespace}-soaker-${instance}-${replica}
+  name: $name
 $(indent 2 namespaceYAML "$namespace")
 $(indent 2 privilegeYAML)
 $(indent 2 nodeSelectorYAML)
@@ -81,11 +82,12 @@ $(createSpec _createContainersSoakerYAML "$@")
 EOF
 	done
     else
-	createObject <<EOF
+	local name=${namespace}-soaker-${instance}
+	createObject -n "$namespace" "$name" <<EOF
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: ${namespace}-soaker-${instance}
+  name: $name
 $(indent 2 namespaceYAML "$namespace")
 $(indent 2 privilegeYAML)
 $(indent 2 standardLabelsYAML)

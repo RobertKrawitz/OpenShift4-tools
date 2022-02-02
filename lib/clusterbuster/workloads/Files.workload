@@ -79,11 +79,12 @@ function _createFilesDeployment() {
     if [[ $deploymentType = pod ]] ; then
 	local -i replica=0
 	while (( replica++ < replicas )) ; do
-	    createObject <<EOF
+	    local name="${namespace}-files-${instance}-${replica}"
+	    createObject -n "$namespace" "$name"  <<EOF
 apiVersion: v1
 kind: Pod
 metadata:
-  name: ${namespace}-files-${instance}-${replica}
+  name: $name
 $(indent 2 namespaceYAML "$namespace")
 $(indent 2 privilegeYAML)
 $(indent 2 nodeSelectorYAML)
@@ -96,7 +97,8 @@ $(createSpec _createContainersFilesYAML "$@")
 EOF
 	done
     else
-	createObject <<EOF
+	local name="${namespace}-files-${instance}"
+	createObject -n "$namespace" "$name" <<EOF
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -199,6 +201,15 @@ function processOptionsFiles() {
 
 function supportsReportingFiles() {
     :
+}
+
+function reportOptionsFiles() {
+    cat <<EOF
+"dirspervolume": $___file_dirs_per_volume,
+"filesperdir": $___files_per_dir,
+"fileblocksize": $___file_block_size,
+"filesize": $___file_size
+EOF
 }
 
 register_workload Files dispatch_generic file

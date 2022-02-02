@@ -109,13 +109,14 @@ function _createDeploymentClassicYAML() {
     local -i replicas=$4
     local -i containersPerPod=$5
     if [[ $deploymentType = pod ]] ; then
-	local -i container=0
-	while (( container++ < replicas )) ; do
-	    createObject <<EOF
+	local -i replica=0
+	while (( replica++ < replicas )) ; do
+	    local name="${namespace}-${instance}-${replica}"
+	    createObject -n "$namespace" "$name" <<EOF
 apiVersion: v1
 kind: Pod
 metadata:
-  name: ${namespace}-${instance}-${container}
+  name: $name
 $(indent 2 namespaceYAML "$namespace")
 $(indent 2 privilegeYAML)
 $(indent 2 nodeSelectorYAML)
@@ -127,11 +128,12 @@ $(createSpec _createContainers${requestedWorkload}YAML "$@")
 EOF
 	done
     else
-	createObject <<EOF
+	local name="${namespace}-${instance}{replica}"
+	createObject -n "$namespace" "$name" <<EOF
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: ${namespace}-${instance}
+  name: $name
 $(indent 2 namespaceYAML "$namespace")
 $(indent 2 privilegeYAML)
 $(indent 2 standardLabelsYAML)
@@ -248,6 +250,17 @@ function processOptionsLog() {
     if [[ -n "${unknown_opts[*]:-}" ]] ; then
 	help "${unknown_opts[@]}"
     fi
+}
+
+function reportOptionsLog() {
+    cat <<EOF
+"logBytesPerLine": $___log_bytes_per_line,
+"logBitesPerIO": $___log_bytes_per_io,
+"logXferCount": $___logXferCount,
+"logProcesses": $___log_processes,
+"logDelayUSec": $___log_delay_usec,
+"logXferTime": $___logXferTime
+EOF
 }
 
 register_workload PausePod dispatch_generic pause

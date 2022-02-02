@@ -125,6 +125,8 @@ declare accumulateddata=
 declare -a plurals=('s' '')
 declare KUBECTL_VALIDATE=
 declare artifactdir=
+declare -a saved_argv=("$0" "$@")
+declare -a processed_options=()
 
 declare OC=${OC:-${KUBECTL:-}}
 OC=${OC:-$(type -p oc)}
@@ -548,6 +550,7 @@ function process_option() {
     read -r noptname1 noptname optvalue <<< "$(parse_option "$1")"
     # shellcheck disable=SC2206
     # shellcheck disable=SC2119
+    processed_options+=("--$1")
     case "$noptname1" in
 	helpall*)		    help_extended				;;
 	helpeverything*)	    help_extended				;;
@@ -1020,10 +1023,82 @@ function get_logs_listen() {
     "${__libdir__}/get_logs" "$@"
 }
 
+function __report_one_volume() {
+    local volname=$1
+	cat <<EOF
+  {
+     "name": "$volname",
+     "mount_path": "${volume_mount_paths[$volname]}",
+     "type": "${volume_types[$vname]}",
+     "type_key": "${volume_types[$vname]}",
+     "scoped_name": "${volume_scoped_names[$vname]}"
+  }
+EOF
+}
+
+function _report_volumes() {
+    echo '"volumes": ['
+    local -a vols=()
+    for volname in "${volumes[@]}" ; do
+	vols+=("$(__report_one_volume "$volname")")
+    done
+    (IFS=$',\n'; echo "${vols[*]}")
+    echo '],'
+}
+
+function _report_emptydirs() {
+    if ((${#emptydirs[@]})) ; then
+	echo "emptydirVolumes: ["
+	local -a ed=("${emptydirs[@]}")
+	ed=("${ed[@]/#/}")
+	ed=("${ed[@]/%/}")
+	(IFS=$',\n'; echo "${ed[*]}")
+	echo "],"
+    fi
+}
+
+function quote_list() {
+    local -a a=("$@")
+    a=("${a[@]//\"/\\\"}")
+    a=("${a[@]//\$'\n'/ }")
+    a=("${a[@]/#/\"}")
+    a=("${a[@]/%/\"}")
+    (IFS=$',\n '; echo "${a[*]}")
+}
+
 function _get_logs() {
-    echo '{"kind": "clusterbusterResults",'
-    echo "\"runUUID\": \"$runUUID\","
-    echo "\"workload\": \"$requestedWorkload\","
+    cat <<EOF
+{
+  "kind": "clusterbusterResults",
+  "startTime": "$(readable_timestamp "${prometheusStartingTimestamp}")",
+  "runUUID": "$runUUID",
+  "workload": "$requestedWorkload",
+  "kubernetesVersion": $(__OC version -ojson),
+  "commandLine": [$(quote_list "${saved_argv[@]}")],
+  "expandedCommandLine": [$(quote_list "${processed_options[@]}")],
+  "options": {
+    "basename": "$basename",
+    "containersPerPod": $containersPerPod,
+    "deploymentsPerNamespace": $depsPerNamespace,
+    "namespaces": $namespaces,
+    "bytesTransfer": $bytesTransfer,
+    "bytesTransferMax": $bytesTransferMax,
+    "workloadRunTime": $workloadRunTime,
+    "workloadRunTimeMax": $workloadRunTimeMax,
+    $(indent 4 _report_volumes)
+    "secrets": $secrets,
+    "replicas": $replicas,
+    "containerImage": "$containerImage",
+    "nodeSelector": "$nodeSelector",
+    $(indent 4 containerResourcesJSON)
+    "runtimeClass": "$runtimeClass",
+    $(indent 4 _report_emptydirs)
+    "targetDataRate": $targetDataRate,
+    "workloadOptions": {
+    $(indent 4 callAPI "$requestedWorkload" "reportOptions")
+    }
+  },
+EOF
     echo '"api_objects":'
     __OC get all -A -l "clusterbuster-id=$runUUID" -ojson | jq -r '[foreach .items[]? as $item ([[],[]];0; {kind: $item.kind, namespace: $item.metadata.namespace, name: $item.metadata.name, nodeName: $item.spec.nodeName})]'
     echo ', "Results": ['
@@ -1040,7 +1115,8 @@ function _get_logs() {
     echo '}'
     if [[ -n "$artifactdir" ]] ; then
 	while read -r namespace pod container ; do
-	    __OC logs -n "$namespace" -c "$container" "$pod" > "$artifactdir/${namespace}:${pod}:${container}"
+	    mkdir -p "$artifactdir/Logs"
+	    __OC logs -n "$namespace" -c "$container" "$pod" > "$artifactdir/Logs/${namespace}:${pod}:${container}"
 	done <<< "$(_OC get pod -A -l "clusterbuster-id=$runUUID" -ojson | jq -r '[foreach .items[]? as $item ([[],[]];0; (if ($item.kind == "Pod") then ([foreach $item.spec.containers[]? as $container ([[],[]];0; $item.metadata.namespace + " " + $item.metadata.name + " " + $container.name)]) else null end))] | flatten | map (select (. != null))[]')"
     fi
 }
@@ -1128,6 +1204,43 @@ function containerResourcesYAML() {
 	    echo "  requests:"
 	    indent 4 resources "${resource_requests[@]}"
 	fi
+    fi
+}
+
+function resources() {
+    local token
+    for token in "$@" ; do
+	local resource=${token%%=*}
+	local value=${token#*=}
+	echo "\"$resource\": $value"
+    done
+}
+
+function resourceJSON() {
+    local request_type=$1
+    shift
+    echo "\"$request_type\": {"
+    local -a resources=()
+    local resource
+    for resource in "$@" ; do
+	resources+=("($(resources "$resource"))")
+    done
+    (IFS=$',\n'; echo "${resources[*]}")
+    echo "}"
+}
+
+function containerResourcesJSON() {
+    local -a res_data=()
+    if (( ${#resource_limits[@]} + ${#resource_requests[@]} )) ; then
+	echo '"resources": {'
+	if (( ${#resource_limits[@]} )) ; then
+	    res_data+=("$(resourceJSON limits "${resource_limits[@]}")")
+	fi
+	if (( ${#resource_requests[@]} )) ; then
+	    res_data+=("$(resourceJSON requests "${resource_requests[@]}")")
+	fi
+	(IFS=$',\n'; echo "${res_data[@]}")
+	echo "},"
     fi
 }
 
@@ -1374,6 +1487,19 @@ function reallyCreateObjects() {
 }
 
 function createObject() {
+    local OPTIND=0
+    local namespace=
+    local objtype=${deploymentType^}
+    local objname=
+    while getopts 'n:t:' opt "$@" ; do
+	case "$opt" in
+	    n) namespace=$OPTARG ;;
+	    t) objtype=$OPTARG   ;;
+	    *)                   ;;
+	esac
+    done
+    shift $((OPTIND-1))
+    objname=${1:-UNKNOWN}
     local data=
     local line=
     local -i dataFound=0
@@ -1388,6 +1514,10 @@ function createObject() {
     ((! dataFound)) && return
     data+="$nl"
     if (( doit )) ; then
+	if [[ -n "$artifactdir" ]] ; then
+	    mkdir -p "$artifactdir/$objtype"
+	    echo "$data" > "$artifactdir/${objtype}/${namespace}:$objname"
+	fi
 	accumulateddata+="$data"
 	if (( ++objsItemCount >= objsPerCall )) ; then
 	    reallyCreateObjects
@@ -1414,6 +1544,7 @@ function createObjectFromFile() {
     local namespace=$1; shift
     local objname=$1; shift
     local ns=${useNamespaces:+-n "$namespace"}
+    local ns1=${useNamespaces:+"$namespace"}
     local file
     for file in "$@" ; do
 	[[ -r "$file" ]] || fatal "Can't read file $file!"
@@ -1423,6 +1554,15 @@ function createObjectFromFile() {
     # shellcheck disable=SC2046
     (_OC label "$objtype" $(_ns) "$objname" 'clusterbusterbase=true' "clusterbuster-runUUID=${runUUID}" "${basename}-id=$runUUID" "${basename}=true" | echoIfDesired 1>&2) || exit 1
     if (( doit )) ; then
+	if [[ -n "$artifactdir" ]] ; then
+	    mkdir -p "$artifactdir/$objtype"
+	    local outfile="$artifactdir/${objtype}/${ns1}:${objname}"
+	    rm -f "$outfile"
+	    for file in "$@" ; do
+		echo '---' >> "$outfile"
+		cat "$file" >> "$outfile"
+	    done
+	fi
 	totalObjectsCreated=$((totalObjectsCreated+1))
 	if [[ -z ${objectsCreated[$objtype]:-} ]] ; then
 	    objectsCreated[$objtype]=1
@@ -1436,7 +1576,7 @@ function createObjectFromFile() {
 function createNamespace() {
     local namespace=$1
     if ((useNamespaces)) ; then
-	createObject <<EOF
+	createObject -t Namespace "$namespace" <<EOF
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -1455,11 +1595,12 @@ function createSecrets() {
     (( secrets )) || return;
     for i in $(seq "$firstDeployment" $((depsPerNamespace + firstDeployment - 1))) ; do
 	for j in $(seq 0 $((secrets - 1))) ; do
-	    createObject <<EOF
+	    local secname="secret${namespace:+-$namespace}-${i}-${j}"
+	    createObject -t secret -n "$namespace" "$secname" <<EOF
 apiVersion: v1
 kind: Secret
 metadata:
-  name: "secret-${namespace}-${i}-${j}"
+  name: "$secname"
 $(indent 2 namespaceYAML "$namespace")
 $(indent 2 standardLabelsYAML)
 data:
@@ -1495,7 +1636,7 @@ function createService() {
     local namespace=$1
     local deployment=$2
     local portnum=$3
-    createObject <<EOF
+    createObject -t Service -n "$namespace" "service-${deployment}" <<EOF
 apiVersion: v1
 kind: Service
 metadata:
@@ -1549,7 +1690,7 @@ function createSyncDeployment() {
     local namespace=$1; shift
     local syncCount=$1; shift
     if [[ $deploymentType = pod ]] ; then
-	createObject <<EOF
+	createObject -t Pod -n "$namespace" "${namespace}-sync" <<EOF
 apiVersion: v1
 kind: Pod
 metadata:
@@ -1569,7 +1710,7 @@ $(syncSpec "$namespace" "$syncCount" "$@")
   restartPolicy: Never
 EOF
     else
-	createObject <<EOF
+	createObject -t Deployment -n "$namespace" "${namespace}-sync" <<EOF
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -1883,11 +2024,10 @@ function run_clusterbuster_1() {
     else
 	prometheusStartingTimestamp=$(get_prometheus_pod_timestamp)
     fi
-    if [[ -n "${artifactdir:-}" ]] ; then
+    if [[ $doit -gt 0 && -n "${artifactdir:-}" ]] ; then
 	artifactdir=${artifactdir//%s/$(readable_timestamp "$prometheusStartingTimestamp")}
-	if [[ ! -d "$artifactdir" ]] ; then
-	    mkdir "$artifactdir" || fatal "Can't create log directory $artifactdir"
-	fi
+	mkdir -p "$artifactdir" || fatal "Can't create log directory $artifactdir"
+	echo "${saved_argv[@]@Q}" > "$artifactdir/commandline"
     fi
     allocate_namespaces
     find_first_deployment
@@ -1963,8 +2103,6 @@ fi
 [[ -n $runtimeClass ]] && runtimeClass="runtimeClassName: \"$runtimeClass\""
 [[ -n "$report_format" ]] && report=1
 
-shift $((OPTIND - 1))
-
 if [[ $deploymentType != pod && $deploymentType != deployment ]] ; then
     echo "--deployment_type must be either pod or deployment"
     help
@@ -1998,6 +2136,7 @@ for i in $(seq 0 $((emptydir_volumes-1)) ) ; do
     emptydirs+=("/mnt/volume-$i")
 done
 
+shift $((OPTIND - 1))
 if [[ -n ${1:-} ]] ; then
     basename="$1"
     shift

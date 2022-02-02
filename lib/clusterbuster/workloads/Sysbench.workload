@@ -75,8 +75,9 @@ function _createSysbenchDeployment() {
     local namespace=$1
     local instance=$2
     local secretCount=$3
+    local name=${namespace}-sysbench-${instance}
     if [[ $deploymentType = pod ]] ; then
-	createObject <<EOF
+	createObject -n "$namespace" "$name" <<EOF
 apiVersion: v1
 kind: Pod
 metadata:
@@ -92,7 +93,7 @@ $(createSpec _createContainersSysbenchYAML "$@")
   restartPolicy: Never
 EOF
     else
-	createObject <<EOF
+	createObject -n "$namespace" "$name" <<EOF
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -196,6 +197,15 @@ function processOptionsSysbench() {
 
 function supportsReportingSysbench() {
     :
+}
+
+function reportOptionsSysbench() {
+    cat <<EOF
+"sysbenchGeneralOptions": "$___sysbench_generic_options",
+"sysbenchGenericOptions": "$___sysbench_generic_options",
+"sysbenchFileIOOptions": "$___sysbench_fioeio_options",
+"sysbenchFileIOTests": "$___sysbench_fileio_tests"
+EOF
 }
 
 register_workload Sysbench dispatch_generic

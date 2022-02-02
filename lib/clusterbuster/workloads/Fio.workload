@@ -70,12 +70,13 @@ function _createFioDeployment() {
     local namespace=$1
     local instance=$2
     local secretCount=$3
+    local name=${namespace}-fio-${instance}
     if [[ $deploymentType = pod ]] ; then
-	createObject <<EOF
+	createObject -n "$namespace" "$name" <<EOF
 apiVersion: v1
 kind: Pod
 metadata:
-  name: ${namespace}-fio-${instance}
+  name: $name
 $(indent 2 namespaceYAML "$namespace")
 $(indent 2 privilegeYAML)
 $(indent 2 nodeSelectorYAML)
@@ -87,11 +88,11 @@ $(createSpec _createContainersFioYAML "$@")
   restartPolicy: Never
 EOF
     else
-	createObject <<EOF
+	createObject -n "$namespace" "$name" <<EOF
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: ${namespace}-fio-${instance}
+  name: "$name"
 $(indent 2 namespaceYAML "$namespace")
 $(indent 2 privilegeYAML)
 $(indent 2 standardLabelsYAML)
@@ -184,6 +185,13 @@ function processOptionsFio() {
 
 function supportsReportingFio() {
     :
+}
+
+function reportOptionsFio() {
+    cat <<EOF
+"fioGeneralOptions": "$___fio_general_options",
+"fioJobFile": "$(base64 -w 0 < "$___file_job_file")"
+EOF
 }
 
 register_workload Fio dispatch_generic
