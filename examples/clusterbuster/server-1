@@ -5,7 +5,6 @@
 
 precleanup
 cleanup
-report = raw
 workload = server
 namespaces = 1
 deployments = 10

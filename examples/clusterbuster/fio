@@ -3,7 +3,6 @@
 
 cleanup
 workloadruntime=10
-report-format=raw
 workload=fio
 fio-jobfile=fio.jobfile
 replicas=1

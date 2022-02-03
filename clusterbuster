@@ -88,7 +88,7 @@ declare -A volume_type_keys=()
 declare -A volume_scoped_names=()
 declare common_workdir=
 declare -i report=0
-declare report_format=
+declare report_format=summary
 declare logStrategy=poll
 declare -i precleanup=0
 declare -i cleanup=0
@@ -202,6 +202,13 @@ function _document_workloads() {
     done <<< "$(workloadsSupportingAPI document)"
 }
 
+function list_report_formats() {
+    local prefix=${1:-}
+    while read -r format ; do
+	echo "$prefix$format"
+    done <<< $("${pathdir:-.}/clusterbuster-connstat" --list_formats)
+}
+
 function _helpmsg() {
     local opt
     for opt in "$@" ; do
@@ -267,13 +274,11 @@ Extended Options:
     Reporting Options:
        --report-format=<format>
                         Print report in specified format.  Meaning of
-                        report types is by type.  Currently only "raw"
-                        works.
-                        - json
-                        - promextract
-                        - raw
-                        - summary
-                        - verbose
+                        report types is by type.  Default is summary
+                        if not specified; if that is not reported,
+                        raw format will be used.
+                        - none
+$(list_report_formats '                        - ')
                         The following workloads support reporting:
 $(print_workloads_supporting_reporting '                        - ')
        --artifactdir=<dir>
@@ -771,8 +776,17 @@ function register_workload() {
 }
 
 function supportsAPI() {
-    local workload=$1
-    local api=$2
+    local workload
+    local OPTIND=0
+    workload="$requestedWorkload"
+    while getopts 'w:' opt "$@" ; do
+	case "$opt" in
+	    w) workload=$OPTARG ;;
+	    *)			;;
+	esac
+    done
+    shift $((OPTIND - 1))
+    local api=$1
     [[ -z "$workload" ]] && return 1
     [[ -z "${registered_workloads[$workload]:-}" ]] && fatal "supportsAPI $workload $api: workload not known"
     "${registered_workloads[$workload]}" -p "$workload" "$api"
@@ -782,7 +796,7 @@ function workloadsSupportingAPI() {
     local api=$1
     local workload
     while read -r workload ; do
-	supportsAPI "$workload" "$api" && echo "$workload"
+	supportsAPI -w "$workload" "$api" && echo "$workload"
     done <<< "$(print_workloads)"
 }
 
@@ -800,9 +814,9 @@ function callAPI() {
 	esac
     done
     shift $((OPTIND - 1))
-    local api=$2
-    if supportsAPI "$workload" "$api" ; then
-	"${registered_workloads[$workload]}" "$@"
+    local api=$1
+    if supportsAPI -w "$workload" "$api" ; then
+	"${registered_workloads[$workload]}" "$workload" "$@"
     elif ((safe)) ; then
 	return 0
     else
@@ -811,23 +825,23 @@ function callAPI() {
 }
 
 function jsonEncodeSettings() {
-    callAPI "$requestedWorkload" jsonEncodeSettings
+    callAPI jsonEncodeSettings
 }
 
 function createDeployment() {
-    callAPI "$requestedWorkload" createDeployment "$@"
+    callAPI createDeployment "$@"
 }
 
 function calculateLogsRequired() {
-    if supportsAPI "$requestedWorkload" supportsReporting ; then
-	callAPI "$requestedWorkload" calculateLogsRequired "$@"
+    if supportsAPI supportsReporting ; then
+	callAPI calculateLogsRequired "$@"
     else
 	echo 1
     fi
 }
 
 function listConfigMaps() {
-    callAPI "$requestedWorkload" listConfigMaps
+    callAPI listConfigMaps
 }
 
 ################################################################
@@ -1110,6 +1124,15 @@ function _report_pin_nodes() {
     (IFS=$',\n '; echo "${nodes[*]}")
 }
 
+function _extract_metrics() {
+    if [[ -r "$metrics_file" ]] ; then
+	cat <<EOF
+,
+"metrics": $("${__mydir__}/experimental/prom-extract" -m "$metrics_file" --metrics-only --start_time="$prometheusStartingTimestamp" --post-settling-time=0)
+EOF
+    fi
+}
+
 function _get_logs() {
     cat <<EOF
 {
@@ -1143,26 +1166,19 @@ function _get_logs() {
     $(indent 4 _report_emptydirs)
     "targetDataRate": $targetDataRate,
     "workloadOptions": {
-    $(indent 4 callAPI "$requestedWorkload" "reportOptions")
+    $(indent 4 callAPI "reportOptions")
     }
   }
 },
 "nodes": $(__OC get nodes -ojson),
+"api_objects":
+$( __OC get all -A -l "clusterbuster-id=$runUUID" -ojson | jq -r '[foreach .items[]? as $item ([[],[]];0; {kind: $item.kind, namespace: $item.metadata.namespace, name: $item.metadata.name, nodeName: $item.spec.nodeName})]'),
+"Results": [
+$("$@")
+]
+$(_extract_metrics)
+}
 EOF
-    echo '"api_objects":'
-    __OC get all -A -l "clusterbuster-id=$runUUID" -ojson | jq -r '[foreach .items[]? as $item ([[],[]];0; {kind: $item.kind, namespace: $item.metadata.namespace, name: $item.metadata.name, nodeName: $item.spec.nodeName})]'
-    echo ', "Results": ['
-    "$@"
-    echo ']'
-    if [[ $report_format = promextract ]] ; then
-	if [[ -z "$metrics_file" ]] ; then
-	    warn "Metrics file must be specified with promextract"
-	else
-	    echo ', "metrics": '
-	    "${__mydir__}/experimental/prom-extract" -m "$metrics_file" --metrics-only --start_time="$prometheusStartingTimestamp" --post-settling-time=0
-	fi
-    fi
-    echo '}'
     if [[ -n "$artifactdir" ]] ; then
 	while read -r namespace pod container ; do
 	    mkdir -p "$artifactdir/Logs"
@@ -1173,14 +1189,11 @@ EOF
 
 function get_logs() {
     local extra_arg=
-    case "$report_format" in
-	json)    extra_arg=-j ;;
-	verbose) extra_arg=-v ;;
-	raw)     extra_arg=-R ;;
-	*)                    ;;
-    esac
+    if [[ ${report_format,,} = none ]] ; then
+	return
+    fi
     local log_cmd
-    if supportsAPI "$requestedWorkload" supportsReporting ; then
+    if supportsAPI supportsReporting ; then
 	log_cmd=get_logs_poll
 	if [[ ${logStrategy,,} = 'listen'* ]] ; then
 	    log_cmd=get_logs_listen
@@ -1188,11 +1201,10 @@ function get_logs() {
     else
 	log_cmd=true
     fi
-#    _get_logs "$log_cmd" "$@" | "${pathdir:-.}/clusterbuster-connstat" -l "${basename}-id=$runUUID" -s -f - "$extra_arg"
     if [[ -n "$artifactdir" ]] ; then
-	_get_logs "$log_cmd" "$@" > "$artifactdir/clusterbuster-report.json"
+	_get_logs "$log_cmd" "$@" | tee "$artifactdir/clusterbuster-report.json" | "${pathdir:-.}/clusterbuster-connstat" ${report_format:+-o "$report_format"}
     else
-	_get_logs "$log_cmd" "$@"
+	_get_logs "$log_cmd" "$@" | "${pathdir:-.}/clusterbuster-connstat" ${report_format:+-o "$report_format"}
     fi
     return $((PIPESTATUS[0] || PIPESTATUS[1]))
 }
@@ -1864,7 +1876,7 @@ function createAllSecrets() {
 }
 
 function createSystemConfigMap() {
-    if supportsAPI "$requestedWorkload" listConfigMaps ; then
+    if supportsAPI listConfigMaps ; then
 	local -a systemfiles
 	readarray -t systemfiles < <(listConfigMaps)
 	trap 'kill -9 $(jobs -p); exit' INT
@@ -2081,7 +2093,7 @@ function run_clusterbuster_1() {
 
     (( ${#configMapFiles[@]} )) && checkConfigMaps "${configMapFiles[@]}"
     createAllObjects ConfigMaps
-    supportsAPI "$requestedWorkload" listConfigMaps && hasSystemConfigMap=1
+    supportsAPI listConfigMaps && hasSystemConfigMap=1
 
     create_secrets
 
@@ -2129,7 +2141,7 @@ else
     help_extended "(Unknown workload '$requestedWorkload')"
 fi
 
-callAPI -s "$requestedWorkload" "processOptions" "${unknown_opts[@]}" || help "${unknown_opt_names[@]}"
+callAPI -s "processOptions" "${unknown_opts[@]}" || help "${unknown_opt_names[@]}"
 
 if (( namespaces <= 0 )) ; then
     namespaces=1

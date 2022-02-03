@@ -7,7 +7,6 @@ dirs_per_volume=256
 files_per_dir=256
 file_block_size=1024
 file_size=1024
-report-format=raw
 precleanup=1
 no-report-object-creation
 deps-per-namespace=2

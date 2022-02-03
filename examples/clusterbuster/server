@@ -5,7 +5,6 @@ cleanup
 workload=server
 target-data-rate=-1
 workloadruntime=10
-report-format=raw
 precleanup=1
 no-report-object-creation
 deps-per-namespace=2

@@ -22,27 +22,32 @@ import argparse
 
 parser = argparse.ArgumentParser(description='Generate ClusterBuster report')
 
+report_formats={'summary', 'verbose', 'raw',
+                'json-summary', 'json', 'json-verbose'}
+
 parser.add_argument('-o', '--format', '--output_format', '--output', default='summary', type=str,
-                    choices={'summary', 'verbose', 'raw',
-                    'json-summary', 'json', 'json-verbose'})
+                    choices=report_formats)
+parser.add_argument('--list_formats', action='store_true', help='List available report formats')
 args = parser.parse_args()
 
-jdata = json.load(sys.stdin)
-if args.format == 'raw':
-    json.dump(jdata, sys.stdout, indent = 4)
+if args.list_formats:
+    print('\n'.join(sorted(report_formats)))
 else:
-    workload = jdata["metadata"]["workload"]
-    postprocessor = os.path.join(os.path.dirname(__file__), "lib", "clusterbuster",
-                     "postprocess", f'{workload}.postprocess')
-
-    if os.path.isfile(postprocessor):
-        if os.access(postprocessor, os.X_OK):
-            with Popen([postprocessor, '-o', args.format], stdin=PIPE) as command:
-                command.communicate(json.dumps(jdata).encode())
-        else:
-            print(f'Handler {postprocessor} is not executable!', file=sys.stderr)
-            sys.exit(1)
+    jdata = json.load(sys.stdin)
+    if args.format == 'raw':
+        json.dump(jdata, sys.stdout, indent = 4)
     else:
-        print(f'Workload {workload} is unhandled!', file=sys.stderr)
-        sys.exit(1)
+        workload = jdata["metadata"]["workload"]
+        postprocessor = os.path.join(os.path.dirname(__file__), "lib", "clusterbuster",
+                         "postprocess", f'{workload}.postprocess')
 
+        if os.path.isfile(postprocessor):
+            if os.access(postprocessor, os.X_OK):
+                with Popen([postprocessor, '-o', args.format], stdin=PIPE) as command:
+                    command.communicate(json.dumps(jdata).encode())
+            else:
+                print(f'Handler {postprocessor} is not executable!', file=sys.stderr)
+                sys.exit(1)
+        else:
+            print(f'Workload {workload} is unhandled!', file=sys.stderr)
+            sys.exit(1)
