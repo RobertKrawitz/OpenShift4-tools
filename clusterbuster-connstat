@@ -31,7 +31,7 @@ jdata = json.load(sys.stdin)
 if args.format == 'raw':
     json.dump(jdata, sys.stdout, indent = 4)
 else:
-    workload = jdata["workload"]
+    workload = jdata["metadata"]["workload"]
     postprocessor = os.path.join(os.path.dirname(__file__), "lib", "clusterbuster",
                      "postprocess", f'{workload}.postprocess')
 

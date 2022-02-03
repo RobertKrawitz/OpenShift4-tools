@@ -112,6 +112,7 @@ declare prometheusStartingTimestamp=
 declare prometheusEndingTimestamp=
 declare targetDataRate=''
 declare metrics_file=
+declare jobName=
 
 declare -r syncFlagFile="/tmp/syncfile";
 # shellcheck disable=2155
@@ -126,7 +127,7 @@ declare -a plurals=('s' '')
 declare KUBECTL_VALIDATE=
 declare artifactdir=
 declare -a saved_argv=("$0" "$@")
-declare -a processed_options=()
+declare -a processed_options=("$0")
 
 declare OC=${OC:-${KUBECTL:-}}
 OC=${OC:-$(type -p oc)}
@@ -243,6 +244,8 @@ function _helpExtended() {
 Extended Options:
     General Options (short equivalents):
        --doit=<1,0>     Run the command or not (default 1) (inverse of -n)
+       --jobname=name   Name of the job, for logging purposes.
+                        Defaults to the workload name
        --workload=type  Specify the workload (-P) (mandatory)
        --basename=name  Specify the base name for any namespaces (-B)
        --namespaces=N   Number of namespaces
@@ -561,6 +564,7 @@ function process_option() {
 	helpall*)		    help_extended				;;
 	helpeverything*)	    help_extended				;;
 	help*)			    help					;;
+	jobname)		    jobName=$optvalue				;;
 	workload)		    requestedWorkload=$optvalue			;;
 	basename)		    basename=$optvalue				;;
 	objspercall)		    objsPerCall=$optvalue			;;
@@ -1075,13 +1079,16 @@ function quote_list() {
 function _get_logs() {
     cat <<EOF
 {
+"metadata": {
   "kind": "clusterbusterResults",
-  "startTime": "$(readable_timestamp "${prometheusStartingTimestamp}")",
+  "jobStartTime": "$(readable_timestamp "${prometheusStartingTimestamp}")",
+  "jobName": "$jobName",
   "runUUID": "$runUUID",
   "workload": "$requestedWorkload",
   "kubernetesVersion": $(__OC version -ojson),
   "commandLine": [$(quote_list "${saved_argv[@]}")],
   "expandedCommandLine": [$(quote_list "${processed_options[@]}")],
+  "runHost": "$(hostname -f)",
   "options": {
     "basename": "$basename",
     "containersPerPod": $containersPerPod,
@@ -1103,7 +1110,9 @@ function _get_logs() {
     "workloadOptions": {
     $(indent 4 callAPI "$requestedWorkload" "reportOptions")
     }
-  },
+  }
+},
+"nodes": $(__OC get nodes -ojson),
 EOF
     echo '"api_objects":'
     __OC get all -A -l "clusterbuster-id=$runUUID" -ojson | jq -r '[foreach .items[]? as $item ([[],[]];0; {kind: $item.kind, namespace: $item.metadata.namespace, name: $item.metadata.name, nodeName: $item.spec.nodeName})]'
@@ -2141,6 +2150,8 @@ fi
 for i in $(seq 0 $((emptydir_volumes-1)) ) ; do
     emptydirs+=("/mnt/volume-$i")
 done
+
+jobName=${jobName:-${requestedWorkload:-}}
 
 shift $((OPTIND - 1))
 if [[ -n ${1:-} ]] ; then

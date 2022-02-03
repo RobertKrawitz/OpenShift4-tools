@@ -15,7 +15,6 @@ jdata = json.load(sys.stdin)
 if 'Results' in jdata:
     rows = jdata['Results']
     answer = {}
-    answer['mode'] = 'clientserver'
     answer['rows'] = []
     total_max_round_trip_time = 0
     round_trip_time_accumulator = 0
@@ -33,11 +32,11 @@ if 'Results' in jdata:
         rowhash['container'] = row['container']
         rowhash['runtime'] = row['data_elapsed_time']
 
-        rowhash['mean_round_trip_time_msec'] = row['mean_latency_sec'] * 1000
-        rowhash['max_round_trip_time_msec'] = row['max_latency_sec'] * 1000
+        rowhash['mean_round_trip_time_msec'] = round(row['mean_latency_sec'] * 1000, 3)
+        rowhash['max_round_trip_time_msec'] = round(row['max_latency_sec'] * 1000, 3)
         rowhash['iterations'] = row['passes']
         rowhash['data_xfer'] = row['data_sent_bytes']
-        rowhash['data_rate_mb_sec'] = round(rowhash['data_xfer'] / rowhash['runtime'] / 1000000)
+        rowhash['data_rate_mb_sec'] = round(rowhash['data_xfer'] / rowhash['runtime'] / 1000000, 3)
         if rowhash['max_round_trip_time_msec'] > total_max_round_trip_time:
             total_max_round_trip_time = rowhash['max_round_trip_time_msec']
         total_data_xfer += rowhash['data_xfer']
@@ -62,11 +61,11 @@ if 'Results' in jdata:
     summary = {}
     answer['Summary'] = summary
     summary['total_iterations'] = total_iterations
-    summary['elapsed_time_average'] = total_et / len(rows)
-    summary['max_round_trip_time_msec'] = total_max_round_trip_time
+    summary['elapsed_time_average'] = round(total_et / len(rows), 3)
+    summary['max_round_trip_time_msec'] = round(total_max_round_trip_time, 3)
     summary['total_data_xfer_bytes'] = total_data_xfer
-    summary['average_data_rate_mb_sec'] = total_data_xfer / summary['elapsed_time_average'] / 1000000
-    summary['average_round_trip_time_msec'] = round_trip_time_accumulator / len(rows)
+    summary['average_data_rate_mb_sec'] = round(total_data_xfer / summary['elapsed_time_average'] / 1000000, 3)
+    summary['average_round_trip_time_msec'] = round(round_trip_time_accumulator / len(rows), 3)
     summary['total_clients'] = len(rows)
 
     # I'd like to do this, but if the nodes are out of sync time-wise, this will not
@@ -83,13 +82,18 @@ if 'Results' in jdata:
         summary['average_data_rate_bytes_sec'] = total_data_xfer / (last_end - first_start)
 
     if args.format == 'json-summary':
+        summary['metadata'] = jdata['metadata']
         json.dump(summary, sys.stdout, sort_keys=True, indent=4)
     elif args.format == 'json':
+        answer['metadata'] = jdata['metadata']
         json.dump(answer, sys.stdout, sort_keys=True, indent=4)
     elif args.format == 'json-verbose':
         jdata['ProcessedResults'] = answer
         json.dump(jdata, sys.stdout, indent=4)
     else:
+        print(f"""Clusterbuster run report for job {jdata['metadata']['jobName']} at {jdata['metadata']['jobStartTime']}
+Command line: {' '.join(jdata['metadata']['expandedCommandLine'])}
+""")
         if args.format == 'verbose':
             def rowName(e):
                 return f'{e["namespace"]}~{e["pod"]}~{e["container"]}'
