@@ -111,7 +111,7 @@ declare -i emptydir_volumes=0
 declare -i take_prometheus_snapshot=0
 declare prometheusStartingTimestamp=
 declare prometheusEndingTimestamp=
-declare targetDataRate=''
+declare -i targetDataRate=0
 declare metrics_file=
 declare jobName=
 
@@ -844,6 +844,10 @@ function listConfigMaps() {
     callAPI listConfigMaps
 }
 
+function listUserConfigMaps() {
+    callAPI listUserConfigMaps
+}
+
 ################################################################
 # Helpers
 ################################################################
@@ -1505,7 +1509,7 @@ function createSpec() {
     local nodeClass=worker
     local OPTIND=0
     local OPTARG
-    local nsYAML=${nodeSelector:+"nodeSelector: $nodeSelector: \"\""}
+    local nsYAML=${nodeSelector:+"nodeSelector:${nl}  $nodeSelector: \"\""}
     local rc=$runtimeClass
     local usePbench=1
     while getopts "A:c:r:Pp" opt "$@" ; do
@@ -1522,7 +1526,7 @@ function createSpec() {
     # Node specifiers override affinity
     if [[ -n "$nodeClass" && -n "${pin_nodes[$nodeClass]:-}" ]] ; then
 	affinityYAML=
-	nsYAML="nodeSelector:${nl}  kubernetes.io/hostname:${nl}    \"${pin_nodes[$nodeClass]}\""
+	nsYAML="nodeSelector:${nl}  kubernetes.io/hostname: \"${pin_nodes[$nodeClass]}\""
     fi
     if (( $# < 4 )) ; then
 	echo "Usage: createSpec <container_func> namespace instance secretCount args..." 1>&2
@@ -1780,7 +1784,6 @@ spec:
   replicas: 1
   strategy:
     type: RollingUpdate
-$(indent 2 nodeSelectorYAML)
   selector:
     matchLabels:
       app: ${namespace}-sync
@@ -2085,6 +2088,7 @@ function run_clusterbuster_1() {
 	artifactdir=${artifactdir//%s/$(readable_timestamp "$prometheusStartingTimestamp")}
 	mkdir -p "$artifactdir" || fatal "Can't create log directory $artifactdir"
 	echo "${saved_argv[@]@Q}" > "$artifactdir/commandline"
+	exec 2> >(tee "$artifactdir/stderr.log" >&2)
     fi
     allocate_namespaces
     find_first_deployment
@@ -2142,6 +2146,11 @@ else
 fi
 
 callAPI -s "processOptions" "${unknown_opts[@]}" || help "${unknown_opt_names[@]}"
+
+if supportsAPI listUserConfigMaps ; then
+    readarray -t userfiles < <(listUserConfigMaps)
+    configMapFiles+=("${userfiles[@]}")
+fi
 
 if (( namespaces <= 0 )) ; then
     namespaces=1

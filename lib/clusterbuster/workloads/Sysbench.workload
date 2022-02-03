@@ -84,7 +84,6 @@ metadata:
   name: ${namespace}-sysbench-${instance}
 $(indent 2 namespaceYAML "$namespace")
 $(indent 2 privilegeYAML)
-$(indent 2 nodeSelectorYAML)
   selector:
     matchLabels:
       app: ${namespace}-sysbench-${instance}
@@ -103,7 +102,6 @@ $(indent 2 privilegeYAML)
 $(indent 2 standardLabelsYAML)
 spec:
   replicas: 1
-$(indent 2 nodeSelectorYAML)
   selector:
     matchLabels:
       app: ${namespace}-sysbench-$instance
@@ -201,10 +199,10 @@ function supportsReportingSysbench() {
 
 function reportOptionsSysbench() {
     cat <<EOF
-"sysbenchGeneralOptions": "$___sysbench_generic_options",
-"sysbenchGenericOptions": "$___sysbench_generic_options",
-"sysbenchFileIOOptions": "$___sysbench_fioeio_options",
-"sysbenchFileIOTests": "$___sysbench_fileio_tests"
+"sysbenchGeneralOptions": [$(quote_list "${___sysbench_general_options[@]}")],
+"sysbenchGenericOptions": [$(quote_list "${___sysbench_generic_options[@]}")],
+"sysbenchFileIOOptions": [$(quote_list "${___sysbench_fileio_options[@]}")],
+"sysbenchFileIOTests": [$(quote_list ${___sysbench_fileio_test_string//,/ })]
 EOF
 }
 

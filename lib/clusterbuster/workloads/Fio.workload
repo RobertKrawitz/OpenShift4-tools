@@ -79,7 +79,6 @@ metadata:
   name: $name
 $(indent 2 namespaceYAML "$namespace")
 $(indent 2 privilegeYAML)
-$(indent 2 nodeSelectorYAML)
   selector:
     matchLabels:
       app: ${namespace}-fio-${instance}
@@ -98,7 +97,6 @@ $(indent 2 privilegeYAML)
 $(indent 2 standardLabelsYAML)
 spec:
   replicas: 1
-$(indent 2 nodeSelectorYAML)
   selector:
     matchLabels:
       app: ${namespace}-fio-${instance}
@@ -139,6 +137,11 @@ function listConfigMapsFio() {
     cat <<EOF
 ${__libdir__}/fio.pl
 ${__libdir__}/sync.pl
+EOF
+}
+
+function listUserConfigMapsFio() {
+    cat <<EOF
 ${___fio_job_file}
 EOF
 }
@@ -189,8 +192,8 @@ function supportsReportingFio() {
 
 function reportOptionsFio() {
     cat <<EOF
-"fioGeneralOptions": "$___fio_general_options",
-"fioJobFile": "$(base64 -w 0 < "$___file_job_file")"
+"fioGeneralOptions": "${___fio_general_options:-}",
+"fioJobFile": "$(base64 -w 0 < "$___fio_job_file")"
 EOF
 }
 

@@ -11,4 +11,5 @@ deployments = 10
 replicas = 4
 containers = 3
 antiaffinity
-targetdatarate = 10MB
+#targetdatarate = 10MB
+workloadruntime=20

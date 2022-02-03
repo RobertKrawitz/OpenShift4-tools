@@ -87,7 +87,6 @@ metadata:
   name: $name
 $(indent 2 namespaceYAML "$namespace")
 $(indent 2 privilegeYAML)
-$(indent 2 nodeSelectorYAML)
   selector:
     matchLabels:
       app: ${namespace}-files-${instance}
@@ -108,7 +107,6 @@ $(indent 2 privilegeYAML)
 $(indent 2 standardLabelsYAML)
 spec:
   replicas: $replicas
-$(indent 2 nodeSelectorYAML)
   selector:
     matchLabels:
       app: ${namespace}-files-$instance

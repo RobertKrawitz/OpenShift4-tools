@@ -173,7 +173,7 @@ sub runit(;$) {
 }
 EOF
     my ($answer) = sprintf($fstring, $namespace, $pod, $container, 0, 0, 0,
-			   $$, $stime - $basetime, $etime - $stime, $ucpu1, $scpu1, $answer0);
+			   $$, $stime - $basetime, $etime - $stime, $ucpu1, $scpu1, $answer0 eq '' ? '{}' : $answer0);
     do_sync($synchost, $syncport, $answer);
     if ($logport > 0) {
 	do_sync($loghost, $logport, $answer);
@@ -182,6 +182,7 @@ EOF
 
 sub get_jobfiles($) {
     my ($dir) = @_;
+    `ls -l $dir 1>&2`;
     opendir DIR, $dir || die "Can't find job files in $dir: #!\n";
 
     my @files = map { "$dir/$_" } grep { -f "$dir/$_" } sort readdir DIR;
