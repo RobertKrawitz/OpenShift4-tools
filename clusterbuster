@@ -2086,6 +2086,8 @@ function run_clusterbuster_1() {
     fi
     if [[ $doit -gt 0 && -n "${artifactdir:-}" ]] ; then
 	artifactdir=${artifactdir//%s/$(readable_timestamp "$prometheusStartingTimestamp")}
+	artifactdir=${artifactdir//%w/$requestedWorkload}
+	artifactdir=${artifactdir//%n/$jobName}
 	mkdir -p "$artifactdir" || fatal "Can't create log directory $artifactdir"
 	echo "${saved_argv[@]@Q}" > "$artifactdir/commandline"
 	exec 2> >(tee "$artifactdir/stderr.log" >&2)
