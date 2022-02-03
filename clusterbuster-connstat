@@ -22,7 +22,7 @@ import argparse
 
 parser = argparse.ArgumentParser(description='Generate ClusterBuster report')
 
-parser.add_argument('-f', '--format', default='summary', type=str,
+parser.add_argument('-o', '--format', '--output_format', '--output', default='summary', type=str,
                     choices={'summary', 'verbose', 'raw',
                     'json-summary', 'json', 'json-verbose'})
 args = parser.parse_args()
@@ -37,7 +37,7 @@ else:
 
     if os.path.isfile(postprocessor):
         if os.access(postprocessor, os.X_OK):
-            with Popen([postprocessor, '-f', args.format], stdin=PIPE) as command:
+            with Popen([postprocessor, '-o', args.format], stdin=PIPE) as command:
                 command.communicate(json.dumps(jdata).encode())
         else:
             print(f'Handler {postprocessor} is not executable!', file=sys.stderr)

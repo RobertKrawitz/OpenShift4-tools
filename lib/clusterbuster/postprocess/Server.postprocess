@@ -3,10 +3,11 @@
 import json
 import sys
 import argparse
+import textwrap
 
 parser = argparse.ArgumentParser(description='Generate ClusterBuster report')
 
-parser.add_argument('-f', '--format', default='summary', type=str,
+parser.add_argument('-o', '--format', '--output_format', '--output', default='summary', type=str,
                     choices={'summary', 'verbose',
                     'json-summary', 'json', 'json-verbose'})
 args = parser.parse_args()
@@ -92,7 +93,9 @@ if 'Results' in jdata:
         json.dump(jdata, sys.stdout, indent=4)
     else:
         print(f"""Clusterbuster run report for job {jdata['metadata']['jobName']} at {jdata['metadata']['jobStartTime']}
-Command line: {' '.join(jdata['metadata']['expandedCommandLine'])}
+
+Workload: {jdata['metadata']['workload']}
+Command line:  {textwrap.fill(' '.join(jdata['metadata']['expandedCommandLine']), width=72, subsequent_indent='                ', break_long_words=False, break_on_hyphens=False)}
 """)
         if args.format == 'verbose':
             def rowName(e):
@@ -122,8 +125,7 @@ Command line: {' '.join(jdata['metadata']['expandedCommandLine'])}
             Avg RTT msec:       {round(row['mean_round_trip_time_msec'], 3)}
             Max RTT msec:       {round(row['max_round_trip_time_msec'], 3)}
 """)
-        print(f"""
-Summary:
+        print(f"""Summary:
     Total Clients:              {summary['total_clients']}
     Elapsed Time Average:       {round(summary['elapsed_time_average'], 3)}
     Total Messages Sent:        {summary['total_iterations']}
