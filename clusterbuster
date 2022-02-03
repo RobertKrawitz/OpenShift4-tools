@@ -52,6 +52,7 @@ declare log_host=
 declare -i log_port=0
 declare syncHost=
 declare -i affinity=0
+declare -A pin_nodes=()
 declare -i verbose=0
 declare -i wait_for_secrets=1
 declare -i bytesTransfer=0
@@ -311,12 +312,21 @@ $(print_workloads_supporting_reporting '                        - ')
                         specify maximum time.
 
     Workload placement options:
+       --pin_node=<class>=<node>
+                        Force pod(s) of the specified class onto the
+                        specified node.  The following classes are
+                        defined for general workloads:
+                        - sync   (sync pods)
+                        - worker (worker pods)
+                        Workloads may define other classes.
        --affinity       Force affinity between client and server pods
                         in a client-server workload.  Default is neither
-                        affinity nor anti-affinity.
+                        affinity nor anti-affinity.  Use of a pin node
+                        overrides affinity.
        --anti-affinity  Force anti-affinity between client and server pods
                         in a client-server workload.  Default is neither
-                        affinity nor anti-affinity.
+                        affinity nor anti-affinity.  Use of a pin node
+                        overrides anti-affinity.
 
     Generic workload storage options:
        --emptydir=dir   Mount an emptydir volume at the specified mount point.
@@ -552,6 +562,18 @@ function parse_option() {
     echo "$noptname1 $noptname $optvalue"
 }
 
+function process_pin_node() {
+    local nodespec=$1
+    nodespec=${nodespec// /}
+    [[ -n "$nodespec" ]] || return
+    if [[ $nodespec != *'='* ]] ; then
+	fatal "Pin node specifier must be of the form <class>=<node>"
+    fi
+    local class=${nodespec%%=*}
+    local node=${nodespec#*=}
+    pin_nodes["$class"]="$node"
+}
+
 function process_option() {
     local noptname
     local noptname1
@@ -635,6 +657,7 @@ function process_option() {
 	artifactdir)		    artifactdir="$optvalue"			;;
 	prometheussnapshot)	    take_prometheus_snapshot=$(bool "$optvalue");;
 	metricsfile)		    metrics_file="$optvalue"			;;
+	pinnode)		    process_pin_node "$optvalue"		;;
 	affinity)
 	    case "$optvalue" in
 		1|'') affinity=1      ;;
@@ -866,6 +889,7 @@ function readable_timestamp() {
 }
 
 function start_prometheus_snapshot() {
+    ((doit)) || return 0
     echo "Starting Prometheus snapshot" | echoIfDesired 1>&2
     _OC delete pod -n openshift-monitoring prometheus-k8s-0
     _OC wait --for=condition=Ready -n openshift-monitoring pod/prometheus-k8s-0 || fatal "Prometheus pod did not go ready"
@@ -876,6 +900,7 @@ function start_prometheus_snapshot() {
 }
 
 function retrieve_prometheus_snapshot() {
+    ((doit)) || return 0
     echo "Retrieving Prometheus snapshot" | echoIfDesired 1>&2
     local dir=${1:-$artifactdir}
     sleep 60
@@ -1076,6 +1101,15 @@ function quote_list() {
     (IFS=$',\n '; echo "${a[*]}")
 }
 
+function _report_pin_nodes() {
+    local -a nodes
+    local class
+    for class in "${!pin_nodes[@]}" ; do
+	nodes+=("\"$class\": \"${pin_nodes[$class]}\"")
+    done
+    (IFS=$',\n '; echo "${nodes[*]}")
+}
+
 function _get_logs() {
     cat <<EOF
 {
@@ -1098,6 +1132,7 @@ function _get_logs() {
     "bytesTransferMax": $bytesTransferMax,
     "workloadRunTime": $workloadRunTime,
     "workloadRunTimeMax": $workloadRunTimeMax,
+    "pin_nodes": {$(_report_pin_nodes)},
     $(indent 4 _report_volumes)
     "secrets": $secrets,
     "replicas": $replicas,
@@ -1281,15 +1316,6 @@ EOF
     fi
 }
 
-function nodeSelectorYAML() {
-    if [[ -n "$nodeSelector" ]] ; then
-	cat <<EOF
-nodeSelector:
-  $nodeSelector: ""
-EOF
-    fi
-}
-
 function bootstrapCommandYAML() {
     local command=$1
     cat <<EOF
@@ -1464,9 +1490,27 @@ EOF
 
 function createSpec() {
     local affinityYAML=
-    if [[ ${1:-} = '-A' ]] ; then
-	affinityYAML="${2:-}"
-	shift 2
+    local nodeClass=worker
+    local OPTIND=0
+    local OPTARG
+    local nsYAML=${nodeSelector:+"nodeSelector: $nodeSelector: \"\""}
+    local rc=$runtimeClass
+    local usePbench=1
+    while getopts "A:c:r:Pp" opt "$@" ; do
+	case "$opt" in
+	    A) affinityYAML=$OPTARG ;;
+	    c) nodeClass=$OPTARG    ;;
+	    r) rc=$OPTARG	    ;;
+	    P) usePbench=	    ;;
+	    p) usePbench=1	    ;;
+	    *)                      ;;
+	esac
+    done
+    shift $((OPTIND-1))
+    # Node specifiers override affinity
+    if [[ -n "$nodeClass" && -n "${pin_nodes[$nodeClass]:-}" ]] ; then
+	affinityYAML=
+	nsYAML="nodeSelector:${nl}  kubernetes.io/hostname:${nl}    \"${pin_nodes[$nodeClass]}\""
     fi
     if (( $# < 4 )) ; then
 	echo "Usage: createSpec <container_func> namespace instance secretCount args..." 1>&2
@@ -1478,13 +1522,14 @@ function createSpec() {
     local secretCount=$3
     cat <<EOF
 spec:
-$(indent 2 nodeSelectorYAML)
+$(indent 2 <<< "$nsYAML")
   terminationGracePeriodSeconds: 1
 $(indent 2 <<< "$affinityYAML")
-$(indent 2 <<< "$runtimeClass")
+$(indent 2 tolerationsYAML ${tolerations+"${tolerations[@]}"})
+$(indent 2 <<< "${rc:+runtimeClassName: \"$rc\"}")
   containers:
 $(indent 2 "$createContainerFunction" "$@")
-$(indent 2 pbenchAgentYAML)
+$(indent 2 <<< "${usePbench:+$(pbenchAgentYAML)}")
 $(indent 2 volumesYAML "$namespace" "$instance" "$secretCount")
 EOF
 }
@@ -1667,10 +1712,10 @@ spec:
 EOF
 }
 
-function syncYAML() {
+function createContainerSync() {
     local namespace=$1
-    local syncCount=${2:-1}
-    local expectedClients=$3
+    local syncCount=${4:-1}
+    local expectedClients=$5
     cat <<EOF
 - name: ${namespace}-sync
   imagePullPolicy: $imagePullPolicy
@@ -1687,20 +1732,6 @@ $(indent 2 volumeMountsYAML "$namespace" 0 0)
 EOF
 }
 
-function syncSpec() {
-    local namespace=$1
-    cat <<EOF
-spec:
-$(indent 2 nodeSelectorYAML)
-  terminationGracePeriodSeconds: 1
-$(indent 2 tolerationsYAML ${tolerations+"${tolerations[@]}"})
-$(indent 2 <<< "$runtimeClass")
-  containers:
-$(indent 2 syncYAML "$@")
-$(indent 2 volumesYAML "$namespace" 0 0)
-EOF
-}
-
 function createSyncDeployment() {
     local namespace=$1; shift
     local syncCount=$1; shift
@@ -1712,7 +1743,6 @@ metadata:
   name: ${namespace}-sync
 $(indent 2 namespaceYAML "$namespace")
 $(indent 2 privilegeYAML)
-$(indent 2 nodeSelectorYAML)
   selector:
     matchLabels:
       app: ${namespace}-sync
@@ -1721,7 +1751,7 @@ $(indent 2 standardLabelsYAML)
     app: ${namespace}-sync
     k8s-app: ${namespace}-sync
     ${basename}-sync: "true"
-$(syncSpec "$namespace" "$syncCount" "$@")
+$(createSpec -P -c sync -r '' createContainerSync "$namespace" 0 0 "$syncCount" "$@")
   restartPolicy: Never
 EOF
     else
@@ -1749,7 +1779,7 @@ $(indent 6 standardLabelsYAML)
         app: ${namespace}-sync
         k8s-app: ${namespace}-sync
         ${basename}-sync: "true"
-$(indent 4 syncSpec "$namespace" -1 "$@")
+$(indent 4 createSpec -P -c sync -r '' createContainerSync "$namespace" 0 0 "$syncCount" "$@")
 EOF
     fi
 }

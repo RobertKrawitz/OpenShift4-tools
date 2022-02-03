@@ -56,13 +56,12 @@ kind: Pod
 metadata:
   name: "$name"
 $(indent 2 namespaceYAML "$namespace")
-$(indent 2 nodeSelectorYAML)
 $(indent 2 privilegeYAML)
   selector:
     matchLabels:
       app: ${namespace}-${instance}
 $(indent 2 standardLabelsYAML server "$namespace" "$instance")
-$(createSpec _createServerContainerYAML "$@")
+$(createSpec -c server _createServerContainerYAML "$@")
   restartPolicy: Never
 EOF
     else
@@ -76,7 +75,6 @@ $(indent 2 privilegeYAML)
 $(indent 2 standardLabelsYAML)
 spec:
   replicas: 1
-$(indent 2 nodeSelectorYAML)
   selector:
     matchLabels:
       app: ${namespace}-$instance
@@ -86,7 +84,7 @@ $(indent 2 nodeSelectorYAML)
     metadata:
       labels:
 $(indent 6 standardLabelsYAML server "$namespace" "$instance")
-$(indent 4 createSpec _createServerContainerYAML "$@")
+$(indent 4 createSpec -c server _createServerContainerYAML "$@")
 EOF
     fi
 }
@@ -181,7 +179,6 @@ metadata:
   name: $name
 $(indent 2 namespaceYAML "$namespace")
 $(indent 2 privilegeYAML)
-$(indent 2 nodeSelectorYAML)
 $(indent 2 privilegeYAML)
   selector:
     matchLabels:
@@ -203,7 +200,6 @@ $(indent 2 namespaceYAML "$namespace")
 $(indent 2 standardLabelsYAML)
 spec:
   replicas: $replicas
-$(indent 2 nodeSelectorYAML)
   restartPolicy: Always
   selector:
     matchLabels:
@@ -260,6 +256,8 @@ function helpOptionsServer() {
     cat <<'EOF'
     Client/server options:
        msgsize         Message size in data transfer
+       pin_node=server=<node>
+                       Specify node to which the server is bound.
 EOF
 }
 
