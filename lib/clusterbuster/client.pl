@@ -51,6 +51,7 @@ sub stats() {
   "connections_failed": %d,
   "connections_refused": %d,
   "passes": %d,
+  "msgSize": %d,
   "init_offset_from_base": %f,
   "start_offset_from_base": %f,
   "gethostbyname_offset_from_base": %f,
@@ -65,14 +66,15 @@ sub stats() {
   "mean_latency_sec": %f,
   "max_latency_sec": %f,
   "stdev_latency_sec": %f,
-  "timing_overhead_sec": %f
+  "timing_overhead_sec": %f,
+  "target_data_rate": %f
 }
 EOF
     $fstring =~ s/[ \n]+//g;
-    return sprintf($fstring, $namespace, $pod, $container, $cfail, $refused, $pass,
+    return sprintf($fstring, $namespace, $pod, $container, $cfail, $refused, $pass, $msgSize,
 		   $crtime - $basetime, $start_time - $basetime, $ghbn_time - $basetime, $etime - $basetime,
 		   $dstime - $basetime, $end_time - $basetime, $user, $sys,
-		   $data_sent, $detime, $data_sent / $detime / 1000000.0, $mean, $max, $stdev, $time_overhead);
+		   $data_sent, $detime, $data_sent / $detime / 1000000.0, $mean, $max, $stdev, $time_overhead, $data_rate);
 }
 sub connect_to($$) {
     my ($addr, $port) = @_;
@@ -161,7 +163,7 @@ vec($buffer, $msgSize - 1, 8) = "A";
 my $nread;
 my $bufsize = length($buffer);
 my $starttime = xtime();
-my $MBSec = $data_rate * 1;
+$data_rate = $data_rate * 1;
 ($dstime) = xtime();
 
 $data_sent = 0;
@@ -174,60 +176,60 @@ if ($bytes != $bytesMax) {
 if ($xfertime != $xfertimeMax) {
     $xfertime += int(rand($xfertimeMax - $xfertime + 1));
 }
-if ($MBSec != 0) {
-    calibrate_time();
-    my $delaytime = $basetime + $poddelay - $dstime;
-    timestamp("Using $bufsize byte buffer");
-    if ($delaytime > 0) {
-	timestamp("Sleeping $delaytime seconds to synchronize");
-	usleep($delaytime * 1000000);
+calibrate_time();
+my $delaytime = $basetime + $poddelay - $dstime;
+timestamp("Using $bufsize byte buffer");
+if ($delaytime > 0) {
+    timestamp("Sleeping $delaytime seconds to synchronize");
+    usleep($delaytime * 1000000);
+}
+$dstime = xtime();
+my ($tbuf, $rtt_start, $rtt_elapsed, $en);
+while (($bytes > 0 && $data_sent < $bytes) ||
+       ($xfertime > 0 && xtime() - $dstime < $xfertime)) {
+    my $nwrite;
+    my $nleft = $bufsize;
+    $rtt_start = xtime();
+    while ($nleft > 0 && ($nwrite = syswrite($conn, $buffer, $nleft)) > 0) {
+	$nleft -= $nwrite;
+	$data_sent += $nwrite;
     }
-    $dstime = xtime();
-    my ($tbuf, $rtt_start, $rtt_elapsed, $en);
-    while (($bytes > 0 && $data_sent < $bytes) ||
-	   ($xfertime > 0 && xtime() - $dstime < $xfertime)) {
-	my $nwrite;
-	my $nleft = $bufsize;
-	$rtt_start = xtime();
-	while ($nleft > 0 && ($nwrite = syswrite($conn, $buffer, $nleft)) > 0) {
-	    $nleft -= $nwrite;
-	    $data_sent += $nwrite;
-	}
-	if ($nwrite == 0) {
-	    exit 0;
-	} elsif ($nwrite < 0) {
-	    die "Write failed: $!\n";
-	}
-	$nleft = $bufsize;
-	while ($nleft > 0 && ($nread = sysread($conn, $tbuf, $nleft)) > 0) {
-	    $nleft -= $nread;
-	}
-	$en = xtime() - $rtt_start - $time_overhead;
-	$ex += $en;
-	$ex2 += $en * $en;
-	if ($en > $max) {
-	    $max = $en;
-	}
-	if ($nread < 0) {
-	    die "Read failed: $!\n";
-	}
-	if ($ENV{"VERBOSE"} > 0) {
-	    timestamp(sprintf("Write/Read %d %.6f", $bufsize, $en));
-	}
-	my $curtime = xtime();
-	$starttime += $bufsize / ($MBSec * 1000000);
-	if ($curtime < $starttime && $MBSec > 0) {
+    if ($nwrite == 0) {
+	exit 0;
+    } elsif ($nwrite < 0) {
+	die "Write failed: $!\n";
+    }
+    $nleft = $bufsize;
+    while ($nleft > 0 && ($nread = sysread($conn, $tbuf, $nleft)) > 0) {
+	$nleft -= $nread;
+    }
+    $en = xtime() - $rtt_start - $time_overhead;
+    $ex += $en;
+    $ex2 += $en * $en;
+    if ($en > $max) {
+	$max = $en;
+    }
+    if ($nread < 0) {
+	die "Read failed: $!\n";
+    }
+    if ($ENV{"VERBOSE"} > 0) {
+	timestamp(sprintf("Write/Read %d %.6f", $bufsize, $en));
+    }
+    my $curtime = xtime();
+    if ($data_rate > 0) {
+	$starttime += $bufsize / $data_rate;
+	if ($curtime < $starttime) {
 	    if ($ENV{"VERBOSE"} > 0) {
 		timestamp(sprintf("Sleeping %8.6f", $starttime - $curtime));
 	    }
 	    usleep(($starttime - $curtime) * 1000000);
 	} else {
-	    if ($ENV{"VERBOSE"} > 0 && $MBSec > 0) {
+	    if ($ENV{"VERBOSE"} > 0) {
 		timestamp("Not sleeping");
 	    }
 	}
-	$pass++;
     }
+    $pass++;
 }
 if ($pass > 0) {
     $mean = ($ex / $pass);

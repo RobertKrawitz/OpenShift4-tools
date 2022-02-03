@@ -181,6 +181,9 @@ function print_workloads_supporting_reporting() {
 function _help_options_workloads() {
     local workload
     while read -r workload ; do
+	if [[ -z "$workload" ]] ; then
+	    continue
+	fi
 	echo
 	callAPI -w "$workload" helpOptions
     done <<< "$(workloadsSupportingAPI helpOptions)"
@@ -189,6 +192,9 @@ function _help_options_workloads() {
 function _document_workloads() {
     local workload
     while read -r workload ; do
+	if [[ -z "$workload" ]] ; then
+	    continue
+	fi
 	echo
 	callAPI -w "$workload" document
     done <<< "$(workloadsSupportingAPI document)"
@@ -439,7 +445,7 @@ function help_extended() {
 ################################################################
 
 function parse_size() {
-    if [[ $1 =~ ([[:digit:]]+)([[:alpha:]]*) ]] ; then
+    if [[ $1 =~ (-?[[:digit:]]+)([[:alpha:]]*) ]] ; then
 	local size=${BASH_REMATCH[1]}
 	local size_modifier=${BASH_REMATCH[2],,}
 	local -i size_multiplier=1

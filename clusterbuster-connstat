@@ -18,20 +18,31 @@ import os
 import sys
 import json
 from subprocess import PIPE, Popen
+import argparse
+
+parser = argparse.ArgumentParser(description='Generate ClusterBuster report')
+
+parser.add_argument('-f', '--format', default='summary', type=str,
+                    choices={'summary', 'verbose', 'raw',
+                    'json-summary', 'json', 'json-verbose'})
+args = parser.parse_args()
 
 jdata = json.load(sys.stdin)
-workload = jdata["workload"]
-postprocessor = os.path.join(os.path.dirname(__file__), "lib", "clusterbuster",
-			     "postprocess", f'{workload}.postprocess')
-
-if os.path.isfile(postprocessor):
-    if os.access(postprocessor, os.X_OK):
-        with Popen(postprocessor, stdin=PIPE) as command:
-            command.communicate(json.dumps(jdata).encode())
-    else:
-        print(f'Handler {postprocessor} is not executable!', file=sys.stderr)
-        sys.exit(1)
+if args.format == 'raw':
+    json.dump(jdata, sys.stdout, indent = 4)
 else:
-    print(f'Workload {workload} is unhandled!', file=sys.stderr)
-    sys.exit(1)
-										   
+    workload = jdata["workload"]
+    postprocessor = os.path.join(os.path.dirname(__file__), "lib", "clusterbuster",
+                     "postprocess", f'{workload}.postprocess')
+
+    if os.path.isfile(postprocessor):
+        if os.access(postprocessor, os.X_OK):
+            with Popen([postprocessor, '-f', args.format], stdin=PIPE) as command:
+                command.communicate(json.dumps(jdata).encode())
+        else:
+            print(f'Handler {postprocessor} is not executable!', file=sys.stderr)
+            sys.exit(1)
+    else:
+        print(f'Workload {workload} is unhandled!', file=sys.stderr)
+        sys.exit(1)
+
