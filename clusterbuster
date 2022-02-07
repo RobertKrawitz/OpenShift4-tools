@@ -588,81 +588,60 @@ function process_option() {
     # shellcheck disable=SC2119
     processed_options+=("--$1")
     case "$noptname1" in
+	# Help, verbosity
 	helpall*)		    help_extended				;;
 	helpeverything*)	    help_extended				;;
 	help*)			    help					;;
-	jobname)		    jobName=$optvalue				;;
-	workload)		    requestedWorkload=$optvalue			;;
-	basename)		    basename=$optvalue				;;
-	objspercall)		    objsPerCall=$optvalue			;;
-	containers)		    containersPerPod=$optvalue			;;
-	containersperpod)	    containersPerPod=$optvalue			;;
-	deployments|depspername*)   depsPerNamespace=$optvalue			;;
-	namespaces)		    namespaces=$optvalue			;;
-	workload_size)		    set_workload_bytes "$optvalue"		;;
-	secrets)		    secrets=$optvalue				;;
 	verbose)		    verbose=$(bool "$optvalue")			;;
 	doit)			    doit=$(bool "$optvalue")			;;
 	quiet)			    verbose=$((! $(bool "$optvalue")))		;;
-	processes|processesperpod)  processes_per_pod=$optvalue			;;
-	replicas)		    replicas=$optvalue				;;
-	parallel)		    parallel=$optvalue				;;
-	sleep)			    sleeptime=$optvalue				;;
-	podsleep|podsleeptime)	    podsleeptime=$optvalue			;;
-	poddelay)		    poddelay=$optvalue				;;
-	workloadruntime)	    set_runtime "$optvalue"			;;
-	firstdeployment)	    firstDeployment=$optvalue			;;
-	parallelconfigmaps)	    parallelConfigMaps=$optvalue		;;
-	parallelsecrets)	    parallelSecrets=$optvalue			;;
-	parallelnamespaces)	    parallelNamespaces=$optvalue		;;
-	paralleldeployments)	    parallelDeployments=$optvalue		;;
-	objsPerCallconfigmaps)	    objsPerCallConfigMaps=$optvalue		;;
-	objsPerCallsecrets)	    objsPerCallSecrets=$optvalue		;;
-	objsPerCallnamespaces)	    objsPerCallNamespaces=$optvalue		;;
-	objsPerCalldeployments)	    objsPerCallDeployments=$optvalue		;;
-	containerimage)		    containerImage=$optvalue			;;
-	imagepullpolicy)	    imagePullPolicy=$optvalue			;;
-	sleepconfigmaps)	    sleepConfigMaps=$optvalue			;;
-	sleepsecrets)		    sleepSecrets=$optvalue			;;
-	sleepnamespaces)	    sleepNamespaces=$optvalue			;;
-	sleepdeployments)	    sleepDeployments=$optvalue			;;
-	nodeselector)		    nodeSelector=$optvalue			;;
-	exitatend)		    exitAtEnd=$(bool "$optvalue")		;;
-	request)		    resource_requests+=("$optvalue")		;;
-	limit)			    resource_limits+=("$optvalue")		;;
-	waitsecrets)		    wait_for_secrets=$(bool "$optvalue")	;;
-	scalens)	   	    scale_ns=$(bool "$optvalue")		;;
-	scaledeployments)   	    scale_deployments=$(bool "$optvalue")	;;
-	deploymenttype)		    deploymentType=$optvalue			;;
-	runtimeclass)		    runtimeClass=$optvalue			;;
-	reportobjectcreation)	    reportObjectCreation=$(bool "$optvalue")	;;
-	kata)			    runtimeClass=${kataRuntimeClass}		;;
-	volumes)		    emptydir_volumes=$optvalue			;;
+	# Reporting
+	artifactdir)		    artifactdir="$optvalue"			;;
+	logstrategy)		    logStrategy=$optvalue			;;
+	metricsfile)		    metrics_file="$optvalue"			;;
 	reportformat)		    report_format=$optvalue			;;
-	report)		    	    report_format=summary			;;
-	verbosereport)		    report_format=verbose			;;
 	jsonreport)		    report_format=json				;;
 	rawreport)		    report_format=raw				;;
-	precleanup)		    precleanup=$(bool "$optvalue")		;;
-	cleanup)		    cleanup=$(bool "$optvalue")			;;
-	logstrategy)		    logStrategy=$optvalue			;;
-	timeout)		    timeout=$optvalue				;;
-	emptydir)		    emptydirs+=("$optvalue")			;;
-	volume)			    parse_volume_spec "$optvalue"		;;
-	sync|syncstart)		    syncStart=$((1-syncStart))			;;
-	baseoffset)		    baseoffset=$optvalue			;;
-	configmapfile)		    configMapFiles+=("$optvalue")		;;
-	tolerate|toleration)	    tolerations+=("$optvalue")			;;
-	pbenchcontrollerport)	    pbenchControllerPort=$optvalue		;;
-	pbenchcontrolleraddress)    pbenchControllerAddress=$optvalue		;;
-	workdir)		    common_workdir=$optvalue			;;
-	targetdatarate)		    targetDataRate=$(parse_size "$optvalue")	;;
-	uuid)			    runUUID=$optvalue				;;
-	jobfile)		    process_job_file "$optvalue"		;;
-	artifactdir)		    artifactdir="$optvalue"			;;
+	report)		    	    report_format=summary			;;
+	verbosereport)		    report_format=verbose			;;
+	reportobjectcreation)	    reportObjectCreation=$(bool "$optvalue")	;;
 	prometheussnapshot)	    take_prometheus_snapshot=$(bool "$optvalue");;
-	metricsfile)		    metrics_file="$optvalue"			;;
+	timeout)		    timeout=$optvalue				;;
+	# Basic options
+	jobname)		    jobName=$optvalue				;;
+	workload)		    requestedWorkload=$optvalue			;;
+	basename)		    basename=$optvalue				;;
+	# Object definition
+	workdir)		    common_workdir=$optvalue			;;
+	configmapfile)		    configMapFiles+=("$optvalue")		;;
+	containerimage)		    containerImage=$optvalue			;;
+	containers)		    containersPerPod=$optvalue			;;
+	containersperpod)	    containersPerPod=$optvalue			;;
+	deploymenttype)		    deploymentType=$optvalue			;;
+	deployments|depspername*)   depsPerNamespace=$optvalue			;;
+	emptydir)		    emptydirs+=("$optvalue")			;;
+	volumes)		    emptydir_volumes=$optvalue			;;
+	exitatend)		    exitAtEnd=$(bool "$optvalue")		;;
+	imagepullpolicy)	    imagePullPolicy=$optvalue			;;
+	namespaces)		    namespaces=$optvalue			;;
+	nodeselector)		    nodeSelector=$optvalue			;;
+	volume)			    parse_volume_spec "$optvalue"		;;
+	pbenchcontrolleraddress)    pbenchControllerAddress=$optvalue		;;
+	pbenchcontrollerport)	    pbenchControllerPort=$optvalue		;;
+	processes|processesperpod)  processes_per_pod=$optvalue			;;
+	jobfile)		    process_job_file "$optvalue"		;;
 	pinnode)		    process_pin_node "$optvalue"		;;
+	replicas)		    replicas=$optvalue				;;
+	limit)			    resource_limits+=("$optvalue")		;;
+	request)		    resource_requests+=("$optvalue")		;;
+	kata)			    runtimeClass=${kataRuntimeClass}		;;
+	runtimeclass)		    runtimeClass=$optvalue			;;
+	uuid)			    runUUID=$optvalue				;;
+	secrets)		    secrets=$optvalue				;;
+	workloadruntime)	    set_runtime "$optvalue"			;;
+	workload_size)		    set_workload_bytes "$optvalue"		;;
+	targetdatarate)		    targetDataRate=$(parse_size "$optvalue")	;;
+	tolerate|toleration)	    tolerations+=("$optvalue")			;;
 	affinity)
 	    case "$optvalue" in
 		1|'') affinity=1      ;;
@@ -676,6 +655,33 @@ function process_option() {
 		*) affinity=0         ;;
 	    esac
 	    ;;
+	# Object creation
+	objspercall)		    objsPerCall=$optvalue			;;
+	parallel)		    parallel=$optvalue				;;
+	sleep)			    sleeptime=$optvalue				;;
+	podsleep|podsleeptime)	    podsleeptime=$optvalue			;;
+	poddelay)		    poddelay=$optvalue				;;
+	firstdeployment)	    firstDeployment=$optvalue			;;
+	parallelconfigmaps)	    parallelConfigMaps=$optvalue		;;
+	parallelsecrets)	    parallelSecrets=$optvalue			;;
+	parallelnamespaces)	    parallelNamespaces=$optvalue		;;
+	paralleldeployments)	    parallelDeployments=$optvalue		;;
+	objsPerCallconfigmaps)	    objsPerCallConfigMaps=$optvalue		;;
+	objsPerCallsecrets)	    objsPerCallSecrets=$optvalue		;;
+	objsPerCallnamespaces)	    objsPerCallNamespaces=$optvalue		;;
+	objsPerCalldeployments)	    objsPerCallDeployments=$optvalue		;;
+	sleepbetweenconfigmaps)	    sleepBetweenConfigMaps=$optvalue		;;
+	sleepbetweensecrets)	    sleepBetweenSecrets=$optvalue		;;
+	sleepbetweennamespaces)	    sleepBetweenNamespaces=$optvalue		;;
+	sleepbetweendeployments)    sleepBetweenDeployments=$optvalue		;;
+	waitsecrets)		    wait_for_secrets=$(bool "$optvalue")	;;
+	scalens)	   	    scale_ns=$(bool "$optvalue")		;;
+	scaledeployments)   	    scale_deployments=$(bool "$optvalue")	;;
+	precleanup)		    precleanup=$(bool "$optvalue")		;;
+	cleanup)		    cleanup=$(bool "$optvalue")			;;
+	baseoffset)		    baseoffset=$optvalue			;;
+	# Synchronization
+	sync|syncstart)		    syncStart=$((1-syncStart))			;;
 	externalsync)
 	    if [[ $optvalue =~ ^(-|([[:alnum:]][-_[:alnum:]]*[[:alnum:]]\.)*([[:alnum:]][-_[:alnum:]]*[[:alnum:]])):([1-9][[:digit:]]{0,4})$ ]] ; then
 		syncHost=${BASH_REMATCH[1]}
