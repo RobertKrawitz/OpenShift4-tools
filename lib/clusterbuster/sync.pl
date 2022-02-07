@@ -4,16 +4,16 @@ use POSIX;
 use strict;
 use Time::Piece;
 use Time::HiRes qw(gettimeofday);
-my ($verbose, $syncFile);
+my ($verbose, $sync_file);
 use Getopt::Long;
 Getopt::Long::Configure("bundling", "no_ignore_case", "pass_through");
 GetOptions("v!"  => \$verbose,
-	   "f:s" => \$syncFile);
+	   "f:s" => \$sync_file);
 
 $SIG{TERM} = sub { POSIX::_exit(0); };
-my ($listen_port, $expected_clients, $syncCount) = @ARGV;
-if (! $syncCount) {
-    $syncCount = 1;
+my ($listen_port, $expected_clients, $sync_count) = @ARGV;
+if (! $sync_count) {
+    $sync_count = 1;
 }
 sub timestamp($) {
     my ($str) = @_;
@@ -32,12 +32,12 @@ my ($junk, $port, $addr) = unpack($sockaddr, $mysockaddr);
 die "can't get port $port: $!\n" if ($port ne $listen_port);
 my (@clients);
 
-my ($tmpSyncFileBase) = (defined($syncFile) && $syncFile ne '') ? "${syncFile}-tmp" : undef;
+my ($tmp_sync_file_base) = (defined($sync_file) && $sync_file ne '') ? "${sync_file}-tmp" : undef;
 
-my (@tmpSyncFiles) = map { "${tmpSyncFileBase}-$_" } (1..$expected_clients);
+my (@tmp_sync_files) = map { "${tmp_sync_file_base}-$_" } (1..$expected_clients);
 
-while ($syncCount < 0 || $syncCount-- > 0) {
-    my ($tmpSyncFile) = undef;
+while ($sync_count < 0 || $sync_count-- > 0) {
+    my ($tmp_sync_file) = undef;
     # Ensure that all of the accepted connections get closed by exiting
     # a child process.  This way we don't have to keep track of all of the
     # clients and close them manually.
@@ -58,10 +58,10 @@ while ($syncCount < 0 || $syncCount-- > 0) {
 		timestamp("Read token from $peerhost failed: $!");
 	    }
 	    timestamp("Accepted connection from $peerhost ($peeraddr) on $port, token $tbuf");
-	    if ($tbuf =~ /clusterbuster-json/ && defined $tmpSyncFileBase) {
-		$tmpSyncFile = sprintf("%s-%d", $tmpSyncFileBase, $expected_clients);
+	    if ($tbuf =~ /clusterbuster-json/ && defined $tmp_sync_file_base) {
+		$tmp_sync_file = sprintf("%s-%d", $tmp_sync_file_base, $expected_clients);
 		chomp $tbuf;
-		open TMP, ">", "$tmpSyncFile" || die("Can't open sync file $tmpSyncFile: $!\n");
+		open TMP, ">", "$tmp_sync_file" || die("Can't open sync file $tmp_sync_file: $!\n");
 		print TMP "$tbuf\n";
 		close TMP || die "Can't close sync file: $!\n";
 	    }
@@ -79,11 +79,11 @@ while ($syncCount < 0 || $syncCount-- > 0) {
         wait();
     }
 }
-if (@tmpSyncFiles) {
-    my ($tmpSyncFile) = "${tmpSyncFileBase}";
-    open (TMP, ">", $tmpSyncFile) || die "Can't open sync file $tmpSyncFile: $!\n";
+if (@tmp_sync_files) {
+    my ($tmp_sync_file) = "${tmp_sync_file_base}";
+    open (TMP, ">", $tmp_sync_file) || die "Can't open sync file $tmp_sync_file: $!\n";
     my (@data);
-    foreach my $file (@tmpSyncFiles) {
+    foreach my $file (@tmp_sync_files) {
 	-f $file || next;
 	open FILE, "<", $file || next;
 	my ($datum) = "";
@@ -95,12 +95,12 @@ if (@tmpSyncFiles) {
     }
     print TMP join(",", @data);
     close TMP || die "Can't close temporary sync file: $!\n";
-    rename($tmpSyncFile, $syncFile) || die "Can't rename $syncFile to $tmpSyncFile: $!\n";
-    timestamp("Waiting for sync file $syncFile to be removed");
-    while (-f $syncFile) {
+    rename($tmp_sync_file, $sync_file) || die "Can't rename $sync_file to $tmp_sync_file: $!\n";
+    timestamp("Waiting for sync file $sync_file to be removed");
+    while (-f $sync_file) {
 	sleep(5);
     }
-    timestamp("Sync file $syncFile removed, exiting");
+    timestamp("Sync file $sync_file removed, exiting");
 }
 
 POSIX::_exit(0);

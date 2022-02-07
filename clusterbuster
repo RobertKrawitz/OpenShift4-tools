@@ -23,52 +23,52 @@ set -u
 declare -A registered_workloads=()
 declare -A workload_aliases=()
 declare -i namespaces=1
-declare -i useNamespaces=1
-declare -i depsPerNamespace=1
+declare -i use_namespaces=1
+declare -i deps_per_namespace=1
 declare -i secrets=0
 declare -i replicas=1
 declare -i parallel=1
-declare -i firstDeployment=0
-declare -i sleepSecrets=0
-declare -i sleepConfigMaps=0
-declare -i sleepNamespaces=0
-declare -i sleepDeployments=0
-declare -i parallelSecrets=0
-declare -i parallelConfigMaps=0
-declare -i parallelNamespaces=0
-declare -i parallelDeployments=0
-declare -i objsPerCall=1
-declare -i objsPerCallSecrets=0
-declare -i objsPerCallConfigMaps=0
-declare -i objsPerCallNamespaces=0
-declare -i objsPerCallDeployments=0
-declare -i containersPerPod=1
+declare -i first_deployment=0
+declare -i sleep_between_secrets=0
+declare -i sleep_between_configmaps=0
+declare -i sleep_between_namespaces=0
+declare -i sleep_between_deployments=0
+declare -i parallel_secrets=0
+declare -i parallel_configmaps=0
+declare -i parallel_namespaces=0
+declare -i parallel_deployments=0
+declare -i objs_per_call=1
+declare -i objs_per_call_secrets=0
+declare -i objs_per_call_configmaps=0
+declare -i objs_per_call_namespaces=0
+declare -i objs_per_call_deployments=0
+declare -i containers_per_pod=1
 declare -i sleeptime=0
 declare -i doit=1
-declare -i objsItemCount=0
+declare -i objs_item_count=0
 declare -i port=7777
-declare -i syncPort=7778
+declare -i sync_port=7778
 declare log_host=
 declare -i log_port=0
-declare syncHost=
+declare sync_host=
 declare -i affinity=0
 declare -A pin_nodes=()
 declare -i verbose=0
 declare -i wait_for_secrets=1
-declare -i bytesTransfer=0
-declare -i bytesTransferMax=0
-declare -i defaultBytesTransfer=1000000000
+declare -i bytes_transfer=0
+declare -i bytes_transfer_max=0
+declare -i default_bytes_transfer=1000000000
 declare -i poddelay=0
-declare -i workloadRunTime=0
-declare -i workloadRunTimeMax=0
-declare -i exitAtEnd=1
-declare -i reportObjectCreation=1
-declare -A objectsCreated=()
+declare -i workload_run_time=0
+declare -i workload_run_time_max=0
+declare -i exit_at_end=1
+declare -i report_object_creation=1
+declare -A objects_created=()
 declare baseoffset=0
-declare requestedWorkload=ClusterBuster
+declare requested_workload=ClusterBuster
 declare podsleeptime=infinity
 declare basename=clusterbuster
-declare deploymentType=pod
+declare deployment_type=pod
 declare -i basetime
 declare opt
 declare -r nl=$'\n'
@@ -78,8 +78,8 @@ declare -A namespaces_in_use=()
 declare -a namespaces_to_create=()
 declare -i scale_ns=0
 declare -i scale_deployments=1
-declare -i syncStart=1
-declare runtimeClass=
+declare -i sync_start=1
+declare runtime_class=
 declare -a emptydirs=()
 declare -a volumes=()
 declare -A volume_mount_paths=()
@@ -89,39 +89,39 @@ declare -A volume_scoped_names=()
 declare common_workdir=
 declare -i report=0
 declare report_format=summary
-declare logStrategy=poll
+declare log_strategy=poll
 declare -i precleanup=0
 declare -i cleanup=0
 declare -i timeout=-1
 declare pathdir=${0%/*}
 declare -a unknown_opts=()
 declare -a unknown_opt_names=()
-declare -i totalObjectsCreated=0
+declare -i total_objects_created=0
 # <name, filename with contents>
-declare -a configMapFiles=()
+declare -a configmap_files=()
 declare -a tolerations=()
-declare configmapMountDir=/etc/map
-declare systemConfigmapMountDir=/etc/bootstrap
-declare -i hasSystemConfigMap=0
-declare nodeSelector='node-role.kubernetes.io/worker'
-declare -i pbenchControllerPort=0
-declare pbenchControllerAddress=
+declare configmap_mount_dir=/etc/map
+declare system_configmap_mount_dir=/etc/bootstrap
+declare -i has_system_configmap=0
+declare node_selector='node-role.kubernetes.io/worker'
+declare -i pbench_controller_port=0
+declare pbench_controller_address=
 declare -i processes_per_pod=1
 declare -i emptydir_volumes=0
 declare -i take_prometheus_snapshot=0
-declare prometheusStartingTimestamp=
-declare prometheusEndingTimestamp=
-declare -i targetDataRate=0
+declare prometheus_starting_timestamp=
+declare prometheus_ending_timestamp=
+declare -i target_data_rate=0
 declare metrics_file=
-declare jobName=
+declare job_name=
 
-declare -r syncFlagFile="/tmp/syncfile";
+declare -r sync_flag_file="/tmp/syncfile";
 # shellcheck disable=2155
-declare -r runUUID=$(uuidgen -r)
+declare -r run_uuid=$(uuidgen -r)
 
-declare kataRuntimeClass=kata
-declare imagePullPolicy=Always
-declare containerImage=quay.io/rkrawitz/bench-army-knife
+declare kata_runtime_class=kata
+declare image_pull_policy=Always
+declare container_image=quay.io/rkrawitz/bench-army-knife
 
 declare accumulateddata=
 declare -a plurals=('s' '')
@@ -177,7 +177,7 @@ function print_workloads_supporting_reporting() {
     local workloads
     while read -r workload ; do
 	echo "$prefix$workload"
-    done <<< "$(workloadsSupportingAPI supportsReporting)"
+    done <<< "$(workloads_supporting_api supports_reporting)"
 }
 
 function _help_options_workloads() {
@@ -187,8 +187,8 @@ function _help_options_workloads() {
 	    continue
 	fi
 	echo
-	callAPI -w "$workload" helpOptions
-    done <<< "$(workloadsSupportingAPI helpOptions)"
+	call_api -w "$workload" help_options
+    done <<< "$(workloads_supporting_api help_options)"
 }
 
 function _document_workloads() {
@@ -198,8 +198,8 @@ function _document_workloads() {
 	    continue
 	fi
 	echo
-	callAPI -w "$workload" document
-    done <<< "$(workloadsSupportingAPI document)"
+	call_api -w "$workload" document
+    done <<< "$(workloads_supporting_api document)"
 }
 
 function list_report_formats() {
@@ -245,7 +245,7 @@ $(print_workloads '                       - ')
 EOF
 }
 
-function _helpExtended() {
+function _help_extended() {
     _helpmsg "$@"
     cat <<EOF
 
@@ -296,7 +296,7 @@ $(print_workloads_supporting_reporting '                        - ')
        --raw-report     Print unprocessed report (deprecated)
 
     Workload sizing options:
-       --containersPerPod=N
+       --containers_per_pod=N
                         Number of containers per pod
        --deployments=N  Number of deployments or pods per namespace
        --processes=N    Number of processes per pod
@@ -356,10 +356,10 @@ $(print_workloads_supporting_reporting '                        - ')
 
     Pod Options:
        --container_image=<image>
-                        Image to use (default $containerImage).
+                        Image to use (default $container_image).
                         Does not apply to "classic" or "pause" workloads.
        --deployment_type=<pod,deployment>
-                        Deploy via individual pods or deployments (default $deploymentType)
+                        Deploy via individual pods or deployments (default $deployment_type)
        --external_sync=host:port
                         Sync to external host rather than internally
        --request=<resource=value>
@@ -369,14 +369,14 @@ $(print_workloads_supporting_reporting '                        - ')
        --runtimeclass=class
                         Run the pods in the designated runtimeclass.
        -K
-       --kata           Synonym for --runtimeclass=${kataRuntimeClass}
+       --kata           Synonym for --runtimeclass=${kata_runtime_class}
        --tolerate=<key:operator:effect>
                         Apply the specified tolerations to created pods.
        --image_pull_policy=<policy>
-                        Image pull policy (default $imagePullPolicy)
+                        Image pull policy (default $image_pull_policy)
        --node_selector=selector
                         Annotate pods with the specified node selector
-                        Default $nodeSelector
+                        Default $node_selector
                         Specify empty value to not provide a node selector.
 
     Tuning object creation (short equivalents):
@@ -394,17 +394,17 @@ $(print_workloads_supporting_reporting '                        - ')
                         Index number of first namespace to be created
        --first_deployment=N
                         Index number of first pod to be created
-       --objsPerCall=N  Number of objects per CLI call
-                        Below options default to objsPerCall
-       --objsPerCall_secrets=N
-       --objsPerCall_namespaces=N
-       --objsPerCall_deployments=N
+       --objs_per_call=N  Number of objects per CLI call
+                        Below options default to objs_per_call
+       --objs_per_call_secrets=N
+       --objs_per_call_namespaces=N
+       --objs_per_call_deployments=N
 
        --sleep=N        Number of seconds between object creations
                         Below options default to sleeptime
-       --sleep_secrets=N
-       --sleep_namespaces=N
-       --sleep_deployments=N
+       --sleep_between_secrets=N
+       --sleep_between_namespaces=N
+       --sleep_between_deployments=N
 
        --parallel=N     Number of operations in parallel
                         Below options default to parallel
@@ -454,7 +454,7 @@ function help() {
 }
 
 function help_extended() {
-    _helpExtended "$@" | "${PAGER:-more}" 1>&2
+    _help_extended "$@" | "${PAGER:-more}" 1>&2
     exit 1
 }
 
@@ -489,32 +489,32 @@ function set_workload_bytes() {
     local sizespec=$1
     local -i scale=${2:-1}
     if [[ $sizespec = *','* ]] ; then
-	bytesTransfer=$(parse_size "${sizespec#*,}")
-	bytesTransferMax=$(parse_size "${sizespec%%,*}")
-	if (( bytesTransfer > bytesTransferMax )) ; then
-	    local -i tmp=$bytesTransfer
-	    bytesTransfer=$bytesTransferMax
-	    bytesTransferMax=$tmp
+	bytes_transfer=$(parse_size "${sizespec#*,}")
+	bytes_transfer_max=$(parse_size "${sizespec%%,*}")
+	if (( bytes_transfer > bytes_transfer_max )) ; then
+	    local -i tmp=$bytes_transfer
+	    bytes_transfer=$bytes_transfer_max
+	    bytes_transfer_max=$tmp
 	fi
     else
-	bytesTransfer=$((sizespec * scale))
-	bytesTransferMax=$((sizespec * scale))
+	bytes_transfer=$((sizespec * scale))
+	bytes_transfer_max=$((sizespec * scale))
     fi
 }
 
 function set_runtime() {
     local timespec=$1
     if [[ $timespec = *','* ]] ; then
-	workloadRunTime=${timespec#*,}
-	workloadRunTimeMax=${timespec%%,*}
-	if (( workloadRunTime > workloadRunTimeMax )) ; then
-	    local -i tmp=$workloadRunTime
-	    workloadRunTime=$workloadRunTimeMax
-	    workloadRunTimeMax=$tmp
+	workload_run_time=${timespec#*,}
+	workload_run_time_max=${timespec%%,*}
+	if (( workload_run_time > workload_run_time_max )) ; then
+	    local -i tmp=$workload_run_time
+	    workload_run_time=$workload_run_time_max
+	    workload_run_time_max=$tmp
 	fi
     else
-	workloadRunTime=$timespec
-	workloadRunTimeMax=$timespec
+	workload_run_time=$timespec
+	workload_run_time_max=$timespec
     fi
 }
 
@@ -597,50 +597,50 @@ function process_option() {
 	quiet)			    verbose=$((! $(bool "$optvalue")))		;;
 	# Reporting
 	artifactdir)		    artifactdir="$optvalue"			;;
-	logstrategy)		    logStrategy=$optvalue			;;
+	logstrategy)		    log_strategy=$optvalue			;;
 	metricsfile)		    metrics_file="$optvalue"			;;
 	reportformat)		    report_format=$optvalue			;;
 	jsonreport)		    report_format=json				;;
 	rawreport)		    report_format=raw				;;
 	report)		    	    report_format=summary			;;
 	verbosereport)		    report_format=verbose			;;
-	reportobjectcreation)	    reportObjectCreation=$(bool "$optvalue")	;;
+	reportobjectcreation)	    report_object_creation=$(bool "$optvalue")	;;
 	prometheussnapshot)	    take_prometheus_snapshot=$(bool "$optvalue");;
 	timeout)		    timeout=$optvalue				;;
 	# Basic options
-	jobname)		    jobName=$optvalue				;;
-	workload)		    requestedWorkload=$optvalue			;;
+	jobname)		    job_name=$optvalue				;;
+	workload)		    requested_workload=$optvalue		;;
 	basename)		    basename=$optvalue				;;
 	# Object definition
 	workdir)		    common_workdir=$optvalue			;;
-	configmapfile)		    configMapFiles+=("$optvalue")		;;
-	containerimage)		    containerImage=$optvalue			;;
-	containers)		    containersPerPod=$optvalue			;;
-	containersperpod)	    containersPerPod=$optvalue			;;
-	deploymenttype)		    deploymentType=$optvalue			;;
-	deployments|depspername*)   depsPerNamespace=$optvalue			;;
+	configmapfile)		    configmap_files+=("$optvalue")		;;
+	containerimage)		    container_image=$optvalue			;;
+	containers)		    containers_per_pod=$optvalue		;;
+	containersperpod)	    containers_per_pod=$optvalue		;;
+	deploymenttype)		    deployment_type=$optvalue			;;
+	deployments|depspername*)   deps_per_namespace=$optvalue		;;
 	emptydir)		    emptydirs+=("$optvalue")			;;
 	volumes)		    emptydir_volumes=$optvalue			;;
-	exitatend)		    exitAtEnd=$(bool "$optvalue")		;;
-	imagepullpolicy)	    imagePullPolicy=$optvalue			;;
+	exitatend)		    exit_at_end=$(bool "$optvalue")		;;
+	imagepullpolicy)	    image_pull_policy=$optvalue			;;
 	namespaces)		    namespaces=$optvalue			;;
-	nodeselector)		    nodeSelector=$optvalue			;;
+	nodeselector)		    node_selector=$optvalue			;;
 	volume)			    parse_volume_spec "$optvalue"		;;
-	pbenchcontrolleraddress)    pbenchControllerAddress=$optvalue		;;
-	pbenchcontrollerport)	    pbenchControllerPort=$optvalue		;;
+	pbenchcontrolleraddress)    pbench_controller_address=$optvalue		;;
+	pbenchcontrollerport)	    pbench_controller_port=$optvalue		;;
 	processes|processesperpod)  processes_per_pod=$optvalue			;;
 	jobfile)		    process_job_file "$optvalue"		;;
 	pinnode)		    process_pin_node "$optvalue"		;;
 	replicas)		    replicas=$optvalue				;;
 	limit)			    resource_limits+=("$optvalue")		;;
 	request)		    resource_requests+=("$optvalue")		;;
-	kata)			    runtimeClass=${kataRuntimeClass}		;;
-	runtimeclass)		    runtimeClass=$optvalue			;;
-	uuid)			    runUUID=$optvalue				;;
+	kata)			    runtime_class=${kata_runtime_class}		;;
+	runtimeclass)		    runtime_class=$optvalue			;;
+	uuid)			    run_uuid=$optvalue				;;
 	secrets)		    secrets=$optvalue				;;
 	workloadruntime)	    set_runtime "$optvalue"			;;
 	workload_size)		    set_workload_bytes "$optvalue"		;;
-	targetdatarate)		    targetDataRate=$(parse_size "$optvalue")	;;
+	targetdatarate)		    target_data_rate=$(parse_size "$optvalue")	;;
 	tolerate|toleration)	    tolerations+=("$optvalue")			;;
 	affinity)
 	    case "$optvalue" in
@@ -656,24 +656,24 @@ function process_option() {
 	    esac
 	    ;;
 	# Object creation
-	objspercall)		    objsPerCall=$optvalue			;;
+	objspercall)		    objs_per_call=$optvalue			;;
 	parallel)		    parallel=$optvalue				;;
 	sleep)			    sleeptime=$optvalue				;;
 	podsleep|podsleeptime)	    podsleeptime=$optvalue			;;
 	poddelay)		    poddelay=$optvalue				;;
-	firstdeployment)	    firstDeployment=$optvalue			;;
-	parallelconfigmaps)	    parallelConfigMaps=$optvalue		;;
-	parallelsecrets)	    parallelSecrets=$optvalue			;;
-	parallelnamespaces)	    parallelNamespaces=$optvalue		;;
-	paralleldeployments)	    parallelDeployments=$optvalue		;;
-	objsPerCallconfigmaps)	    objsPerCallConfigMaps=$optvalue		;;
-	objsPerCallsecrets)	    objsPerCallSecrets=$optvalue		;;
-	objsPerCallnamespaces)	    objsPerCallNamespaces=$optvalue		;;
-	objsPerCalldeployments)	    objsPerCallDeployments=$optvalue		;;
-	sleepbetweenconfigmaps)	    sleepBetweenConfigMaps=$optvalue		;;
-	sleepbetweensecrets)	    sleepBetweenSecrets=$optvalue		;;
-	sleepbetweennamespaces)	    sleepBetweenNamespaces=$optvalue		;;
-	sleepbetweendeployments)    sleepBetweenDeployments=$optvalue		;;
+	firstdeployment)	    first_deployment=$optvalue			;;
+	parallelconfigmaps)	    parallel_configmaps=$optvalue		;;
+	parallelsecrets)	    parallel_secrets=$optvalue			;;
+	parallelnamespaces)	    parallel_namespaces=$optvalue		;;
+	paralleldeployments)	    parallel_deployments=$optvalue		;;
+	objspercallconfigmaps)	    objs_per_call_configmaps=$optvalue		;;
+	objspercallsecrets)	    objs_per_call_secrets=$optvalue		;;
+	objspercallnamespaces)	    objs_per_call_namespaces=$optvalue		;;
+	objspercalldeployments)	    objs_per_call_deployments=$optvalue		;;
+	sleepbetweenconfigmaps)	    sleep_between_configmaps=$optvalue		;;
+	sleepbetweensecrets)	    sleep_between_secrets=$optvalue		;;
+	sleepbetweennamespaces)	    sleep_between_namespaces=$optvalue		;;
+	sleepbetweendeployments)    sleep_between_deployments=$optvalue		;;
 	waitsecrets)		    wait_for_secrets=$(bool "$optvalue")	;;
 	scalens)	   	    scale_ns=$(bool "$optvalue")		;;
 	scaledeployments)   	    scale_deployments=$(bool "$optvalue")	;;
@@ -681,16 +681,16 @@ function process_option() {
 	cleanup)		    cleanup=$(bool "$optvalue")			;;
 	baseoffset)		    baseoffset=$optvalue			;;
 	# Synchronization
-	sync|syncstart)		    syncStart=$((1-syncStart))			;;
+	sync|syncstart)		    sync_start=$((1-sync_start))			;;
 	externalsync)
 	    if [[ $optvalue =~ ^(-|([[:alnum:]][-_[:alnum:]]*[[:alnum:]]\.)*([[:alnum:]][-_[:alnum:]]*[[:alnum:]])):([1-9][[:digit:]]{0,4})$ ]] ; then
-		syncHost=${BASH_REMATCH[1]}
-		syncPort=${BASH_REMATCH[4]}
-		if (( syncPort > 65535 )) ; then
+		sync_host=${BASH_REMATCH[1]}
+		sync_port=${BASH_REMATCH[4]}
+		if (( sync_port > 65535 )) ; then
 		    echo "Illegal external sync port (must be 1 <= port <= 65535)"
 		    help
 		fi
-		syncStart=1
+		sync_start=1
 	    else
 		echo "Undecipherable external sync host:port $optvalue"
 		help
@@ -743,17 +743,17 @@ function load_workloads() {
 }
 
 function dispatch_generic() {
-    local -i probeOnly=0
+    local -i probe_only=0
     if [[ $1 = '-p' ]] ; then
-	probeOnly=1
+	probe_only=1
 	shift
     fi
     local workload=$1
     local API=$2
     shift 2
-    if type -t "${API}${workload}" >/dev/null ; then
-	((probeOnly)) && return 0
-	 "${API}${workload}" "$@"
+    if type -t "${API}_${workload}" >/dev/null ; then
+	((probe_only)) && return 0
+	"${API}_${workload}" "$@"
     else
 	return 1
     fi
@@ -781,10 +781,10 @@ function register_workload() {
     done
 }
 
-function supportsAPI() {
+function supports_api() {
     local workload
     local OPTIND=0
-    workload="$requestedWorkload"
+    workload="$requested_workload"
     while getopts 'w:' opt "$@" ; do
 	case "$opt" in
 	    w) workload=$OPTARG ;;
@@ -794,24 +794,24 @@ function supportsAPI() {
     shift $((OPTIND - 1))
     local api=$1
     [[ -z "$workload" ]] && return 1
-    [[ -z "${registered_workloads[$workload]:-}" ]] && fatal "supportsAPI $workload $api: workload not known"
+    [[ -z "${registered_workloads[$workload]:-}" ]] && fatal "supports_api $workload $api: workload not known"
     "${registered_workloads[$workload]}" -p "$workload" "$api"
 }
 
-function workloadsSupportingAPI() {
+function workloads_supporting_api() {
     local api=$1
     local workload
     while read -r workload ; do
-	supportsAPI -w "$workload" "$api" && echo "$workload"
+	supports_api -w "$workload" "$api" && echo "$workload"
     done <<< "$(print_workloads)"
 }
 
-function callAPI() {
-    (( $# < 1 )) && fatal "callAPI [-w workload] API args..."
+function call_api() {
+    (( $# < 1 )) && fatal "call_api [-w workload] API args..."
     local workload
     local -i safe=0
     local OPTIND=0
-    workload="$requestedWorkload"
+    workload="$requested_workload"
     while getopts 'w:s' opt "$@" ; do
 	case "$opt" in
 	    w) workload=$OPTARG ;;
@@ -821,7 +821,7 @@ function callAPI() {
     done
     shift $((OPTIND - 1))
     local api=$1
-    if supportsAPI -w "$workload" "$api" ; then
+    if supports_api -w "$workload" "$api" ; then
 	"${registered_workloads[$workload]}" "$workload" "$@"
     elif ((safe)) ; then
 	return 0
@@ -830,28 +830,28 @@ function callAPI() {
     fi
 }
 
-function jsonEncodeSettings() {
-    callAPI jsonEncodeSettings
+function json_encode_settings() {
+    call_api json_encode_settings
 }
 
-function createDeployment() {
-    callAPI createDeployment "$@"
+function create_deployment() {
+    call_api create_deployment "$@"
 }
 
-function calculateLogsRequired() {
-    if supportsAPI supportsReporting ; then
-	callAPI calculateLogsRequired "$@"
+function calculate_logs_required() {
+    if supports_api supports_reporting ; then
+	call_api calculate_logs_required "$@"
     else
 	echo 1
     fi
 }
 
-function listConfigMaps() {
-    callAPI listConfigMaps
+function list_configmaps() {
+    call_api list_configmaps
 }
 
-function listUserConfigMaps() {
-    callAPI listUserConfigMaps
+function list_user_configmaps() {
+    call_api list_user_configmaps
 }
 
 ################################################################
@@ -863,7 +863,7 @@ function __OC() {
 	echo "$OC" "$@" 1>&2
     elif [[ $1 = describe || $1 = get || $1 = status || $1 = exec || $1 = logs ]] ; then
 	"$OC" "$@"
-    elif ((reportObjectCreation)) ; then
+    elif ((report_object_creation)) ; then
 	"$OC" "$@" 2>&1
     else
 	"$OC" "$@" 2>&1 |grep -v -E '(^No resources found|deleted|created|labeled|condition met)$'
@@ -878,10 +878,10 @@ function _OC() {
     fi
 }
 
-function getSync() {
-    if (( syncStart )) ; then
+function get_sync() {
+    if (( sync_start )) ; then
 	if [[ ${1:-} != -q ]] ; then
-	    echo "${syncHost:-service-${namespace}-sync}:$syncPort"
+	    echo "${sync_host:-service-${namespace}-sync}:$sync_port"
 	fi
 	return 0
     else
@@ -889,13 +889,13 @@ function getSync() {
     fi
 }
 
-function createSyncServiceIfNeeded() {
+function create_sync_service_if_needed() {
     local namespace=$1
-    local syncCount=$2
-    local syncClients=$3
-    if getSync -q ; then
-	createService "$namespace" "${namespace}-sync" "$syncPort"
-	createSyncDeployment "$namespace" "$syncCount" "$syncClients"
+    local sync_count=$2
+    local sync_clients=$3
+    if get_sync -q ; then
+	create_service "$namespace" "${namespace}-sync" "$sync_port"
+	create_sync_deployment "$namespace" "$sync_count" "$sync_clients"
     fi
 }
 
@@ -914,25 +914,25 @@ function readable_timestamp() {
 
 function start_prometheus_snapshot() {
     ((doit)) || return 0
-    echo "Starting Prometheus snapshot" | echoIfDesired 1>&2
+    echo "Starting Prometheus snapshot" | echo_if_desired 1>&2
     _OC delete pod -n openshift-monitoring prometheus-k8s-0
     _OC wait --for=condition=Ready -n openshift-monitoring pod/prometheus-k8s-0 || fatal "Prometheus pod did not go ready"
-    prometheusStartingTimestamp=$(get_prometheus_pod_timestamp)
+    prometheus_starting_timestamp=$(get_prometheus_pod_timestamp)
     # Wait for prometheus pod to fully initialize
     sleep 60
-    echo "Prometheus snapshot started" | echoIfDesired 1>&2
+    echo "Prometheus snapshot started" | echo_if_desired 1>&2
 }
 
 function retrieve_prometheus_snapshot() {
     ((doit)) || return 0
-    echo "Retrieving Prometheus snapshot" | echoIfDesired 1>&2
+    echo "Retrieving Prometheus snapshot" | echo_if_desired 1>&2
     local dir=${1:-$artifactdir}
     sleep 60
-    prometheusEndingTimestamp=$(get_prometheus_pod_timestamp)
-    local promdb_name="promdb_$(readable_timestamp "$prometheusStartingTimestamp")_$(readable_timestamp "$prometheusEndingTimestamp")"
+    prometheus_ending_timestamp=$(get_prometheus_pod_timestamp)
+    local promdb_name="promdb_$(readable_timestamp "$prometheus_starting_timestamp")_$(readable_timestamp "$prometheus_ending_timestamp")"
     local promdb_path="${dir:+${dir}/}${promdb_name}.tar"
     __OC exec -n openshift-monitoring prometheus-k8s-0 -c prometheus -- /bin/sh -c "tar cf - . -C /prometheus --transform 's,^[.],./${promdb_name},' .; true" > "$promdb_path"
-    echo "Prometheus snapshot retrieved" | echoIfDesired 1>&2
+    echo "Prometheus snapshot retrieved" | echo_if_desired 1>&2
 }
 
 function ts() {
@@ -1056,14 +1056,14 @@ function get_logs_poll() {
 	    esac
 	done
 	# shellcheck disable=SC2086
-	local cleanupCommand="; sleep 1; rm -f '$syncFlagFile'"
+	local cleanup_command="; sleep 1; rm -f '$sync_flag_file'"
 	trap 'exec 2>/dev/null; [[ -n "$(jobs -p)" ]] && kill $(jobs -p); return 1' INT TERM HUP
 	trap 'exec 2>/dev/null; kill $(jobs -p); return 1' USR1
 	trap 'exec 3>&2 2>/dev/null ; kill $(jobs -p) && wait ; exec 2>&3 3>&-' USR2
 	local mypid=$BASHPID
-	monitor_pods -p "$mypid" -- -l "${basename}-id=$runUUID" &
+	monitor_pods -p "$mypid" -- -l "${basename}-id=$run_uuid" &
 	# shellcheck disable=SC2086
-	run_logger -p "$mypid" __OC exec $pod -- sh -c "while [[ ! -f '$syncFlagFile' ]] ; do sleep 5; done; cat '$syncFlagFile' $cleanupCommand" &
+	run_logger -p "$mypid" __OC exec $pod -- sh -c "while [[ ! -f '$sync_flag_file' ]] ; do sleep 5; done; cat '$sync_flag_file' $cleanup_command" &
 	wait
 	# shellcheck disable=SC2046
 	if [[ -n "$(jobs -p)" ]] ; then
@@ -1138,7 +1138,7 @@ function _extract_metrics() {
     if [[ -r "$metrics_file" ]] ; then
 	cat <<EOF
 ,
-"metrics": $("${__mydir__}/experimental/prom-extract" -m "$metrics_file" --metrics-only --start_time="$prometheusStartingTimestamp" --post-settling-time=0)
+"metrics": $("${__mydir__}/experimental/prom-extract" -m "$metrics_file" --metrics-only --start_time="$prometheus_starting_timestamp" --post-settling-time=0)
 EOF
     fi
 }
@@ -1148,41 +1148,41 @@ function _get_logs() {
 {
 "metadata": {
   "kind": "clusterbusterResults",
-  "jobStartTime": "$(readable_timestamp "${prometheusStartingTimestamp}")",
-  "jobName": "$jobName",
-  "runUUID": "$runUUID",
-  "workload": "$requestedWorkload",
-  "kubernetesVersion": $(__OC version -ojson),
-  "commandLine": [$(quote_list "${saved_argv[@]}")],
-  "expandedCommandLine": [$(quote_list "${processed_options[@]}")],
+  "job_start_time": "$(readable_timestamp "${prometheus_starting_timestamp}")",
+  "job_name": "$job_name",
+  "run_uuid": "$run_uuid",
+  "workload": "$requested_workload",
+  "kubernetes_version": $(__OC version -ojson),
+  "command_line": [$(quote_list "${saved_argv[@]}")],
+  "expanded_command_line": [$(quote_list "${processed_options[@]}")],
   "runHost": "$(hostname -f)",
   "options": {
     "basename": "$basename",
-    "containersPerPod": $containersPerPod,
-    "deploymentsPerNamespace": $depsPerNamespace,
+    "containers_per_pod": $containers_per_pod,
+    "deployments_per_namespace": $deps_per_namespace,
     "namespaces": $namespaces,
-    "bytesTransfer": $bytesTransfer,
-    "bytesTransferMax": $bytesTransferMax,
-    "workloadRunTime": $workloadRunTime,
-    "workloadRunTimeMax": $workloadRunTimeMax,
+    "bytes_transfer": $bytes_transfer,
+    "bytes_transfer_max": $bytes_transfer_max,
+    "workload_run_time": $workload_run_time,
+    "workload_run_time_max": $workload_run_time_max,
     "pin_nodes": {$(_report_pin_nodes)},
     $(indent 4 _report_volumes)
     "secrets": $secrets,
     "replicas": $replicas,
-    "containerImage": "$containerImage",
-    "nodeSelector": "$nodeSelector",
-    $(indent 4 containerResourcesJSON)
-    "runtimeClass": "$runtimeClass",
+    "container_image": "$container_image",
+    "node_selector": "$node_selector",
+    $(indent 4 container_resources_json)
+    "runtime_class": "$runtime_class",
     $(indent 4 _report_emptydirs)
-    "targetDataRate": $targetDataRate,
+    "target_data_rate": $target_data_rate,
     "workloadOptions": {
-    $(indent 4 callAPI "reportOptions")
+    $(indent 4 call_api "report_options")
     }
   }
 },
 "nodes": $(__OC get nodes -ojson),
 "api_objects":
-$( __OC get all -A -l "clusterbuster-id=$runUUID" -ojson | jq -r '[foreach .items[]? as $item ([[],[]];0; {kind: $item.kind, namespace: $item.metadata.namespace, name: $item.metadata.name, nodeName: $item.spec.nodeName})]'),
+$( __OC get all -A -l "clusterbuster-id=$run_uuid" -ojson | jq -r '[foreach .items[]? as $item ([[],[]];0; {kind: $item.kind, namespace: $item.metadata.namespace, name: $item.metadata.name, nodeName: $item.spec.nodeName})]'),
 "Results": [
 $("$@")
 ]
@@ -1193,7 +1193,7 @@ EOF
 	while read -r namespace pod container ; do
 	    mkdir -p "$artifactdir/Logs"
 	    __OC logs -n "$namespace" -c "$container" "$pod" > "$artifactdir/Logs/${namespace}:${pod}:${container}"
-	done <<< "$(_OC get pod -A -l "clusterbuster-id=$runUUID" -ojson | jq -r '[foreach .items[]? as $item ([[],[]];0; (if ($item.kind == "Pod") then ([foreach $item.spec.containers[]? as $container ([[],[]];0; $item.metadata.namespace + " " + $item.metadata.name + " " + $container.name)]) else null end))] | flatten | map (select (. != null))[]')"
+	done <<< "$(_OC get pod -A -l "clusterbuster-id=$run_uuid" -ojson | jq -r '[foreach .items[]? as $item ([[],[]];0; (if ($item.kind == "Pod") then ([foreach $item.spec.containers[]? as $container ([[],[]];0; $item.metadata.namespace + " " + $item.metadata.name + " " + $container.name)]) else null end))] | flatten | map (select (. != null))[]')"
     fi
 }
 
@@ -1203,9 +1203,9 @@ function get_logs() {
 	return
     fi
     local log_cmd
-    if supportsAPI supportsReporting ; then
+    if supports_api supports_reporting ; then
 	log_cmd=get_logs_poll
-	if [[ ${logStrategy,,} = 'listen'* ]] ; then
+	if [[ ${log_strategy,,} = 'listen'* ]] ; then
 	    log_cmd=get_logs_listen
 	fi
     else
@@ -1242,7 +1242,7 @@ function indent() {
     fi
 }
 
-function tolerationsYAML() {
+function tolerations_yaml() {
     local toleration
     (( ${#tolerations[@]} )) || return
     echo "tolerations:"
@@ -1257,7 +1257,7 @@ EOF
     done
 }
 
-function containerResourcesYAML() {
+function container_resources_yaml() {
     function resources() {
 	local token
 	for token in "$@" ; do
@@ -1288,7 +1288,7 @@ function resources() {
     done
 }
 
-function resourceJSON() {
+function resource_json() {
     local request_type=$1
     shift
     echo "\"$request_type\": {"
@@ -1301,30 +1301,30 @@ function resourceJSON() {
     echo "}"
 }
 
-function containerResourcesJSON() {
+function container_resources_json() {
     local -a res_data=()
     if (( ${#resource_limits[@]} + ${#resource_requests[@]} )) ; then
 	echo '"resources": {'
 	if (( ${#resource_limits[@]} )) ; then
-	    res_data+=("$(resourceJSON limits "${resource_limits[@]}")")
+	    res_data+=("$(resource_json limits "${resource_limits[@]}")")
 	fi
 	if (( ${#resource_requests[@]} )) ; then
-	    res_data+=("$(resourceJSON requests "${resource_requests[@]}")")
+	    res_data+=("$(resource_json requests "${resource_requests[@]}")")
 	fi
 	(IFS=$',\n'; echo "${res_data[@]}")
 	echo "},"
     fi
 }
 
-function standardLabelsYAML() {
+function standard_labels_yaml() {
     local workload=${1:-}
     local namespace=${2:-}
     local instance=${3:-}
     local logger=${4:+logger}
     cat <<EOF
 labels:
-  clusterbuster-runUUID: "$runUUID"
-  ${basename}-id: "$runUUID"
+  clusterbuster-run_uuid: "$run_uuid"
+  ${basename}-id: "$run_uuid"
   ${basename}: "true"
   clusterbusterbase: "true"
 EOF
@@ -1338,21 +1338,21 @@ EOF
     fi
 }
 
-function bootstrapCommandYAML() {
+function bootstrap_command_yaml() {
     local command=$1
     cat <<EOF
 command:
 - bootstrap.sh
 args:
-- "$systemConfigmapMountDir/$command"
+- "$system_configmap_mount_dir/$command"
 EOF
 }
 
-function volumeMountsYAML() {
+function volume_mounts_yaml() {
     local namespace=$1
     local deployment=${2:-1}
     local secrets=${3:-1}
-    (( secrets + ${#emptydirs[@]} + ${#configMapFiles[@]} + ${#volumes[@]} + hasSystemConfigMap )) || return;
+    (( secrets + ${#emptydirs[@]} + ${#configmap_files[@]} + ${#volumes[@]} + has_system_configmap )) || return;
     local -i i
     echo volumeMounts:
     for i in $(seq 0 $((secrets - 1))) ; do
@@ -1372,10 +1372,10 @@ EOF
 EOF
 	done
     fi
-    if [[ -n "${configMapFiles[*]:-}" ]] ; then
+    if [[ -n "${configmap_files[*]:-}" ]] ; then
 	cat <<EOF
 - name: "configmap-${namespace}"
-  mountPath: "${configmapMountDir}"
+  mountPath: "${configmap_mount_dir}"
   readOnly: true
 EOF
     fi
@@ -1388,28 +1388,28 @@ EOF
 EOF
 	done
     fi
-    if (( hasSystemConfigMap )) ; then
+    if (( has_system_configmap )) ; then
 	cat <<EOF
 - name: "systemconfigmap-${namespace}"
-  mountPath: "${systemConfigmapMountDir}"
+  mountPath: "${system_configmap_mount_dir}"
   readOnly: true
 EOF
     fi
 }
 
-function pbenchAgentYAML() {
-    if (( pbenchControllerPort > 0 )) ; then
+function pbench_agent_yaml() {
+    if (( pbench_controller_port > 0 )) ; then
 	# This isn't ideal, as there still can be collisions.
 	# Without a port server, this is certainly the most
 	# expeditious.
-	local sshPort=0
-	while (( sshPort < 2023 )) ; do
-	    sshPort=$RANDOM
+	local ssh_port=0
+	while (( ssh_port < 2023 )) ; do
+	    ssh_port=$RANDOM
 	done
 	cat <<EOF
 - name: "pbench-agent"
-  image: "$containerImage"
-  imagePullPolicy: $imagePullPolicy
+  image: "$container_image"
+  image_pull_policy: $image_pull_policy
   securityContext:
     privileged: false
     capabilities:
@@ -1421,28 +1421,28 @@ function pbenchAgentYAML() {
   command:
   - "/usr/local/bin/run-pbench-agent-container"
   args:
-  - "$pbenchControllerPort"
-  - "$pbenchControllerAddress"
+  - "$pbench_controller_port"
+  - "$pbench_controller_address"
 #hostPID: true
 serviceAccount: pbench
 EOF
     fi
 }
 
-function privilegeYAML() {
-    if (( pbenchControllerPort > 0)) ; then
+function privilege_yaml() {
+    if (( pbench_controller_port > 0)) ; then
 	cat <<EOF
 openshift.io/scc: privileged
 EOF
     fi
 }
 
-function namespaceYAML() {
+function namespace_yaml() {
     local namespace=$1
-    (( useNamespaces )) && echo "namespace: \"$namespace\""
+    (( use_namespaces )) && echo "namespace: \"$namespace\""
 }
 
-function expandVolume() {
+function expand_volume() {
     local scoped_name=$1
     local namespace=${2:+-$2}
     local instance=${3:+-$3}
@@ -1451,11 +1451,11 @@ function expandVolume() {
     echo "$scoped_name"
 }
 
-function volumesYAML() {
+function volumes_yaml() {
     local namespace=$1
     local instance=${2:-1}
     local secrets=${3:-1}
-    (( secrets + ${#emptydirs[@]} + ${#configMapFiles[@]} + ${#volumes[@]} + hasSystemConfigMap )) || return;
+    (( secrets + ${#emptydirs[@]} + ${#configmap_files[@]} + ${#volumes[@]} + has_system_configmap )) || return;
     local -i i
     echo "volumes:"
     for i in $(seq 0 $((secrets - 1))) ; do
@@ -1476,7 +1476,7 @@ EOF
 EOF
 	done
     fi
-    if [[ -n "${configMapFiles[*]:-}" ]] ; then
+    if [[ -n "${configmap_files[*]:-}" ]] ; then
 	cat <<EOF
 - name: "configmap-${namespace}"
   configMap:
@@ -1492,7 +1492,7 @@ EOF
 	    if [[ -n "${volume_type_keys[$vol]}" ]] ; then
 		cat <<EOF
   ${volume_types[$vol]}:
-    ${volume_type_keys[$vol]}: "$(expandVolume "${volume_scoped_names[$vol]}" "$namespace" "$instance")"
+    ${volume_type_keys[$vol]}: "$(expand_volume "${volume_scoped_names[$vol]}" "$namespace" "$instance")"
 EOF
 	    else
 		cat <<EOF
@@ -1501,7 +1501,7 @@ EOF
 	    fi
 	done
     fi
-    if (( hasSystemConfigMap )) ; then
+    if (( has_system_configmap )) ; then
 	cat <<EOF
 - name: "systemconfigmap-${namespace}"
   configMap:
@@ -1510,49 +1510,49 @@ EOF
     fi
 }
 
-function createSpec() {
-    local affinityYAML=
-    local nodeClass=worker
+function create_spec() {
+    local affinity_yaml=
+    local node_class=worker
     local OPTIND=0
     local OPTARG
-    local nsYAML=${nodeSelector:+"nodeSelector:${nl}  $nodeSelector: \"\""}
-    local rc=$runtimeClass
-    local usePbench=1
+    local ns_yaml=${node_selector:+"node_selector:${nl}  $node_selector: \"\""}
+    local rc=$runtime_class
+    local use_pbench=1
     while getopts "A:c:r:Pp" opt "$@" ; do
 	case "$opt" in
-	    A) affinityYAML=$OPTARG ;;
-	    c) nodeClass=$OPTARG    ;;
+	    A) affinity_yaml=$OPTARG ;;
+	    c) node_class=$OPTARG    ;;
 	    r) rc=$OPTARG	    ;;
-	    P) usePbench=	    ;;
-	    p) usePbench=1	    ;;
+	    P) use_pbench=	    ;;
+	    p) use_pbench=1	    ;;
 	    *)                      ;;
 	esac
     done
     shift $((OPTIND-1))
     # Node specifiers override affinity
-    if [[ -n "$nodeClass" && -n "${pin_nodes[$nodeClass]:-}" ]] ; then
-	affinityYAML=
-	nsYAML="nodeSelector:${nl}  kubernetes.io/hostname: \"${pin_nodes[$nodeClass]}\""
+    if [[ -n "$node_class" && -n "${pin_nodes[$node_class]:-}" ]] ; then
+	affinity_yaml=
+	ns_yaml="node_selector:${nl}  kubernetes.io/hostname: \"${pin_nodes[$node_class]}\""
     fi
     if (( $# < 4 )) ; then
-	echo "Usage: createSpec <container_func> namespace instance secretCount args..." 1>&2
+	echo "Usage: create_spec <container_func> namespace instance secret_count args..." 1>&2
 	exit 1
     fi
-    local createContainerFunction=$1; shift
+    local create_container_function=$1; shift
     local namespace=$1
     local instance=$2
-    local secretCount=$3
+    local secret_count=$3
     cat <<EOF
 spec:
-$(indent 2 <<< "$nsYAML")
+$(indent 2 <<< "$ns_yaml")
   terminationGracePeriodSeconds: 1
-$(indent 2 <<< "$affinityYAML")
-$(indent 2 tolerationsYAML ${tolerations+"${tolerations[@]}"})
-$(indent 2 <<< "${rc:+runtimeClassName: \"$rc\"}")
+$(indent 2 <<< "$affinity_yaml")
+$(indent 2 tolerations_yaml ${tolerations+"${tolerations[@]}"})
+$(indent 2 <<< "${rc:+runtime_className: \"$rc\"}")
   containers:
-$(indent 2 "$createContainerFunction" "$@")
-$(indent 2 <<< "${usePbench:+$(pbenchAgentYAML)}")
-$(indent 2 volumesYAML "$namespace" "$instance" "$secretCount")
+$(indent 2 "$create_container_function" "$@")
+$(indent 2 <<< "${use_pbench:+$(pbench_agent_yaml)}")
+$(indent 2 volumes_yaml "$namespace" "$instance" "$secret_count")
 EOF
 }
 
@@ -1560,18 +1560,18 @@ EOF
 # Object YAML creation
 ################################################################
 
-function reallyCreateObjects() {
+function really_create_objects() {
     if [[ $doit -ne 0 && -n $accumulateddata ]] ; then
 	(_OC ${KUBECTL_VALIDATE} apply -f - <<< "$accumulateddata" | timestamp 1>&2) || exit 1
 	accumulateddata=
-	objsItemCount=0
+	objs_item_count=0
     fi
 }
 
-function createObject() {
+function create_object() {
     local OPTIND=0
     local namespace=
-    local objtype=${deploymentType^}
+    local objtype=${deployment_type^}
     local objname=
     while getopts 'n:t:' opt "$@" ; do
 	case "$opt" in
@@ -1584,16 +1584,16 @@ function createObject() {
     objname=${1:-UNKNOWN}
     local data=
     local line=
-    local -i dataFound=0
+    local -i data_found=0
     while IFS='' read -r 'line' ; do
 	line=${line%% }
 	if [[ -n $line ]] ; then
-	    dataFound=1
+	    data_found=1
 	    [[ -n $data ]] || data="---$nl"
 	    data+="$line$nl"
 	fi
     done
-    ((! dataFound)) && return
+    ((! data_found)) && return
     data+="$nl"
     if (( doit )) ; then
 	if [[ -n "$artifactdir" ]] ; then
@@ -1601,8 +1601,8 @@ function createObject() {
 	    echo "$data" > "$artifactdir/${objtype}/${namespace}:$objname"
 	fi
 	accumulateddata+="$data"
-	if (( ++objsItemCount >= objsPerCall )) ; then
-	    reallyCreateObjects
+	if (( ++objs_item_count >= objs_per_call )) ; then
+	    really_create_objects
 	    (( !sleeptime )) || sleep "$sleeptime"
 	fi
     else
@@ -1610,31 +1610,31 @@ function createObject() {
     fi
 }
 
-function echoIfDesired() {
-    if (( reportObjectCreation )) ; then
+function echo_if_desired() {
+    if (( report_object_creation )) ; then
 	cat
     else
 	cat >/dev/null
     fi
 }
 
-function createObjectFromFile() {
+function create_object_from_file() {
     function _ns() {
-	((useNamespaces)) && echo -n "-n $namespace"
+	((use_namespaces)) && echo -n "-n $namespace"
     }
     local objtype=$1; shift
     local namespace=$1; shift
     local objname=$1; shift
-    local ns=${useNamespaces:+-n "$namespace"}
-    local ns1=${useNamespaces:+"$namespace"}
+    local ns=${use_namespaces:+-n "$namespace"}
+    local ns1=${use_namespaces:+"$namespace"}
     local file
     for file in "$@" ; do
 	[[ -r "$file" ]] || fatal "Can't read file $file!"
     done
     # shellcheck disable=SC2046
-    (_OC create "$objtype" $(_ns) "$objname" "${@/#/--from-file=}" | echoIfDesired 1>&2) || exit 1
+    (_OC create "$objtype" $(_ns) "$objname" "${@/#/--from-file=}" | echo_if_desired 1>&2) || exit 1
     # shellcheck disable=SC2046
-    (_OC label "$objtype" $(_ns) "$objname" 'clusterbusterbase=true' "clusterbuster-runUUID=${runUUID}" "${basename}-id=$runUUID" "${basename}=true" | echoIfDesired 1>&2) || exit 1
+    (_OC label "$objtype" $(_ns) "$objname" 'clusterbusterbase=true' "clusterbuster-run_uuid=${run_uuid}" "${basename}-id=$run_uuid" "${basename}=true" | echo_if_desired 1>&2) || exit 1
     if (( doit )) ; then
 	if [[ -n "$artifactdir" ]] ; then
 	    mkdir -p "$artifactdir/$objtype"
@@ -1645,46 +1645,46 @@ function createObjectFromFile() {
 		cat "$file" >> "$outfile"
 	    done
 	fi
-	totalObjectsCreated=$((totalObjectsCreated+1))
-	if [[ -z ${objectsCreated[$objtype]:-} ]] ; then
-	    objectsCreated[$objtype]=1
+	total_objects_created=$((total_objects_created+1))
+	if [[ -z ${objects_created[$objtype]:-} ]] ; then
+	    objects_created[$objtype]=1
 	else
-	    objectsCreated[$objtype]=$((${objectsCreated[$objtype]}+1))
+	    objects_created[$objtype]=$((${objects_created[$objtype]}+1))
 	fi
 	(( !sleeptime )) || sleep "$sleeptime"
     fi
 }
 
-function createNamespace() {
+function create_namespace() {
     local namespace=$1
-    if ((useNamespaces)) ; then
-	createObject -t Namespace "$namespace" <<EOF
+    if ((use_namespaces)) ; then
+	create_object -t namespace "$namespace" <<EOF
 apiVersion: v1
 kind: Namespace
 metadata:
   name: "${namespace}"
-$(indent 2 standardLabelsYAML)
+$(indent 2 standard_labels_yaml)
 EOF
     fi
 }
 
-function createSecrets() {
+function create_secrets() {
     local namespace=$1
-    local depsPerNamespace=${2:-1}
+    local deps_per_namespace=${2:-1}
     local secrets=${3:-1}
     local -i i
     local -i j
     (( secrets )) || return;
-    for i in $(seq "$firstDeployment" $((depsPerNamespace + firstDeployment - 1))) ; do
+    for i in $(seq "$first_deployment" $((deps_per_namespace + first_deployment - 1))) ; do
 	for j in $(seq 0 $((secrets - 1))) ; do
 	    local secname="secret${namespace:+-$namespace}-${i}-${j}"
-	    createObject -t secret -n "$namespace" "$secname" <<EOF
+	    create_object -t secret -n "$namespace" "$secname" <<EOF
 apiVersion: v1
 kind: Secret
 metadata:
   name: "$secname"
-$(indent 2 namespaceYAML "$namespace")
-$(indent 2 standardLabelsYAML)
+$(indent 2 namespace_yaml "$namespace")
+$(indent 2 standard_labels_yaml)
 data:
   key1: "$(base64 <<< "${namespace}X${i}Y${j}Z1")"
   key2: "$(base64 <<< "${namespace}X${i}Y${j}Z2")"
@@ -1694,7 +1694,7 @@ EOF
     done
 }
 
-function checkConfigMaps() {
+function check_configmaps() {
     local errors=0
     for mapfile in "$@" ; do
 	if [[ ! -r "$mapfile" ]] ; then
@@ -1707,24 +1707,24 @@ function checkConfigMaps() {
     fi
 }
 
-function createConfigMaps() {
+function create_configmaps() {
     local namespace=$1; shift
     local mapname=$1; shift
     (( $# )) || return;
-    createObjectFromFile configmap "$namespace" "${mapname}-${namespace}" "$@"
+    create_object_from_file configmap "$namespace" "${mapname}-${namespace}" "$@"
 }
 
-function createService() {
+function create_service() {
     local namespace=$1
     local deployment=$2
     local portnum=$3
-    createObject -t Service -n "$namespace" "service-${deployment}" <<EOF
+    create_object -t Service -n "$namespace" "service-${deployment}" <<EOF
 apiVersion: v1
 kind: Service
 metadata:
   name: "service-${deployment}"
-$(indent 2 namespaceYAML "$namespace")
-$(indent 2 standardLabelsYAML)
+$(indent 2 namespace_yaml "$namespace")
+$(indent 2 standard_labels_yaml)
 spec:
   ports:
   - port: $portnum
@@ -1734,58 +1734,58 @@ spec:
 EOF
 }
 
-function createContainerSync() {
+function create_container_sync() {
     local namespace=$1
-    local syncCount=${4:-1}
-    local expectedClients=$5
+    local sync_count=${4:-1}
+    local expected_clients=$5
     cat <<EOF
 - name: ${namespace}-sync
-  imagePullPolicy: $imagePullPolicy
-  image: "$containerImage"
+  image_pull_policy: $image_pull_policy
+  image: "$container_image"
   ports:
   - containerPort: $port
-$(indent 2 bootstrapCommandYAML sync.pl)
+$(indent 2 bootstrap_command_yaml sync.pl)
   - "-f"
-  - "$syncFlagFile"
-  - "$syncPort"
-  - "$expectedClients"
-  - "$syncCount"
-$(indent 2 volumeMountsYAML "$namespace" 0 0)
+  - "$sync_flag_file"
+  - "$sync_port"
+  - "$expected_clients"
+  - "$sync_count"
+$(indent 2 volume_mounts_yaml "$namespace" 0 0)
 EOF
 }
 
-function createSyncDeployment() {
+function create_sync_deployment() {
     local namespace=$1; shift
-    local syncCount=$1; shift
-    if [[ $deploymentType = pod ]] ; then
-	createObject -t Pod -n "$namespace" "${namespace}-sync" <<EOF
+    local sync_count=$1; shift
+    if [[ $deployment_type = pod ]] ; then
+	create_object -t Pod -n "$namespace" "${namespace}-sync" <<EOF
 apiVersion: v1
 kind: Pod
 metadata:
   name: ${namespace}-sync
-$(indent 2 namespaceYAML "$namespace")
-$(indent 2 privilegeYAML)
+$(indent 2 namespace_yaml "$namespace")
+$(indent 2 privilege_yaml)
   selector:
     matchLabels:
       app: ${namespace}-sync
-$(indent 2 standardLabelsYAML)
+$(indent 2 standard_labels_yaml)
     name: ${namespace}-sync
     app: ${namespace}-sync
     k8s-app: ${namespace}-sync
     ${basename}-sync: "true"
-$(createSpec -P -c sync -r '' createContainerSync "$namespace" 0 0 "$syncCount" "$@")
+$(create_spec -P -c sync -r '' create_container_sync "$namespace" 0 0 "$sync_count" "$@")
   restartPolicy: Never
 EOF
     else
-	createObject -t Deployment -n "$namespace" "${namespace}-sync" <<EOF
+	create_object -t Deployment -n "$namespace" "${namespace}-sync" <<EOF
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: ${namespace}-sync
-$(indent 2 namespaceYAML "$namespace")
-$(indent 2 privilegeYAML)
+$(indent 2 namespace_yaml "$namespace")
+$(indent 2 privilege_yaml)
   labels:
-$(indent 4 standardLabelsYAML)
+$(indent 4 standard_labels_yaml)
 spec:
   replicas: 1
   strategy:
@@ -1795,12 +1795,12 @@ spec:
       app: ${namespace}-sync
   template:
     metadata:
-$(indent 6 standardLabelsYAML)
+$(indent 6 standard_labels_yaml)
         name: ${namespace}-sync
         app: ${namespace}-sync
         k8s-app: ${namespace}-sync
         ${basename}-sync: "true"
-$(indent 4 createSpec -P -c sync -r '' createContainerSync "$namespace" 0 0 "$syncCount" "$@")
+$(indent 4 create_spec -P -c sync -r '' create_container_sync "$namespace" 0 0 "$sync_count" "$@")
 EOF
     fi
 }
@@ -1809,23 +1809,23 @@ EOF
 # Generic Object creation
 ################################################################
 
-function createObjects_n() {
+function create_objects_n() {
     trap exit INT
     local objtype=$1; shift
     local parallel=$1; shift
-    local objsPerCall=$1; shift
+    local objs_per_call=$1; shift
     local rotor=$1; shift
     local sleeptime=$1; shift
     while (( rotor < namespaces )) ; do
 	local j=0
-	while (( j < objsPerCall && j + rotor < namespaces )) ; do
-	    "create${objtype}" "${namespaces_to_create[$((rotor + j))]}" "$@"
+	while (( j < objs_per_call && j + rotor < namespaces )) ; do
+	    "create_${objtype}" "${namespaces_to_create[$((rotor + j))]}" "$@"
 	    if (( sleeptime )) ; then sleep "$sleeptime"; fi
 	    j=$((j+1))
 	done
-	rotor=$((rotor + (parallel * objsPerCall)))
+	rotor=$((rotor + (parallel * objs_per_call)))
     done
-    reallyCreateObjects
+    really_create_objects
 }
 
 function allocate_namespaces() {
@@ -1857,67 +1857,67 @@ function find_first_deployment() {
 		deployment=${deployment#${ns}-}
 		deployment=${deployment%-*}
 		echo _OC get deployments -l "$basename" -A --no-headers 1>&2
-		echo "|$basename|$deployment|$firstDeployment|" 1>&2
-		if (( deployment + 1 > firstDeployment )) ; then
-		    firstDeployment=$((deployment + 1))
+		echo "|$basename|$deployment|$first_deployment|" 1>&2
+		if (( deployment + 1 > first_deployment )) ; then
+		    first_deployment=$((deployment + 1))
 		fi
 	    fi
         done < <(_OC get deployments -l "$basename" -A --no-headers 2>/dev/null)
     fi
 }
 
-function createAllNamespaces() {
+function create_all_namespaces() {
     local i
     trap 'kill -9 $(jobs -p); exit' INT
-    for i in $(seq 0 "$((parallelNamespaces - 1))") ; do
-	createObjects_n Namespace "$parallelNamespaces" "$objsPerCallNamespaces" "$((i * objsPerCallNamespaces))" "$sleepNamespaces" &
+    for i in $(seq 0 "$((parallel_namespaces - 1))") ; do
+	create_objects_n namespace "$parallel_namespaces" "$objs_per_call_namespaces" "$((i * objs_per_call_namespaces))" "$sleep_between_namespaces" &
     done
     wait || exit 1
 }
 
-function createAllSecrets() {
+function create_all_secrets() {
     local i
     trap 'kill -9 $(jobs -p); exit' INT
-    for i in $(seq 0 "$((parallelSecrets - 1))") ; do
-	createObjects_n Secrets "$parallelSecrets" "$objsPerCallSecrets" "$((i * objsPerCallSecrets))" "$sleepSecrets" "$depsPerNamespace" "$secrets" &
+    for i in $(seq 0 "$((parallel_secrets - 1))") ; do
+	create_objects_n secrets "$parallel_secrets" "$objs_per_call_secrets" "$((i * objs_per_call_secrets))" "$sleep_between_secrets" "$deps_per_namespace" "$secrets" &
     done
     wait || exit 1
 }
 
-function createSystemConfigMap() {
-    if supportsAPI listConfigMaps ; then
+function create_system_configmap() {
+    if supports_api list_configmaps ; then
 	local -a systemfiles
-	readarray -t systemfiles < <(listConfigMaps)
+	readarray -t systemfiles < <(list_configmaps)
 	trap 'kill -9 $(jobs -p); exit' INT
-	for i in $(seq 0 "$((parallelConfigMaps - 1))") ; do
-	    createObjects_n ConfigMaps "$parallelConfigMaps" "$objsPerCallConfigMaps" "$((i * objsPerCallConfigMaps))" "$sleepConfigMaps" "systemconfigmap" "${systemfiles[@]}"&
+	for i in $(seq 0 "$((parallel_configmaps - 1))") ; do
+	    create_objects_n configmaps "$parallel_configmaps" "$objs_per_call_configmaps" "$((i * objs_per_call_configmaps))" "$sleep_between_configmaps" "systemconfigmap" "${systemfiles[@]}"&
 	done
 	wait || exit 1
     fi
 }
 
-function createAllConfigMaps() {
-    createSystemConfigMap
-    (( ${#configMapFiles[@]} )) || return;
+function create_all_configmaps() {
+    create_system_configmap
+    (( ${#configmap_files[@]} )) || return;
     local i
     trap 'kill -9 $(jobs -p); exit' INT
-    for i in $(seq 0 "$((parallelConfigMaps - 1))") ; do
-	createObjects_n ConfigMaps "$parallelConfigMaps" "$objsPerCallConfigMaps" "$((i * objsPerCallConfigMaps))" "$sleepConfigMaps" "configmap" "${configMapFiles[@]}"&
+    for i in $(seq 0 "$((parallel_configmaps - 1))") ; do
+	create_objects_n configmaps "$parallel_configmaps" "$objs_per_call_configmaps" "$((i * objs_per_call_configmaps))" "$sleep_between_configmaps" "configmap" "${configmap_files[@]}"&
     done
     wait || exit 1
 }
 
-function createAllDeployments() {
+function create_all_deployments() {
     local i
     trap 'kill -9 $(jobs -p); exit' INT
-    for i in $(seq 0 "$((parallelDeployments - 1))") ; do
+    for i in $(seq 0 "$((parallel_deployments - 1))") ; do
 	export PARALLEL_ROTOR=$i
-	createObjects_n Deployment "$parallelDeployments" "$objsPerCallDeployments" "$((i * objsPerCallDeployments))" "$sleepDeployments" "$depsPerNamespace" "$secrets" "$replicas" "$containersPerPod" "$log_host" "$log_port" &
+	create_objects_n deployment "$parallel_deployments" "$objs_per_call_deployments" "$((i * objs_per_call_deployments))" "$sleep_between_deployments" "$deps_per_namespace" "$secrets" "$replicas" "$containers_per_pod" "$log_host" "$log_port" &
     done
     wait || exit 1
 }
 
-function createAllObjects() {
+function create_all_objects() {
     local found_objtype
     local objtype=$1
     shift
@@ -1926,38 +1926,38 @@ function createAllObjects() {
 	    echo "${line/__KUBEFAIL__ /}" 1>&2
 	    return 1
 	elif [[ $line =~ ^[[:digit:]]{4}(-[[:digit:]]{2}){2}T([[:digit:]]{2}:){2}[[:digit:]]{2}\.[[:digit:]]{6}\ +([-a-z0-9]+)/([-a-z0-9]+)\ +created$ ]] ; then
-	    if (( reportObjectCreation )) ; then
+	    if (( report_object_creation )) ; then
 		echo "$line" 1>&2
 	    fi
-	    totalObjectsCreated=$((totalObjectsCreated+1))
+	    total_objects_created=$((total_objects_created+1))
 	    found_objtype=${BASH_REMATCH[3]}
-	    if [[ -z ${objectsCreated[$found_objtype]:-} ]] ; then
-		objectsCreated[$found_objtype]=1
+	    if [[ -z ${objects_created[$found_objtype]:-} ]] ; then
+		objects_created[$found_objtype]=1
 	    else
-		objectsCreated[$found_objtype]=$((${objectsCreated[$found_objtype]:-}+1))
+		objects_created[$found_objtype]=$((${objects_created[$found_objtype]:-}+1))
 	    fi
 	elif [[ -n "$line" ]] ; then
 	    (IFS=''; echo "$line" 1>&2)
 	fi
-    done < <("createAll${objtype}" "$@" 2>&1)
+    done < <("create_all_${objtype}" "$@" 2>&1)
 }
 
-function doCleanup() {
-    local -a objectsToClean
+function do_cleanup() {
+    local -a objects_to_clean
     local objtype
     (( doit )) || return
-    if ((useNamespaces)) ; then
-	objectsToClean=(namespace)
+    if ((use_namespaces)) ; then
+	objects_to_clean=(namespace)
     else
-	objectsToClean=("$deploymentType" configmap secret service)
+	objects_to_clean=("$deployment_type" configmap secret service)
     fi
-    for objtype in "${objectsToClean[@]}" ; do
-	if (( reportObjectCreation )) ; then
+    for objtype in "${objects_to_clean[@]}" ; do
+	if (( report_object_creation )) ; then
 	    _OC delete "$objtype" -l "$basename" 1>&2
 	else
 	    local objects_deleted
 	    objects_deleted=$(_OC delete "$objtype" -l "$basename" |grep -c "^${objtype}.*deleted\$")
-	    if ((objects_deleted > 0 && reportObjectCreation)) ; then
+	    if ((objects_deleted > 0 && report_object_creation)) ; then
 		printf "Deleted %d %s%s\n" "$objects_deleted" "$objtype" "${plurals[$((objects_deleted == 1))]}" 1>&2
 	    fi
 	fi
@@ -1968,7 +1968,7 @@ function doCleanup() {
 # Main work loop
 ################################################################
 
-function create_secrets() {
+function create_secrets_top_level() {
     # If previous secrets weren't all created, this will yield
     # the wrong result.
     if (( doit && wait_for_secrets )) ; then
@@ -1979,7 +1979,7 @@ function create_secrets() {
 	local nsd
 	for i in $(seq 0 $((namespaces - 1))) ; do
 	    ns="secret/secret-${basename}-${namespaces_to_create[$i]##*-}"
-	    for j in $(seq "$firstDeployment" $((depsPerNamespace + firstDeployment - 1))) ; do
+	    for j in $(seq "$first_deployment" $((deps_per_namespace + first_deployment - 1))) ; do
 		nsd="${ns}-$j"
 		for k in $(seq 0 $((secrets - 1))) ; do
 		    expected_secrets["${nsd}-$k"]=1
@@ -1987,10 +1987,11 @@ function create_secrets() {
 	    done
 	done
     fi
-    createAllObjects Secrets
+    create_all_objects secrets
     if (( doit )) ; then
 	local secname=""
 	while (( ${#expected_secrets[@]} )) ; do
+	    echo "Expect ${#secrets[@]}" 1>&2
 	    while read -r secname ; do
 		[[ -n "${secname:-}" ]] && unset "expected_secrets[$secname]"
 	    done < <(_OC get secret -oname --no-headers -l "$basename" -A)
@@ -2007,20 +2008,20 @@ function create_secrets() {
 function do_logging() {
     ((report)) || return 0
     local -i logs_expected=0
-    logs_expected="$(calculateLogsRequired "$namespaces" "$depsPerNamespace" "$replicas" "$containersPerPod")"
+    logs_expected="$(calculate_logs_required "$namespaces" "$deps_per_namespace" "$replicas" "$containers_per_pod")"
     ((logs_expected > 0)) || return 0
 
-    if [[ $logStrategy = poll ]] ; then
-	local -a syncPods=()
-	if ((useNamespaces)) ; then
+    if [[ $log_strategy = poll ]] ; then
+	local -a sync_pods=()
+	if ((use_namespaces)) ; then
 	    local -i i
 	    for i in $(seq 0 $((namespaces - 1))) ; do
-		syncPods+=("-n ${basename}-${i} ${basename}-${i}-sync")
+		sync_pods+=("-n ${basename}-${i} ${basename}-${i}-sync")
 	    done
 	else
-	    syncPods=("${basename}-0-sync")
+	    sync_pods=("${basename}-0-sync")
 	fi
-	get_logs "${syncPods[@]}" &
+	get_logs "${sync_pods[@]}" &
     else
 	log_host=$(hostname -f)
 	log_port=$("${__libdir__}/find_free_port")
@@ -2073,27 +2074,27 @@ function do_logging() {
 }
 
 function report_object_creation() {
-    (( reportObjectCreation )) || return
+    (( report_object_creation )) || return
     local objtype
     while read -r objtype ; do
-	[[ -n "${objtype:-}" ]] && printf "Created %${#totalObjectsCreated}d %s%s\n" "${objectsCreated[$objtype]}" "$objtype" "${plurals[$((${objectsCreated[$objtype]} == 1))]}" 1>&2
-    done < <( (IFS=$'\n'; echo "${!objectsCreated[*]}") | sort)
-    printf "Created %d object%s total\n" "$totalObjectsCreated" "${plurals[$((totalObjectsCreated == 1))]}" 1>&2
+	[[ -n "${objtype:-}" ]] && printf "Created %${#total_objects_created}d %s%s\n" "${objects_created[$objtype]}" "$objtype" "${plurals[$((${objects_created[$objtype]} == 1))]}" 1>&2
+    done < <( (IFS=$'\n'; echo "${!objects_created[*]}") | sort)
+    printf "Created %d object%s total\n" "$total_objects_created" "${plurals[$((total_objects_created == 1))]}" 1>&2
 }
 
 function run_clusterbuster_1() {
     local -A expected_secrets=()
     local -i status=0
-    (( precleanup && doit )) && doCleanup
+    (( precleanup && doit )) && do_cleanup
     if [[ $take_prometheus_snapshot -gt 0 && -n "$artifactdir" ]] ; then
 	start_prometheus_snapshot
     else
-	prometheusStartingTimestamp=$(get_prometheus_pod_timestamp)
+	prometheus_starting_timestamp=$(get_prometheus_pod_timestamp)
     fi
     if [[ $doit -gt 0 && -n "${artifactdir:-}" ]] ; then
-	artifactdir=${artifactdir//%s/$(readable_timestamp "$prometheusStartingTimestamp")}
-	artifactdir=${artifactdir//%w/$requestedWorkload}
-	artifactdir=${artifactdir//%n/$jobName}
+	artifactdir=${artifactdir//%s/$(readable_timestamp "$prometheus_starting_timestamp")}
+	artifactdir=${artifactdir//%w/$requested_workload}
+	artifactdir=${artifactdir//%n/$job_name}
 	mkdir -p "$artifactdir" || fatal "Can't create log directory $artifactdir"
 	echo "${saved_argv[@]@Q}" > "$artifactdir/commandline"
 	exec 2> >(tee "$artifactdir/stderr.log" >&2)
@@ -2101,21 +2102,21 @@ function run_clusterbuster_1() {
     allocate_namespaces
     find_first_deployment
     trap 'if [[ -n "$(jobs -p)" ]] ; then kill -INT $(jobs -p); fi; exit' INT
-    createAllObjects Namespaces
+    create_all_objects namespaces
 
-    (( ${#configMapFiles[@]} )) && checkConfigMaps "${configMapFiles[@]}"
-    createAllObjects ConfigMaps
-    supportsAPI listConfigMaps && hasSystemConfigMap=1
+    (( ${#configmap_files[@]} )) && check_configmaps "${configmap_files[@]}"
+    create_all_objects configmaps
+    supports_api list_configmaps && has_system_configmap=1
 
-    create_secrets
+    create_secrets_top_level
 
     basetime=$(printf '%(%s)T' -1)
-    createAllObjects Deployments || exit 1
+    create_all_objects deployments || exit 1
     (( doit )) || return
 
     do_logging || status=1
     report_object_creation
-    ((cleanup)) && doCleanup
+    ((cleanup)) && do_cleanup
     if [[ $take_prometheus_snapshot -gt 0 && -n "$artifactdir" ]] ; then
 	retrieve_prometheus_snapshot "$artifactdir"
     fi
@@ -2132,8 +2133,8 @@ load_workloads
 while getopts ":B:Eef:HhnP:Qqv-:" opt ; do
     case "$opt" in
 	B) process_option "basename=$OPTARG"	 ;;
-	E) process_option "exitAtEnd=0"		 ;;
-	e) process_option "exitAtEnd=1"		 ;;
+	E) process_option "exit_at_end=0"	 ;;
+	e) process_option "exit_at_end=1"	 ;;
 	f) process_job_file "$OPTARG"		 ;;
 	h) help					 ;;
 	H) help_extended			 ;;
@@ -2147,37 +2148,37 @@ while getopts ":B:Eef:HhnP:Qqv-:" opt ; do
     esac
 done
 
-if [[ -n "${workload_aliases[${requestedWorkload,,}]:-}" ]] ; then
-    requestedWorkload="${workload_aliases[${requestedWorkload,,}]:-}"
+if [[ -n "${workload_aliases[${requested_workload,,}]:-}" ]] ; then
+    requested_workload="${workload_aliases[${requested_workload,,}]:-}"
 else
-    help_extended "(Unknown workload '$requestedWorkload')"
+    help_extended "(Unknown workload '$requested_workload')"
 fi
 
-callAPI -s "processOptions" "${unknown_opts[@]}" || help "${unknown_opt_names[@]}"
+call_api -s "process_options" "${unknown_opts[@]}" || help "${unknown_opt_names[@]}"
 
-if supportsAPI listUserConfigMaps ; then
-    readarray -t userfiles < <(listUserConfigMaps)
-    configMapFiles+=("${userfiles[@]}")
+if supports_api list_user_configmaps ; then
+    readarray -t userfiles < <(list_user_configmaps)
+    configmap_files+=("${userfiles[@]}")
 fi
 
 if (( namespaces <= 0 )) ; then
     namespaces=1
-    useNamespaces=0
+    use_namespaces=0
 fi
-(( !parallelConfigMaps )) && parallelConfigMaps=$parallel
-(( !parallelSecrets )) && parallelSecrets=$parallel
-(( !parallelNamespaces )) && parallelNamespaces=$parallel
-(( !parallelDeployments )) && parallelDeployments=$parallel
+(( !parallel_configmaps )) && parallel_configmaps=$parallel
+(( !parallel_secrets )) && parallel_secrets=$parallel
+(( !parallel_namespaces )) && parallel_namespaces=$parallel
+(( !parallel_deployments )) && parallel_deployments=$parallel
 
-(( !objsPerCallConfigMaps )) && objsPerCallConfigMaps=$objsPerCall
-(( !objsPerCallSecrets )) && objsPerCallSecrets=$objsPerCall
-(( !objsPerCallNamespaces )) && objsPerCallNamespaces=$objsPerCall
-(( !objsPerCallDeployments )) && objsPerCallDeployments=$objsPerCall
+(( !objs_per_call_configmaps )) && objs_per_call_configmaps=$objs_per_call
+(( !objs_per_call_secrets )) && objs_per_call_secrets=$objs_per_call
+(( !objs_per_call_namespaces )) && objs_per_call_namespaces=$objs_per_call
+(( !objs_per_call_deployments )) && objs_per_call_deployments=$objs_per_call
 
-[[ -n $runtimeClass ]] && runtimeClass="runtimeClassName: \"$runtimeClass\""
+[[ -n $runtime_class ]] && runtime_class="runtimeClassName: \"$runtime_class\""
 [[ -n "$report_format" ]] && report=1
 
-if [[ $deploymentType != pod && $deploymentType != deployment ]] ; then
+if [[ $deployment_type != pod && $deployment_type != deployment ]] ; then
     echo "--deployment_type must be either pod or deployment"
     help
 fi
@@ -2186,16 +2187,16 @@ if [[ -z $OC && $doit -gt 0 ]] ; then
     fatal "Cannot find oc or kubectl command, exiting!"
 fi
 
-if [[ -z "$pbenchControllerAddress" && $pbenchControllerPort -ne 0 ]] ; then
+if [[ -z "$pbench_controller_address" && $pbench_controller_port -ne 0 ]] ; then
     fatal "Both pbench_controller_address and pbench_controller_port must be specified"
 fi
 
-if [[ -n "$pbenchControllerAddress" && $pbenchControllerPort -eq 0 ]] ; then
+if [[ -n "$pbench_controller_address" && $pbench_controller_port -eq 0 ]] ; then
     fatal "Both pbench_controller_address and pbench_controller_port must be specified"
 fi
 
-logStrategy=${logStrategy,,}
-if [[ $logStrategy != poll && $logStrategy != listen ]] ; then
+log_strategy=${log_strategy,,}
+if [[ $log_strategy != poll && $log_strategy != listen ]] ; then
     fatal "Unknown --log_strategy (must be 'poll' or 'listen')"
 fi
 
@@ -2210,7 +2211,7 @@ for i in $(seq 0 $((emptydir_volumes-1)) ) ; do
     emptydirs+=("/mnt/volume-$i")
 done
 
-jobName=${jobName:-${requestedWorkload:-}}
+job_name=${job_name:-${requested_workload:-}}
 
 shift $((OPTIND - 1))
 if [[ -n ${1:-} ]] ; then

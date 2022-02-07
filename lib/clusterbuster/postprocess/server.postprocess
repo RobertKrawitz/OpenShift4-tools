@@ -89,13 +89,13 @@ if 'Results' in jdata:
         answer['metadata'] = jdata['metadata']
         json.dump(answer, sys.stdout, sort_keys=True, indent=4)
     elif args.format == 'json-verbose':
-        jdata['ProcessedResults'] = answer
+        jdata['processed_results'] = answer
         json.dump(jdata, sys.stdout, indent=4)
     else:
-        print(f"""Clusterbuster run report for job {jdata['metadata']['jobName']} at {jdata['metadata']['jobStartTime']}
+        print(f"""Clusterbuster run report for job {jdata['metadata']['job_name']} at {jdata['metadata']['job_start_time']}
 
 Workload: {jdata['metadata']['workload']}
-Command line:  {textwrap.fill(' '.join(jdata['metadata']['expandedCommandLine']), width=72, subsequent_indent='                ', break_long_words=False, break_on_hyphens=False)}
+Command line:  {textwrap.fill(' '.join(jdata['metadata']['expanded_command_line']), width=72, subsequent_indent='                ', break_long_words=False, break_on_hyphens=False)}
 """)
         if args.format == 'verbose':
             def rowName(e):

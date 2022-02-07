@@ -18,28 +18,28 @@
 # CPU soaker workload
 ################################################################
 
-function _createContainersSoakerYAML() {
+function _create_containers_soaker_yaml() {
     local namespace=$1
     local instance=$2
-    local secretCount=$3
+    local secret_count=$3
     local -i processes=$4
-    local -i containersPerPod=$5
+    local -i containers_per_pod=$5
     local log_host=${6:-}
     local -i log_port=${7:-0}
     local -i container
-    local syncService=
-    local syncPortNum=
-    IFS=: read -r syncService syncPortNum <<< $(getSync)
-    for container in $(seq 0 $((containersPerPod - 1))) ; do
+    local sync_service=
+    local sync_port_num=
+    IFS=: read -r sync_service sync_port_num <<< $(get_sync)
+    for container in $(seq 0 $((containers_per_pod - 1))) ; do
 	cat <<EOF
 - name: "c$container"
-  imagePullPolicy: $imagePullPolicy
-  image: "$containerImage"
-$(indent 2 containerResourcesYAML)
+  image_pull_policy: $image_pull_policy
+  image: "$container_image"
+$(indent 2 container_resources_yaml)
   env:
   - name: VERBOSE
     value: "$verbose"
-$(indent 2 bootstrapCommandYAML cpusoaker.pl)
+$(indent 2 bootstrap_command_yaml cpusoaker.pl)
   - "$namespace"
   - "c$container"
   - "$basetime"
@@ -47,49 +47,49 @@ $(indent 2 bootstrapCommandYAML cpusoaker.pl)
   - "$(ts)"
   - "$poddelay"
   - "$processes"
-  - "$workloadRunTime"
-  - "$exitAtEnd"
-  - "$syncService"
-  - "$syncPortNum"
+  - "$workload_run_time"
+  - "$exit_at_end"
+  - "$sync_service"
+  - "$sync_port_num"
   - "$log_host"
   - "$log_port"
-$(indent 2 volumeMountsYAML "$namespace" "${instance}" "$secretCount")
+$(indent 2 volume_mounts_yaml "$namespace" "${instance}" "$secret_count")
 EOF
     done
 }
 
-function _createSoakerDeployment() {
+function _create_soaker_deployment() {
     local namespace=$1
     local instance=$2
-    if [[ $deploymentType = pod ]] ; then
+    if [[ $deployment_type = pod ]] ; then
 	local -i replica=0
 	while (( replica++ < replicas )) ; do
 	    local name=${namespace}-soaker-${instance}-${replica}
-	    createObject -n "$namespace" "$name" <<EOF
+	    create_object -n "$namespace" "$name" <<EOF
 apiVersion: v1
 kind: Pod
 metadata:
   name: $name
-$(indent 2 namespaceYAML "$namespace")
-$(indent 2 privilegeYAML)
+$(indent 2 namespace_yaml "$namespace")
+$(indent 2 privilege_yaml)
   selector:
     matchLabels:
       app: ${namespace}-soaker-${instance}
-$(indent 2 standardLabelsYAML soaker "$namespace" "$instance" 1)
-$(createSpec _createContainersSoakerYAML "$@")
+$(indent 2 standard_labels_yaml soaker "$namespace" "$instance" 1)
+$(create_spec _create_containers_soaker_yaml "$@")
   restartPolicy: Never
 EOF
 	done
     else
 	local name=${namespace}-soaker-${instance}
-	createObject -n "$namespace" "$name" <<EOF
+	create_object -n "$namespace" "$name" <<EOF
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: $name
-$(indent 2 namespaceYAML "$namespace")
-$(indent 2 privilegeYAML)
-$(indent 2 standardLabelsYAML)
+$(indent 2 namespace_yaml "$namespace")
+$(indent 2 privilege_yaml)
+$(indent 2 standard_labels_yaml)
 spec:
   replicas: $replicas
   selector:
@@ -99,50 +99,50 @@ spec:
     type: RollingUpdate
   template:
     metadata:
-$(indent 6 standardLabelsYAML soaker "$namespace" "$instance" 1)
-$(indent 4 createSpec _createContainersSoakerYAML "$@")
+$(indent 6 standard_labels_yaml soaker "$namespace" "$instance" 1)
+$(indent 4 create_spec _create_containers_soaker_yaml "$@")
 EOF
     fi
 }
 
-function createDeploymentSoaker() {
+function create_deployment_soaker() {
     local namespace=$1
     local count=${2:-1}
-    local secretCount=${3:-1}
+    local secret_count=${3:-1}
     local replicas=${4:-1}
-    local containersPerPod=${5:-1}
+    local containers_per_pod=${5:-1}
     local log_host=${6:-}
     local -i log_port=${7:-0}
     local -i instance
-    createSyncServiceIfNeeded "$namespace" 2 "$((containersPerPod * replicas * processes_per_pod * count))"
-    for instance in $(seq $firstDeployment $((count + firstDeployment - 1))) ; do
-	_createSoakerDeployment "$namespace" "$instance" "$secretCount"  "$((processes_per_pod))" "$containersPerPod" "$log_host" "$log_port"
+    create_sync_service_if_needed "$namespace" 2 "$((containers_per_pod * replicas * processes_per_pod * count))"
+    for instance in $(seq $first_deployment $((count + first_deployment - 1))) ; do
+	_create_soaker_deployment "$namespace" "$instance" "$secret_count"  "$((processes_per_pod))" "$containers_per_pod" "$log_host" "$log_port"
     done
 }
 
-function listConfigMapsSoaker() {
+function list_configmaps_soaker() {
     cat <<EOF
 ${__libdir__}/cpusoaker.pl
 ${__libdir__}/sync.pl
 EOF
 }
 
-function calculateLogsRequiredSoaker() {
+function calculate_logs_required_soaker() {
     local -i namespaces=$1
-    local -i depsPerNamespace=${2:-1}
+    local -i deps_per_namespace=${2:-1}
     local -i replicas=${3:-1}
-    local -i containersPerPod=${4:-1}
-    echo $((namespaces * processes_per_pod * containersPerPod * replicas * depsPerNamespace))
+    local -i containers_per_pod=${4:-1}
+    echo $((namespaces * processes_per_pod * containers_per_pod * replicas * deps_per_namespace))
 }
 
-function documentSoaker() {
+function document_soaker() {
     cat <<'EOF'
 * soaker: a simple CPU soaker running a continuous tight loop.
 EOF
 }
 
-function supportsReportingSoaker() {
+function supports_reporting_soaker() {
     :
 }
 
-register_workload Soaker dispatch_generic cpu cpusoak soak cpusoaker
+register_workload soaker dispatch_generic cpu cpusoak soak cpusoaker
