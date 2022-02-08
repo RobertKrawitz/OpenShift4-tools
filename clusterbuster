@@ -1182,7 +1182,7 @@ function _get_logs() {
 },
 "nodes": $(__OC get nodes -ojson),
 "api_objects":
-$( __OC get all -A -l "clusterbuster-id=$run_uuid" -ojson | jq -r '[foreach .items[]? as $item ([[],[]];0; {kind: $item.kind, namespace: $item.metadata.namespace, name: $item.metadata.name, nodeName: $item.spec.nodeName})]'),
+$( __OC get all -A -l "clusterbuster-id=$run_uuid" -ojson | jq -r '[foreach .items[]? as $item ([[],[]];0; {kind: $item.kind, namespace: $item.metadata.namespace, name: $item.metadata.name, nodeName: $item.spec.nodeName, labels: $item.metadata.labels})]'),
 "Results": [
 $("$@")
 ]
@@ -1194,6 +1194,14 @@ EOF
 	    mkdir -p "$artifactdir/Logs"
 	    __OC logs -n "$namespace" -c "$container" "$pod" > "$artifactdir/Logs/${namespace}:${pod}:${container}"
 	done <<< "$(_OC get pod -A -l "clusterbuster-id=$run_uuid" -ojson | jq -r '[foreach .items[]? as $item ([[],[]];0; (if ($item.kind == "Pod") then ([foreach $item.spec.containers[]? as $container ([[],[]];0; $item.metadata.namespace + " " + $item.metadata.name + " " + $container.name)]) else null end))] | flatten | map (select (. != null))[]')"
+    fi
+}
+
+function print_report() {
+    if [[ $report_format == raw ]] ; then
+	cat
+    else
+	"${pathdir:-.}/clusterbuster-connstat" ${report_format:+-o "$report_format"}
     fi
 }
 
@@ -1211,10 +1219,11 @@ function get_logs() {
     else
 	log_cmd=true
     fi
+    local report_cmd=cat
     if [[ -n "$artifactdir" ]] ; then
-	_get_logs "$log_cmd" "$@" | tee "$artifactdir/clusterbuster-report.json" | "${pathdir:-.}/clusterbuster-connstat" ${report_format:+-o "$report_format"}
+	_get_logs "$log_cmd" "$@" | tee "$artifactdir/clusterbuster-report.json" | print_report
     else
-	_get_logs "$log_cmd" "$@" | "${pathdir:-.}/clusterbuster-connstat" ${report_format:+-o "$report_format"}
+	_get_logs "$log_cmd" "$@" | print_report
     fi
     return $((PIPESTATUS[0] || PIPESTATUS[1]))
 }
@@ -1409,7 +1418,7 @@ function pbench_agent_yaml() {
 	cat <<EOF
 - name: "pbench-agent"
   image: "$container_image"
-  image_pull_policy: $image_pull_policy
+  imagePullPolicy: $image_pull_policy
   securityContext:
     privileged: false
     capabilities:
@@ -1515,8 +1524,8 @@ function create_spec() {
     local node_class=worker
     local OPTIND=0
     local OPTARG
-    local ns_yaml=${node_selector:+"node_selector:${nl}  $node_selector: \"\""}
-    local rc=$runtime_class
+    local ns_yaml=${node_selector:+"nodeSelector:${nl}  $node_selector: \"\""}
+    local rc=${runtime_class:+runtimeClassName: "$runtime_class"}
     local use_pbench=1
     while getopts "A:c:r:Pp" opt "$@" ; do
 	case "$opt" in
@@ -1532,7 +1541,7 @@ function create_spec() {
     # Node specifiers override affinity
     if [[ -n "$node_class" && -n "${pin_nodes[$node_class]:-}" ]] ; then
 	affinity_yaml=
-	ns_yaml="node_selector:${nl}  kubernetes.io/hostname: \"${pin_nodes[$node_class]}\""
+	ns_yaml="nodeSelector:${nl}  kubernetes.io/hostname: \"${pin_nodes[$node_class]}\""
     fi
     if (( $# < 4 )) ; then
 	echo "Usage: create_spec <container_func> namespace instance secret_count args..." 1>&2
@@ -1548,7 +1557,7 @@ $(indent 2 <<< "$ns_yaml")
   terminationGracePeriodSeconds: 1
 $(indent 2 <<< "$affinity_yaml")
 $(indent 2 tolerations_yaml ${tolerations+"${tolerations[@]}"})
-$(indent 2 <<< "${rc:+runtime_className: \"$rc\"}")
+$(indent 2 <<< $rc)
   containers:
 $(indent 2 "$create_container_function" "$@")
 $(indent 2 <<< "${use_pbench:+$(pbench_agent_yaml)}")
@@ -2175,7 +2184,7 @@ fi
 (( !objs_per_call_namespaces )) && objs_per_call_namespaces=$objs_per_call
 (( !objs_per_call_deployments )) && objs_per_call_deployments=$objs_per_call
 
-[[ -n $runtime_class ]] && runtime_class="runtimeClassName: \"$runtime_class\""
+[[ -n $runtime_class ]]
 [[ -n "$report_format" ]] && report=1
 
 if [[ $deployment_type != pod && $deployment_type != deployment ]] ; then
