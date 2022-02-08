@@ -36,6 +36,10 @@ if 'Results' in jdata:
     last_start = None
     first_end = None
     last_end = None
+    first_pod_start = None
+    last_pod_start = None
+    first_pod_create = None
+    last_pod_create = None
     all_clients_are_on_same_node = are_clients_all_on_same_node(jdata['api_objects'])
     for row in rows:
         rowhash = {}
@@ -55,11 +59,18 @@ if 'Results' in jdata:
         total_iterations += rowhash['iterations']
         total_et += rowhash['runtime']
         round_trip_time_accumulator += rowhash['mean_round_trip_time_msec']
+        # Pod create time is relative to the host
+        rowhash['pod_create'] = row['pod_create_time_offset_from_base']
+        if first_pod_create is None or rowhash['pod_create'] < first_pod_create:
+            first_pod_create = rowhash['pod_create']
+        if last_pod_create is None or rowhash['pod_create'] > last_pod_create:
+            last_pod_create = rowhash['pod_create']
         # I'd like to do this, but if the nodes are out of sync time-wise, this will not
         # function correctly.
         if all_clients_are_on_same_node:
             rowhash['run_start'] = row['data_start_time_offset_from_base']
             rowhash['run_end'] = row['data_end_time_offset_from_base']
+            rowhash['pod_start'] = row['pod_start_time_offset_from_base']
             if first_start is None or rowhash['run_start'] < first_start:
                 first_start = rowhash['run_start']
             if first_end is None or rowhash['run_end'] < first_end:
@@ -68,6 +79,10 @@ if 'Results' in jdata:
                 last_start = rowhash['run_start']
             if last_end is None or rowhash['run_end'] > last_end:
                 last_end = rowhash['run_end']
+            if first_pod_start is None or rowhash['pod_start'] < first_pod_start:
+                first_pod_start = rowhash['pod_start']
+            if last_pod_start is None or rowhash['pod_start'] > last_pod_start:
+                last_pod_start = rowhash['pod_start']
         answer['rows'].append(rowhash)
 
     summary = {}
@@ -78,6 +93,7 @@ if 'Results' in jdata:
     summary['total_data_xfer_bytes'] = total_data_xfer
     summary['average_data_rate_mb_sec'] = round(total_data_xfer / summary['elapsed_time_average'] / 1000000, 3)
     summary['average_round_trip_time_msec'] = round(round_trip_time_accumulator / len(rows), 3)
+    summary['pod_create_span'] = last_pod_create - first_pod_create
     summary['total_clients'] = len(rows)
 
     # I'd like to do this, but if the nodes are out of sync time-wise, this will not
@@ -88,9 +104,10 @@ if 'Results' in jdata:
         summary['last_run_start'] = last_start
         summary['last_run_end'] = last_end
         summary['elapsed_time_net'] = last_end - first_start
+        summary['pod_start_span'] = last_pod_start - first_pod_start
         summary['overlap_error'] = round(((((last_start - first_start) +
-                                           (last_end - first_end)) / 2) /
-                                         (total_et / len(rows))), 5)
+                                            (last_end - first_end)) / 2) /
+                                          (total_et / len(rows))), 5)
         summary['average_data_rate_mb_sec'] = round(total_data_xfer / (last_end - first_start) / 1000000, 3)
     else:
         summary['average_data_rate_mb_sec'] = round(total_data_xfer / summary['elapsed_time_average'] / 1000000, 3)
@@ -145,7 +162,8 @@ Command line:  {textwrap.fill(' '.join(jdata['metadata']['expanded_command_line'
     Total Data Sent (MB):       {round(summary['total_data_xfer_bytes'] / 1000000, 3)}
     Average Data Rate (MB/sec): {round(summary['average_data_rate_mb_sec'], 3)}
     Average RTT msec:           {round(summary['average_round_trip_time_msec'], 3)}
-    Max RTT msec:               {round(summary['max_round_trip_time_msec'], 3)}""")
+    Max RTT msec:               {round(summary['max_round_trip_time_msec'], 3)}
+    Pod creation span:          {round(summary['pod_create_span'], 5)}""")
         if all_clients_are_on_same_node:
             print(f"""    First run start:            {round(summary['first_run_start'], 3)}
     First run end:              {round(summary['first_run_end'], 3)}
@@ -153,7 +171,7 @@ Command line:  {textwrap.fill(' '.join(jdata['metadata']['expanded_command_line'
     Last run end:               {round(summary['last_run_end'], 3)}
     Net elapsed time:           {round(summary['elapsed_time_net'], 3)}
     Overlap error:              {round(summary['overlap_error'], 5)}
-""")
+    Pod start span:             {round(summary['pod_start_span'], 5)}""")
         else:
             print(f'''
     *** Run start/end not available when client pods are not all on the same node ***''')

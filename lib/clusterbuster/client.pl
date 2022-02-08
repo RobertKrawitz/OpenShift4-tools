@@ -7,12 +7,15 @@ use Time::HiRes qw(gettimeofday usleep);
 use Time::Piece;
 use Sys::Hostname;
 $SIG{TERM} = sub { kill 'KILL', -1; POSIX::_exit(0); };
-my ($namespace, $container, $basetime, $baseoffset, $poddelay, $connect_port, $container, $srvhost, $data_rate, $bytes, $bytesMax, $msgSize, $xfertime, $xfertimeMax, $crtime, $exit_at_end, $synchost, $syncport, $namespace, $loghost, $logport) = @ARGV;
+my ($namespace, $container, $basetime, $baseoffset, $poddelay, $connect_port, $container, $srvhost, $data_rate, $bytes, $bytes_max, $msg_size, $xfertime, $xfertime_max, $crtime, $exit_at_end, $synchost, $syncport, $namespace, $loghost, $logport) = @ARGV;
+my ($start_time, $data_start_time, $data_end_time, $elapsed_time, $end_time, $user, $sys, $cuser, $csys);
+
+my ($data_sent);
+my ($mean_latency, $max_latency, $stdev_latency);
 $basetime += $baseoffset;
 $crtime += $baseoffset;
-my ($etime, $data_sent, $detime, $stime, $end_time, $dstime, $mean, $max, $stdev, $user, $sys, $cuser, $csys, $elapsed);
-my $start_time;
-my $ghbn_time;
+
+$start_time = xtime();
 my $pass = 0;
 my $ex = 0;
 my $ex2 = 0;
@@ -48,38 +51,33 @@ sub stats() {
   "namespace": "%s",
   "pod": "%s",
   "container": "%s",
-  "connections_failed": %d,
-  "connections_refused": %d,
-  "passes": %d,
-  "msgSize": %d,
-  "init_offset_from_base": %f,
-  "start_offset_from_base": %f,
-  "gethostbyname_offset_from_base": %f,
-  "initial_sync_offset_from_base": %f,
+  "process_id": %d,
+  "pod_create_time_offset_from_base": %f,
+  "pod_start_time_offset_from_base": %f,
   "data_start_time_offset_from_base": %f,
   "data_end_time_offset_from_base": %f,
+  "data_elapsed_time": %f,
   "user_cpu_time": %f,
   "system_cpu_time": %f,
   "data_sent_bytes": %d,
-  "data_elapsed_time": %f,
-  "data_rate_mb_sec": %f,
   "mean_latency_sec": %f,
   "max_latency_sec": %f,
   "stdev_latency_sec": %f,
   "timing_overhead_sec": %f,
-  "target_data_rate": %f
+  "target_data_rate": %f,
+  "passes": %d,
+  "msg_size": %d
 }
 EOF
     $fstring =~ s/[ \n]+//g;
-    return sprintf($fstring, $namespace, $pod, $container, $cfail, $refused, $pass, $msgSize,
-		   $crtime - $basetime, $start_time - $basetime, $ghbn_time - $basetime, $etime - $basetime,
-		   $dstime - $basetime, $end_time - $basetime, $user, $sys,
-		   $data_sent, $detime, $data_sent / $detime / 1000000.0, $mean, $max, $stdev, $time_overhead, $data_rate);
+    return sprintf($fstring, $namespace, $pod, $container, $$, $crtime - $basetime, $start_time - $basetime,
+		   $data_start_time - $basetime, $data_end_time - $basetime, $elapsed_time, $user, $sys,
+		   $data_sent, $mean_latency,
+		   $max_latency, $stdev_latency, $time_overhead, $data_rate, $pass, $msg_size);
 }
 sub connect_to($$) {
     my ($addr, $port) = @_;
     my ($connected) = 0;
-    my ($ghbn_time, $stime);
     my ($fname,$faliases,$ftype,$flen,$faddr);
     my ($sock);
     do {
@@ -92,10 +90,8 @@ sub connect_to($$) {
         } else {
             my $straddr = inet_ntoa($faddr);
             timestamp("Connecting to $addr:$port ($fname, $ftype)");
-            $ghbn_time = xtime();
             my $sockmeta = pack($sockaddr, AF_INET, $port, $faddr);
             socket($sock, AF_INET, SOCK_STREAM, getprotobyname('tcp')) || die "can't make socket: $!";
-            $stime = xtime();
             if (connect($sock, $sockmeta)) {
                 $connected = 1;
                 timestamp("Connected to $addr:$port ($fname, $ftype), waiting for sync");
@@ -110,13 +106,11 @@ sub connect_to($$) {
             }
         }
     } while (! $connected);
-    return ($sock, $ghbn_time, $stime);
+    return ($sock);
 }
 $SIG{TERM} = sub { POSIX::_exit(0); };
 timestamp("Clusterbuster client starting");
-$start_time = xtime();
-my ($conn);
-($conn, $ghbn_time, $stime) = connect_to($srvhost, $connect_port);
+my ($conn) = connect_to($srvhost, $connect_port);
 $SIG{TERM} = sub { close $conn; POSIX::_exit(0); };
 
 sub do_sync($$;$) {
@@ -152,41 +146,39 @@ sub do_sync($$;$) {
     }
 }
 do_sync($synchost, $syncport);
-$etime = xtime();
 my $peeraddr = getpeername($conn);
 my ($port, $addr) = sockaddr_in($peeraddr);
 my $peerhost = gethostbyaddr($addr, AF_INET);
 $peeraddr = inet_ntoa($addr);
 timestamp("Connected to $peerhost ($peeraddr) on port tcp:$port");
 my $buffer = "";
-vec($buffer, $msgSize - 1, 8) = "A";
+vec($buffer, $msg_size - 1, 8) = "A";
 my $nread;
 my $bufsize = length($buffer);
-my $starttime = xtime();
 $data_rate = $data_rate * 1;
-($dstime) = xtime();
 
 $data_sent = 0;
-$mean = 0;
-$max = 0;
-$stdev = 0;
-if ($bytes != $bytesMax) {
-    $bytes += int(rand($bytesMax - $bytes + 1));
+$mean_latency = 0;
+$max_latency = 0;
+$stdev_latency = 0;
+if ($bytes != $bytes_max) {
+    $bytes += int(rand($bytes_max - $bytes + 1));
 }
-if ($xfertime != $xfertimeMax) {
-    $xfertime += int(rand($xfertimeMax - $xfertime + 1));
+if ($xfertime != $xfertime_max) {
+    $xfertime += int(rand($xfertime_max - $xfertime + 1));
 }
 calibrate_time();
-my $delaytime = $basetime + $poddelay - $dstime;
 timestamp("Using $bufsize byte buffer");
+$data_start_time = xtime();
+my ($starttime) = $data_start_time;
+my $delaytime = $basetime + $poddelay - $data_start_time;
 if ($delaytime > 0) {
     timestamp("Sleeping $delaytime seconds to synchronize");
     usleep($delaytime * 1000000);
 }
-$dstime = xtime();
 my ($tbuf, $rtt_start, $rtt_elapsed, $en);
 while (($bytes > 0 && $data_sent < $bytes) ||
-       ($xfertime > 0 && xtime() - $dstime < $xfertime)) {
+       ($xfertime > 0 && xtime() - $data_start_time < $xfertime)) {
     my $nwrite;
     my $nleft = $bufsize;
     $rtt_start = xtime();
@@ -206,8 +198,8 @@ while (($bytes > 0 && $data_sent < $bytes) ||
     $en = xtime() - $rtt_start - $time_overhead;
     $ex += $en;
     $ex2 += $en * $en;
-    if ($en > $max) {
-	$max = $en;
+    if ($en > $max_latency) {
+	$max_latency = $en;
     }
     if ($nread < 0) {
 	die "Read failed: $!\n";
@@ -231,17 +223,17 @@ while (($bytes > 0 && $data_sent < $bytes) ||
     }
     $pass++;
 }
+$data_end_time = xtime();
 if ($pass > 0) {
-    $mean = ($ex / $pass);
+    $mean_latency = ($ex / $pass);
     if ($pass > 1) {
-	$stdev = sqrt(($ex2 - ($ex * $ex / $pass)) / ($pass - 1));
+	$stdev_latency = sqrt(($ex2 - ($ex * $ex / $pass)) / ($pass - 1));
     }
 }
 ($user, $sys, $cuser, $csys) = times;
-$end_time = xtime();
-$detime = $end_time - $dstime;
-if ($detime <= 0) {
-    $detime = 0.00000001;
+$elapsed_time = $data_end_time - $data_start_time;
+if ($elapsed_time <= 0) {
+    $elapsed_time = 0.00000001;
 }
 
 timestamp("Done");
