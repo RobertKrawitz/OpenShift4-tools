@@ -41,13 +41,9 @@ else:
         postprocessor = os.path.join(os.path.dirname(__file__), "lib", "clusterbuster",
                          "postprocess", f'{workload}.postprocess')
 
-        if os.path.isfile(postprocessor):
-            if os.access(postprocessor, os.X_OK):
-                with Popen([postprocessor, '-o', args.format], stdin=PIPE) as command:
-                    command.communicate(json.dumps(jdata).encode())
-            else:
-                print(f'Handler {postprocessor} is not executable!', file=sys.stderr)
-                sys.exit(1)
+        if os.path.isfile(postprocessor) and os.access(postprocessor, os.X_OK):
+            with Popen([postprocessor, '-o', args.format], stdin=PIPE) as command:
+                command.communicate(json.dumps(jdata).encode())
         else:
-            print(f'Workload {workload} is unhandled!', file=sys.stderr)
-            sys.exit(1)
+            print(f'Workload {postprocessor} is unhandled, dumping raw output!', file=sys.stderr)
+            json.dump(jdata, sys.stdout, indent = 4)
