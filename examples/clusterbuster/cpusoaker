@@ -6,6 +6,6 @@ workload=cpu
 workloadruntime=10
 precleanup=1
 no-report-object-creation
-deps-per-namespace=2
+deps-per-namespace=8
 processes=3
-namespaces=4
+namespaces=1
