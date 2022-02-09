@@ -66,7 +66,6 @@ declare -i report_object_creation=1
 declare -A objects_created=()
 declare baseoffset=0
 declare requested_workload=ClusterBuster
-declare podsleeptime=infinity
 declare basename=clusterbuster
 declare deployment_type=pod
 declare -i basetime
@@ -159,6 +158,7 @@ fi
 
 declare __mydir__=${__me__%/*}
 declare __libdir__=${__mydir__}/lib/clusterbuster
+declare __podfile_dir__=${__libdir__}/pod_files
 declare __workloaddir__=${__libdir__}/workloads
 
 [[ -d "$__libdir__" ]] || fatal "Can't find my library dir!"
@@ -659,7 +659,6 @@ function process_option() {
 	objspercall)		    objs_per_call=$optvalue			;;
 	parallel)		    parallel=$optvalue				;;
 	sleep)			    sleeptime=$optvalue				;;
-	podsleep|podsleeptime)	    podsleeptime=$optvalue			;;
 	poddelay)		    poddelay=$optvalue				;;
 	firstdeployment)	    first_deployment=$optvalue			;;
 	parallelconfigmaps)	    parallel_configmaps=$optvalue		;;

@@ -49,16 +49,16 @@ $(indent 2 bootstrap_command_yaml fio.pl)
   - "c${j}"
   - "$basetime"
   - "$baseoffset"
-  - "$(ts)"
   - "$poddelay"
-  - "$processes"
-  - "$workdir"
-  - "$workload_run_time"
+  - "$(ts)"
   - "$exit_at_end"
   - "$sync_service"
   - "$sync_port_num"
   - "$log_host"
   - "$log_port"
+  - "$processes"
+  - "$workdir"
+  - "$workload_run_time"
   - "$configmap_mount_dir"
   - "${_fio_generic_options[*]:-}"
 $(indent 2 volume_mounts_yaml "$namespace" "${instance}" "$secret_count")
@@ -135,8 +135,8 @@ function calculate_logs_required_fio() {
 
 function list_configmaps_fio() {
     cat <<EOF
-${__libdir__}/fio.pl
-${__libdir__}/sync.pl
+${__podfile_dir__}/fio.pl
+${__podfile_dir__}/sync.pl
 EOF
 }
 

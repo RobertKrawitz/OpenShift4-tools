@@ -18,6 +18,7 @@
 # Simple workloads (pause pod, clusterbuster, logging)
 ################################################################
 
+declare -g ___classic_pod_sleep_time=infinity
 declare -ig ___log_bytes_per_line=1
 declare -ig ___log_bytes_per_io=1
 declare -ig ___log_xfer_count=1
@@ -25,7 +26,7 @@ declare -ig ___log_processes=1
 declare -ig ___log_delay_usec=0
 declare -ig ___log_xfertime=0
 
-function _create_containers_clusterbuster_yaml() {
+function _create_containers_classic_yaml() {
     local namespace=$1
     local instance=$2
     local secret_count=$3
@@ -45,7 +46,7 @@ $(indent 2 container_resources_yaml)
   - |
     trap 'exit 0' TERM
     (while : ; do date ; sleep 60 ; done)&
-    sleep $podsleeptime
+    sleep $___clusterbuster_pod_sleep_time
     exit 1
 $(indent 2 volume_mounts_yaml "$namespace" "${instance}" "$secret_count")
 EOF
@@ -96,7 +97,7 @@ $(indent 2 bootstrap_command_yaml logger.pl)
   - "$___log_processes"
   - "$___log_delay_usec"
   - "$___log_xfertime"
-  - "$___log_exit_at_end"
+  - "$exit_at_end"
 $(indent 2 volume_mounts_yaml "$namespace" "${instance}" "$secret_count")
 EOF
     done
@@ -168,7 +169,7 @@ function _create_deployment_simple() {
 
 function list_configmaps_log() {
     cat <<EOF
-${__libdir__}/logger.pl
+${__podfile_dir__}/logger.pl
 EOF
 }
 
@@ -176,7 +177,7 @@ function create_deployment_pausepod() {
     _create_deployment_simple "$@"
 }
 
-function create_deployment_clusterbuster() {
+function create_deployment_simple() {
     _create_deployment_simple "$@"
 }
 
@@ -209,6 +210,15 @@ function help_options_log() {
 EOF
 }
 
+function help_options_classic() {
+    cat <<EOF
+    Classic Options:
+       --classic-pod-sleep-time=<seconds>
+                        Number of seconds pods should sleep before
+                        exiting.  Default infinity.
+EOF
+}
+
 function document_pausepod() {
     cat <<'EOF'
 * pausepod: a minimal pod that does nothing.  Useful for stressing
@@ -217,9 +227,9 @@ function document_pausepod() {
 EOF
 }
 
-function document_clusterbuster() {
+function document_classic() {
     cat <<'EOF'
-* clusterbuster: a simple pod based on busybox that logs the date
+* classic: a simple pod based on busybox that logs the date
   once per minute.  Useful for testing the control plane.
 EOF
 }
@@ -228,6 +238,21 @@ function document_log() {
     cat <<'EOF'
 * log: a pod that emits log messages at a controllable rate.
 EOF
+}
+
+function process_options_classic() {
+    local opt
+    local -a unknown_opts=()
+    for opt in "$@" ; do
+	read -r noptname1 noptname optvalue <<< "$(process_option "$opt")"
+	case "$noptname1" in
+	    classicpodsleeptime) ___classic_pod_sleep_time=$optvalue ;;
+	    *) 			unknown_opts+=("$noptname ($noptname1)") ;;
+	esac
+    done
+    if [[ -n "${unknown_opts[*]:-}" ]] ; then
+	help "${unknown_opts[@]}"
+    fi
 }
 
 function process_options_log() {
@@ -250,6 +275,12 @@ function process_options_log() {
     fi
 }
 
+function report_options_classic() {
+    cat <<EOF
+"classic_pod_sleep_time": $___classic_pod_sleep_time
+EOF
+}
+
 function report_options_log() {
     cat <<EOF
 "log_bytes_per_line": $___log_bytes_per_line,
@@ -262,5 +293,5 @@ EOF
 }
 
 register_workload pausepod dispatch_generic pause
-register_workload clusterbuster dispatch_generic classic
+register_workload classic dispatch_generic clusterbuster
 register_workload log dispatch_generic logger logging

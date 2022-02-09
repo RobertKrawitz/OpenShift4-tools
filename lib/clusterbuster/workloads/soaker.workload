@@ -44,15 +44,15 @@ $(indent 2 bootstrap_command_yaml cpusoaker.pl)
   - "c$container"
   - "$basetime"
   - "$baseoffset"
-  - "$(ts)"
   - "$poddelay"
-  - "$processes"
-  - "$workload_run_time"
+  - "$(ts)"
   - "$exit_at_end"
   - "$sync_service"
   - "$sync_port_num"
   - "$log_host"
   - "$log_port"
+  - "$processes"
+  - "$workload_run_time"
 $(indent 2 volume_mounts_yaml "$namespace" "${instance}" "$secret_count")
 EOF
     done
@@ -122,8 +122,8 @@ function create_deployment_soaker() {
 
 function list_configmaps_soaker() {
     cat <<EOF
-${__libdir__}/cpusoaker.pl
-${__libdir__}/sync.pl
+${__podfile_dir__}/cpusoaker.pl
+${__podfile_dir__}/sync.pl
 EOF
 }
 

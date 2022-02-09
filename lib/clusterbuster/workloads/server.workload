@@ -115,26 +115,24 @@ $(indent 2 container_resources_yaml)
     value: "$verbose"
 $(indent 2 bootstrap_command_yaml client.pl)
   - "$namespace"
-  - "$container"
+  - "c$container"
   - "$basetime"
   - "$baseoffset"
   - "$poddelay"
-  - "$port"
-  - "c${container}"
+  - "$(ts)"
+  - "$exit_at_end"
+  - "$sync_service"
+  - "$sync_port_num"
+  - "$log_host"
+  - "$log_port"
   - "service-${namespace}-server-$instance"
+  - "$port"
   - "$target_data_rate"
   - "$bytes_transfer"
   - "$bytes_transfer_max"
   - "$___msg_size"
   - "$workload_run_time"
   - "$workload_run_time_max"
-  - "$(ts)"
-  - "$exit_at_end"
-  - "$sync_service"
-  - "$sync_port_num"
-  - "$namespace"
-  - "$log_host"
-  - "$log_port"
 $(indent 2 volume_mounts_yaml "$namespace" "$instance" "$secret_count")
 EOF
     done
@@ -238,9 +236,9 @@ function create_deployment_server() {
 
 function list_configmaps_server() {
     cat <<EOF
-${__libdir__}/client.pl
-${__libdir__}/server.pl
-${__libdir__}/sync.pl
+${__podfile_dir__}/client.pl
+${__podfile_dir__}/server.pl
+${__podfile_dir__}/sync.pl
 EOF
 }
 

@@ -6,14 +6,15 @@ use strict;
 use Time::HiRes qw(gettimeofday usleep);
 use Time::Piece;
 use Sys::Hostname;
-$SIG{TERM} = sub { kill 'KILL', -1; POSIX::_exit(0); };
-my ($namespace, $container, $basetime, $baseoffset, $poddelay, $connect_port, $container, $srvhost, $data_rate, $bytes, $bytes_max, $msg_size, $xfertime, $xfertime_max, $crtime, $exit_at_end, $synchost, $syncport, $namespace, $loghost, $logport) = @ARGV;
+my ($namespace, $container, $basetime, $baseoffset, $poddelay, $crtime, $exit_at_end, $synchost, $syncport, $loghost, $logport, $srvhost, $connect_port, $data_rate, $bytes, $bytes_max, $msg_size, $xfertime, $xfertime_max) = @ARGV;
 my ($start_time, $data_start_time, $data_end_time, $elapsed_time, $end_time, $user, $sys, $cuser, $csys);
+
+$SIG{TERM} = sub { POSIX::_exit(0); };
+$basetime += $baseoffset;
+$crtime += $baseoffset;
 
 my ($data_sent);
 my ($mean_latency, $max_latency, $stdev_latency);
-$basetime += $baseoffset;
-$crtime += $baseoffset;
 
 $start_time = xtime();
 my $pass = 0;
@@ -23,6 +24,7 @@ my ($cfail) = 0;
 my ($refused) = 0;
 my $time_overhead = 0;
 my ($pod) = hostname;
+
 sub ts() {
     my (@now) = gettimeofday();
     return sprintf("%s.%06d", gmtime($now[0])->strftime("%Y-%m-%dT%T"), $now[1]);
@@ -70,10 +72,11 @@ sub stats() {
 }
 EOF
     $fstring =~ s/[ \n]+//g;
-    return sprintf($fstring, $namespace, $pod, $container, $$, $crtime - $basetime, $start_time - $basetime,
-		   $data_start_time - $basetime, $data_end_time - $basetime, $elapsed_time, $user, $sys,
-		   $data_sent, $mean_latency,
-		   $max_latency, $stdev_latency, $time_overhead, $data_rate, $pass, $msg_size);
+    return sprintf($fstring, $namespace, $pod, $container, $$, $crtime - $basetime,
+		   $start_time - $basetime, $data_start_time - $basetime,
+		   $data_end_time - $basetime, $elapsed_time, $user, $sys,
+		   $data_sent, $mean_latency, $max_latency, $stdev_latency, $time_overhead,
+		   $data_rate, $pass, $msg_size);
 }
 sub connect_to($$) {
     my ($addr, $port) = @_;
@@ -127,7 +130,7 @@ sub do_sync($$;$) {
     }
     while (1) {
 	timestamp("Waiting for sync on $addr:$port");
-	my ($_conn, $i1, $i2) = connect_to($addr, $port);
+	my ($_conn) = connect_to($addr, $port);
 	my ($sbuf);
 	timestamp("Writing token $token to sync");
 	my ($answer) = syswrite($_conn, $token, length $token);
@@ -169,13 +172,14 @@ if ($xfertime != $xfertime_max) {
 }
 calibrate_time();
 timestamp("Using $bufsize byte buffer");
-$data_start_time = xtime();
+my ($start_time) = xtime();
 my ($starttime) = $data_start_time;
-my $delaytime = $basetime + $poddelay - $data_start_time;
+my $delaytime = $basetime + $poddelay - $start_time;
 if ($delaytime > 0) {
     timestamp("Sleeping $delaytime seconds to synchronize");
     usleep($delaytime * 1000000);
 }
+$data_start_time = xtime();
 my ($tbuf, $rtt_start, $rtt_elapsed, $en);
 while (($bytes > 0 && $data_sent < $bytes) ||
        ($xfertime > 0 && xtime() - $data_start_time < $xfertime)) {

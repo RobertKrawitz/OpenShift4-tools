@@ -4,13 +4,16 @@ use Socket;
 use POSIX;
 use strict;
 use Time::Piece;
-use Time::HiRes qw(gettimeofday);
+use Time::HiRes qw(gettimeofday usleep);
 use Sys::Hostname;
 #use File::Sync qw(sync);
-our ($namespace, $container, $basetime, $baseoffset, $crtime, $poddelay, $exit_delay, $synchost, $syncport, $dirs, $files_per_dir, $blocksize, $block_count, $processes, $loghost, $logport, @dirs) = @ARGV;
+our ($namespace, $container, $basetime, $baseoffset, $poddelay, $crtime, $sync_host, $sync_port, $log_host, $log_port, $dirs, $files_per_dir, $blocksize, $block_count, $processes, @dirs) = @ARGV;
+my ($start_time, $data_start_time, $data_end_time, $elapsed_time, $end_time, $user, $sys, $cuser, $csys);
 $SIG{TERM} = sub { POSIX::_exit(0); };
 $basetime += $baseoffset;
 $crtime += $baseoffset;
+$start_time = xtime();
+
 my ($pod) = hostname;
 
 sub cputime() {
@@ -28,12 +31,11 @@ sub timestamp($) {
     my ($str) = @_;
     printf STDERR "%7d %s %s\n", $$, ts(), $str;
 }
-
 sub xtime() {
     my (@now) = gettimeofday();
     return $now[0] + ($now[1] / 1000000.0);
 }
-my ($dstime) = xtime();
+
 sub connect_to($$) {
     my ($addr, $port) = @_;
     my ($connected) = 0;
@@ -61,7 +63,7 @@ sub connect_to($$) {
             }
         }
     } while (! $connected);
-    return ($sock, $ghbn_time, $stime);
+    return ($sock);
 }
 
 sub do_sync($$;$) {
@@ -78,7 +80,7 @@ sub do_sync($$;$) {
     }
     while (1) {
 	timestamp("Waiting for sync on $addr:$port");
-	my ($_conn, $i1, $i2) = connect_to($addr, $port);
+	my ($_conn) = connect_to($addr, $port);
 	my ($sbuf);
 	timestamp("Writing token $token to sync");
 	my ($answer) = syswrite($_conn, $token, length $token);
@@ -100,8 +102,6 @@ sub do_sync($$;$) {
 if ($#dirs < 0) {
     @dirs=("/tmp");
 }
-my ($buffer);
-vec($buffer, $blocksize - 1, 8) = "A";
 
 sub remdir($$) {
     my ($dirname, $oktofail) = @_;
@@ -145,6 +145,8 @@ sub removethem($;$) {
 sub makethem($) {
     my ($process) = @_;
     my ($ops) = 0;
+    my ($buffer);
+    vec($buffer, $blocksize - 1, 8) = "A";
     foreach my $bdir (@dirs) {
 	my ($pdir)="$bdir/p$process";
 	mkdir("$pdir") || die("Can't create directory $pdir: $!\n");
@@ -173,98 +175,99 @@ sub makethem($) {
     return $ops;
 }
 
-sub runit($) {
-    my ($process) = @_;
-    my ($basecpu) = cputime();
-    my ($prevcpu) = $basecpu;
-    my ($iterations) = 1;
-
-    my $delaytime = $basetime + $poddelay - $dstime;
-    # Make sure everything is cleared out first...but don't count the time here.
-    removethem($process, 1);
-
-    do_sync($synchost, $syncport);
-    my ($stime1) = xtime();
-    my ($stime0) = $stime1;
-    my ($stime) = $stime1;
-    my ($prevtime) = $stime;
-    my ($ucpu0, $scpu0) = cputime();
-    timestamp("Creating files...");
-    my ($ops) = makethem($process);
-    system("sync");
-    my ($etime) = xtime();
-    my ($eltime) = $etime - $stime1;
-    my ($ucpu1, $scpu1) = cputime();
-    $ucpu1 -= $ucpu0;
-    $scpu1 -= $scpu0;
-    my ($fstring0) = <<'EOF';
+sub run_one_operation($$$$$$$) {
+    my ($op_name0, $op_name1, $op_name2, $op_func, $sync_host, $sync_port, $process) = @_;
+    my ($op_format_string) = <<'EOF';
 "%s": {
   "elapsed_time": %f,
   "user_cpu_time": %f,
   "system_cpu_time": %f,
   "cpu_utilization": %f,
   "operations": %d,
-  "iterations": %d,
-  "iterations_per_second": %f
+  "operations_per_second": %f
 }
 EOF
-    $fstring0 =~ s/[ \n]+//g;
-    my ($answer0) = sprintf($fstring0, "create",
-        $eltime, $ucpu1,
-	$scpu1, ($ucpu1 + $scpu1) / $eltime, $ops, $iterations,
-        $iterations / ($etime - $stime1));
-    timestamp("Created files...");
-    do_sync($synchost, $syncport);
+    $op_format_string =~ s/[ \n]+//g;
 
-    timestamp("Sleeping for $exit_delay");
-    sleep($exit_delay);
-    timestamp("Back from sleep");
-    $ops = 0;
-
-    do_sync($synchost, $syncport);
-    my ($stime1) = xtime();
-    my ($stime) = $stime1;
-    my ($prevtime) = $stime;
+    do_sync($sync_host, $sync_port);
+    timestamp("$op_name0 files...");
     my ($ucpu0, $scpu0) = cputime();
-    timestamp("Removing files...");
-    my ($ops) = removethem($process);
-    timestamp("Removed files...");
+    my ($op_start_time) = xtime();
+    my ($ops) = &$op_func($process);
     system("sync");
-    my ($etime) = xtime();
-    my ($eltime) = $etime - $stime1;
+    my ($op_end_time) = xtime();
+    my ($op_elapsed_time) = $op_end_time - $op_start_time;
     my ($ucpu1, $scpu1) = cputime();
     $ucpu1 -= $ucpu0;
     $scpu1 -= $scpu0;
-    my ($answer1) = sprintf($fstring0, "remove",
-        $eltime, $ucpu1,
-	$scpu1, ($ucpu1 + $scpu1) / $eltime, $ops, $iterations,
-        $iterations / ($etime - $stime1));
+    my ($answer) = sprintf($op_format_string, $op_name2, $op_elapsed_time,
+			   $ucpu1, $scpu1, ($ucpu1 + $scpu1) / $op_elapsed_time,
+			   $ops, $ops / $op_elapsed_time);
+    timestamp("$op_name1 files...");
+    do_sync($sync_host, $sync_port);
+    return ($answer, $op_elapsed_time, $ucpu1, $scpu1);
+}
+
+sub runit($) {
+    my ($process) = @_;
+    my ($basecpu) = cputime();
+    my ($prevcpu) = $basecpu;
+    my ($iterations) = 1;
+
+    my $delaytime = $basetime + $poddelay - $start_time;
+    if ($delaytime > 0) {
+	timestamp("Sleeping $delaytime seconds to synchronize");
+	usleep($delaytime * 1000000);
+    }
+    # Make sure everything is cleared out first...but don't count the time here.
+    removethem($process, 1);
+    system("sync");
+
+    my ($data_start_time) = xtime();
+    my ($answer_create, $create_et, $create_ucpu, $create_scpu) =
+	run_one_operation('Creating', 'Created', 'create', \&makethem,
+			  $sync_host, $sync_port, $process);
+
+    timestamp("Sleeping for 60 seconds");
+    sleep(60);
+    timestamp("Back from sleep");
+    my ($answer_remove, $remove_et, $remove_ucpu, $remove_scpu) =
+	run_one_operation('Creating', 'Removed', 'remove', \&removethem,
+			  $sync_host, $sync_port, $process);
+    my ($data_end_time) = xtime();
+    my ($data_elapsed_time) = $create_et + $remove_et;
+    my ($user_cpu) = $create_ucpu + $remove_ucpu;
+    my ($system_cpu) = $create_scpu + $remove_scpu;
+
     my ($fstring) = <<'EOF';
 {
   "application": "clusterbuster-json",
   "namespace": "%s",
   "pod": "%s",
   "container": "%s",
-  "connections_failed": %d,
-  "connections_refused": %d,
-  "connections_succeeded": %d,
-  "start_time_offset_from_base": %f,
-  "elapsed_time_seconds": %f,
+  "process_id": %d,
+  "pod_create_time_offset_from_base": %f,
+  "pod_start_time_offset_from_base": %f,
+  "data_start_time_offset_from_base": %f,
+  "data_end_time_offset_from_base": %f,
+  "data_elapsed_time": %f,
+  "user_cpu_time": %f,
+  "system_cpu_time": %f,
   "block_count": %d,
   "block_size": %d,
 %s,
 %s
 }
 EOF
-    $fstring =~ s/[ \n]+//g;
-    my ($answer) = sprintf($fstring, $namespace, $pod, $container, 0, 0, 0,
-			   $stime0 - $basetime, $etime - $stime0,
-			   $block_count, $blocksize,
-			   $answer0, $answer1);
-    print STDERR "$answer\n";
-    do_sync($synchost, $syncport, "$answer");
-    if ($logport > 0) {
-	do_sync($loghost, $logport, "$answer");
+    my ($answer) = sprintf($fstring, $namespace, $pod, $container, $$, $crtime - $basetime,
+			   $start_time - $basetime, $data_start_time - $basetime, $data_end_time - $basetime,
+			   $data_elapsed_time, $user_cpu, $system_cpu, $block_count, $blocksize,
+			   $answer_create, $answer_remove);
+    $answer =~ s/[ \n]+//g;
+    timestamp("$answer");
+    do_sync($sync_host, $sync_port, "$answer");
+    if ($log_port > 0) {
+	do_sync($log_host, $log_port, "$answer");
     }
 }
 

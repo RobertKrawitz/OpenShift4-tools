@@ -132,8 +132,8 @@ function create_deployment_sysbench() {
 
 function list_configmaps_sysbench() {
     cat <<EOF
-${__libdir__}/sysbench.pl
-${__libdir__}/sync.pl
+${__podfile_dir__}/sysbench.pl
+${__podfile_dir__}/sync.pl
 EOF
 }
 

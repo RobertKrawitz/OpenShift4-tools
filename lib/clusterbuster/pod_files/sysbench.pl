@@ -11,6 +11,8 @@ our ($namespace, $container, $basetime, $baseoffset, $crtime, $poddelay, $proces
 my ($pod) = hostname;
 my ($localrundir) = "$rundir/$pod/$$";
 
+my ($start_time) = xtime();
+
 sub removeRundir() {
     if (-d "$localrundir") {
 	open(CLEANUP, "-|", "rm -rf '$localrundir'");
@@ -33,7 +35,7 @@ $crtime += $baseoffset;
 
 sub cputime() {
     my (@times) = times();
-    return $times[0] + $times[1] + $times[2] + $times[3];
+    return ($times[0] + $times[2], $times[1] + $times[3]);
 }
 
 sub ts() {
@@ -147,8 +149,8 @@ sub runit() {
         timestamp("Cannot cd $localrundir: $!");
 	exit(1);
     }
-    my (@answers) = ();
-    my ($answer_fstring) = <<'EOF';
+    my (@op_answers) = ();
+    my ($op_answer_fstring) = <<'EOF';
 "%s": {
   "read_ops": %d,
   "write_ops": %d,
@@ -166,20 +168,24 @@ sub runit() {
   "rdwr_ratio": %f,
   "fsync_frequency": %d,
   "final_fsync_enabled": "%s",
-  "io_mode": "%s"
+  "io_mode": "%s",
+  "user_cpu_time": %f,
+  "sys_cpu_time": %f
 }
 EOF
-    my ($basecpu) = cputime();
-    my ($prevcpu) = $basecpu;
     my ($firsttime) = 1;
     my ($avgcpu) = 0;
     my ($weight) = .25;
     my ($icputime);
     my ($interval) = 5;
-    my $start_time;
-    my ($dstime) = xtime();
+    my $data_start_time = xtime();
 
-    my $delaytime = $basetime + $poddelay - $dstime;
+    my $delaytime = $basetime + $poddelay - $start_time;
+    if ($delaytime > 0) {
+	timestamp("Sleeping $delaytime seconds to synchronize");
+	usleep($delaytime * 1000000);
+    }
+    my ($base0_user, $base0_sys) = cputime();
     foreach my $mode (@known_sysbench_fileio_modes) {
 	do_sync($synchost, $syncport);
 	timestamp("Preparing...");
@@ -202,7 +208,7 @@ EOF
 	close PREPARE;
 
 	do_sync($synchost, $syncport);
-	my ($scputime) = cputime();
+	my ($op0_user, $op0_sys) = cputime();
 	timestamp("Running...");
 	timestamp("sysbench --time=$runtime $sysbench_generic_args $sysbench_cmd run --file-test-mode=$mode $sysbench_fileio_args");
 	open(RUN, "-|", "sysbench --time=$runtime $sysbench_generic_args $sysbench_cmd run --file-test-mode=$mode $sysbench_fileio_args") || die "Can't run sysbench: $!\n";
@@ -263,6 +269,7 @@ EOF
 	    }
 	}
 	close RUN;
+	my ($op1_user, $op1_sys) = cputime();
 	do_sync($synchost, $syncport);
 	timestamp("Cleanup...");
 	timestamp("sysbench --time=$runtime $sysbench_generic_args $sysbench_cmd cleanup --file-test-mode=$mode $sysbench_fileio_args");
@@ -274,31 +281,39 @@ EOF
 	    }
 	}
 	close CLEANUP;
-	my ($op_answer) = sprintf($answer_fstring, $mode, $readops, $writeops, $fsyncops, $readrate,
-				  $writerate, $et, $min_lat, $avg_lat, $max_lat, $p95_lat,
-				  $files, $filesize, $blocksize, $rdwr_ratio, $fsync_frequency, $final_fsync_enabled, $io_mode);
-	push @answers, $op_answer;
+	my ($op_answer) = sprintf($op_answer_fstring, $mode, $readops, $writeops, $fsyncops, $readrate,
+				     $writerate, $et, $min_lat, $avg_lat, $max_lat, $p95_lat,
+				     $files, $filesize, $blocksize, $rdwr_ratio, $fsync_frequency,
+				     $final_fsync_enabled, $io_mode, $op1_user - $op0_user,
+				     $op1_sys - $op0_sys);
+	push @op_answers, $op_answer;
     }
+    my $data_end_time = xtime();
+    my ($elapsed_time) = $data_end_time - $data_start_time;
+    my ($base1_user, $base1_sys) = cputime();
+    my ($user) = $base1_user - $base0_user;
+    my ($sys) = $base1_sys - $base0_sys;
     my ($fstring) = <<'EOF';
 {
   "application": "clusterbuster-json",
-  "operation": "%s",
   "namespace": "%s",
   "pod": "%s",
   "container": "%s",
-  "connections_failed": %d,
-  "connections_refused": %d,
-  "connections_succeeded": %d,
   "process_id": %d,
-  "init_offset_from_base": %f,
-  "start_offset_from_base": %f,
+  "pod_create_time_offset_from_base": %f,
+  "pod_start_time_offset_from_base": %f,
+  "data_start_time_offset_from_base": %f,
+  "data_end_time_offset_from_base": %f,
+  "data_elapsed_time": %f,
+  "user_cpu_time": %f,
+  "system_cpu_time": %f,
   "workloads": {%s}
 }
 EOF
-    my ($answer) = sprintf($fstring, "sysbench",
-			   $namespace, $pod, $container, 0, 0, 0,
-			   $$, $crtime - $basetime, $dstime - $basetime,
-			   join(",", @answers));
+    my ($answer) = sprintf($fstring, $namespace, $pod, $container, $$, $crtime - $basetime,
+			   $start_time - $basetime, $data_start_time - $basetime,
+			   $data_end_time - $basetime, $elapsed_time, $user, $sys,
+			   join(",", @op_answers));
     print STDERR "$answer\n";
     do_sync($synchost, $syncport, $answer);
     if ($logport > 0) {

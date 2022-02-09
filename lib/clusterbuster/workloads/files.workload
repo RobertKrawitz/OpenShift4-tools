@@ -52,18 +52,17 @@ $(indent 2 bootstrap_command_yaml files.pl)
   - "c${container}"
   - "$basetime"
   - "$baseoffset"
-  - "$(ts)"
   - "$poddelay"
-  - "$podsleeptime"
+  - "$(ts)"
   - "$sync_service"
   - "$sync_port_num"
+  - "$log_host"
+  - "$log_port"
   - "$___file_dirs_per_volume"
   - "$___files_per_dir"
   - "$___file_block_size"
   - "$file_blocks"
   - "$processes_per_pod"
-  - "$log_host"
-  - "$log_port"
 $(tmp_volume_paths=("${volume_mount_paths[@]/%/\"}"); IFS=$'\n'; echo "${tmp_volume_paths[*]/#/  - \"}")
 $(emptydirs=("${emptydirs[@]/%/\"}"); IFS=$'\n'; echo "${emptydirs[*]/#/  - \"}")
 $(indent 2 volume_mounts_yaml "$namespace" "$instance" "$secret_count")
@@ -129,7 +128,7 @@ function create_deployment_files() {
     local log_host=${6:-}
     local -i log_port=${7:-0}
     local -i instance
-    create_sync_service_if_needed "$namespace" 4 "$((containers_per_pod * processes_per_pod * replicas * count))"
+    create_sync_service_if_needed "$namespace" 5 "$((containers_per_pod * processes_per_pod * replicas * count))"
     for instance in $(seq $first_deployment $((count + first_deployment - 1))) ; do
 	_create_files_deployment "$namespace" "$instance" "$secret_count"  "$replicas" "$containers_per_pod" "$log_host" "$log_port"
     done
@@ -145,8 +144,8 @@ function calculate_logs_required_files() {
 
 function list_configmaps_files() {
     cat <<EOF
-${__libdir__}/files.pl
-${__libdir__}/sync.pl
+${__podfile_dir__}/files.pl
+${__podfile_dir__}/sync.pl
 EOF
 }
 

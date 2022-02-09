@@ -4,16 +4,51 @@ use Socket;
 use POSIX;
 use strict;
 use Time::Piece;
-use Time::HiRes qw(gettimeofday);
+use Time::HiRes qw(gettimeofday usleep);
+use File::Path qw(make_path remove_tree);
 use Sys::Hostname;
-our ($namespace, $container, $basetime, $baseoffset, $crtime, $poddelay, $processes, $runtime, $exit_at_end, $synchost, $syncport, $loghost, $logport) = @ARGV;
-$SIG{TERM} = sub { kill 'KILL', -1; POSIX::_exit(0); };
+our ($namespace, $container, $basetime, $baseoffset, $poddelay, $crtime, $exit_at_end, $synchost, $syncport, $loghost, $logport, $processes, $rundir, $runtime, $jobfiles_dir, $fio_generic_args) = @ARGV;
+
+my ($data_start_time, $data_end_time);
+$SIG{TERM} = sub() { docleanup() };
 $basetime += $baseoffset;
 $crtime += $baseoffset;
+my ($start_time) = xtime();
+
+my ($pod) = hostname;
+my ($localrundir) = "$rundir/$pod/$$";
+
+sub removeRundir() {
+    if (-d "$localrundir") {
+	open(CLEANUP, "-|", "rm -rf '$localrundir'");
+	while (<CLEANUP>) {
+	    1;
+	}
+	close(CLEANUP);
+    }
+}
+
+sub docleanup()  {
+    removeRundir();
+    kill 'KILL', -1;
+    POSIX::_exit(0);
+}
+
+removeRundir();
+
+if (! make_path($localrundir)) {
+    timestamp("Cannot create run directory $localrundir: $!");
+}
+if (! chdir($localrundir)) {
+    timestamp("Cannot cd $localrundir: $!");
+    exit(1);
+}
 
 sub cputime() {
     my (@times) = times();
-    return $times[0] + $times[1] + $times[2] + $times[3];
+    my ($usercpu) = $times[0] + $times[2];
+    my ($syscpu) = $times[1] + $times[3];
+    return ($usercpu, $syscpu);
 }
 
 sub ts() {
@@ -29,8 +64,6 @@ sub xtime() {
     my (@now) = gettimeofday();
     return $now[0] + ($now[1] / 1000000.0);
 }
-my ($dstime) = xtime();
-my ($pod) = hostname;
 sub connect_to($$) {
     my ($addr, $port) = @_;
     my ($connected) = 0;
@@ -96,108 +129,107 @@ sub do_sync($$;$) {
     }
 }
 
-sub runit() {
-    my ($iterations) = 0;
-    my ($loops_per_iteration) = 10000;
-    my ($basecpu) = cputime();
-    my ($prevcpu) = $basecpu;
+sub runit(;$) {
+    my ($jobfile) = @_;
     my ($firsttime) = 1;
     my ($avgcpu) = 0;
     my ($weight) = .25;
     my ($icputime);
     my ($interval) = 5;
     my $start_time;
+    my ($dstime) = xtime();
 
     my $delaytime = $basetime + $poddelay - $dstime;
-    do_sync($synchost, $syncport);
-    my ($stime1) = xtime();
-    my ($stime) = $stime1;
-    my ($prevtime) = $stime;
-    my ($scputime) = cputime();
-    while ($runtime < 0 || xtime() - $stime1 < $runtime) {
-        my ($a) = 1;
-        for (my $i = 0; $i < $loops_per_iteration; $i++) {
-            $a = $a + $a;
-        }
-        $iterations += $loops_per_iteration;
-        if ($ENV{"VERBOSE"} > 0) {
-	    my ($ntime) = xtime();
-	    if ($ntime - $prevtime >= $interval) {
-		my (@times) = times();
-		my ($user, $system, $cuser, $csystem) = times();
-		my ($etime) = $ntime - $stime;
-		my ($cpu) = cputime();
-		my ($cputime) = $cpu - $basecpu;
-		my ($icputime) = $cpu - $prevcpu;
-		if ($firsttime) {
-		    $avgcpu = $cputime;
-		    $firsttime = 0;
-		} else {
-		    $avgcpu = ($icputime * $weight) + ($avgcpu * (1.0 - $weight));
-		}
-		$prevtime = $ntime;
-		$prevcpu = $cpu;
-            }
-        }
+    if ($delaytime > 0) {
+	timestamp("Sleeping $delaytime seconds to synchronize");
+	usleep($delaytime * 1000000);
     }
-    my ($etime) = xtime();
-    my ($eltime) = $etime - $stime1;
-    my ($cputime) = cputime() - $scputime;
+    do_sync($synchost, $syncport);
+    my ($ucpu0, $scpu0) = cputime();
+    my ($answer0) = '';
+    timestamp("Running...");
+    my ($data_start_time) = xtime();
+    timestamp("fio $fio_generic_args --output-format=json+ $jobfile");
+    open(RUN, "-|", "fio $fio_generic_args --output-format=json+ $jobfile | jq -c .") || die "Can't run fio: $!\n";
+    while (<RUN>) {
+	$answer0 .= "$_";
+    }
+    close(RUN);
+    my ($data_end_time) = xtime();
+    my ($ucpu1, $scpu1) = cputime();
+    $ucpu1 -= $ucpu0;
+    $scpu1 -= $scpu0;
     my ($fstring) = <<'EOF';
 {
   "application": "clusterbuster-json",
   "namespace": "%s",
   "pod": "%s",
   "container": "%s",
-  "connections_failed": %d,
-  "connections_refused": %d,
-  "connections_succeeded": %d,
   "process_id": %d,
   "pod_create_time_offset_from_base": %f,
-  "exec_start_time_offset_from_base": %f,
+  "pod_start_time_offset_from_base": %f,
   "data_start_time_offset_from_base": %f,
-  "elapsed_time": %f,
   "data_end_time_offset_from_base": %f,
-  "cpu_time": %f,
-  "cpu_utilization": %f,
-  "work_iterations": %d,
-  "work_iterations_per_second": %f,
-  "base_time": %f,
-  "exec_start_time": %f,
-  "pod_create_time": %f,
-  "data_start_time": %f
+  "data_elapsed_time": %f,
+  "user_cpu_time": %f,
+  "system_cpu_time": %f,
+  "results": %s
 }
 EOF
     $fstring =~ s/[ \n]+//g;
-    my ($answer) = sprintf($fstring, $namespace, $pod, $container, 0,0,0,
-			   $$, $crtime - $basetime, $dstime - $basetime, $stime1 - $basetime,
-			   $eltime, $etime - $basetime, $cputime, $cputime / $eltime, $iterations,
-			   $iterations / ($etime - $stime1),
-			   $basetime, $dstime, $crtime, $stime1);
-    print STDERR "$answer\n";
+    my ($answer) = sprintf($fstring, $namespace, $pod, $container, $$, $crtime - $basetime,
+			   $start_time - $basetime, $data_start_time - $basetime,
+			   $data_end_time - $basetime, $data_end_time - $data_start_time,
+			   $ucpu1 - $ucpu0, $scpu1 - $scpu0,
+			   $answer0 eq '' ? '{}' : $answer0);
+
     do_sync($synchost, $syncport, $answer);
     if ($logport > 0) {
 	do_sync($loghost, $logport, $answer);
     }
 }
-$SIG{CHLD} = 'IGNORE';
+
+sub get_jobfiles($) {
+    my ($dir) = @_;
+    opendir DIR, $dir || die "Can't find job files in $dir: #!\n";
+
+    my @files = map { "$dir/$_" } grep { -f "$dir/$_" } sort readdir DIR;
+    closedir DIR;
+    print STDERR "get_jobfiles($dir) => @files\n";
+    return @files;
+}
+
+my (@jobfiles) = get_jobfiles($jobfiles_dir);
+
+sub runall() {
+    if ($#jobfiles >= 0) {
+	foreach my $file (@jobfiles) {
+	    runit($file)
+	}
+    } else {
+        runit()
+    }
+}
+
 if ($processes > 1) {
     for (my $i = 0; $i < $processes; $i++) {
         if ((my $child = fork()) == 0) {
-            runit();
+            runall();
+	    docleanup();
             exit(0);
         }
     }
 } else {
-    runit();
+    runall();
 }
-print STDERR "FINIS\n";
 if ($exit_at_end) {
     timestamp("About to exit");
     while (wait() > 0) {}
     timestamp("Done waiting");
+    print STDERR "FINIS\n";
     POSIX::_exit(0);
 } else {
     timestamp("Waiting forever");
     pause()
 }
+EOF
