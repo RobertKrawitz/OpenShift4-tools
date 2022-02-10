@@ -179,10 +179,13 @@ sub run_one_operation($$$$$$$) {
     my ($op_name0, $op_name1, $op_name2, $op_func, $sync_host, $sync_port, $process) = @_;
     my ($op_format_string) = <<'EOF';
 "%s": {
-  "elapsed_time": %f,
+  "operation_elapsed_time": %f,
   "user_cpu_time": %f,
   "system_cpu_time": %f,
+  "cpu_time": %f,
   "cpu_utilization": %f,
+  "operation_start_time_offset_from_base": %f,
+  "operation_end_time_offset_from_base": %f,
   "operations": %d,
   "operations_per_second": %f
 }
@@ -201,7 +204,8 @@ EOF
     $ucpu1 -= $ucpu0;
     $scpu1 -= $scpu0;
     my ($answer) = sprintf($op_format_string, $op_name2, $op_elapsed_time,
-			   $ucpu1, $scpu1, ($ucpu1 + $scpu1) / $op_elapsed_time,
+			   $ucpu1, $scpu1, $ucpu1 + $scpu1, ($ucpu1 + $scpu1) / $op_elapsed_time,
+			   $op_start_time - $basetime, $op_end_time - $basetime,
 			   $ops, $ops / $op_elapsed_time);
     timestamp("$op_name1 files...");
     do_sync($sync_host, $sync_port);
@@ -253,6 +257,7 @@ sub runit($) {
   "data_elapsed_time": %f,
   "user_cpu_time": %f,
   "system_cpu_time": %f,
+  "cpu_time": %f,
   "block_count": %d,
   "block_size": %d,
 %s,
@@ -261,7 +266,7 @@ sub runit($) {
 EOF
     my ($answer) = sprintf($fstring, $namespace, $pod, $container, $$, $crtime - $basetime,
 			   $start_time - $basetime, $data_start_time - $basetime, $data_end_time - $basetime,
-			   $data_elapsed_time, $user_cpu, $system_cpu, $block_count, $blocksize,
+			   $data_elapsed_time, $user_cpu, $system_cpu, $user_cpu + $system_cpu, $block_count, $blocksize,
 			   $answer_create, $answer_remove);
     $answer =~ s/[ \n]+//g;
     timestamp("$answer");

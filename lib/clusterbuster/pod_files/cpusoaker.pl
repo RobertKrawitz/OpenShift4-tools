@@ -162,6 +162,7 @@ sub runit() {
   "data_elapsed_time": %f,
   "user_cpu_time": %f,
   "system_cpu_time": %f,
+  "cpu_time": %f,
   "work_iterations": %d
 }
 EOF
@@ -169,7 +170,7 @@ EOF
     my ($elapsed_time) = $data_end_time - $data_start_time;
     my ($answer) = sprintf($fstring, $namespace, $pod, $container, $$, $crtime - $basetime,
 			   $start_time - $basetime, $data_start_time - $basetime,
-			   $data_end_time - $basetime, $elapsed_time, $user, $sys,
+			   $data_end_time - $basetime, $elapsed_time, $user, $sys, $user + $sys,
 			   $iterations);
     print STDERR "$answer\n";
     do_sync($synchost, $syncport, $answer);

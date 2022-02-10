@@ -61,6 +61,7 @@ sub stats() {
   "data_elapsed_time": %f,
   "user_cpu_time": %f,
   "system_cpu_time": %f,
+  "cpu_time": %f,
   "data_sent_bytes": %d,
   "mean_latency_sec": %f,
   "max_latency_sec": %f,
@@ -74,7 +75,7 @@ EOF
     $fstring =~ s/[ \n]+//g;
     return sprintf($fstring, $namespace, $pod, $container, $$, $crtime - $basetime,
 		   $start_time - $basetime, $data_start_time - $basetime,
-		   $data_end_time - $basetime, $elapsed_time, $user, $sys,
+		   $data_end_time - $basetime, $elapsed_time, $user, $sys, $user + $sys,
 		   $data_sent, $mean_latency, $max_latency, $stdev_latency, $time_overhead,
 		   $data_rate, $pass, $msg_size);
 }

@@ -30,9 +30,17 @@ parser.add_argument('-o', '--format', '--output_format', '--output', default='su
                     choices=report_formats)
 parser.add_argument('-w', '--workload', default=None, type=str, help='Override workload determined from input')
 parser.add_argument('-f', '--force', '--fallback', action='store_true', help='Force raw dump if workload is unhandled')
+parser.add_argument('--debug', action='store_true', help='Simplify debugging')
 parser.add_argument('--list_formats', action='store_true', help='List available report formats')
 parser.add_argument('filename', metavar='file', type=str, nargs='?', help='File to process')
 args = parser.parse_args()
+
+def do_report(workload: str):
+    imported_lib = importlib.import_module(f'lib.clusterbuster.postprocess.{workload}_reporter', 'reporter')
+    for i in inspect.getmembers(imported_lib):
+        if i[0] == f'{workload}_reporter':
+            i[1](jdata, args.format).create_report()
+
 
 if args.list_formats:
     print('\n'.join(sorted(report_formats)))
@@ -58,14 +66,14 @@ else:
             workload = args.workload
         else:
             workload = jdata["metadata"]["workload"]
-        try:
-            imported_lib = importlib.import_module(f'lib.clusterbuster.postprocess.{workload}_reporter', 'reporter')
-            for i in inspect.getmembers(imported_lib):
-                if i[0] == f'{workload}_reporter':
-                    i[1](jdata, args.format).create_report()
-        except Exception as exc:
-            if args.force:
-                json.dump(jdata, sys.stdout, indent = 4)
-            else:
-                print(f"Cannot load handler for workload '{workload}': {exc}", file=sys.stderr)
-                sys.exit(1)
+        if args.debug:
+            do_report(workload)
+        else:
+            try:
+                do_report(workload)
+            except Exception as exc:
+                if args.force:
+                    json.dump(jdata, sys.stdout, indent = 4)
+                else:
+                    print(f"Cannot load handler for workload '{workload}': {exc}", file=sys.stderr)
+                    sys.exit(1)

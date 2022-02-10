@@ -173,6 +173,7 @@ sub runit(;$) {
   "data_elapsed_time": %f,
   "user_cpu_time": %f,
   "system_cpu_time": %f,
+  "cpu_time": %f,
   "results": %s
 }
 EOF
@@ -180,7 +181,7 @@ EOF
     my ($answer) = sprintf($fstring, $namespace, $pod, $container, $$, $crtime - $basetime,
 			   $start_time - $basetime, $data_start_time - $basetime,
 			   $data_end_time - $basetime, $data_end_time - $data_start_time,
-			   $ucpu1 - $ucpu0, $scpu1 - $scpu0,
+			   $ucpu1, $scpu1, $ucpu1 + $scpu1,
 			   $answer0 eq '' ? '{}' : $answer0);
 
     do_sync($synchost, $syncport, $answer);
