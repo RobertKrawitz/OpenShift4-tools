@@ -16,7 +16,6 @@
 
 import json
 import sys
-import argparse
 import textwrap
 from copy import deepcopy
 

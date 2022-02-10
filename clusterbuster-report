@@ -1,0 +1,71 @@
+#!/usr/bin/env python3
+
+# Copyright 2022 Robert Krawitz/Red Hat
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import os
+import sys
+import json
+import argparse
+import importlib
+import inspect
+
+parser = argparse.ArgumentParser(description='Generate ClusterBuster report')
+
+report_formats={'summary', 'verbose', 'raw',
+                'json-summary', 'json', 'json-verbose'}
+
+parser.add_argument('-o', '--format', '--output_format', '--output', default='summary', type=str,
+                    choices=report_formats)
+parser.add_argument('-w', '--workload', default=None, type=str, help='Override workload determined from input')
+parser.add_argument('-f', '--force', '--fallback', action='store_true', help='Force raw dump if workload is unhandled')
+parser.add_argument('--list_formats', action='store_true', help='List available report formats')
+parser.add_argument('filename', metavar='file', type=str, nargs='?', help='File to process')
+args = parser.parse_args()
+
+if args.list_formats:
+    print('\n'.join(sorted(report_formats)))
+else:
+    jdata=''
+    if args.filename:
+        try:
+            with open(args.filename) as f:
+                jdata = json.load(f)
+        except Exception as err:
+            print(f"Cannot read {args.filename} as JSON: {err}")
+            sys.exit(1)
+    else:
+        try:
+            jdata = json.load(sys.stdin)
+        except Exception as err:
+            print(f"Cannot read JSON: {err}")
+            sys.exit(1)
+    if args.format == 'raw':
+        json.dump(jdata, sys.stdout, indent = 4)
+    else:
+        if args.workload:
+            workload = args.workload
+        else:
+            workload = jdata["metadata"]["workload"]
+        try:
+            imported_lib = importlib.import_module(f'lib.clusterbuster.postprocess.{workload}_reporter', 'reporter')
+            for i in inspect.getmembers(imported_lib):
+                if i[0] == f'{workload}_reporter':
+                    i[1](jdata, args.format).create_report()
+        except Exception as exc:
+            if args.force:
+                json.dump(jdata, sys.stdout, indent = 4)
+            else:
+                print(f"Cannot load handler for workload '{workload}'", file=sys.stderr)
+                sys.exit(1)

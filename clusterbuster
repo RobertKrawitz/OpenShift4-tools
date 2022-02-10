@@ -206,7 +206,7 @@ function list_report_formats() {
     local prefix=${1:-}
     while read -r format ; do
 	echo "$prefix$format"
-    done <<< $("${pathdir:-.}/clusterbuster-connstat" --list_formats)
+    done <<< $("${pathdir:-.}/clusterbuster-report" --list_formats)
 }
 
 function _helpmsg() {
@@ -1200,7 +1200,7 @@ function print_report() {
     if [[ $report_format == raw ]] ; then
 	cat
     else
-	"${pathdir:-.}/clusterbuster-connstat" ${report_format:+-o "$report_format"}
+	"${pathdir:-.}/clusterbuster-report" ${report_format:+-o "$report_format"}
     fi
 }
 

@@ -16,22 +16,11 @@
 
 import json
 import sys
-import argparse
 import textwrap
 from copy import deepcopy
-from Reporter import Reporter
+from lib.clusterbuster.postprocess.Reporter import Reporter
 
-parser = argparse.ArgumentParser(description='Generate ClusterBuster report')
-
-parser.add_argument('-o', '--format', '--output_format', '--output', default='summary', type=str,
-                    choices={'summary', 'verbose',
-                    'json-summary', 'json', 'json-verbose'})
-args = parser.parse_args()
-
-jdata = json.load(sys.stdin)
-
-
-class server_postprocessor(Reporter):
+class server_reporter(Reporter):
     def __init__(self, jdata: dict, report_format: str):
         Reporter.__init__(self, jdata, report_format)
         self._summary['total_max_round_trip_time'] = 0
@@ -98,6 +87,3 @@ class server_postprocessor(Reporter):
             Avg RTT msec:       {round(row['mean_round_trip_time_msec'], 3)}
             Max RTT msec:       {round(row['max_round_trip_time_msec'], 3)}
 """)
-
-        
-server_postprocessor(jdata, args.format).create_report()
