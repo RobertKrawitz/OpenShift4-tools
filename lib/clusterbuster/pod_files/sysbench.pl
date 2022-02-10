@@ -313,7 +313,7 @@ EOF
 EOF
     my ($answer) = sprintf($fstring, $namespace, $pod, $container, $$, $crtime - $basetime,
 			   $start_time - $basetime, $data_start_time - $basetime,
-			   $data_end_time - $basetime, $elapsed_time, $user, $sys, $cpu_time,
+			   $data_end_time - $basetime, $elapsed_time, $user, $sys, $user + $sys,
 			   join(",", @op_answers));
     print STDERR "$answer\n";
     do_sync($synchost, $syncport, $answer);
