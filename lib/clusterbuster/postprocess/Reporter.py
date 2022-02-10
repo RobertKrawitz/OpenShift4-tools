@@ -57,7 +57,7 @@ class Reporter:
         self._rows = []
                       
     def row_name(self, row: dict):
-        return f'{row["namespace"]}~{row["pod"]}~{row["container"]}'
+        return f'{row["namespace"]}~{row["pod"]}~{row["container"]}~{row.get("process_id", 0):#07d}'
 
     def create_row(self, row: dict):
         rowhash = {}
@@ -65,6 +65,7 @@ class Reporter:
         rowhash['pod'] = row['pod']
         rowhash['container'] = row['container']
         rowhash['node'] = self.find_node_for_pod(namespace=row['namespace'], pod=row['pod'])
+        rowhash['process_id'] = row['process_id']
         rowhash['user_cpu_seconds'] = row['user_cpu_time']
         self._summary['user_cpu_seconds'] += row['user_cpu_time']
         rowhash['system_cpu_seconds'] = row['system_cpu_time']

@@ -19,6 +19,7 @@ import sys
 import textwrap
 from copy import deepcopy
 from lib.clusterbuster.postprocess.Reporter import Reporter
+from lib.clusterbuster.postprocess.VerboseHeader import VerboseHeader
 
 class server_reporter(Reporter):
     def __init__(self, jdata: dict, report_format: str):
@@ -63,23 +64,10 @@ class server_reporter(Reporter):
         lastPod = None
         lastContainer = None
         self._rows.sort(key=self.row_name)
+        header = VerboseHeader(['namespace', 'pod', 'container'])
         for row in self._rows:
             Reporter.print_verbose(row)
-            if row['namespace'] != lastNamespace:
-                print(f"""Namespace: {row['namespace']}
-    Pod: {row['pod']}
-        Container: {row['container']}""")
-                lastNamespace = row['namespace']
-                lastPod = row['pod']
-                lastContainer = row['container']
-            elif row['pod'] != lastPod:
-                print(f"""    Pod: {row['pod']}
-        Container: {row['container']}""")
-                lastPod = row['pod']
-                lastContainer = row['container']
-            elif row['container'] != lastContainer:
-                print(f"        Container: {row['container']}")
-                lastContainer = row['container']
+            header.print_header(row)
             print(f"""            Elapsed Time:       {round(row['runtime'], 3)}
             Messages Sent:      {row['iterations']}
             Data Sent:          {round(row['data_xfer'] / 1000000, 3)}

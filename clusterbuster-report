@@ -67,5 +67,5 @@ else:
             if args.force:
                 json.dump(jdata, sys.stdout, indent = 4)
             else:
-                print(f"Cannot load handler for workload '{workload}'", file=sys.stderr)
+                print(f"Cannot load handler for workload '{workload}': {exc}", file=sys.stderr)
                 sys.exit(1)
