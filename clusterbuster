@@ -969,10 +969,12 @@ function monitor_pods() {
     fi
     while : ; do
 	# shellcheck disable=2034
-	while read -r name rdy status rest ; do
+	while read -r namespace name rdy status rest ; do
 	    case "${status,,}" in
 		error|failed)
-		    echo "Pod $name $status!" 1>&2
+		    echo "Pod -n $namespace $name $status!" 1>&2
+		    echo "Tail end of logs:" 1>&2
+		    oc logs -n "$namespace" "$name" |tail -20 1>&2
 		    if (( ppid > 0 )) ; then
 			exec 2>/dev/null
 			kill -USR1 "$ppid"
@@ -1004,8 +1006,8 @@ function run_logger() {
 	esac
     done
     shift $((OPTIND-1))
-    trap '[[ -n "${pids_to_kill[*]}" ]] && exec 2>/dev/null && kill $(jobs -p) && "${pids_to_kill[@]}" && return 1' TERM INT HUP
     "$@" </dev/null &
+    trap '[[ -n "${pids_to_kill[*]}" ]] && exec 2>/dev/null && kill $(jobs -p) && kill "${pids_to_kill[@]}" && return 1' TERM INT HUP USR1 USR2
     # shellcheck disable=2207
     pids_to_kill+=($(jobs -p))
     wait
@@ -1056,13 +1058,15 @@ function get_logs_poll() {
 	done
 	# shellcheck disable=SC2086
 	local cleanup_command="; sleep 1; rm -f '$sync_flag_file'"
-	trap 'exec 2>/dev/null; [[ -n "$(jobs -p)" ]] && kill $(jobs -p); return 1' INT TERM HUP
-	trap 'exec 2>/dev/null; kill $(jobs -p); return 1' USR1
-	trap 'exec 3>&2 2>/dev/null ; kill $(jobs -p) && wait ; exec 2>&3 3>&-' USR2
 	local mypid=$BASHPID
 	monitor_pods -p "$mypid" -- -l "${basename}-id=$run_uuid" &
 	# shellcheck disable=SC2086
-	run_logger -p "$mypid" __OC exec $pod -- sh -c "while [[ ! -f '$sync_flag_file' ]] ; do sleep 5; done; cat '$sync_flag_file' $cleanup_command" &
+	run_logger -p "$mypid" "$OC" exec $pod -- sh -c "while [[ ! -f '$sync_flag_file' ]] ; do sleep 5; done; cat '$sync_flag_file' $cleanup_command" &
+	# We need to kill our parent, since it's capturing output in a way that it can't
+	# see that we failed.
+	trap '[[ -n "$(jobs -p)" ]] && kill $(jobs -p) ${__PARENT_PID__}; return 2' INT TERM HUP
+	trap 'kill $(jobs -p) ${__PARENT_PID__}; return 3' USR1
+	trap 'kill $(jobs -p) && wait' USR2
 	wait
 	# shellcheck disable=SC2046
 	if [[ -n "$(jobs -p)" ]] ; then
@@ -1143,6 +1147,9 @@ EOF
 }
 
 function _get_logs() {
+    # We need to be killed by our logger, since we're capturing output
+    # in a way that we can't see that it failed.
+    export __PARENT_PID__=${BASHPID}
     cat <<EOF
 {
 "metadata": {
@@ -2123,12 +2130,18 @@ function run_clusterbuster_1() {
     (( doit )) || return
 
     do_logging || status=1
-    report_object_creation
-    ((cleanup)) && do_cleanup
-    if [[ $take_prometheus_snapshot -gt 0 && -n "$artifactdir" ]] ; then
-	retrieve_prometheus_snapshot "$artifactdir"
+    if ((! status)) ; then
+	report_object_creation
     fi
+    ((cleanup)) && do_cleanup
 
+    if ((status)) ; then
+	fatal "Clusterbuster failed!"
+    else
+	if [[ $take_prometheus_snapshot -gt 0 && -n "$artifactdir" ]] ; then
+	    retrieve_prometheus_snapshot "$artifactdir"
+	fi
+    fi
     return $status
 }
 
