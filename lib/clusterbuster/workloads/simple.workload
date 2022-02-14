@@ -124,7 +124,7 @@ $(indent 2 privilege_yaml)
     matchLabels:
       app: ${namespace}-${instance}
 $(indent 2 standard_labels_yaml "${requested_workload}" "$namespace" "$instance")
-$(create_spec _createContainers${requested_workload}YAML "$@")
+$(create_spec _create_containers_${requested_workload}_yaml "$@")
 EOF
 	done
     else
@@ -147,7 +147,7 @@ spec:
   template:
     metadata:
 $(indent 6 standard_labels_yaml "${requested_workload}" "$namespace" "$instance")
-$(indent 4 create_spec _createContainers${requested_workload}YAML "$@")
+$(indent 4 create_spec _create_containers_${requested_workload}_yaml "$@")
 EOF
     fi
 }
