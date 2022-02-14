@@ -192,7 +192,12 @@ class Reporter:
                 print(f"""Clusterbuster run report for job {self._jdata['metadata']['job_name']} at {self._jdata['metadata']['job_start_time']}
 
     Workload: {self._jdata['metadata']['workload']}
-    Command line:  {textwrap.fill(' '.join(self._jdata['metadata']['expanded_command_line']), width=72, subsequent_indent='                ', break_long_words=False, break_on_hyphens=False)}
+    Job UUID: {self._jdata['metadata']['run_uuid']}
+    Run host: {self._jdata['metadata']['runHost']}
+    Kubernetes version: {self._jdata['metadata']['kubernetes_version']['serverVersion']['gitVersion']}""")
+                if 'openshiftVersion' in self._jdata['metadata']['kubernetes_version']:
+                    print(f"    OpenShift version: {self._jdata['metadata']['kubernetes_version']['openshiftVersion']}")
+                print(f"""    Command line:  {textwrap.fill(' '.join(self._jdata['metadata']['expanded_command_line']), width=72, subsequent_indent='                ', break_long_words=False, break_on_hyphens=False)}
 """)
                 if self._format == 'verbose':
                     self._rows.sort(key=self.row_name)
