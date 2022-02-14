@@ -20,7 +20,7 @@ import json
 import argparse
 import importlib
 import inspect
-from lib.clusterbuster.postprocess.Reporter import Reporter
+from lib.clusterbuster.postprocess.ClusterBusterReporter import ClusterBusterReporter
 
 parser = argparse.ArgumentParser(description='Generate ClusterBuster report')
 
@@ -37,7 +37,7 @@ parser.add_argument('filename', metavar='file', type=str, nargs='?', help='File 
 args = parser.parse_args()
 
 def do_report(workload: str):
-    try:
+#    try:
         imported_lib = importlib.import_module(f'lib.clusterbuster.postprocess.{workload}_reporter', 'reporter')
         try:
             for i in inspect.getmembers(imported_lib):
@@ -45,9 +45,9 @@ def do_report(workload: str):
                     i[1](jdata, args.format).create_report()
         except Exception as exc:
             raise(exc)
-    except Exception as exc:
-        print(f'Warning: no handler for workload {workload}, issuing generic summary report')
-        Reporter(jdata, args.format).create_report()
+#    except Exception as exc:
+#        print(f'Warning: no handler for workload {workload}, issuing generic summary report ({exc})')
+#        ClusterBusterReporter(jdata, args.format).create_report()
 
 
 if args.list_formats:

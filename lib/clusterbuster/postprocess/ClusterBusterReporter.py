@@ -18,10 +18,9 @@ import json
 import sys
 import textwrap
 from copy import deepcopy
-from lib.clusterbuster.postprocess.VerboseHeader import VerboseHeader
 
 
-class Reporter:
+class ClusterBusterReporter:
     def are_clients_all_on_same_node(self):
         node = None
         for obj in self._jdata['api_objects']:
@@ -48,7 +47,6 @@ class Reporter:
         self._rows = []
         self._timeline_vars = []
         self._accumulator_vars = []
-        self._header = VerboseHeader([])
         self._summary_indent = 4
         self._verbose_indent = 0
         self.initialize_timeline_vars(['data_start', 'data_end', 'pod_start', 'pod_create'])
@@ -61,8 +59,7 @@ class Reporter:
         self._accumulator_vars.extend(accumulators)
 
     def set_header_components(self, headers: list):
-        self._header = VerboseHeader(headers)
-        self._verbose_indent = 4 * len(headers)
+        self._header = headers
 
     def row_name(self, row: dict):
         return f'{row["namespace"]}~{row["pod"]}~{row["container"]}~{row.get("process_id", 0):#07d}'
@@ -118,7 +115,7 @@ class Reporter:
         self._rows.append(rowhash)
         return len(self._rows)-1
 
-    def create_summary(self):
+    def initialize_summary(self):
         self._summary['elapsed_time_average'] = self._summary['data_elapsed_time'] / self._summary['total_instances']
         self._summary['pod_create_span'] = self._summary['last_pod_create'] - self._summary['first_pod_create']
         if self._all_clients_are_on_the_same_node:
@@ -130,35 +127,114 @@ class Reporter:
         else:
             self._summary['data_run_span'] = self._summary['elapsed_time_average']
 
-    def print_summary(self):
-        print('Summary:')
-        self.print_summary_key_value('Total Clients', self._summary['total_instances'])
-        self.print_summary_key_value('Elapsed Time Average', round(self._summary['elapsed_time_average'], 3))
-        self.print_summary_key_value('Pod creation span', round(self._summary['pod_create_span'], 5))
-        self.print_summary_key_value('User CPU seconds', round(self._summary['user_cpu_time'], 3))
-        self.print_summary_key_value('System CPU seconds', round(self._summary['system_cpu_time'], 3))
-        self.print_summary_key_value('CPU seconds', round(self._summary['cpu_time'], 5))
+    def generate_summary(self, results:dict):
+        results['Total Clients'] = self._summary['total_instances']
+        results['Elapsed Time Average'] = round(self._summary['elapsed_time_average'], 3)
+        results['Pod creation span'] = round(self._summary['pod_create_span'], 5)
+        results['User CPU seconds'] = round(self._summary['user_cpu_time'], 3)
+        results['System CPU seconds'] = round(self._summary['system_cpu_time'], 3)
+        results['CPU seconds'] = round(self._summary['cpu_time'], 5)
         if self._all_clients_are_on_the_same_node:
-            self.print_summary_key_value('CPU utilization', round(self._summary['cpu_time'] / self._summary['data_run_span'], 5))
-            self.print_summary_key_value('First run start', round(self._summary['first_data_start'], 3))
-            self.print_summary_key_value('First run end', round(self._summary['first_data_end'], 3))
-            self.print_summary_key_value('Last run start', round(self._summary['last_data_start'], 3))
-            self.print_summary_key_value('Last run end', round(self._summary['last_data_end'], 3))
-            self.print_summary_key_value('Net elapsed time', round(self._summary['data_run_span'], 3))
-            self.print_summary_key_value('Overlap error', round(self._summary['overlap_error'], 5))
-            self.print_summary_key_value('Pod start span', round(self._summary['pod_start_span'], 5))
-        else:
-            print(f'''
-    *** Run start/end not available when client pods are not all on the same node ***''')
+            results['CPU utilization'] = round(self._summary['cpu_time'] / self._summary['data_run_span'], 5)
+            results['First run start'] = round(self._summary['first_data_start'], 3)
+            results['First run end'] = round(self._summary['first_data_end'], 3)
+            results['Last run start'] = round(self._summary['last_data_start'], 3)
+            results['Last run end'] = round(self._summary['last_data_end'], 3)
+            results['Net elapsed time'] = round(self._summary['data_run_span'], 3)
+            results['Overlap error'] = round(self._summary['overlap_error'], 5)
+            results['Pod start span'] = round(self._summary['pod_start_span'], 5)
+#        else:
+#            print(f'''
+#    *** Run start/end not available when client pods are not all on the same node ***''')
 
-    def print_summary_key_value(self, key, value:str):
-        print(f'%{self._summary_indent}s%-{40-self._summary_indent}s%s' % (' ', f'{key}:', value))
+    def generate_row(self, results, row):
+        pass
 
-    def print_verbose_key_value(self, key, value:str):
-        print(f'%{self._verbose_indent}s%-{40-self._verbose_indent}s%s' % (' ', f'{key}:', value))
+    def compute_report_width(self, results, indentation=4, integer_width=0):
+        width = 0
+        integer_width = 0
+        for key in results:
+            if isinstance(results[key], dict):
+                fwidth, nwidth = self.compute_report_width(results[key], indentation=indentation)
+                fwidth += indentation
+            else:
+                if isinstance(results[key], float):
+                    nwidth = len(str(int(results[key])))
+                elif isinstance(results[key], int):
+                    nwidth = len(str(results[key]))
+                else:
+                    nwidth = 0
+                fwidth = len(key)
+            if fwidth > width:
+                width = fwidth
+            if nwidth > integer_width:
+                integer_width = nwidth
+        return [width, integer_width]
 
-    def print_verbose(self, row):
-        self._header.print_header(row)
+    def print_subreport(self, results, headers: list, key_column=0, value_column=0, depth_indentation=4, integer_width=0):
+        header_keys = []
+        value_keys = []
+        for key in results.keys():
+            if key in results:
+                if isinstance(results[key], dict):
+                    header_keys.append(key)
+                else:
+                    value_keys.append(key)
+
+        header_name = None
+        if key_column > 0 and len(headers):
+            headers = deepcopy(headers)
+            header_name = headers.pop(0)
+        for key in header_keys:
+            if header_name:
+                print(f'{" " * key_column}{header_name}: {key}:')
+            else:
+                print(f'{" " * key_column} {key}:')
+            self.print_subreport(results[key], headers, key_column = key_column + depth_indentation, value_column=value_column, depth_indentation=depth_indentation, integer_width=integer_width)
+        for key in value_keys:
+            value = results[key]
+            if isinstance(value, int):
+                integer_indent = integer_width - len(str(value))
+            elif isinstance(value, float):
+                integer_indent = integer_width - len(str(int(value)))
+            else:
+                integer_indent = 0
+            value = str(value)
+            print(f'{" " * key_column}{key}: {" " * (value_column + integer_indent  - key_column - len(key))}{value}')
+        if len(header_keys) == 0:
+            print('')
+
+    def make_header_tree(self, results:dict, row:dict, headers:list):
+        if len(headers) > 1:
+            hdr = headers.pop(0)
+            if row[hdr] not in results:
+                results[row[hdr]] = {}
+            self.make_header_tree(results[row[hdr]], row, headers)
+
+    def create_text_report(self):
+        results = {}
+        overview_keys = ['Workload', 'Job UUID', 'Run host', 'Kubernetes version', 'OpenShift version', 'Command line']
+        results['Overview'] = {}
+        results['Overview']['Workload'] = self._jdata['metadata']['workload']
+        results['Overview']['Job UUID'] = self._jdata['metadata']['run_uuid']
+        results['Overview']['Run host'] = self._jdata['metadata']['runHost']
+        results['Overview']['Kubernetes version'] = self._jdata['metadata']['kubernetes_version']['serverVersion']['gitVersion']
+        if 'openshiftVersion' in self._jdata['metadata']['kubernetes_version']:
+            results['Overview']['OpenShift Version'] = self._jdata['metadata']['kubernetes_version']['openshiftVersion']
+        results['Overview']['Command line'] = textwrap.fill(' '.join(self._jdata['metadata']['expanded_command_line']),
+                                                            width=72, subsequent_indent='                ',
+                                                            break_long_words=False, break_on_hyphens=False)
+
+        if self._format == 'verbose':
+            results['Detail'] = {}
+            self._rows.sort(key=self.row_name)
+            for row in self._rows:
+                self.make_header_tree(results['Detail'], row, deepcopy(self._header))
+                self.generate_row(results['Detail'], row)
+        results['Summary'] = {}
+        self.generate_summary(results['Summary'])
+        key_width, integer_width = self.compute_report_width(results)
+        self.print_subreport(results, self._header, key_column=0, value_column=key_width, integer_width=integer_width)
 
     def create_report(self):
         if 'Results' in self._jdata:
@@ -166,7 +242,7 @@ class Reporter:
             for row in rows:
                 self.create_row(row)
 
-            self.create_summary()
+            self.initialize_summary()
 
             if self._format == 'json-summary':
                 answer = {
@@ -189,18 +265,4 @@ class Reporter:
                     }
                 json.dump(answer, sys.stdout, sort_keys=True, indent=4)
             else:
-                print(f"""Clusterbuster run report for job {self._jdata['metadata']['job_name']} at {self._jdata['metadata']['job_start_time']}
-
-    Workload: {self._jdata['metadata']['workload']}
-    Job UUID: {self._jdata['metadata']['run_uuid']}
-    Run host: {self._jdata['metadata']['runHost']}
-    Kubernetes version: {self._jdata['metadata']['kubernetes_version']['serverVersion']['gitVersion']}""")
-                if 'openshiftVersion' in self._jdata['metadata']['kubernetes_version']:
-                    print(f"    OpenShift version: {self._jdata['metadata']['kubernetes_version']['openshiftVersion']}")
-                print(f"""    Command line:  {textwrap.fill(' '.join(self._jdata['metadata']['expanded_command_line']), width=72, subsequent_indent='                ', break_long_words=False, break_on_hyphens=False)}
-""")
-                if self._format == 'verbose':
-                    self._rows.sort(key=self.row_name)
-                    for row in self._rows:
-                        self.print_verbose(row)
-                self.print_summary()
+                self.create_text_report()

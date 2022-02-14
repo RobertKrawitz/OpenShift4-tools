@@ -18,34 +18,38 @@ import json
 import sys
 import textwrap
 from copy import deepcopy
-from lib.clusterbuster.postprocess.Reporter import Reporter
+from lib.clusterbuster.postprocess.ClusterBusterReporter import ClusterBusterReporter
 
-class files_reporter(Reporter):
+class files_reporter(ClusterBusterReporter):
     def __init__(self, jdata: dict, report_format: str):
-        Reporter.__init__(self, jdata, report_format)
+        ClusterBusterReporter.__init__(self, jdata, report_format)
         self.initialize_timeline_vars(['create.operation_start', 'remove.operation_start'])
         self.initialize_accumulators(['create.operation_elapsed_time', 'create.user_cpu_time', 'create.system_cpu_time', 'create.cpu_time', 'create.operations',
                                       'remove.operation_elapsed_time', 'remove.user_cpu_time', 'remove.system_cpu_time', 'remove.cpu_time', 'remove.operations'])
         self.set_header_components(['namespace', 'pod', 'container', 'process_id'])
 
-    def print_summary(self):
+    def generate_summary(self, results: dict):
         # I'd like to do this, but if the nodes are out of sync time-wise, this will not
         # function correctly.
-        Reporter.print_summary(self)
+        ClusterBusterReporter.generate_summary(self, results)
         for op in ['create', 'remove']:
-            self.print_summary_key_value(op.capitalize(), '')
-            self.print_summary_key_value('    Elapsed Time', round(self._summary[op]['operation_elapsed_time'], 3))
-            self.print_summary_key_value('    CPU Time', round(self._summary[op]['cpu_time'], 3))
-            self.print_summary_key_value('    Operations', self._summary[op]['operations'])
-            self.print_summary_key_value('    Operations/sec', round(self._summary[op]['operations'] / self._summary[op]['operation_elapsed_time']))
-            self.print_summary_key_value('    Operations/CPU sec', round(self._summary[op]['operations'] / (self._summary[op]['cpu_time'])))
+            cop = op.capitalize()
+            results[cop] = {}
+            results[cop]['Elapsed Time'] = round(self._summary[op]['operation_elapsed_time'], 3)
+            results[cop]['CPU Time'] = round(self._summary[op]['cpu_time'], 3)
+            results[cop]['Operations'] = self._summary[op]['operations']
+            results[cop]['Operations/sec'] = round(self._summary[op]['operations'] / self._summary[op]['operation_elapsed_time'])
+            results[cop]['Operations/CPU sec'] = round(self._summary[op]['operations'] / (self._summary[op]['cpu_time']))
 
-    def print_verbose(self, row):
-        Reporter.print_verbose(self, row)
+    def generate_row(self, results: dict, row: dict):
+        ClusterBusterReporter.generate_row(self, row, results)
+        result = {}
         for op in ['create', 'remove']:
-            self.print_verbose_key_value(op.capitalize(), '')
-            self.print_verbose_key_value('    Elapsed Time', round(row[op]['operation_elapsed_time'], 3))
-            self.print_verbose_key_value('    CPU Time', round(row[op]['cpu_time'], 3))
-            self.print_verbose_key_value('    Operations', row[op]['operations'])
-            self.print_verbose_key_value('    Operations/sec', round(row[op]['operations'] / row[op]['operation_elapsed_time']))
-            self.print_verbose_key_value('    Operations/CPU sec', round(row[op]['operations'] / (row[op]['cpu_time'])))
+            cop = op.capitalize()
+            result[cop] = {}
+            result[cop]['Elapsed Time'] = round(row[op]['operation_elapsed_time'], 3)
+            result[cop]['CPU Time'] = round(row[op]['cpu_time'], 3)
+            result[cop]['Operations'] = row[op]['operations']
+            result[cop]['Operations/sec'] = round(row[op]['operations'] / row[op]['operation_elapsed_time'])
+            result[cop]['Operations/CPU sec'] = round(row[op]['operations'] / (row[op]['cpu_time']))
+        results[row['namespace']][row['pod']][row['container']][row['process_id']] = result
