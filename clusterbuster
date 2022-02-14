@@ -113,6 +113,7 @@ declare prometheus_ending_timestamp=
 declare -i target_data_rate=0
 declare metrics_file=
 declare job_name=
+declare debug=
 
 declare -r sync_flag_file="/tmp/syncfile";
 # shellcheck disable=2155
@@ -863,6 +864,9 @@ function __OC() {
     elif [[ $1 = describe || $1 = get || $1 = status || $1 = exec || $1 = logs ]] ; then
 	"$OC" "$@"
     elif ((report_object_creation)) ; then
+	if [[ -n "$debug" ]] ; then
+	    echo "$OC" "$@" 1>&2
+	fi
 	"$OC" "$@" 2>&1
     else
 	"$OC" "$@" 2>&1 |grep -v -E '(^No resources found|deleted|created|labeled|condition met)$'
@@ -1226,7 +1230,9 @@ function get_logs() {
 	log_cmd=true
     fi
     local report_cmd=cat
-    if [[ -n "$artifactdir" ]] ; then
+    if [[ -z "$*" ]] ; then
+	echo "Workload $requested_workload does not support reporting" 1>&2
+    elif [[ -n "$artifactdir" ]] ; then
 	_get_logs "$log_cmd" "$@" | tee "$artifactdir/clusterbuster-report.json" | print_report
     else
 	_get_logs "$log_cmd" "$@" | print_report
@@ -1544,6 +1550,9 @@ function create_spec() {
 	esac
     done
     shift $((OPTIND-1))
+    if [[ -z "$(type -t "$1")" ]] ; then
+	fatal "Cannot run $1: command not found"
+    fi
     # Node specifiers override affinity
     if [[ -n "$node_class" && -n "${pin_nodes[$node_class]:-}" ]] ; then
 	affinity_yaml=
@@ -1787,7 +1796,7 @@ $(indent 2 standard_labels_yaml)
     name: ${namespace}-sync
     app: ${namespace}-sync
     k8s-app: ${namespace}-sync
-    ${basename}-sync: "true"
+    ${basename}-sync: "$run_uuid"
 $(create_spec -P -c sync -r '' create_container_sync "$namespace" 0 0 "$sync_count" "$@")
   restartPolicy: Never
 EOF
@@ -1814,7 +1823,7 @@ $(indent 6 standard_labels_yaml)
         name: ${namespace}-sync
         app: ${namespace}-sync
         k8s-app: ${namespace}-sync
-        ${basename}-sync: "true"
+        ${basename}-sync: "$run_uuid"
 $(indent 4 create_spec -P -c sync -r '' create_container_sync "$namespace" 0 0 "$sync_count" "$@")
 EOF
     fi
@@ -2028,14 +2037,14 @@ function do_logging() {
 
     if [[ $log_strategy = poll ]] ; then
 	local -a sync_pods=()
-	if ((use_namespaces)) ; then
-	    local -i i
-	    for i in $(seq 0 $((namespaces - 1))) ; do
-		sync_pods+=("-n ${basename}-${i} ${basename}-${i}-sync")
-	    done
-	else
-	    sync_pods=("${basename}-0-sync")
-	fi
+	local namespace
+	local pod
+	local ignore
+	while read -r namespace pod ignore ; do
+	    if [[ -n "$namespace" && -n "$pod" ]] ; then
+		sync_pods+=("-n $namespace $pod")
+	    fi
+	done <<< "$(oc get pod -A --no-headers -l "${basename}-sync=${run_uuid}")"
 	get_logs "${sync_pods[@]}" &
     else
 	log_host=$(hostname -f)
