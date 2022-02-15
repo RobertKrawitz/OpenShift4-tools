@@ -136,7 +136,6 @@ sub runit(;$) {
     my ($weight) = .25;
     my ($icputime);
     my ($interval) = 5;
-    my $start_time;
     my ($dstime) = xtime();
 
     my $delaytime = $basetime + $poddelay - $dstime;
