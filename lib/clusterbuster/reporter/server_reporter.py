@@ -18,7 +18,7 @@ import json
 import sys
 import textwrap
 from copy import deepcopy
-from lib.clusterbuster.postprocess.ClusterBusterReporter import ClusterBusterReporter
+from lib.clusterbuster.reporter.ClusterBusterReporter import ClusterBusterReporter
 
 class server_reporter(ClusterBusterReporter):
     def __init__(self, jdata: dict, report_format: str):

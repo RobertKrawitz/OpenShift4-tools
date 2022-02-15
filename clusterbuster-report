@@ -20,7 +20,7 @@ import json
 import argparse
 import importlib
 import inspect
-from lib.clusterbuster.postprocess.ClusterBusterReporter import ClusterBusterReporter
+from lib.clusterbuster.reporter.ClusterBusterReporter import ClusterBusterReporter
 
 parser = argparse.ArgumentParser(description='Generate ClusterBuster report')
 
@@ -38,7 +38,7 @@ args = parser.parse_args()
 
 def do_report(workload: str):
 #    try:
-        imported_lib = importlib.import_module(f'lib.clusterbuster.postprocess.{workload}_reporter', 'reporter')
+        imported_lib = importlib.import_module(f'lib.clusterbuster.reporter.{workload}_reporter', 'reporter')
         try:
             for i in inspect.getmembers(imported_lib):
                 if i[0] == f'{workload}_reporter':
