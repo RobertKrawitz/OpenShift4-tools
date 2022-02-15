@@ -3,7 +3,7 @@ use Socket;
 use POSIX;
 use strict;
 use Time::Piece;
-use Time::HiRes qw(gettimeofday);
+use Time::HiRes qw(gettimeofday usleep);
 $SIG{TERM} = sub { POSIX::_exit(0); };
 my ($basetime, $baseoffset, $listen_port, $container, $msgSize, $ts, $expected_clients) = @ARGV;
 $basetime += $baseoffset;

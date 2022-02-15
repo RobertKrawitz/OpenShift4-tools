@@ -4,7 +4,7 @@ use Socket;
 use POSIX;
 use strict;
 use Time::Piece;
-use Time::HiRes qw(gettimeofday);
+use Time::HiRes qw(gettimeofday usleep);
 use File::Path qw(make_path remove_tree);
 use Sys::Hostname;
 our ($namespace, $container, $basetime, $baseoffset, $crtime, $poddelay, $processes, $rundir, $runtime, $exit_at_end, $synchost, $syncport, $loghost, $logport, $sysbench_generic_args, $sysbench_cmd, $sysbench_fileio_args, $sysbench_modes) = @ARGV;

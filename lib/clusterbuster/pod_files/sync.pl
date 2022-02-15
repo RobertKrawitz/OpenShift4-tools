@@ -3,7 +3,7 @@ use Socket;
 use POSIX;
 use strict;
 use Time::Piece;
-use Time::HiRes qw(gettimeofday);
+use Time::HiRes qw(gettimeofday usleep);
 my ($verbose, $sync_file);
 use Getopt::Long;
 Getopt::Long::Configure("bundling", "no_ignore_case", "pass_through");
