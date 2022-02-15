@@ -61,6 +61,8 @@ class ClusterBusterReporter:
             result = num / denom
             if precision is None:
                 return result
+            elif precision == 0:
+                return int(round(precision, 0))
             else:
                 return round(result, precision)
         except Exception:

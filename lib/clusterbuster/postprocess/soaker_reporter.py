@@ -31,14 +31,14 @@ class soaker_reporter(ClusterBusterReporter):
         # function correctly.
         ClusterBusterReporter.generate_summary(self, results)
         results['Interations'] = self._summary['work_iterations']
-        results['Iterations/sec'] = int(self.safe_div(self._summary['work_iterations'], self._summary['data_run_span']))
-        results['Interations/CPU sec'] = int(self.safe_div(self._summary['work_iterations'], self._summary['cpu_time']))
+        results['Iterations/sec'] = self.safe_div(self._summary['work_iterations'], self._summary['data_run_span'], 0)
+        results['Interations/CPU sec'] = self.safe_div(self._summary['work_iterations'], self._summary['cpu_time'], 0)
 
     def generate_row(self, results: dict, row: dict):
         ClusterBusterReporter.generate_row(self, results, row)
         result = {}
         result['Elapsed Time'] = round(row['data_elapsed_time'], 3)
         result['Iterations'] = row['work_iterations']
-        result['Iterations/sec'] = int(self.safe_div(row['work_iterations'], row['data_elapsed_time']))
-        result['Iterations/CPU sec'] = int(self.safe_div(row['work_iterations'], row['cpu_time']))
+        result['Iterations/sec'] = self.safe_div(row['work_iterations'], row['data_elapsed_time'], 0)
+        result['Iterations/CPU sec'] = self.safe_div(row['work_iterations'], row['cpu_time'], 0)
         results[row['namespace']][row['pod']][row['container']][row['process_id']] = result
