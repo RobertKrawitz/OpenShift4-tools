@@ -44,15 +44,18 @@ class sysbench_reporter(ClusterBusterReporter):
     def __update_report(self, dest: dict, source: dict, sample_row:dict = None):
         if sample_row is None:
             sample_row = source
-        print(sample_row)
         for op in self._sysbench_operations:
             dest[op] = {}
             dest[op]['Elapsed Time'] = round(source[op]['elapsed_time'], 3)
             dest[op]['CPU Time'] = round(source[op]['user_cpu_time'] + source[op]['sys_cpu_time'], 3)
-            for key in ['read_ops', 'write_ops', 'fsync_ops', 'files']:
-                dest[op][key] = source[op][key]
+            for var in ['read_ops', 'write_ops', 'fsync_ops', 'files']:
+                dest[op][var] = source[op][var]
             for var in self._sysbench_vars_to_copy:
                 dest[op][var] = sample_row[op][var]
+            dest[op]['read ops/sec'] = self.safe_div(dest[op]['read_ops'], dest[op]['Elapsed Time'], 3)
+            dest[op]['write ops/sec'] = self.safe_div(dest[op]['write_ops'], dest[op]['Elapsed Time'], 3)
+            dest[op]['read MiB/sec'] = self.safe_div(dest[op]['blocksize'] * dest[op]['read_ops'] / 1048576, dest[op]['Elapsed Time'], 3)
+            dest[op]['write MiB/sec'] = self.safe_div(dest[op]['blocksize'] * dest[op]['write_ops'] / 1048576, dest[op]['Elapsed Time'], 3)
 
     def generate_summary(self, results: dict):
         # I'd like to do this, but if the nodes are out of sync time-wise, this will not
