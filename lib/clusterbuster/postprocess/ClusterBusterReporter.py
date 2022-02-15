@@ -34,10 +34,10 @@ class ClusterBusterReporter:
         self._summary_indent = indent
         self._report_width = report_width
         self._verbose_indent = 0
-        self._headers = []
-        self._summary_headers = []
+        self._header = []
+        self._summary_header = []
         self._fields_to_copy = []
-        self.__header_map = {'Detail': self._headers, 'Summary': self._summary_headers}
+        self.__header_map = {'Detail': self._header, 'Summary': self._summary_header}
         self.initialize_timeline_vars(['data_start', 'data_end', 'pod_start', 'pod_create'])
         self.initialize_accumulators(['user_cpu_time', 'system_cpu_time', 'cpu_time', 'data_elapsed_time'])
     def are_clients_all_on_same_node(self):
@@ -56,13 +56,21 @@ class ClusterBusterReporter:
                 return obj['nodeName']
         return None
 
-    def safe_div(self, num: float, denom: float, precision: float=None):
+    def fformat(self, num: float, precision:float=5):
+        if precision > 1:
+            return f'{num:.{precision}f}'
+        else:
+            return int(round(result))
+
+    def safe_div(self, num: float, denom: float, precision: float=None, as_string: bool=False):
         try:
             result = num / denom
             if precision is None:
                 return result
             elif precision == 0:
-                return int(round(precision, 0))
+                return int(round(result, 0))
+            elif as_string:
+                return self.fformat(num, precision)
             else:
                 return round(result, precision)
         except Exception:
@@ -157,26 +165,26 @@ class ClusterBusterReporter:
             self._summary['pod_start_span'] = self._summary['last_pod_start'] - self._summary['first_pod_start']
             self._summary['overlap_error'] = self.safe_div((((self._summary['last_data_start'] - self._summary['first_data_start']) +
                                                              (self._summary['last_data_end'] - self._summary['first_data_end'])) / 2),
-                                                           self._summary['elapsed_time_average'])
+                                                            self._summary['elapsed_time_average'])
         else:
             self._summary['data_run_span'] = self._summary['elapsed_time_average']
 
     def generate_summary(self, results:dict):
         results['Total Clients'] = self._summary['total_instances']
-        results['Elapsed Time Average'] = round(self._summary['elapsed_time_average'], 3)
-        results['Pod creation span'] = round(self._summary['pod_create_span'], 5)
-        results['User CPU seconds'] = round(self._summary['user_cpu_time'], 3)
-        results['System CPU seconds'] = round(self._summary['system_cpu_time'], 3)
-        results['CPU seconds'] = round(self._summary['cpu_time'], 5)
+        results['Elapsed Time Average'] = f"{self._summary['elapsed_time_average']:.{3}f}"
+        results['Pod creation span'] = f"{self._summary['pod_create_span']:.5f}"
+        results['User CPU seconds'] = f"{self._summary['user_cpu_time']:.3f}"
+        results['System CPU seconds'] = f"{self._summary['system_cpu_time']:.3f}"
+        results['CPU seconds'] = f"{self._summary['cpu_time']:.5f}"
         if self._all_clients_are_on_the_same_node:
-            results['CPU utilization'] = self.safe_div(self._summary['cpu_time'], self._summary['data_run_span'], 5)
-            results['First run start'] = round(self._summary['first_data_start'], 3)
-            results['First run end'] = round(self._summary['first_data_end'], 3)
-            results['Last run start'] = round(self._summary['last_data_start'], 3)
-            results['Last run end'] = round(self._summary['last_data_end'], 3)
-            results['Net elapsed time'] = round(self._summary['data_run_span'], 3)
-            results['Overlap error'] = round(self._summary['overlap_error'], 5)
-            results['Pod start span'] = round(self._summary['pod_start_span'], 5)
+            results['CPU utilization'] = self.safe_div(self._summary['cpu_time'], self._summary['data_run_span'], 5, as_string=True)
+            results['First run start'] = f"{self._summary['first_data_start']:.3f}"
+            results['First run end'] = f"{self._summary['first_data_end']:.3f}"
+            results['Last run start'] = f"{self._summary['last_data_start']:.3f}"
+            results['Last run end'] = f"{self._summary['last_data_end']:.3f}"
+            results['Net elapsed time'] = f"{self._summary['data_run_span']:.3f}"
+            results['Overlap error'] = f"{self._summary['overlap_error']:.5f}"
+            results['Pod start span'] = f"{self._summary['pod_start_span']:.5f}"
 #        else:
 #            print(f'''
 #    *** Run start/end not available when client pods are not all on the same node ***''')
@@ -194,11 +202,9 @@ class ClusterBusterReporter:
                 fwidth, nwidth = self.compute_report_width(results[key], indentation=indentation)
                 fwidth += indentation
             else:
-                if isinstance(results[key], float):
-                    nwidth = len(str(int(results[key])))
-                elif isinstance(results[key], int):
-                    nwidth = len(str(results[key]))
-                else:
+                try:
+                    nwidth = len(str(int(float(results[key]))))
+                except Exception:
                     nwidth = 0
                 fwidth = len(key)
             if fwidth > width:
@@ -231,14 +237,16 @@ class ClusterBusterReporter:
             self.print_subreport(results[key], headers, key_column = key_column + depth_indentation, value_column=value_column, depth_indentation=depth_indentation, integer_width=integer_width)
         for key in value_keys:
             value = results[key]
-            if isinstance(value, int):
-                integer_indent = integer_width - len(str(value))
-            elif isinstance(value, float):
-                integer_indent = integer_width - len(str(int(value)))
-            else:
+            try:
+                nwidth = len(str(int(float(value))))
+            except Exception:
+                nwidth = None
+            if nwidth is None:
                 integer_indent = 0
+            else:
+                integer_indent = integer_width - nwidth
             value = str(value)
-            print(f'{" " * key_column}{key}: {" " * (value_column + integer_indent  - key_column - len(key))}{value}')
+            print(f'{" " * key_column}{key}: {" " * (value_column + integer_indent - key_column - len(key))}{value}')
         if len(header_keys) == 0:
             print('')
 

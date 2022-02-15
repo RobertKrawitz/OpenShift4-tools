@@ -32,8 +32,8 @@ class files_reporter(ClusterBusterReporter):
     def __update_report(self, dest: dict, source: dict):
         for op in ['create', 'remove']:
             dest[op.capitalize()] = {}
-            dest[op.capitalize()]['Elapsed Time'] = round(source[op]['operation_elapsed_time'], 3)
-            dest[op.capitalize()]['CPU Time'] = round(source[op]['cpu_time'], 3)
+            dest[op.capitalize()]['Elapsed Time'] = self.fformat(source[op]['operation_elapsed_time'], 3)
+            dest[op.capitalize()]['CPU Time'] = self.fformat(source[op]['cpu_time'], 3)
             dest[op.capitalize()]['Operations'] = source[op]['operations']
             dest[op.capitalize()]['Operations/sec'] = self.safe_div(source[op]['operations'], source[op]['operation_elapsed_time'], 0)
             dest[op.capitalize()]['Operations/CPU sec'] = self.safe_div(source[op]['operations'], source[op]['cpu_time'], 0)

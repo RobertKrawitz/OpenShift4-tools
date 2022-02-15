@@ -31,18 +31,18 @@ class server_reporter(ClusterBusterReporter):
         # function correctly.
         ClusterBusterReporter.generate_summary(self, results)
         results['Total Messages Sent'] = self._summary['passes']
-        results['Total Data Sent (MB)'] = round(self._summary['data_sent_bytes'] / 1000000, 3)
+        results['Total Data Sent (MB)'] = self.fformat(self._summary['data_sent_bytes'] / 1000000, 3)
         results['Average Data Rate (MB/sec)'] = self.safe_div(self._summary['data_sent_bytes'] / 1000000, self._summary['elapsed_time_average'], 3)
-        results['Average RTT msec'] = round(self._summary['mean_latency_sec'] / self._summary['total_instances'], 3)
-        results['Max RTT msec'] = round(self._summary['max_max_latency_sec'], 3)
+        results['Average RTT msec'] = self.fformat(self._summary['mean_latency_sec'] / self._summary['total_instances'], 3)
+        results['Max RTT msec'] = self.fformat(self._summary['max_max_latency_sec'], 3)
 
     def generate_row(self, results: dict, row: dict):
         ClusterBusterReporter.generate_row(self, results, row)
         result = {}
-        result['Elapsed Time'] = round(row['data_elapsed_time'], 3)
+        result['Elapsed Time'] = self.fformat(row['data_elapsed_time'], 3)
         result['Messages Sent'] = row['passes']
-        result['Data Sent (MB)'] =  round(row['data_sent_bytes'] / 1000000, 3)
+        result['Data Sent (MB)'] =  self.fformat(row['data_sent_bytes'] / 1000000, 3)
         result['Data Rate (MB/sec)'] = self.safe_div(row['data_sent_bytes'] / 1000000, row['data_elapsed_time'], 3)
-        result['Avg RTT msec'] = round(row['mean_latency_sec'], 3)
-        result['Max RTT msec'] = round(row['max_latency_sec'], 3)
+        result['Avg RTT msec'] = self.fformat(row['mean_latency_sec'], 3)
+        result['Max RTT msec'] = self.fformat(row['max_latency_sec'], 3)
         results[row['namespace']][row['pod']][row['container']] = result

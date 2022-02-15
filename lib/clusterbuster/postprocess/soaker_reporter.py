@@ -37,7 +37,7 @@ class soaker_reporter(ClusterBusterReporter):
     def generate_row(self, results: dict, row: dict):
         ClusterBusterReporter.generate_row(self, results, row)
         result = {}
-        result['Elapsed Time'] = round(row['data_elapsed_time'], 3)
+        result['Elapsed Time'] = self.fformat(row['data_elapsed_time'], 3)
         result['Iterations'] = row['work_iterations']
         result['Iterations/sec'] = self.safe_div(row['work_iterations'], row['data_elapsed_time'], 0)
         result['Iterations/CPU sec'] = self.safe_div(row['work_iterations'], row['cpu_time'], 0)
