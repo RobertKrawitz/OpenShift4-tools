@@ -249,7 +249,7 @@ class ClusterBusterReporter:
         :param as_string: If true, return value as strong
         """
         try:
-            result = num / denom
+            result = float(num) / float(denom)
             if precision is None:
                 return result
             elif precision == 0:
@@ -258,7 +258,8 @@ class ClusterBusterReporter:
                 return self._fformat(num, precision)
             else:
                 return round(result, precision)
-        except Exception:
+        except Exception as exc:
+            print(f'++++++ {exc}')
             return 'N/A'
 
     def __are_clients_all_on_same_node(self):
