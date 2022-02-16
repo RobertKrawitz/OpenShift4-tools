@@ -14,35 +14,33 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import json
-import sys
-import textwrap
-from copy import deepcopy
 from lib.clusterbuster.reporter.ClusterBusterReporter import ClusterBusterReporter
+
 
 class server_reporter(ClusterBusterReporter):
     def __init__(self, jdata: dict, report_format: str):
         ClusterBusterReporter.__init__(self, jdata, report_format)
-        self.initialize_accumulators(['data_sent_bytes', 'passes', 'mean_latency_sec', 'max_latency_sec'])
-        self.set_header_components(['namespace', 'pod', 'container'])
+        self._add_accumulators(['data_sent_bytes', 'passes', 'mean_latency_sec', 'max_latency_sec'])
+        self._set_header_components(['namespace', 'pod', 'container'])
 
-    def generate_summary(self, results: dict):
+    def _generate_summary(self, results: dict):
         # I'd like to do this, but if the nodes are out of sync time-wise, this will not
         # function correctly.
-        ClusterBusterReporter.generate_summary(self, results)
+        ClusterBusterReporter._generate_summary(self, results)
         results['Total Messages Sent'] = self._summary['passes']
-        results['Total Data Sent (MB)'] = self.fformat(self._summary['data_sent_bytes'] / 1000000, 3)
-        results['Average Data Rate (MB/sec)'] = self.safe_div(self._summary['data_sent_bytes'] / 1000000, self._summary['elapsed_time_average'], 3)
-        results['Average RTT msec'] = self.fformat(self._summary['mean_latency_sec'] / self._summary['total_instances'], 3)
-        results['Max RTT msec'] = self.fformat(self._summary['max_max_latency_sec'], 3)
+        results['Total Data Sent (MB)'] = self._fformat(self._summary['data_sent_bytes'] / 1000000, 3)
+        results['Average Data Rate (MB/sec)'] = self._safe_div(self._summary['data_sent_bytes'] / 1000000,
+                                                               self._summary['elapsed_time_average'], 3)
+        results['Average RTT msec'] = self._fformat(self._summary['mean_latency_sec'] / self._summary['total_instances'], 3)
+        results['Max RTT msec'] = self._fformat(self._summary['max_max_latency_sec'], 3)
 
-    def generate_row(self, results: dict, row: dict):
-        ClusterBusterReporter.generate_row(self, results, row)
+    def _generate_row(self, results: dict, row: dict):
+        ClusterBusterReporter._generate_row(self, results, row)
         result = {}
-        result['Elapsed Time'] = self.fformat(row['data_elapsed_time'], 3)
+        result['Elapsed Time'] = self._fformat(row['data_elapsed_time'], 3)
         result['Messages Sent'] = row['passes']
-        result['Data Sent (MB)'] =  self.fformat(row['data_sent_bytes'] / 1000000, 3)
-        result['Data Rate (MB/sec)'] = self.safe_div(row['data_sent_bytes'] / 1000000, row['data_elapsed_time'], 3)
-        result['Avg RTT msec'] = self.fformat(row['mean_latency_sec'], 3)
-        result['Max RTT msec'] = self.fformat(row['max_latency_sec'], 3)
+        result['Data Sent (MB)'] = self._fformat(row['data_sent_bytes'] / 1000000, 3)
+        result['Data Rate (MB/sec)'] = self._safe_div(row['data_sent_bytes'] / 1000000, row['data_elapsed_time'], 3)
+        result['Avg RTT msec'] = self._fformat(row['mean_latency_sec'], 3)
+        result['Max RTT msec'] = self._fformat(row['max_latency_sec'], 3)
         results[row['namespace']][row['pod']][row['container']] = result
