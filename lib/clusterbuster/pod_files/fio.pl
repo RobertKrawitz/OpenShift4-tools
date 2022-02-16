@@ -93,7 +93,7 @@ sub connect_to($$) {
             }
         }
     } while (! $connected);
-    return ($sock, $ghbn_time, $stime);
+    return ($sock);
 }
 
 sub do_sync($$;$) {
@@ -110,13 +110,23 @@ sub do_sync($$;$) {
     }
     while (1) {
 	timestamp("Waiting for sync on $addr:$port");
-	my ($sync_conn, $i1, $i2) = connect_to($addr, $port);
+	my ($sync_conn) = connect_to($addr, $port);
 	my ($sbuf);
-	timestamp("Writing token $token to sync");
-	my ($answer) = syswrite($sync_conn, $token, length $token);
-	if ($answer != length $token) {
-	    timestamp("Write token failed: $!");
-	    exit(1);
+	my ($token_length) = sprintf('0x%08x', length $token);
+	my ($tbuf) = "$token_length$token";
+	timestamp("Writing token $tbuf to sync");
+	my ($bytes_to_write) = length $tbuf;
+	my ($offset) = 0;
+	my ($answer);
+	while ($bytes_to_write > 0) {
+	    $answer = syswrite($sync_conn, $tbuf, length $tbuf, $offset);
+	    if ($answer <= 0) {
+		timestamp("Write token failed: $!");
+		exit(1);
+	    } else {
+		$bytes_to_write -= $answer;
+		$offset += $answer;
+	    }
 	}
 	$answer = sysread($sync_conn, $sbuf, 1024);
 	my ($str) = sprintf("Got sync (%s, %d, %s)!", $answer, length $sbuf, $!);

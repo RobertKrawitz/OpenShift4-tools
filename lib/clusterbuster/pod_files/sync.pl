@@ -36,6 +36,36 @@ my ($tmp_sync_file_base) = (defined($sync_file) && $sync_file ne '') ? "${sync_f
 
 my (@tmp_sync_files) = map { "${tmp_sync_file_base}-$_" } (1..$expected_clients);
 
+sub read_token($) {
+    my ($client) = @_;
+    my ($tbuf) = '';
+    if (sysread($client, $tbuf, 10) != 10) {
+	timestamp("Unable to read token");
+	return undef;
+    }
+    if (!($tbuf =~ /0x[[:xdigit:]]{8}/)) {
+	timestamp("Bad token $tbuf!");
+	return undef;
+    }
+    my ($bytes_to_read) = hex($tbuf);
+    $tbuf = '';
+    my ($offset) = 0;
+    while ($bytes_to_read > 0) {
+	my ($bytes) = sysread($client, $tbuf, $bytes_to_read, $offset);
+	if ($bytes == 0) {
+	    timestamp("Short read: got zero bytes with $bytes_to_read left at $offset");
+	    return undef;
+	} elsif ($bytes < 0) {
+	    timestamp("Bad read with $bytes_to_read left at $offset: $!");
+	    return undef;
+	} else {
+	    $bytes_to_read -= $bytes;
+	    $offset += $bytes;
+	}
+    }
+    return $tbuf
+}
+
 while ($sync_count < 0 || $sync_count-- > 0) {
     my ($tmp_sync_file) = undef;
     # Ensure that all of the accepted connections get closed by exiting
@@ -53,8 +83,8 @@ while ($sync_count < 0 || $sync_count-- > 0) {
 	    my ($port, $addr) = sockaddr_in($peeraddr);
 	    my $peerhost = gethostbyaddr($addr, AF_INET);
 	    my $peeraddr = inet_ntoa($addr);
-	    my ($tbuf) = "NULL";
-	    if (sysread($client, $tbuf, 1048576) <= 0) {
+	    my ($tbuf) = read_token($client);
+	    if (! defined $tbuf) {
 		timestamp("Read token from $peerhost failed: $!");
 	    }
 	    timestamp("Accepted connection from $peerhost ($peeraddr) on $port, token $tbuf");
