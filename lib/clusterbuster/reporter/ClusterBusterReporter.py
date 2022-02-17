@@ -261,6 +261,16 @@ class ClusterBusterReporter:
         except Exception as exc:
             return 'N/A'
 
+    def _wrap_text(self, text: str):
+        """
+        Wrap and indent text appropriately for reporting.
+        This should not be used for multi-line strings.
+        :param text: String to wrap
+        :return: Filled string
+        """
+        return textwrap.fill(text, width=self._report_width, subsequent_indent='  ',
+                             break_long_words=False, break_on_hyphens=False)
+
     def __are_clients_all_on_same_node(self):
         """
         Determine whether all clients ran on the same node.  This is used to determine
@@ -444,6 +454,9 @@ class ClusterBusterReporter:
                                so that if possible strings are right aligned with
                                integers
         """
+        def indent(string: str, target_column: int):
+            return textwrap.indent(string, prefix=' ' * (target_column + 2))[target_column+2:]
+
         header_keys = []
         value_keys = []
         if depth_indentation is None:
@@ -480,8 +493,12 @@ class ClusterBusterReporter:
                 integer_indent = 0
             else:
                 integer_indent = integer_width - nwidth
-            value = str(value).strip()
-            print(f'{" " * key_column}{key}: {" " * (value_column + integer_indent - key_column - len(key))}{value}', file=outfile)
+            value = str(value)
+            if "\n" in value:
+                value = textwrap.indent(value, prefix = ' ' * (key_column + 2))
+                print(f'{" " * key_column}{key}:\n{value}', file=outfile)
+            else:
+                print(f'{" " * key_column}{key}: {" " * (value_column + integer_indent - key_column - len(key))}{value}', file=outfile)
         if len(header_keys) == 0:
             print('', file=outfile)
 
@@ -545,10 +562,7 @@ class ClusterBusterReporter:
         if 'openshiftVersion' in self._jdata['metadata']['kubernetes_version']:
             results['Overview']['OpenShift Version'] = self._jdata['metadata']['kubernetes_version']['openshiftVersion']
         key_width, integer_width = self.__compute_report_width(results)
-        indent = ' ' * (key_width + self._summary_indent + 2)
-        xindent = '+' * (key_width)
-        cmdline = textwrap.fill(xindent + ' '.join(self._jdata['metadata']['expanded_command_line']),
-                                width=self._report_width, subsequent_indent=indent,
-                                break_long_words=False, break_on_hyphens=False)[key_width:]
+        cmdline = ' '.join(self._jdata['metadata']['expanded_command_line'])
+        cmdline = self._wrap_text(' '.join(self._jdata['metadata']['expanded_command_line']))
         results['Overview']['Command line'] = cmdline
         self.__print_report(results, value_column=key_width, integer_width=integer_width, outfile=outfile)

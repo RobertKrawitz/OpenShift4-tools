@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import base64
 from lib.clusterbuster.reporter.ClusterBusterReporter import ClusterBusterReporter
 
 
@@ -69,6 +70,7 @@ class fio_reporter(ClusterBusterReporter):
         for k, v in sample_row['global options'].items():
             results[k] = v
         self.__update_report(results, self._summary['results'], sample_row)
+        results['FIO job file'] = base64.b64decode(self._jdata['metadata']['options']['workloadOptions']['fio_job_file']).decode()
 
     def _generate_row(self, results: dict, row: dict):
         ClusterBusterReporter._generate_row(self, results, row)
