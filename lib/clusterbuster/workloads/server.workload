@@ -238,6 +238,7 @@ function list_configmaps_server() {
     cat <<EOF
 ${__podfile_dir__}/client.pl
 ${__podfile_dir__}/server.pl
+${__podfile_dir__}/clientlib.pl
 ${__podfile_dir__}/sync.pl
 EOF
 }

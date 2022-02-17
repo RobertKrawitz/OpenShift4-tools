@@ -4,14 +4,14 @@ use POSIX;
 use strict;
 use Time::Piece;
 use Time::HiRes qw(gettimeofday usleep);
+use File::Basename;
+my ($dir) = $ENV{'BAK_CONFIGMAP'};
+require "$dir/clientlib.pl";
+
 $SIG{TERM} = sub { POSIX::_exit(0); };
 my ($basetime, $baseoffset, $listen_port, $container, $msgSize, $ts, $expected_clients) = @ARGV;
 $basetime += $baseoffset;
-sub timestamp($) {
-    my ($str) = @_;
-    my (@now) = gettimeofday();
-    printf STDERR  "$container %s.%06d %s\n", gmtime($now[0])->strftime("%Y-%m-%dT%T"), $now[1], $str;
-}
+
 timestamp("Clusterbuster server starting");
 my $sockaddr = "S n a4 x8";
 socket(SOCK, AF_INET, SOCK_STREAM, getprotobyname('tcp')) || die "socket: $!";

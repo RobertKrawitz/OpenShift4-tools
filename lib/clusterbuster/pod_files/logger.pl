@@ -6,17 +6,13 @@ use strict;
 use Time::Piece;
 use Time::HiRes qw(gettimeofday usleep);
 use Sys::Hostname;
+use File::Basename;
+my ($dir) = $ENV{'BAK_CONFIGMAP'};
+require "$dir/clientlib.pl";
+
 $SIG{TERM} = sub { POSIX::_exit(0); };
 our ($namespace, $container, $bytes_per_line, $bytes_per_io, $xfer_count, $processes, $delay_usecs, $xfer_time, $exit_at_end) = @ARGV;
-sub timestamp($) {
-    my ($str) = @_;
-    my (@now) = gettimeofday();
-    printf STDERR  "$container %s.%06d %s\n", gmtime($now[0])->strftime("%Y-%m-%dT%T"), $now[1], $str;
-}
-sub xtime() {
-    my (@now) = gettimeofday();
-    return $now[0] + ($now[1] / 1000000.0);
-}
+
 timestamp("Clusterbuster logger starting");
 my ($pod) = hostname;
 

@@ -169,6 +169,7 @@ function _create_deployment_simple() {
 
 function list_configmaps_log() {
     cat <<EOF
+${__podfile_dir__}/clientlib.pl
 ${__podfile_dir__}/logger.pl
 EOF
 }

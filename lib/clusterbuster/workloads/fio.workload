@@ -136,6 +136,7 @@ function calculate_logs_required_fio() {
 function list_configmaps_fio() {
     cat <<EOF
 ${__podfile_dir__}/fio.pl
+${__podfile_dir__}/clientlib.pl
 ${__podfile_dir__}/sync.pl
 EOF
 }

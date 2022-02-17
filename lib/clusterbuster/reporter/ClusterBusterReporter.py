@@ -259,7 +259,6 @@ class ClusterBusterReporter:
             else:
                 return round(result, precision)
         except Exception as exc:
-            print(f'++++++ {exc}')
             return 'N/A'
 
     def __are_clients_all_on_same_node(self):

@@ -145,6 +145,7 @@ function calculate_logs_required_files() {
 function list_configmaps_files() {
     cat <<EOF
 ${__podfile_dir__}/files.pl
+${__podfile_dir__}/clientlib.pl
 ${__podfile_dir__}/sync.pl
 EOF
 }
