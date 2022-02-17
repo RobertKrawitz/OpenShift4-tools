@@ -207,7 +207,7 @@ function list_report_formats() {
     local prefix=${1:-}
     while read -r format ; do
 	echo "$prefix$format"
-    done <<< $("${pathdir:-.}/clusterbuster-report" --list_formats)
+    done <<< "$("${pathdir:-.}/clusterbuster-report" --list_formats)"
 }
 
 function _helpmsg() {
@@ -932,7 +932,8 @@ function retrieve_prometheus_snapshot() {
     local dir=${1:-$artifactdir}
     sleep 60
     prometheus_ending_timestamp=$(get_prometheus_pod_timestamp)
-    local promdb_name="promdb_$(readable_timestamp "$prometheus_starting_timestamp")_$(readable_timestamp "$prometheus_ending_timestamp")"
+    local promdb_name
+    promdb_name="promdb_$(readable_timestamp "$prometheus_starting_timestamp")_$(readable_timestamp "$prometheus_ending_timestamp")"
     local promdb_path="${dir:+${dir}/}${promdb_name}.tar"
     __OC exec -n openshift-monitoring prometheus-k8s-0 -c prometheus -- /bin/sh -c "tar cf - . -C /prometheus --transform 's,^[.],./${promdb_name},' .; true" > "$promdb_path"
     echo "Prometheus snapshot retrieved" | echo_if_desired 1>&2
@@ -1342,6 +1343,8 @@ function standard_labels_yaml() {
     local namespace=${2:-}
     local instance=${3:-}
     local logger=${4:+logger}
+    # Different versions of bash expand quotes inside the ${logger:+...} differently.
+    local true='"true"'
     cat <<EOF
 labels:
   clusterbuster-run_uuid: "$run_uuid"
@@ -1354,7 +1357,7 @@ EOF
   name: "${namespace}-${workload}-${instance}"
   app: "${namespace}-${workload}-${instance}"
   ${basename}-${workload}: "true"
-${logger:+  ${basename}-logger: \"true\"}
+${logger:+  ${basename}-logger: $true}
 EOF
     fi
 }
@@ -1572,7 +1575,7 @@ $(indent 2 <<< "$ns_yaml")
   terminationGracePeriodSeconds: 1
 $(indent 2 <<< "$affinity_yaml")
 $(indent 2 tolerations_yaml ${tolerations+"${tolerations[@]}"})
-$(indent 2 <<< $rc)
+$(indent 2 <<< "$rc")
   containers:
 $(indent 2 "$create_container_function" "$@")
 $(indent 2 <<< "${use_pbench:+$(pbench_agent_yaml)}")
