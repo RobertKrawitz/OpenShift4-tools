@@ -778,7 +778,7 @@ cat <<\EOF
 
   + Go to
     https://oauth-openshift.apps.ci.l2s4.p1.openshiftapps.com/oauth/token/request
-    and choose the option to log in with Github.  Click "Display token" to get
+    and choose the appropriate option to log in.  Click "Display token" to get
     the login command, and run it.
 
   + Run 'oc registry login'.
