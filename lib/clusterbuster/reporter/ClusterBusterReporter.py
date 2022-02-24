@@ -56,33 +56,36 @@ class ClusterBusterReporter:
         """
         if 'Results' in self._jdata:
             rows = self._jdata['Results']
-            for row in rows:
-                self._create_row(row)
+        else:
+            rows = []
+        for row in rows:
+            self._create_row(row)
 
+        if len(rows) > 0:
             self._add_summary()
 
-            if self._format == 'json-summary':
-                answer = {
-                    'summary': self._summary,
-                    'metadata': self._jdata['metadata'],
-                    }
-                json.dump(answer, sys.stdout, sort_keys=True, indent=4)
-            elif self._format == 'json':
-                answer = {
-                    'summary': self._summary,
-                    'metadata': self._jdata['metadata'],
-                    'rows': self._rows
-                    }
-                json.dump(answer, sys.stdout, sort_keys=True, indent=4)
-            elif self._format == 'json-verbose':
-                answer = deepcopy(self._jdata)
-                answer['processed_results'] = {
-                    'summary': self._summary,
-                    'rows': self._rows
-                    }
-                json.dump(answer, sys.stdout, sort_keys=True, indent=4)
-            else:
-                self.__create_text_report(outfile=outfile)
+        if self._format == 'json-summary':
+            answer = {
+                'summary': self._summary,
+                'metadata': self._jdata['metadata'],
+                }
+            json.dump(answer, sys.stdout, sort_keys=True, indent=4)
+        elif self._format == 'json':
+            answer = {
+                'summary': self._summary,
+                'metadata': self._jdata['metadata'],
+                'rows': self._rows
+                }
+            json.dump(answer, sys.stdout, sort_keys=True, indent=4)
+        elif self._format == 'json-verbose':
+            answer = deepcopy(self._jdata)
+            answer['processed_results'] = {
+                'summary': self._summary,
+                'rows': self._rows
+                }
+            json.dump(answer, sys.stdout, sort_keys=True, indent=4)
+        else:
+            self.__create_text_report(outfile=outfile)
 
     def _generate_summary(self, results: dict):
         """
@@ -100,6 +103,12 @@ class ClusterBusterReporter:
         if self._all_clients_are_on_the_same_node:
             results['CPU utilization'] = self._safe_div(self._summary['cpu_time'],
                                                         self._summary['data_run_span'], 5, as_string=True)
+            results['First pod start'] = f"{self._summary['first_pod_start']:.3f}"
+            results['Last pod start'] = f"{self._summary['last_pod_start']:.3f}"
+            results['Average pods start/sec'] = self._safe_div(self._summary['total_instances'],
+                                                               (self._summary['last_pod_start'] -
+                                                                self._summary['first_pod_start']),
+                                                               precision=3, as_string=True)
             results['First run start'] = f"{self._summary['first_data_start']:.3f}"
             results['First run end'] = f"{self._summary['first_data_end']:.3f}"
             results['Last run start'] = f"{self._summary['last_data_start']:.3f}"
@@ -156,6 +165,7 @@ class ClusterBusterReporter:
         if self._all_clients_are_on_the_same_node:
             self._summary['data_run_span'] = self._summary['last_data_end'] - self._summary['first_data_start']
             self._summary['pod_start_span'] = self._summary['last_pod_start'] - self._summary['first_pod_start']
+            self._summary['pod_sync_span'] = self._summary['last_data_start'] - self._summary['first_data_start']
             self._summary['overlap_error'] = self._safe_div((((self._summary['last_data_start'] -
                                                                self._summary['first_data_start']) +
                                                              (self._summary['last_data_end'] -
@@ -240,7 +250,7 @@ class ClusterBusterReporter:
         else:
             return int(round(num))
 
-    def _safe_div(self, num: float, denom: float, precision: float = None, as_string: bool = False):
+    def _safe_div(self, num: float, denom: float, precision: int = None, as_string: bool = False):
         """
         Safely divide two numbers.  Return 'N/A' if denominator is zero.
         :param num: Numerator
@@ -255,7 +265,7 @@ class ClusterBusterReporter:
             elif precision == 0:
                 return int(round(result, 0))
             elif as_string:
-                return self._fformat(num, precision)
+                return self._fformat(result, precision)
             else:
                 return round(result, precision)
         except Exception as exc:
@@ -542,6 +552,8 @@ class ClusterBusterReporter:
         """
         results = {}
         results['Overview'] = {}
+        results['Overview']['Job Name'] = self._jdata['metadata']['job_name']
+        results['Overview']['Start Time'] = self._jdata['metadata']['cluster_start_time']
         if self._format == 'verbose':
             results['Detail'] = {}
             self._rows.sort(key=self.__row_name)
@@ -552,8 +564,12 @@ class ClusterBusterReporter:
                     header = []
                 self.__make_result_tree(results['Detail'], row, header)
                 self._generate_row(results['Detail'], row)
-        results['Summary'] = {}
-        self._generate_summary(results['Summary'])
+        if len(self._rows) > 0:
+            results['Summary'] = {}
+            self._generate_summary(results['Summary'])
+            results['Overview']['Status'] = 'Success'
+        else:
+            results['Overview']['Status'] = 'FAILED, no data generated'
 
         results['Overview']['Workload'] = self._jdata['metadata']['workload']
         results['Overview']['Job UUID'] = self._jdata['metadata']['run_uuid']
