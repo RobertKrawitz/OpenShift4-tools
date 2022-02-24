@@ -113,6 +113,7 @@ declare prometheus_ending_timestamp=
 declare -i target_data_rate=0
 declare metrics_file=
 declare job_name=
+declare -i job_start_time=$(date +%s)
 declare debug=
 
 declare -r sync_flag_file="/tmp/syncfile";
@@ -911,8 +912,8 @@ function get_prometheus_pod_timestamp() {
 }
 
 function readable_timestamp() {
-    local rawtime=$1
-    date -u '+%Y_%m_%dT%H_%M_%S%z' "--date=@$rawtime"
+    local rawtime=${1:-}
+    date -u '+%Y_%m_%dT%H_%M_%S%z' ${rawtime:+"--date=@$rawtime"}
 }
 
 function start_prometheus_snapshot() {
@@ -1024,7 +1025,7 @@ function run_logger() {
     fi
 }
 
-function get_logs_poll() {
+function _get_logs_poll() {
     local pod
     local status
     local counter=$#
@@ -1084,6 +1085,23 @@ function get_logs_poll() {
 	    echo ','
 	fi
     done
+}
+
+function get_logs_poll() {
+    local tfile=$(mktemp '_clusterbusterlogs.XXXXXXXXXX')
+    trap 'rm -f "$tfile"; echo "Status: Fail"' INT TERM HUP USR1 USR2
+    _get_logs_poll "$@" > "$tfile"
+    local status=$?
+    if ((status == 0)) ; then
+	echo '"Results": ['
+	indent 4 < "$tfile"
+	echo '],'
+	echo '"Status": "Success"'
+    else
+	echo '"Status": "Fail"'
+    fi
+    rm -f "$tfile"
+    return $status
 }
 
 function get_logs_listen() {
@@ -1155,11 +1173,12 @@ function _get_logs() {
     # We need to be killed by our logger, since we're capturing output
     # in a way that we can't see that it failed.
     export __PARENT_PID__=${BASHPID}
+    trap 'echo "DYING!" 1>&2; echo "}"; exit 1' INT TERM HUP USR1 USR2
     cat <<EOF
 {
 "metadata": {
   "kind": "clusterbusterResults",
-  "job_start_time": "$(readable_timestamp "${prometheus_starting_timestamp}")",
+  "cluster_start_time": "$(readable_timestamp "${prometheus_starting_timestamp}")",
   "job_name": "$job_name",
   "run_uuid": "$run_uuid",
   "workload": "$requested_workload",
@@ -1194,12 +1213,12 @@ function _get_logs() {
 "nodes": $(__OC get nodes -ojson),
 "api_objects": $( __OC get all -A -l "clusterbuster-id=$run_uuid" -ojson | jq -r '[foreach .items[]? as $item ([[],[]];0; {kind: $item.kind, namespace: $item.metadata.namespace, name: $item.metadata.name, nodeName: $item.spec.nodeName, labels: $item.metadata.labels})]'),
 "csvs": $(__OC get csv -A -ojson | jq -r '[foreach .items[]? as $item ([[],[]];0; {name: $item.metadata.name, namespace: $item.metadata.namespace, version: $item.spec.version})]'),
-"Results": [
-$("$@")
-]
-$(_extract_metrics)
-}
 EOF
+    cat <<EOF
+$("$@")
+$(_extract_metrics)
+EOF
+    echo '}'
     if [[ -n "$artifactdir" ]] ; then
 	while read -r namespace pod container ; do
 	    mkdir -p "$artifactdir/Logs"
@@ -1306,6 +1325,9 @@ function resources() {
     for token in "$@" ; do
 	local resource=${token%%=*}
 	local value=${token#*=}
+	if [[ ! $value =~ ^-?[[:digit:]]+(\.[[:digit:]]+)?$ ]] ; then
+	    value="\"$value\""
+	fi
 	echo "\"$resource\": $value"
     done
 }
@@ -1313,14 +1335,14 @@ function resources() {
 function resource_json() {
     local request_type=$1
     shift
-    echo "\"$request_type\": {"
+    echo "    \"$request_type\": {"
     local -a resources=()
     local resource
     for resource in "$@" ; do
-	resources+=("($(resources "$resource"))")
+	resources+=("$(resources "$resource")")
     done
-    (IFS=$',\n'; echo "${resources[*]}")
-    echo "}"
+    (IFS=$',\n        '; echo "${resources[*]}")
+    echo "    }"
 }
 
 function container_resources_json() {
@@ -1333,7 +1355,7 @@ function container_resources_json() {
 	if (( ${#resource_requests[@]} )) ; then
 	    res_data+=("$(resource_json requests "${resource_requests[@]}")")
 	fi
-	(IFS=$',\n'; echo "${res_data[@]}")
+	(IFS=$',\n    '; echo "${res_data[@]}")
 	echo "},"
     fi
 }
@@ -2086,15 +2108,15 @@ function do_logging() {
 		kill "$get_logs_pid"
 		sleep 3
 		kill -9 "$get_logs_pid"
-		get_logs_pid=
 		exec 2>&3 3>&-
 		wait "$get_logs_pid"
+		get_logs_pid=
 	    fi
 	    echo "Run did not terminate" 1>&2
 	    status=1
 	fi
     fi
-    if [[ -n "${get_logs_pid:-}" ]] ; then
+    if (( get_logs_pid > 1 )) ; then
 	wait "$get_logs_pid"
 	status=$?
     fi
@@ -2112,7 +2134,7 @@ function report_object_creation() {
 function run_clusterbuster_1() {
     local -A expected_secrets=()
     local -i status=0
-    (( precleanup && doit )) && do_cleanup
+    (( precleanup && doit )) && do_cleanup 1>&2
     if [[ $take_prometheus_snapshot -gt 0 && -n "$artifactdir" ]] ; then
 	start_prometheus_snapshot
     else
