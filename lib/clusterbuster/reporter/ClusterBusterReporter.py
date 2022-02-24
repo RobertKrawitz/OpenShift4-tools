@@ -97,6 +97,10 @@ class ClusterBusterReporter:
         results['Total Clients'] = self._summary['total_instances']
         results['Elapsed Time Average'] = f"{self._summary['elapsed_time_average']:.{3}f}"
         results['Pod creation span'] = f"{self._summary['pod_create_span']:.5f}"
+        results['Average pods created/sec'] = self._safe_div(self._summary['total_instances'],
+                                                           (self._summary['last_pod_create'] -
+                                                            self._summary['first_pod_create']),
+                                                           precision=3, as_string=True)
         results['User CPU seconds'] = f"{self._summary['user_cpu_time']:.3f}"
         results['System CPU seconds'] = f"{self._summary['system_cpu_time']:.3f}"
         results['CPU seconds'] = f"{self._summary['cpu_time']:.5f}"
