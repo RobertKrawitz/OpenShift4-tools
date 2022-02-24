@@ -18,40 +18,12 @@
 # Simple workloads (pause pod, clusterbuster, logging)
 ################################################################
 
-declare -g ___classic_pod_sleep_time=infinity
 declare -ig ___log_bytes_per_line=1
 declare -ig ___log_bytes_per_io=1
 declare -ig ___log_xfer_count=1
 declare -ig ___log_processes=1
 declare -ig ___log_delay_usec=0
 declare -ig ___log_xfertime=0
-
-function _create_containers_classic_yaml() {
-    local namespace=$1
-    local instance=$2
-    local secret_count=$3
-    local -i pods=$4
-    local -i containers_per_pod=$5
-    local -i container
-    for container in $(seq 0 $((containers_per_pod - 1))) ; do
-	cat <<EOF
-- name: ${namespace}-${instance}-$container
-  image_pull_policy: $image_pull_policy
-  image: "busybox"
-$(indent 2 container_resources_yaml)
-  command:
-  - /bin/sh
-  args:
-  - -c
-  - |
-    trap 'exit 0' TERM
-    (while : ; do date ; sleep 60 ; done)&
-    sleep $___clusterbuster_pod_sleep_time
-    exit 1
-$(indent 2 volume_mounts_yaml "$namespace" "${instance}" "$secret_count")
-EOF
-    done
-}
 
 function _create_containers_pausepod_yaml() {
     local namespace=$1
@@ -102,8 +74,7 @@ $(indent 2 volume_mounts_yaml "$namespace" "${instance}" "$secret_count")
 EOF
     done
 }
-
-function _create_deployment_classic_yaml() {
+function _create_deployment_simple_yaml() {
     local namespace=$1
     local instance=$2
     local secret_count=$3
@@ -160,7 +131,7 @@ function _create_deployment_simple() {
     local containers_per_pod=${5:-1}
     local -i instance
     for instance in $(seq $first_deployment $((count + first_deployment - 1))) ; do
-	_create_deployment_classic_yaml "$namespace" "${instance}" "$secret_count"  "$replicas" "$containers_per_pod"
+	_create_deployment_simple_yaml "$namespace" "${instance}" "$secret_count"  "$replicas" "$containers_per_pod"
     done
 }
 
@@ -175,10 +146,6 @@ EOF
 }
 
 function create_deployment_pausepod() {
-    _create_deployment_simple "$@"
-}
-
-function create_deployment_simple() {
     _create_deployment_simple "$@"
 }
 
@@ -211,27 +178,11 @@ function help_options_log() {
 EOF
 }
 
-function help_options_classic() {
-    cat <<EOF
-    Classic Options:
-       --classic-pod-sleep-time=<seconds>
-                        Number of seconds pods should sleep before
-                        exiting.  Default infinity.
-EOF
-}
-
 function document_pausepod() {
     cat <<'EOF'
 * pausepod: a minimal pod that does nothing.  Useful for stressing
   the control plane.  See
   https://console.cloud.google.com/gcr/images/google-containers/global/pause-amd64
-EOF
-}
-
-function document_classic() {
-    cat <<'EOF'
-* classic: a simple pod based on busybox that logs the date
-  once per minute.  Useful for testing the control plane.
 EOF
 }
 
@@ -241,26 +192,11 @@ function document_log() {
 EOF
 }
 
-function process_options_classic() {
-    local opt
-    local -a unknown_opts=()
-    for opt in "$@" ; do
-	read -r noptname1 noptname optvalue <<< "$(process_option "$opt")"
-	case "$noptname1" in
-	    classicpodsleeptime) ___classic_pod_sleep_time=$optvalue ;;
-	    *) 			unknown_opts+=("$noptname ($noptname1)") ;;
-	esac
-    done
-    if [[ -n "${unknown_opts[*]:-}" ]] ; then
-	help "${unknown_opts[@]}"
-    fi
-}
-
 function process_options_log() {
     local opt
     local -a unknown_opts=()
     for opt in "$@" ; do
-	read -r noptname1 noptname optvalue <<< "$(process_option "$opt")"
+	read -r noptname1 noptname optvalue <<< "$(parse_option "$opt")"
 	case "$noptname1" in
 	    logbytesperline)	___log_bytes_per_line=$optvalue	;;
 	    logbytesperio)	___log_bytes_per_io=$optvalue	;;
@@ -276,12 +212,6 @@ function process_options_log() {
     fi
 }
 
-function report_options_classic() {
-    cat <<EOF
-"classic_pod_sleep_time": $___classic_pod_sleep_time
-EOF
-}
-
 function report_options_log() {
     cat <<EOF
 "log_bytes_per_line": $___log_bytes_per_line,
@@ -294,5 +224,4 @@ EOF
 }
 
 register_workload pausepod dispatch_generic pause
-register_workload classic dispatch_generic clusterbuster
 register_workload log dispatch_generic logger logging

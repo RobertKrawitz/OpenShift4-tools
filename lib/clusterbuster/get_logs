@@ -25,6 +25,7 @@ if (!bind($socket, pack($sockaddr, AF_INET, $port, "\0\0\0\0"))) {
 listen($socket, 100) || die "Can't listen on port $port\n";
 
 my ($client_count) = 0;
+print "\"Results\": [\n";
 eval {
     if ($timeout > 0) {
 	alarm $timeout;
@@ -60,7 +61,11 @@ eval {
 	$kid = wait();
     } while ($kid > 0);
 };
+print "],\n"
 
 if ($@) {
+    print "\"Status\": Fail\n";
     die "$@";
+} else {
+    print "\"Status\": Success\n";
 }

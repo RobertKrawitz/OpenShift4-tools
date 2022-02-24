@@ -274,7 +274,7 @@ function process_options_server() {
     for opt in "$@" ; do
 	read -r noptname1 noptname optvalue <<< "$(parse_option "$opt")"
 	case "$noptname1" in
-	    msgSize) ___msg_size=$optvalue ;;
+	    msgsize) ___msg_size=$optvalue ;;
 	    *) unknown_opts+=("$noptname ($noptname1)")	;;
 	esac
     done
