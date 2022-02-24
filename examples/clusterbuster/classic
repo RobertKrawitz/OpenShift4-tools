@@ -1,0 +1,9 @@
+# Run as
+# clusterbuster -f clusterbuster-classic-jobfile
+
+cleanup
+workload=classic
+precleanup=1
+no-report-object-creation
+deps-per-namespace=8
+namespaces=1
