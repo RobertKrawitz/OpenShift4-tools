@@ -30,13 +30,14 @@ class files_reporter(ClusterBusterReporter):
 
     def __update_report(self, dest: dict, source: dict):
         for op in self._file_operations:
-            dest[op.capitalize()] = {}
-            dest[op.capitalize()]['Elapsed Time'] = self._fformat(source[op]['operation_elapsed_time'], 3)
-            dest[op.capitalize()]['CPU Time'] = self._fformat(source[op]['cpu_time'], 3)
-            dest[op.capitalize()]['Operations'] = source[op]['operations']
-            dest[op.capitalize()]['Operations/sec'] = self._safe_div(source[op]['operations'],
-                                                                     source[op]['operation_elapsed_time'], 0)
-            dest[op.capitalize()]['Operations/CPU sec'] = self._safe_div(source[op]['operations'], source[op]['cpu_time'], 0)
+            cop = op.capitalize()
+            sop = source[op]
+            dest[cop] = {}
+            dest[cop]['Elapsed Time'] = self._fformat(sop['operation_elapsed_time'], 3)
+            dest[cop]['CPU Time'] = self._fformat(sop['cpu_time'], 3)
+            dest[cop]['Operations'] = sop['operations']
+            dest[cop]['Operations/sec'] = self._safe_div(sop['operations'], sop['operation_elapsed_time'], 0)
+            dest[cop]['Operations/CPU sec'] = self._safe_div(sop['operations'], sop['cpu_time'], 0)
 
     def _generate_summary(self, results: dict):
         # I'd like to do this, but if the nodes are out of sync time-wise, this will not

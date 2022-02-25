@@ -28,7 +28,7 @@ class soaker_reporter(ClusterBusterReporter):
         # function correctly.
         ClusterBusterReporter._generate_summary(self, results)
         results['Interations'] = self._summary['work_iterations']
-        results['Iterations/sec'] = self._safe_div(self._summary['work_iterations'], self._summary['data_run_span'], 0)
+        results['Iterations/sec'] = self._safe_div(self._summary['work_iterations'], self._summary['data_run_interval'], 0)
         results['Interations/CPU sec'] = self._safe_div(self._summary['work_iterations'], self._summary['cpu_time'], 0)
 
     def _generate_row(self, results: dict, row: dict):

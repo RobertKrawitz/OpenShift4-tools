@@ -11,7 +11,7 @@ my ($dir) = $ENV{'BAK_CONFIGMAP'};
 require "$dir/clientlib.pl";
 
 our ($namespace, $container, $basetime, $baseoffset, $poddelay, $crtime, $sync_host, $sync_port, $log_host, $log_port, $dirs, $files_per_dir, $blocksize, $block_count, $processes, @dirs) = @ARGV;
-my ($start_time, $data_start_time, $data_end_time, $elapsed_time, $end_time, $user, $sys, $cuser, $csys);
+my ($start_time, $elapsed_time, $end_time, $user, $sys, $cuser, $csys);
 
 $SIG{TERM} = sub { POSIX::_exit(0); };
 $basetime += $baseoffset;
@@ -116,21 +116,21 @@ EOF
     do_sync($sync_host, $sync_port);
     timestamp("$op_name0 files...");
     my ($ucpu0, $scpu0) = cputime();
-    my ($op_start_time) = xtime();
+    my ($op_start_time) = xtime() - $basetime;
     my ($ops) = &$op_func($process);
     system("sync");
-    my ($op_end_time) = xtime();
+    my ($op_end_time) = xtime() - $basetime;
     my ($op_elapsed_time) = $op_end_time - $op_start_time;
     my ($ucpu1, $scpu1) = cputime();
     $ucpu1 -= $ucpu0;
     $scpu1 -= $scpu0;
     my ($answer) = sprintf($op_format_string, $op_name2, $op_elapsed_time,
 			   $ucpu1, $scpu1, $ucpu1 + $scpu1, ($ucpu1 + $scpu1) / $op_elapsed_time,
-			   $op_start_time - $basetime, $op_end_time - $basetime,
+			   $op_start_time, $op_end_time,
 			   $ops, $ops / $op_elapsed_time);
     timestamp("$op_name1 files...");
     do_sync($sync_host, $sync_port);
-    return ($answer, $op_elapsed_time, $ucpu1, $scpu1);
+    return ($answer, $op_start_time, $op_end_time, $ucpu1, $scpu1);
 }
 
 sub runit($) {
@@ -148,18 +148,20 @@ sub runit($) {
     removethem($process, 1);
     system("sync");
 
-    my ($data_start_time) = xtime();
-    my ($answer_create, $create_et, $create_ucpu, $create_scpu) =
+    my ($answer_create, $create_start_time, $create_end_time, $create_ucpu, $create_scpu) =
 	run_one_operation('Creating', 'Created', 'create', \&makethem,
 			  $sync_host, $sync_port, $process);
+    my ($create_et) = $create_end_time - $create_start_time;
 
     timestamp("Sleeping for 60 seconds");
     sleep(60);
     timestamp("Back from sleep");
-    my ($answer_remove, $remove_et, $remove_ucpu, $remove_scpu) =
+    my ($answer_remove, $remove_start_time, $remove_end_time, $remove_ucpu, $remove_scpu) =
 	run_one_operation('Creating', 'Removed', 'remove', \&removethem,
 			  $sync_host, $sync_port, $process);
-    my ($data_end_time) = xtime();
+    my ($remove_et) = $remove_end_time - $remove_start_time;
+    my ($data_start_time) = $create_start_time;
+    my ($data_end_time) = $remove_end_time;
     my ($data_elapsed_time) = $create_et + $remove_et;
     my ($user_cpu) = $create_ucpu + $remove_ucpu;
     my ($system_cpu) = $create_scpu + $remove_scpu;
@@ -186,7 +188,7 @@ sub runit($) {
 }
 EOF
     my ($answer) = sprintf($fstring, $namespace, $pod, $container, $$, $crtime - $basetime,
-			   $start_time - $basetime, $data_start_time - $basetime, $data_end_time - $basetime,
+			   $start_time - $basetime, $data_start_time, $data_end_time,
 			   $data_elapsed_time, $user_cpu, $system_cpu, $user_cpu + $system_cpu, $block_count, $blocksize,
 			   $answer_create, $answer_remove);
     $answer =~ s/[ \n]+//g;
