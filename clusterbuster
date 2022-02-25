@@ -319,13 +319,16 @@ $(print_workloads_supporting_reporting '                        - ')
                         specify maximum time.
 
     Workload placement options:
-       --pin_node=<class>=<node>
-                        Force pod(s) of the specified class onto the
-                        specified node.  The following classes are
+       --pin_node=[class1,class2...]=<node>
+                        Force pod(s) of the specified class(es) onto the
+                        specified node.  Multiple comma-separated classes
+                        may be specified.  The following classes are
                         defined for general workloads:
                         - sync   (sync pods)
                         - worker (worker pods)
                         Workloads may define other classes.
+                        If no class is specified, pin node applies to all
+                        pods.
        --affinity       Force affinity between client and server pods
                         in a client-server workload.  Default is neither
                         affinity nor anti-affinity.  Use of a pin node
@@ -573,12 +576,17 @@ function process_pin_node() {
     local nodespec=$1
     nodespec=${nodespec// /}
     [[ -n "$nodespec" ]] || return
-    if [[ $nodespec != *'='* ]] ; then
-	fatal "Pin node specifier must be of the form <class>=<node>"
+    if [[ $nodespec = *'='* ]] ; then
+	local node=${nodespec#*=}
+	local class=${nodespec%%=*}
+	class=${class//,/ }
+	local -a classes=($class)
+	for class in "${classes[@]}" ; do
+	    pin_nodes[$class]="$node"
+	done
+    else
+	pin_nodes[default]="$nodespec"
     fi
-    local class=${nodespec%%=*}
-    local node=${nodespec#*=}
-    pin_nodes["$class"]="$node"
 }
 
 function process_option() {
@@ -1088,7 +1096,7 @@ function _get_logs_poll() {
 }
 
 function get_logs_poll() {
-    local tfile=$(mktemp '_clusterbusterlogs.XXXXXXXXXX')
+    local tfile=$(mktemp -t '_clusterbusterlogs.XXXXXXXXXX')
     trap 'rm -f "$tfile"; echo "Status: Fail"' INT TERM HUP USR1 USR2
     _get_logs_poll "$@" > "$tfile"
     local status=$?
@@ -1173,7 +1181,7 @@ function _get_logs() {
     # We need to be killed by our logger, since we're capturing output
     # in a way that we can't see that it failed.
     export __PARENT_PID__=${BASHPID}
-    trap 'echo "DYING!" 1>&2; echo "}"; exit 1' INT TERM HUP USR1 USR2
+    trap 'echo "}"; exit 1' INT TERM HUP USR1 USR2
     cat <<EOF
 {
 "metadata": {
@@ -1582,6 +1590,9 @@ function create_spec() {
     if [[ -n "$node_class" && -n "${pin_nodes[$node_class]:-}" ]] ; then
 	affinity_yaml=
 	ns_yaml="nodeSelector:${nl}  kubernetes.io/hostname: \"${pin_nodes[$node_class]}\""
+    elif [[ -n "${pin_nodes[default]}" ]] ; then
+	affinity_yaml=
+	ns_yaml="nodeSelector:${nl}  kubernetes.io/hostname: \"${pin_nodes[default]}\""
     fi
     if (( $# < 4 )) ; then
 	echo "Usage: create_spec <container_func> namespace instance secret_count args..." 1>&2
