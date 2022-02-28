@@ -454,7 +454,7 @@ EOF
 }
 
 function help() {
-    _helpmsg "$@" | "${PAGER:-more}" 1>&2
+    _help_extended "$@" | "${PAGER:-more}" 1>&2
     exit 1
 }
 
@@ -1590,7 +1590,7 @@ function create_spec() {
     if [[ -n "$node_class" && -n "${pin_nodes[$node_class]:-}" ]] ; then
 	affinity_yaml=
 	ns_yaml="nodeSelector:${nl}  kubernetes.io/hostname: \"${pin_nodes[$node_class]}\""
-    elif [[ -n "${pin_nodes[default]}" ]] ; then
+    elif [[ -n "${pin_nodes[default]:-}" ]] ; then
 	affinity_yaml=
 	ns_yaml="nodeSelector:${nl}  kubernetes.io/hostname: \"${pin_nodes[default]}\""
     fi
