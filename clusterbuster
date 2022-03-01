@@ -468,26 +468,29 @@ function help_extended() {
 ################################################################
 
 function parse_size() {
-    if [[ $1 =~ (-?[[:digit:]]+)([[:alpha:]]*) ]] ; then
-	local size=${BASH_REMATCH[1]}
-	local size_modifier=${BASH_REMATCH[2],,}
-	local -i size_multiplier=1
-	case "$size_modifier" in
-	    ''|b)          size_multiplier=1                ;;
-	    k|kb|kilobytes)  size_multiplier=1000           ;;
-	    ki|kib|kibibytes) size_multiplier=1024          ;;
-	    m|mb|megabytes)  size_multiplier=1000000        ;;
-	    mi|mib|mebibytes) size_multiplier=1048576       ;;
-	    g|gb|gigabytes)  size_multiplier=1000000000     ;;
-	    gi|gib|gibibytes) size_multiplier=1073741824    ;;
-	    t|tb|terabytes)  size_multiplier=1000000000000  ;;
-	    ti|tib|tebibytes) size_multiplier=1099511627776 ;;
-	    *) fatal "Cannot parse size $optvalue"          ;;
-	esac
-	echo $((size*size_multiplier))
-    else
-	fatal "Cannot parse filesize $optvalue"
-    fi
+    local size
+    for size in "$@" ; do
+	if [[ $size =~ (-?[[:digit:]]+)([[:alpha:]]*) ]] ; then
+	    local size=${BASH_REMATCH[1]}
+	    local size_modifier=${BASH_REMATCH[2],,}
+	    local -i size_multiplier=1
+	    case "$size_modifier" in
+		''|b)          size_multiplier=1                ;;
+		k|kb|kilobytes)  size_multiplier=1000           ;;
+		ki|kib|kibibytes) size_multiplier=1024          ;;
+		m|mb|megabytes)  size_multiplier=1000000        ;;
+		mi|mib|mebibytes) size_multiplier=1048576       ;;
+		g|gb|gigabytes)  size_multiplier=1000000000     ;;
+		gi|gib|gibibytes) size_multiplier=1073741824    ;;
+		t|tb|terabytes)  size_multiplier=1000000000000  ;;
+		ti|tib|tebibytes) size_multiplier=1099511627776 ;;
+		*) fatal "Cannot parse size $optvalue"          ;;
+	    esac
+	    echo $((size*size_multiplier))
+	else
+	    fatal "Cannot parse filesize $optvalue"
+	fi
+    done
 }
 
 function set_workload_bytes() {
@@ -863,6 +866,10 @@ function list_user_configmaps() {
     call_api list_user_configmaps
 }
 
+function generate_workload_metadata() {
+    call_api -s generate_metadata
+}
+
 ################################################################
 # Helpers
 ################################################################
@@ -1194,6 +1201,7 @@ function _get_logs() {
   "command_line": [$(quote_list "${saved_argv[@]}")],
   "expanded_command_line": [$(quote_list "${processed_options[@]}")],
   "runHost": "$(hostname -f)",
+  "workload_metadata": {$(generate_workload_metadata)},
   "options": {
     "basename": "$basename",
     "containers_per_pod": $containers_per_pod,
