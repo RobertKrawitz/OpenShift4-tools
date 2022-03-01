@@ -18,7 +18,11 @@
 # FIO workload
 ################################################################
 
-declare -Ag ___fio_generic_options=()
+declare -ag ___fio_generic_options=()
+declare -ag ___fio_blocksizes=(4096)
+declare -ag ___fio_patterns=(read)
+declare -g ___fio_blksize_count=1
+declare -g ___fio_workload_count=1
 declare -g ___fio_job_file
 
 function _create_containers_fio_yaml() {
@@ -60,7 +64,9 @@ $(indent 2 bootstrap_command_yaml fio.pl)
   - "$workdir"
   - "$workload_run_time"
   - "$configmap_mount_dir"
-  - "${_fio_generic_options[*]:-}"
+  - "${___fio_blocksizes[*]:-}"
+  - "${___fio_patterns[*]:-}"
+  - "${___fio_generic_options[*]:-}"
 $(indent 2 volume_mounts_yaml "$namespace" "${instance}" "$secret_count")
 EOF
     done
@@ -119,7 +125,8 @@ function create_deployment_fio() {
     local log_host=${6:-}
     local -i log_port=${7:-0}
     local -i instance
-    create_sync_service_if_needed "$namespace" 2 "$((containers_per_pod * replicas * count))"
+    local -i syncs_needed=$((1 + (${#___fio_patterns[@]} * ${#___fio_blocksizes[@]}) ))
+    create_sync_service_if_needed "$namespace" "$syncs_needed" "$((containers_per_pod * replicas * count))"
     for instance in $(seq $first_deployment $((count + first_deployment - 1))) ; do
 	_create_fio_deployment "$namespace" "${instance}" "$secret_count"  "$replicas" "$containers_per_pod" "$log_host" "$log_port"
     done
@@ -150,10 +157,15 @@ EOF
 function help_options_fio() {
     cat <<'EOF'
     Fio Options:
-       --fio-general-options=<options>
-                        Space or comma separated general fio options
+       --fio-patterns=<patterns>
+                        Comma-separated list of patterns to use.
+                        Any pattern supported by fio may be used.
+       --fio-blocksizes=<sizes>
+                        Comma-separated list of I/O blocksizes to use.
+       --fio-general-option=<options>
+                        General fio option.  May be repeated.
        --fio-jobfile=<file>
-                        Name of fio job file to use.  May be repeated.
+                        Name of fio job file to use.
 EOF
 }
 
@@ -168,10 +180,14 @@ EOF
 function process_options_fio() {
     local opt
     local -a unknown_opts=()
+    local fioblksize=
+    local fiopattern=
     for opt in "$@" ; do
 	read -r noptname1 noptname optvalue <<< "$(parse_option "$opt")"
 	case "$noptname1" in
-	    fiogenericoptions)	    ___fio_generic_options+=(${optvalue//,/ })     ;;
+	    fiopatterns)	    fiopattern=$optvalue		  ;;     
+	    fioblocksizes)	    fioblksize=$optvalue		  ;;     
+	    fiogenericoption)	    ___fio_generic_options+=("$optvalue") ;;
 	    fiojobfile)
 		if [[ ! -f "$optvalue" ]] ; then
 		    echo "Job file $optvalue does not exist"
@@ -185,10 +201,38 @@ function process_options_fio() {
     if [[ -n "${unknown_opts[*]:-}" ]] ; then
 	help "${unknown_opts[@]}"
     fi
+    if [[ -n "${fioblksize:-}" ]] ; then
+	readarray -t ___fio_blocksizes <<< "$(parse_size ${fioblksize//,/ })"
+    fi
+    if [[ -n "${fiopattern:-}" ]] ; then
+	___fio_patterns=(${fiopattern//,/ })
+    fi
 }
 
 function supports_reporting_fio() {
     :
+}
+
+function generate_metadata_fio() {
+    local -a jobs=()
+    local -i jobidx=1
+    local pattern
+    local -i blocksize
+    echo '"jobs": {'
+    for blocksize in "${___fio_blocksizes[@]}" ; do
+	for pattern in "${___fio_patterns[@]}" ; do
+	    jobs+=("$(cat <<EOF
+$(printf '"%03d-%s-%d"' $((jobidx)) "$pattern" "$blocksize"): {
+    "pattern": "$pattern",
+    "blocksize": $blocksize
+}
+EOF
+)")
+	    jobidx=$((jobidx+1))
+	done
+    done
+    (IFS=$',\n'; echo "${jobs[*]}")
+    echo '}'
 }
 
 function report_options_fio() {

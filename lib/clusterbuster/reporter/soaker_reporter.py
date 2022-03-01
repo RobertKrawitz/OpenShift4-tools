@@ -38,4 +38,4 @@ class soaker_reporter(ClusterBusterReporter):
         result['Iterations'] = row['work_iterations']
         result['Iterations/sec'] = self._safe_div(row['work_iterations'], row['data_elapsed_time'], 0)
         result['Iterations/CPU sec'] = self._safe_div(row['work_iterations'], row['cpu_time'], 0)
-        results[row['namespace']][row['pod']][row['container']][row['process_id']] = result
+        self._insert_into(results, [row['namespace'], row['pod'], row['container']], result)

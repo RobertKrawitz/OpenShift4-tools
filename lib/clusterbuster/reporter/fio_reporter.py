@@ -21,75 +21,66 @@ from lib.clusterbuster.reporter.ClusterBusterReporter import ClusterBusterReport
 class fio_reporter(ClusterBusterReporter):
     def __init__(self, jdata: dict, report_format: str):
         ClusterBusterReporter.__init__(self, jdata, report_format)
+        self._jobs = jdata['metadata']['workload_metadata']['jobs']
+        self._job_names = list(self._jobs.keys())
         self._fio_operations = ['read', 'write', 'trim']
         self._fio_vars = ['io_kbytes', 'total_ios', 'runtime',
                           'slat_ns.max', 'slat_ns.mean',
                           'clat_ns.max', 'clat_ns.mean',
                           'lat_ns.max', 'lat_ns.mean']
         accumulators = []
-        for op in self._fio_operations:
-            workload = f'results.jobs.{op}'
-            for var in self._fio_vars:
-                accumulators.append(f'{workload}.{var}')
-        accumulators.append('results.jobs.sync.total_ios')
-        accumulators.append('results.jobs.sync.lat_ns.max')
-        accumulators.append('results.jobs.sync.lat_ns.mean')
+        for job in self._job_names:
+            for op in self._fio_operations:
+                workload = f'results.{job}.job_results.jobs.{op}'
+                for var in self._fio_vars:
+                    accumulators.append(f'{workload}.{var}')
+            accumulators.append('results.{job}.job_results.jobs.sync.total_ios')
+            accumulators.append('results.{job}.job_results.jobs.sync.lat_ns.max')
+            accumulators.append('results.{job}.job_results.jobs.sync.lat_ns.mean')
         self._add_accumulators(accumulators)
-        self._set_header_components(['namespace', 'pod', 'container', 'operation'])
-        self._set_summary_header_components(['operation'])
+        self._set_header_components(['namespace', 'pod', 'container', 'job', 'operation'])
+        self._set_summary_header_components(['job', 'operation'])
 
-    def __update_report(self, dest: dict, source: dict, sample_row: dict = None):
-        if sample_row is None:
-            sample_row = source
-        for op in self._fio_operations:
-            if op not in dest:
-                dest[op] = {}
-            dest[op]['io_kbytes'] = self._fformat(source[op]['io_kbytes'], 0)
-            dest[op]['total_ios'] = self._fformat(source[op]['total_ios'], 0)
-            if 'runtime_counter' in source[op] and source[op]['runtime_counter'] > 0:
-                divisor = source[op]['runtime_counter']
-            else:
-                divisor = 1
-            dest[op]['runtime_sec'] = self._fformat(source[op]['runtime'] / divisor / 1000.0, 3)
-            dest[op]['io_mb/sec'] = self._safe_div(source[op]['io_kbytes'] / 1000.0,
-                                                   source[op]['runtime'] / divisor / 1000.0, 3)
-            dest[op]['slat_max_ms'] = self._fformat(source[op]['slat_ns']['max_max'] / 1000000.0, 3)
-            dest[op]['slat_mean_ms'] = self._fformat(source[op]['slat_ns']['mean'] / 1000000.0, 3)
-            dest[op]['clat_max_ms'] = self._fformat(source[op]['clat_ns']['max_max'] / 1000000.0, 3)
-            dest[op]['clat_mean_ms'] = self._fformat(source[op]['clat_ns']['mean'] / 1000000.0, 3)
-            dest[op]['lat_max_ms'] = self._fformat(source[op]['lat_ns']['max_max'] / 1000000.0, 3)
-            dest[op]['lat_mean_ms'] = self._fformat(source[op]['lat_ns']['mean'] / 1000000.0, 3)
+    def __update_report(self, dest: dict, source: dict, max_key: str, rows: int = 1):
+        for job in self._job_names:
+            if job not in dest:
+                dest[job] = {}
+            for op in self._fio_operations:
+                source1 = source[job]['job_results'][op]
+                if source1['io_kbytes'] > 0:
+                    if op not in dest:
+                        dest[job][op] = {}
+                    dest1 = dest[job][op]
+                    dest1['io_kbytes'] = self._fformat(source1['io_kbytes'], 0)
+                    dest1['total_ios'] = self._fformat(source1['total_ios'], 0)
+                    if 'runtime_counter' in source1 and source1['runtime_counter'] > 0:
+                        divisor = source1['runtime_counter']
+                    else:
+                        divisor = 1
+                    dest1['runtime_sec'] = self._fformat(source1['runtime'] / divisor / rows / 1000.0, 3)
+                    dest1['io_mb/sec'] = self._safe_div(source1['io_kbytes'] / 1000.0,
+                                                           source1['runtime'] / divisor / 1000.0, 3)
+                    dest1['slat_max_ms'] = self._fformat(source1['slat_ns'][max_key] / 1000000.0, 3)
+                    dest1['slat_mean_ms'] = self._fformat(source1['slat_ns']['mean'] / rows / 1000000.0, 3)
+                    dest1['clat_max_ms'] = self._fformat(source1['clat_ns'][max_key] / 1000000.0, 3)
+                    dest1['clat_mean_ms'] = self._fformat(source1['clat_ns']['mean'] / rows / 1000000.0, 3)
+                    dest1['lat_max_ms'] = self._fformat(source1['lat_ns'][max_key] / 1000000.0, 3)
+                    dest1['lat_mean_ms'] = self._fformat(source1['lat_ns']['mean'] / rows / 1000000.0, 3)
 
     def _generate_summary(self, results: dict):
         # I'd like to do this, but if the nodes are out of sync time-wise, this will not
         # function correctly.
         ClusterBusterReporter._generate_summary(self, results)
-        sample_row = self._jdata['Results'][0]['results']
+        sample_row = self._jdata['Results'][0]['results'][self._job_names[0]]['job_results']
         results['FIO version'] = sample_row['fio version']
-        results['Sub-jobs'] = len(sample_row['jobs'])
         for k, v in sample_row['global options'].items():
-            results[k] = v
-        self.__update_report(results, self._summary['results'], sample_row)
+            if k not in ['rw', 'bs']:
+                results[k] = v
+        self.__update_report(results, self._summary['results'], 'max_max', int(self._summary['total_instances']))
         results['FIO job file'] = base64.b64decode(self._jdata['metadata']['options']['workloadOptions']['fio_job_file']).decode()
 
     def _generate_row(self, results: dict, row: dict):
         ClusterBusterReporter._generate_row(self, results, row)
         result = {}
-        for op in self._fio_operations:
-            result[op] = {}
-            result[op]['io_kbytes'] = self._fformat(row['results'][op]['io_kbytes'], 0)
-            result[op]['total_ios'] = self._fformat(row['results'][op]['total_ios'], 0)
-            if 'runtime_counter' in row['results'][op] and row['results'][op]['runtime_counter'] > 0:
-                divisor = row['results'][op]['runtime_counter']
-            else:
-                divisor = 1
-            result[op]['runtime_sec'] = self._fformat(row['results'][op]['runtime'] / divisor / 1000.0, 3)
-            result[op]['io_mb/sec'] = self._safe_div(row['results'][op]['io_kbytes'] / 1000.0,
-                                                     row['results'][op]['runtime'] / divisor / 1000.0, 3)
-            result[op]['slat_max_ms'] = self._fformat(row['results'][op]['slat_ns']['max'] / 1000000.0, 3)
-            result[op]['slat_mean_ms'] = self._fformat(row['results'][op]['slat_ns']['mean'] / 1000000.0, 3)
-            result[op]['clat_max_ms'] = self._fformat(row['results'][op]['clat_ns']['max'] / 1000000.0, 3)
-            result[op]['clat_mean_ms'] = self._fformat(row['results'][op]['clat_ns']['mean'] / 1000000.0, 3)
-            result[op]['lat_max_ms'] = self._fformat(row['results'][op]['lat_ns']['max'] / 1000000.0, 3)
-            result[op]['lat_mean_ms'] = self._fformat(row['results'][op]['lat_ns']['mean'] / 1000000.0, 3)
-        results[row['namespace']][row['pod']][row['container']] = result
+        self.__update_report(result, row['results'], 'max')
+        self._insert_into(results, [row['namespace'], row['pod'], row['container']], result)

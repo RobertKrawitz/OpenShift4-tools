@@ -43,4 +43,4 @@ class server_reporter(ClusterBusterReporter):
         result['Data Rate (MB/sec)'] = self._safe_div(row['data_sent_bytes'] / 1000000, row['data_elapsed_time'], 3)
         result['Avg RTT msec'] = self._fformat(row['mean_latency_sec'], 3)
         result['Max RTT msec'] = self._fformat(row['max_latency_sec'], 3)
-        results[row['namespace']][row['pod']][row['container']] = result
+        self._insert_into(results, [row['namespace'], row['pod'], row['container']], result)

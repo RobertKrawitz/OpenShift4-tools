@@ -2,7 +2,6 @@
 # cannot be indented.
 
 [global]
-bs = 65536
 runtime = 10
 #ioengine = sync
 iodepth = 32

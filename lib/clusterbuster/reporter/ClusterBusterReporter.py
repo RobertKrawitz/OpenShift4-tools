@@ -285,6 +285,23 @@ class ClusterBusterReporter:
         return textwrap.fill(text, width=self._report_width, subsequent_indent='  ',
                              break_long_words=False, break_on_hyphens=False)
 
+    def _insert_into(self, results: dict, path: list, value):
+        """
+        Insert value into results at location specified by path,
+        creating missing keys as needed.
+        :param results: Dictionary into which value should be inserted
+        :param path: Path within directory where data should be inserted
+        :param value: What should be inserted
+        """
+
+        results1 = results
+        while len(path) > 1:
+            key = path.pop(0)
+            if key not in results1:
+                results1[key] = {}
+            results1 = results1[key]
+        results1[key] = value
+
     def __are_clients_all_on_same_node(self):
         """
         Determine whether all clients ran on the same node.  This is used to determine
@@ -532,23 +549,10 @@ class ClusterBusterReporter:
             headers = []
             if key in self._header_keys:
                 headers = self._header_keys[key]
-            print(f'{key}:', file=outfile)
-            self.__print_subreport(results[key], headers=headers, key_column=self._summary_indent, value_column=value_column,
-                                   depth_indentation=self._summary_indent, integer_width=integer_width, outfile=outfile)
-
-    def __make_result_tree(self, results: dict, row: dict, headers: list):
-        """
-        Create tree of results.
-
-        :param results: Result tree that is to be populated
-        :param row: Data row that is to be inserted
-        :param headers: Names of headers that are to be used as keys for rows
-        """
-        if len(headers) > 1:
-            hdr = headers.pop(0)
-            if row[hdr] not in results:
-                results[row[hdr]] = {}
-            self.__make_result_tree(results[row[hdr]], row, headers)
+            if len(results[key].keys()):
+                print(f'{key}:', file=outfile)
+                self.__print_subreport(results[key], headers=headers, key_column=self._summary_indent, value_column=value_column,
+                                       depth_indentation=self._summary_indent, integer_width=integer_width, outfile=outfile)
 
     def __create_text_report(self, outfile=sys.stdout):
         """
@@ -558,7 +562,7 @@ class ClusterBusterReporter:
         results['Overview'] = {}
         results['Overview']['Job Name'] = self._jdata['metadata']['job_name']
         results['Overview']['Start Time'] = self._jdata['metadata']['cluster_start_time']
-        if self._format == 'verbose':
+        if self._format == 'verbose' and len(self._rows):
             results['Detail'] = {}
             self._rows.sort(key=self.__row_name)
             for row in self._rows:
@@ -566,7 +570,6 @@ class ClusterBusterReporter:
                     header = deepcopy(self._header_keys['Detail'])
                 else:
                     header = []
-                self.__make_result_tree(results['Detail'], row, header)
                 self._generate_row(results['Detail'], row)
         if len(self._rows) > 0:
             results['Summary'] = {}

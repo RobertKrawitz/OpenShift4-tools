@@ -11,7 +11,8 @@ use File::Basename;
 my ($dir) = $ENV{'BAK_CONFIGMAP'};
 require "$dir/clientlib.pl";
 
-our ($namespace, $container, $basetime, $baseoffset, $poddelay, $crtime, $exit_at_end, $synchost, $syncport, $loghost, $logport, $processes, $rundir, $runtime, $jobfiles_dir, $fio_generic_args) = @ARGV;
+our ($namespace, $container, $basetime, $baseoffset, $poddelay, $crtime, $exit_at_end, $synchost, $syncport, $loghost, $logport,
+     $processes, $rundir, $runtime, $jobfiles_dir, $fio_blocksizes, $fio_patterns, $fio_generic_args) = @ARGV;
 
 my ($data_start_time, $data_end_time);
 $SIG{TERM} = sub() { docleanup() };
@@ -56,27 +57,60 @@ sub runit(;$) {
     my ($icputime);
     my ($interval) = 5;
     my ($dstime) = xtime();
+    my (@results);
+    my ($data_start_time);
 
     my $delaytime = $basetime + $poddelay - $dstime;
     if ($delaytime > 0) {
 	timestamp("Sleeping $delaytime seconds to synchronize");
 	usleep($delaytime * 1000000);
     }
-    do_sync($synchost, $syncport);
+    my (@sizes) = split(/ +/, $fio_blocksizes);
+    my (@patterns) = split(/ +/, $fio_patterns);
     my ($ucpu0, $scpu0) = cputime();
-    my ($answer0) = '';
-    timestamp("Running...");
-    my ($data_start_time) = xtime();
-    timestamp("fio $fio_generic_args --output-format=json+ $jobfile");
-    open(RUN, "-|", "fio $fio_generic_args --output-format=json+ $jobfile | jq -c .") || die "Can't run fio: $!\n";
-    while (<RUN>) {
-	$answer0 .= "$_";
+    my ($jobidx) = 1;
+    my ($jstring) = <<'EOF';
+"%s": {
+  "job_elapsed_time": %f,
+  "job_user_cpu_time": %f,
+  "job_system_cpu_time": %f,
+  "job_cpu_time": %f,
+  "job_results": %s
+}
+EOF
+    timestamp("Sizes: " . join(" ", @sizes));
+    timestamp("Patterns: " . join(" ", @patterns));
+    foreach my $size (@sizes) {
+	foreach my $pattern (@patterns) {
+	    my ($jobname) = sprintf("%03d-%s-%d", $jobidx, $pattern, $size);
+	    do_sync($synchost, $syncport);
+	    if ($jobidx == 1) {
+		timestamp("Running...");
+		$data_start_time = xtime();
+	    }
+	    my ($answer0) = '';
+	    timestamp("fio --rw=$pattern --bs=$size $fio_generic_args --output-format=json+ $jobfile");
+	    my ($jtime0) = xtime();
+	    my ($jucpu0, $jscpu0) = cputime();
+	    open(RUN, "-|", "fio --rw=$pattern --bs=$size $fio_generic_args --output-format=json+ $jobfile | jq -c .") || die "Can't run fio: $!\n";
+	    while (<RUN>) {
+		$answer0 .= "$_";
+	    }
+	    close(RUN);
+	    my ($jtime1) = xtime();
+	    my ($jucpu1, $jscpu1) = cputime();
+	    $jtime1 -= $jtime0;
+	    $jucpu1 -= $jucpu0;
+	    $jscpu1 -= $jscpu0;
+	    push @results, sprintf($jstring, $jobname, $jtime1, $jucpu1, $jscpu1, $jucpu1 + $jscpu1, $answer0);
+	    $jobidx++;
+	}
     }
-    close(RUN);
     my ($data_end_time) = xtime();
     my ($ucpu1, $scpu1) = cputime();
     $ucpu1 -= $ucpu0;
     $scpu1 -= $scpu0;
+    my ($all_results) = '{' . join(",\n", @results) . '}';
     my ($fstring) = <<'EOF';
 {
   "application": "clusterbuster-json",
@@ -99,8 +133,7 @@ EOF
     my ($answer) = sprintf($fstring, $namespace, $pod, $container, $$, $crtime - $basetime,
 			   $start_time - $basetime, $data_start_time - $basetime,
 			   $data_end_time - $basetime, $data_end_time - $data_start_time,
-			   $ucpu1, $scpu1, $ucpu1 + $scpu1,
-			   $answer0 eq '' ? '{}' : $answer0);
+			   $ucpu1, $scpu1, $ucpu1 + $scpu1, $all_results);
 
     do_sync($synchost, $syncport, $answer);
     if ($logport > 0) {

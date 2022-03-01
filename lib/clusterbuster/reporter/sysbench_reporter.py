@@ -67,4 +67,4 @@ class sysbench_reporter(ClusterBusterReporter):
         ClusterBusterReporter._generate_row(self, results, row)
         result = {}
         self.__update_report(result, row['workloads'])
-        results[row['namespace']][row['pod']][row['container']][row['process_id']] = result
+        self._insert_into(results, [row['namespace'], row['pod'], row['container'], row['process_id']], result)
