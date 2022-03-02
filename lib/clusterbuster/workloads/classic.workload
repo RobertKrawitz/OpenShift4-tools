@@ -68,7 +68,7 @@ function _create_deployment_classic_yaml() {
     if [[ $deployment_type = pod ]] ; then
 	local -i replica=0
 	while (( replica++ < replicas )) ; do
-	    local name="${namespace}-${instance}-${replica}"
+	    local name="${namespace}-classic-${instance}-${replica}"
 	    create_object -n "$namespace" "$name" <<EOF
 apiVersion: v1
 kind: Pod
@@ -85,7 +85,7 @@ $(create_spec _create_containers_classic_yaml "$@")
 EOF
 	done
     else
-	local name="${namespace}-${instance}{replica}"
+	local name="${namespace}-classic-${instance}"
 	create_object -n "$namespace" "$name" <<EOF
 apiVersion: apps/v1
 kind: Deployment
@@ -127,8 +127,6 @@ function create_deployment_classic() {
 function list_configmaps_classic() {
     cat <<EOF
 ${__podfile_dir__}/classic.pl
-${__podfile_dir__}/clientlib.pl
-${__podfile_dir__}/sync.pl
 EOF
 }
 

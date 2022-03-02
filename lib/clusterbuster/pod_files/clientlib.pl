@@ -1,5 +1,9 @@
 #!/usr/bin/perl
 
+use Time::HiRes qw(gettimeofday usleep);
+use Time::Piece;
+use File::Temp qw(:POSIX);
+
 sub cputime() {
     my (@times) = times();
     my ($usercpu) = $times[0] + $times[2];
@@ -62,9 +66,24 @@ sub connect_to($$) {
     return ($sock);
 }
 
+# Configmaps are mounted noexec, so we have to copy sync_to somewhere that is executable.
+if (! -f "/var/tmp/sync_to.pl") {
+    open(COPYIN, "<", $ENV{'BAK_CONFIGMAP'} . "/sync_to.pl") || die "Can't open sync_to.pl to copy out: $!\n";
+    open(COPYOUT, ">", "/var/tmp/sync_to.pl") || die "Can't open /var/tmp/sync_to.pl to copy in: $!\n";
+    while (<COPYIN>) {
+	print COPYOUT;
+    }
+    close(COPYIN);
+    close(COPYOUT) || die "Can't close /var/tmp/sync_to.pl: $!\n";
+    chmod(0555, "/var/tmp/sync_to.pl") || die "Can't chmod sync_to.pl: $!\n";
+}
+
 sub do_sync($$;$) {
     my ($addr, $port, $token) = @_;
     if (not $addr) { return; }
+    my ($fh) = undef;
+    my ($file) = undef;
+
     if ($addr eq '-') {
 	$addr=`ip route get 1 |awk '{print \$(NF-2); exit}'`;
 	chomp $addr;
@@ -74,34 +93,54 @@ sub do_sync($$;$) {
     } elsif (not $token) {
         $token = sprintf('%s-%d', $pod, rand() * 999999999);
     }
-    while (1) {
-	timestamp("Waiting for sync on $addr:$port");
-	my ($sync_conn) = connect_to($addr, $port);
-	my ($sbuf);
-	my ($token_length) = sprintf('0x%08x', length $token);
-	my ($tbuf) = "$token_length$token";
-	timestamp("Writing token $tbuf to sync");
-	my ($bytes_to_write) = length $tbuf;
-	my ($offset) = 0;
-	my ($answer);
-	while ($bytes_to_write > 0) {
-	    $answer = syswrite($sync_conn, $tbuf, length $tbuf, $offset);
-	    if ($answer <= 0) {
-		timestamp("Write token failed: $!");
-		exit(1);
-	    } else {
-		$bytes_to_write -= $answer;
-		$offset += $answer;
-	    }
+    if (length $token > 64) {
+	($fh, $file) = tmpnam();
+	print $fh $token;
+	close $fh;
+    }
+    my $fh;
+    if (defined $file) {
+	open($fh, "-|", "/var/tmp/sync_to.pl", "-t", $file, $addr, $port) || die "Can't sync: $!\n";
+    } else {
+	open($fh, "-|", "/var/tmp/sync_to.pl", $addr, $port, $token) || die "Can't sync: $!\n";
+    }
+    my ($answer);
+    while (<$fh>) {
+	$answer .= $_;
+    }
+    if (! close $fh) {
+	if ($? == 0) {
+	    timestamp("Sync failed: $?");
 	}
-	$answer = sysread($sync_conn, $sbuf, 1024);
-	my ($str) = sprintf("Got sync (%s, %d, %s)!", $answer, length $sbuf, $!);
-	if ($!) {
-	    timestamp("$str, retrying");
-	} else {
-	    timestamp("$str, got sync");
-	    return;
-        }
+    }
+    return $answer;
+}
+
+sub run_cmd_to_stderr(@) {
+    my (@cmd) = @_;
+    timestamp("@cmd output");
+    if (open(my $fh, "-|", @cmd)) {
+	while (<$fh>) {
+	    print STDERR "$cmd[0] $_";
+	}
+	close($fh)
+    } else {
+	timestamp("Can't run $cmd[0]");
+    }
+}
+
+sub finish() {
+    run_cmd_to_stderr("lscpu");
+    run_cmd_to_stderr("dmesg");
+    if ($exit_at_end) {
+	timestamp("About to exit");
+	while (wait() > 0) {}
+	timestamp("Done waiting");
+	print STDERR "FINIS\n";
+	POSIX::_exit(0);
+    } else {
+	timestamp("Waiting forever");
+	pause();
     }
 }
 

@@ -13,3 +13,4 @@ containers = 3
 antiaffinity
 #targetdatarate = 10MB
 workloadruntime=20
+exit_at_end

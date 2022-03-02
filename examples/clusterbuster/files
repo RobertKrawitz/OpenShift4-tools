@@ -11,3 +11,5 @@ precleanup=1
 no-report-object-creation
 deps-per-namespace=8
 namespaces=1
+exit_at_end
+

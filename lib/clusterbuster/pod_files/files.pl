@@ -211,8 +211,4 @@ if ($processes > 1) {
 } else {
     runit(0);
 }
-print STDERR "FINIS\n";
-timestamp("Waiting for all processes to exit...");
-while (wait() > 0) {}
-timestamp("Done waiting");
-POSIX::_exit(0);
+finish();

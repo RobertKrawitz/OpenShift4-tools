@@ -111,13 +111,5 @@ if ($processes > 1) {
 } else {
     runit();
 }
-print STDERR "FINIS\n";
-if ($exit_at_end) {
-    timestamp("About to exit");
-    while (wait() > 0) {}
-    timestamp("Done waiting");
-    POSIX::_exit(0);
-} else {
-    timestamp("Waiting forever");
-    pause()
-}
+
+finish();

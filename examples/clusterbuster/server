@@ -10,3 +10,4 @@ no-report-object-creation
 deps-per-namespace=2
 namespaces=4
 replicas=3
+exit_at_end

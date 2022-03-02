@@ -6,3 +6,4 @@ cleanup
 workload = pausepod
 deployments = 15
 namespaces = 1000
+exit_at_end

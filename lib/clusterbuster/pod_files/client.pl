@@ -170,7 +170,5 @@ if ($syncport) {
 if ($logport > 0) {
     do_sync($loghost, $logport, $results);
 }
-if (! $exit_at_end) {
-    pause();
-}
-exit 0;
+
+finish();

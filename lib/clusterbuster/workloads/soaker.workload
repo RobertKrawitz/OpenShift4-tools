@@ -123,8 +123,6 @@ function create_deployment_soaker() {
 function list_configmaps_soaker() {
     cat <<EOF
 ${__podfile_dir__}/cpusoaker.pl
-${__podfile_dir__}/clientlib.pl
-${__podfile_dir__}/sync.pl
 EOF
 }
 

@@ -83,7 +83,7 @@ function _create_deployment_simple_yaml() {
     if [[ $deployment_type = pod ]] ; then
 	local -i replica=0
 	while (( replica++ < replicas )) ; do
-	    local name="${namespace}-${instance}-${replica}"
+	    local name="${namespace}-${requested_workload}-${instance}-${replica}"
 	    create_object -n "$namespace" "$name" <<EOF
 apiVersion: v1
 kind: Pod
@@ -99,7 +99,7 @@ $(create_spec _create_containers_${requested_workload}_yaml "$@")
 EOF
 	done
     else
-	local name="${namespace}-${instance}{replica}"
+	local name="${namespace}-${requested_workload}-${instance}"
 	create_object -n "$namespace" "$name" <<EOF
 apiVersion: apps/v1
 kind: Deployment
@@ -140,7 +140,6 @@ function _create_deployment_simple() {
 
 function list_configmaps_log() {
     cat <<EOF
-${__podfile_dir__}/clientlib.pl
 ${__podfile_dir__}/logger.pl
 EOF
 }

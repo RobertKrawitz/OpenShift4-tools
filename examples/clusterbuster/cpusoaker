@@ -9,3 +9,4 @@ no-report-object-creation
 deps-per-namespace=8
 processes=3
 namespaces=1
+exit_at_end

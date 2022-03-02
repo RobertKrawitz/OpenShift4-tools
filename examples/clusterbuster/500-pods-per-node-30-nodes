@@ -5,3 +5,4 @@ precleanup
 cleanup
 workload = pausepod
 deployments = 15000
+exit_at_end
