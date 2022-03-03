@@ -126,7 +126,6 @@ declare container_image=quay.io/rkrawitz/bench-army-knife
 
 declare accumulateddata=
 declare -a plurals=('s' '')
-declare KUBECTL_VALIDATE=
 declare artifactdir=
 declare -a saved_argv=("$0" "$@")
 declare -a processed_options=("$0")
@@ -147,8 +146,6 @@ function warn() {
 
 if [[ -z "$OC" ]] ; then
     fatal "Can't find kubectl or oc"
-elif [[ $OC = 'kubectl'* ]] ; then
-    KUBECTL_VALIDATE=--validate=false
 fi
 
 declare __me__
@@ -1688,7 +1685,7 @@ EOF
 
 function really_create_objects() {
     if [[ $doit -ne 0 && -n $accumulateddata ]] ; then
-	(_OC ${KUBECTL_VALIDATE} apply -f - <<< "$accumulateddata" | timestamp 1>&2) || exit 1
+	(_OC --validate=false apply -f - <<< "$accumulateddata" | timestamp 1>&2) || exit 1
 	accumulateddata=
 	objs_item_count=0
     fi
