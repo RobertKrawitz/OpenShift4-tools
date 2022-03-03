@@ -82,8 +82,7 @@ apiVersion: v1
 kind: Pod
 metadata:
   name: ${namespace}-sysbench-${instance}
-$(indent 2 namespace_yaml "$namespace")
-$(indent 2 privilege_yaml)
+$(indent 2 standard_all_metadata_yaml "$namespace" client)
   selector:
     matchLabels:
       app: ${namespace}-sysbench-${instance}
@@ -97,8 +96,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: ${namespace}-sysbench-$instance
-$(indent 2 namespace_yaml "$namespace")
-$(indent 2 privilege_yaml)
+$(indent 2 standard_deployment_metadata_yaml "$namespace" client)
 $(indent 2 standard_labels_yaml)
 spec:
   replicas: 1
@@ -110,6 +108,7 @@ spec:
   template:
     metadata:
 $(indent 6 standard_labels_yaml sysbench "$namespace" "$instance" 1)
+$(indent 6 standard_pod_metadata_yaml "$namespace" client)
 $(indent 4 create_spec _create_containers_sysbench_yaml "$@")
 EOF
     fi
