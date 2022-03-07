@@ -59,7 +59,7 @@ class fio_reporter(ClusterBusterReporter):
                         divisor = 1
                     dest1['runtime_sec'] = self._fformat(source1['runtime'] / divisor / rows / 1000.0, 3)
                     dest1['io_mb/sec'] = self._safe_div(source1['io_kbytes'] / 1000.0,
-                                                           source1['runtime'] / divisor / 1000.0, 3)
+                                                        source1['runtime'] / divisor / 1000.0, 3)
                     dest1['slat_max_ms'] = self._fformat(source1['slat_ns'][max_key] / 1000000.0, 3)
                     dest1['slat_mean_ms'] = self._fformat(source1['slat_ns']['mean'] / rows / 1000000.0, 3)
                     dest1['clat_max_ms'] = self._fformat(source1['clat_ns'][max_key] / 1000000.0, 3)

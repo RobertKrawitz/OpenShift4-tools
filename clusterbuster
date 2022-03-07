@@ -116,6 +116,7 @@ declare prometheus_ending_timestamp=
 declare -i target_data_rate=0
 declare metrics_file=
 declare job_name=
+# shellcheck disable=2155
 declare -i job_start_time=$(date +%s)
 declare debug=
 declare global_sync_service=
@@ -563,8 +564,8 @@ function parse_option() {
     local option=$1
     option=${option## }
     option=${option%% }
-    if [[ option =~ ^([^=]+)\ *=\ *([^\ ].*)? ]] ; then
-	option="${BASH_REMATCH[1]}={BASH_REMATCH[2]}"
+    if [[ $option =~ ^([^=]+)\ *=\ *([^\ ].*)? ]] ; then
+	option="${BASH_REMATCH[1]}=${BASH_REMATCH[2]}"
     fi
     [[ -n "$option" ]] || return
     local optname
@@ -594,6 +595,7 @@ function process_pin_node() {
 	local node=${nodespec#*=}
 	local class=${nodespec%%=*}
 	class=${class//,/ }
+	# shellcheck disable=SC2206
 	local -a classes=($class)
 	for class in "${classes[@]}" ; do
 	    pin_nodes[$class]="$node"
@@ -1132,7 +1134,8 @@ function _get_logs_poll() {
 }
 
 function get_logs_poll() {
-    local tfile=$(mktemp -t '_clusterbusterlogs.XXXXXXXXXX')
+    local tfile
+    tfile=$(mktemp -t '_clusterbusterlogs.XXXXXXXXXX')
     trap 'rm -f "$tfile"; echo "Status: Fail"' INT TERM HUP USR1 USR2
     _get_logs_poll "$@" > "$tfile"
     local status=$?
@@ -1542,11 +1545,12 @@ function annotations_yaml() {
     echo "annotations:"
     for annotation in "${pod_annotations[@]}" ; do
 	if [[ $annotation =~ ^:([^:]*):(.*)$ ]] ; then
-	    local classes=${BASH_REMATCH[1]//,/ }
+	    # shellcheck disable=SC2206
+	    local -a classes=(${BASH_REMATCH[1]//,/ })
 	    annotation=${BASH_REMATCH[2]:-}
 	    local class
 	    local -i class_found=0
-	    for class in $classes ; do
+	    for class in "${classes[@]}" ; do
 		if [[ $desired_class = "$class" ]] ; then
 		    class_found=1
 		    break

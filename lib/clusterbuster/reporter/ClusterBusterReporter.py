@@ -98,9 +98,9 @@ class ClusterBusterReporter:
         results['Elapsed Time Average'] = f"{self._summary['elapsed_time_average']:.{3}f}"
         results['Pod creation interval'] = f"{self._summary['pod_create_interval']:.5f}"
         results['Average pods created/sec'] = self._safe_div(self._summary['total_instances'],
-                                                           (self._summary['last_pod_create'] -
-                                                            self._summary['first_pod_create']),
-                                                           precision=3, as_string=True)
+                                                             (self._summary['last_pod_create'] -
+                                                              self._summary['first_pod_create']),
+                                                             precision=3, as_string=True)
         results['User CPU seconds'] = f"{self._summary['user_cpu_time']:.3f}"
         results['System CPU seconds'] = f"{self._summary['system_cpu_time']:.3f}"
         results['CPU seconds'] = f"{self._summary['cpu_time']:.3f}"
@@ -285,7 +285,7 @@ class ClusterBusterReporter:
                 return self._fformat(result, precision)
             else:
                 return round(result, precision)
-        except Exception as exc:
+        except Exception:
             return 'N/A'
 
     def _wrap_text(self, text: str):
@@ -553,10 +553,11 @@ class ClusterBusterReporter:
                 integer_indent = integer_width - nwidth
             value = str(value)
             if "\n" in value:
-                value = textwrap.indent(value, prefix = ' ' * (key_column + 2))
+                value = textwrap.indent(value, prefix=' ' * (key_column + 2))
                 print(f'{" " * key_column}{key}:\n{value}', file=outfile)
             else:
-                print(f'{" " * key_column}{key}: {" " * (value_column + integer_indent - key_column - len(key))}{value}', file=outfile)
+                print(f'{" " * key_column}{key}: {" " * (value_column + integer_indent - key_column - len(key))}{value}',
+                      file=outfile)
         if len(header_keys) == 0:
             print('', file=outfile)
 
@@ -593,10 +594,6 @@ class ClusterBusterReporter:
             results['Detail'] = {}
             self._rows.sort(key=self.__row_name)
             for row in self._rows:
-                if 'Detail' in self._header_keys:
-                    header = deepcopy(self._header_keys['Detail'])
-                else:
-                    header = []
                 self._generate_row(results['Detail'], row)
         if len(self._rows) > 0:
             results['Summary'] = {}
