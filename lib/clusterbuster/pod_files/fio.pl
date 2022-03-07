@@ -175,4 +175,4 @@ if ($processes > 1) {
     runall();
 }
 
-finish();
+finish($exit_at_end);

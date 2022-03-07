@@ -112,4 +112,4 @@ if ($processes > 1) {
     runit();
 }
 
-finish();
+finish($exit_at_end);

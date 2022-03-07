@@ -10,7 +10,7 @@ use File::Basename;
 my ($dir) = $ENV{'BAK_CONFIGMAP'};
 require "$dir/clientlib.pl";
 
-our ($namespace, $container, $basetime, $baseoffset, $poddelay, $crtime, $sync_host, $sync_port, $log_host, $log_port, $dirs, $files_per_dir, $blocksize, $block_count, $processes, @dirs) = @ARGV;
+our ($namespace, $container, $basetime, $baseoffset, $poddelay, $crtime, $exit_at_end, $sync_host, $sync_port, $log_host, $log_port, $dirs, $files_per_dir, $blocksize, $block_count, $processes, @dirs) = @ARGV;
 my ($start_time, $elapsed_time, $end_time, $user, $sys, $cuser, $csys);
 
 $SIG{TERM} = sub { POSIX::_exit(0); };
@@ -211,4 +211,4 @@ if ($processes > 1) {
 } else {
     runit(0);
 }
-finish();
+finish($exit_at_end);

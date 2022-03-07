@@ -75,4 +75,4 @@ while ((my $pid = wait()) >= 0) {
 }
 timestamp("Done!");
 
-finish();
+finish(1);

@@ -129,7 +129,8 @@ sub run_cmd_to_stderr(@) {
     }
 }
 
-sub finish() {
+sub finish($) {
+    my ($exit_at_end) = @_;
     run_cmd_to_stderr("lscpu");
     run_cmd_to_stderr("dmesg");
     if ($exit_at_end) {
