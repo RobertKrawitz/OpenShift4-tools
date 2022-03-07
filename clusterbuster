@@ -108,13 +108,17 @@ declare pbench_controller_address=
 declare -i processes_per_pod=1
 declare -i emptydir_volumes=0
 declare -i take_prometheus_snapshot=0
+declare first_start_timestamp=
 declare prometheus_starting_timestamp=
+declare prometheus_exact_starting_timestamp=
+declare second_start_timestamp=
 declare prometheus_ending_timestamp=
 declare -i target_data_rate=0
 declare metrics_file=
 declare job_name=
 declare -i job_start_time=$(date +%s)
 declare debug=
+declare global_sync_service=
 
 declare -r sync_flag_file="/tmp/syncfile";
 # shellcheck disable=2155
@@ -913,7 +917,7 @@ function _OC() {
 function get_sync() {
     if (( sync_start )) ; then
 	if [[ ${1:-} != -q ]] ; then
-	    echo "${sync_host:-service-${namespace}-sync}:$sync_port"
+	    echo "${global_sync_service}:$sync_port"
 	fi
 	return 0
     else
@@ -926,8 +930,12 @@ function create_sync_service_if_needed() {
     local sync_count=$2
     local sync_clients=$3
     if get_sync -q ; then
-	create_service "$namespace" "${namespace}-sync" "$sync_port"
-	create_sync_deployment "$namespace" "$sync_count" "$sync_clients"
+	if [[ $namespace = "${namespaces_to_create[0]:-}" ]] ; then
+	    create_service "$namespace" "${namespace}-sync" "$sync_port"
+	    create_sync_deployment "$namespace" "$sync_count" $((sync_clients * ${#namespaces_to_create[@]}))
+	else
+	    create_external_service "$namespace" "${namespace}-sync" "$sync_port" "$global_sync_service"
+	fi
     fi
 }
 
@@ -936,7 +944,8 @@ function create_sync_service_if_needed() {
 ################################################################
 
 function get_prometheus_pod_timestamp() {
-    _OC exec -n openshift-monitoring prometheus-k8s-0 -c prometheus -- /bin/sh -c 'date +%s'
+    local format=${1:-%s}
+    _OC exec -n openshift-monitoring prometheus-k8s-0 -c prometheus -- /bin/sh -c "date '+$format'"
 }
 
 function readable_timestamp() {
@@ -944,12 +953,19 @@ function readable_timestamp() {
     date -u '+%Y_%m_%dT%H_%M_%S%z' ${rawtime:+"--date=@$rawtime"}
 }
 
+function set_start_timestamps() {
+    first_start_timestamp=$(date +%s.%N)
+    prometheus_exact_starting_timestamp=$(get_prometheus_pod_timestamp '%s.%N')
+    prometheus_starting_timestamp=${prometheus_exact_starting_timestamp%%.*}
+    second_start_timestamp=$(date +%s.%N)
+}
+
 function start_prometheus_snapshot() {
     ((doit)) || return 0
     echo "Starting Prometheus snapshot" | echo_if_desired 1>&2
     _OC delete pod -n openshift-monitoring prometheus-k8s-0
     _OC wait --for=condition=Ready -n openshift-monitoring pod/prometheus-k8s-0 || fatal "Prometheus pod did not go ready"
-    prometheus_starting_timestamp=$(get_prometheus_pod_timestamp)
+    set_start_timestamps
     # Wait for prometheus pod to fully initialize
     sleep 60
     echo "Prometheus snapshot started" | echo_if_desired 1>&2
@@ -1206,6 +1222,9 @@ function _get_logs() {
 {
 "metadata": {
   "kind": "clusterbusterResults",
+  "controller_first_start_timestamp": $first_start_timestamp,
+  "cluster_start_timestamp": $prometheus_exact_starting_timestamp,
+  "controller_second_start_timestamp": $second_start_timestamp,
   "cluster_start_time": "$(readable_timestamp "${prometheus_starting_timestamp}")",
   "job_name": "$job_name",
   "run_uuid": "$run_uuid",
@@ -1857,6 +1876,26 @@ spec:
 EOF
 }
 
+function create_external_service() {
+    local namespace=$1
+    local deployment=$2
+    local portnum=$3
+    local external_name=$4
+    create_object -t Service -n "$namespace" "service-${deployment}" <<EOF
+apiVersion: v1
+kind: Service
+metadata:
+  name: "service-${deployment}"
+$(indent 2 namespace_yaml "$namespace")
+$(indent 2 standard_labels_yaml)
+spec:
+  ports:
+  - port: $portnum
+  type: ExternalName
+  externalName: $external_name
+EOF
+}
+
 function create_container_sync() {
     local namespace=$1
     local sync_count=${4:-1}
@@ -1940,13 +1979,9 @@ function create_objects_n() {
     local rotor=$1; shift
     local sleeptime=$1; shift
     while (( rotor < namespaces )) ; do
-	local j=0
-	while (( j < objs_per_call && j + rotor < namespaces )) ; do
-	    "create_${objtype}" "${namespaces_to_create[$((rotor + j))]}" "$@"
-	    if (( sleeptime )) ; then sleep "$sleeptime"; fi
-	    j=$((j+1))
-	done
-	rotor=$((rotor + (parallel * objs_per_call)))
+	"create_${objtype}" "${namespaces_to_create[$rotor]}" "$@"
+	if (( sleeptime )) ; then sleep "$sleeptime"; fi
+	rotor=$((rotor + parallel))
     done
     really_create_objects
 }
@@ -1993,7 +2028,7 @@ function create_all_namespaces() {
     local i
     trap 'kill -9 $(jobs -p); exit' INT
     for i in $(seq 0 "$((parallel_namespaces - 1))") ; do
-	create_objects_n namespace "$parallel_namespaces" "$objs_per_call_namespaces" "$((i * objs_per_call_namespaces))" "$sleep_between_namespaces" &
+	create_objects_n namespace "$parallel_namespaces" "$objs_per_call_namespaces" "$i" "$sleep_between_namespaces" &
     done
     wait || exit 1
 }
@@ -2002,7 +2037,7 @@ function create_all_secrets() {
     local i
     trap 'kill -9 $(jobs -p); exit' INT
     for i in $(seq 0 "$((parallel_secrets - 1))") ; do
-	create_objects_n secrets "$parallel_secrets" "$objs_per_call_secrets" "$((i * objs_per_call_secrets))" "$sleep_between_secrets" "$deps_per_namespace" "$secrets" &
+	create_objects_n secrets "$parallel_secrets" "$objs_per_call_secrets" "$i" "$sleep_between_secrets" "$deps_per_namespace" "$secrets" &
     done
     wait || exit 1
 }
@@ -2013,7 +2048,7 @@ function create_system_configmap() {
 	readarray -t systemfiles < <(list_configmaps)
 	trap 'kill -9 $(jobs -p); exit' INT
 	for i in $(seq 0 "$((parallel_configmaps - 1))") ; do
-	    create_objects_n configmaps "$parallel_configmaps" "$objs_per_call_configmaps" "$((i * objs_per_call_configmaps))" "$sleep_between_configmaps" "systemconfigmap" "${systemfiles[@]}"&
+	    create_objects_n configmaps "$parallel_configmaps" "$objs_per_call_configmaps" "$i" "$sleep_between_configmaps" "systemconfigmap" "${systemfiles[@]}"&
 	done
 	wait || exit 1
     fi
@@ -2025,7 +2060,7 @@ function create_all_configmaps() {
     local i
     trap 'kill -9 $(jobs -p); exit' INT
     for i in $(seq 0 "$((parallel_configmaps - 1))") ; do
-	create_objects_n configmaps "$parallel_configmaps" "$objs_per_call_configmaps" "$((i * objs_per_call_configmaps))" "$sleep_between_configmaps" "configmap" "${configmap_files[@]}"&
+	create_objects_n configmaps "$parallel_configmaps" "$objs_per_call_configmaps" "$i" "$sleep_between_configmaps" "configmap" "${configmap_files[@]}"&
     done
     wait || exit 1
 }
@@ -2034,8 +2069,7 @@ function create_all_deployments() {
     local i
     trap 'kill -9 $(jobs -p); exit' INT
     for i in $(seq 0 "$((parallel_deployments - 1))") ; do
-	export PARALLEL_ROTOR=$i
-	create_objects_n deployment "$parallel_deployments" "$objs_per_call_deployments" "$((i * objs_per_call_deployments))" "$sleep_between_deployments" "$deps_per_namespace" "$secrets" "$replicas" "$containers_per_pod" "$log_host" "$log_port" &
+	create_objects_n deployment "$parallel_deployments" "$objs_per_call_deployments" "$i" "$sleep_between_deployments" "$deps_per_namespace" "$secrets" "$replicas" "$containers_per_pod" "$log_host" "$log_port" &
     done
     wait || exit 1
 }
@@ -2114,7 +2148,7 @@ function create_secrets_top_level() {
     if (( doit )) ; then
 	local secname=""
 	while (( ${#expected_secrets[@]} )) ; do
-	    echo "Expect ${#secrets[@]}" 1>&2
+	    echo "Expect ${#expected_secrets[@]}" 1>&2
 	    while read -r secname ; do
 		[[ -n "${secname:-}" ]] && unset "expected_secrets[$secname]"
 	    done < <(_OC get secret -oname --no-headers -l "$basename" -A)
@@ -2212,7 +2246,7 @@ function run_clusterbuster_1() {
     if [[ $take_prometheus_snapshot -gt 0 && -n "$artifactdir" ]] ; then
 	start_prometheus_snapshot
     else
-	prometheus_starting_timestamp=$(get_prometheus_pod_timestamp)
+	set_start_timestamps
     fi
     if [[ $doit -gt 0 && -n "${artifactdir:-}" ]] ; then
 	artifactdir=${artifactdir//%s/$(readable_timestamp "$prometheus_starting_timestamp")}
@@ -2226,6 +2260,13 @@ function run_clusterbuster_1() {
     find_first_deployment
     trap 'if [[ -n "$(jobs -p)" ]] ; then kill -INT $(jobs -p); fi; exit' INT
     create_all_objects namespaces
+    if get_sync -q ; then
+	if [[ $use_namespaces ]] ; then
+	    global_sync_service="service-${namespaces_to_create[0]}-sync.${namespaces_to_create[0]}.svc.cluster.local"
+	else
+	    global_sync_service="service-${basename}-0-sync"
+	fi
+    fi
 
     (( ${#configmap_files[@]} )) && check_configmaps "${configmap_files[@]}"
     create_all_objects configmaps
@@ -2294,10 +2335,10 @@ if (( namespaces <= 0 )) ; then
     namespaces=1
     use_namespaces=0
 fi
-(( !parallel_configmaps )) && parallel_configmaps=$parallel
-(( !parallel_secrets )) && parallel_secrets=$parallel
-(( !parallel_namespaces )) && parallel_namespaces=$parallel
-(( !parallel_deployments )) && parallel_deployments=$parallel
+(( parallel_configmaps )) || parallel_configmaps=$parallel
+(( parallel_secrets )) || parallel_secrets=$parallel
+(( parallel_namespaces )) || parallel_namespaces=$parallel
+(( parallel_deployments )) || parallel_deployments=$parallel
 
 (( !objs_per_call_configmaps )) && objs_per_call_configmaps=$objs_per_call
 (( !objs_per_call_secrets )) && objs_per_call_secrets=$objs_per_call

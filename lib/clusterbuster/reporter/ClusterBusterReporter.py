@@ -104,6 +104,19 @@ class ClusterBusterReporter:
         results['User CPU seconds'] = f"{self._summary['user_cpu_time']:.3f}"
         results['System CPU seconds'] = f"{self._summary['system_cpu_time']:.3f}"
         results['CPU seconds'] = f"{self._summary['cpu_time']:.3f}"
+        start_time_uncertainty = None
+        if 'controller_first_start_timestamp' in self._jdata['metadata']:
+            start_time_offset = (self._jdata['metadata']['cluster_start_timestamp'] -
+                                 self._jdata['metadata']['controller_second_start_timestamp'])
+            start_time_uncertainty = (self._jdata['metadata']['controller_second_start_timestamp'] -
+                                      self._jdata['metadata']['controller_first_start_timestamp'])
+        else:
+            start_time_offset = self._summary['first_pod_start']
+        for var in self._timeline_vars:
+            self.__normalize_timeline_val(var, self._summary, start_time_offset)
+        results['Start time offset'] = f"{start_time_offset:.3f}"
+        if start_time_uncertainty is not None:
+            results['Start time uncertainty'] = f"{start_time_uncertainty:.3f}"
         if self._all_clients_are_on_the_same_node:
             results['CPU utilization'] = self._safe_div(self._summary['cpu_time'],
                                                         self._summary['data_run_interval'], 5, as_string=True)
@@ -390,6 +403,20 @@ class ClusterBusterReporter:
                 summary[f'first_{var}'] = row_val
             if f'last_{var}' not in summary or row_val > summary[f'last_{var}']:
                 summary[f'last_{var}'] = row_val
+
+    def __normalize_timeline_val(self, var: str, summary: dict, offset: float):
+        """
+        Normalize a timeline variable to the initial offset between host and pod
+        :param var: Name of variable to update
+        :param summary: Summary of report
+        :param offset: Starting time offset
+        """
+        components = var.split('.', 1)
+        if len(components) > 1:
+            self.__normalize_timeline_val(components[1], summary[components[0]], offset)
+        else:
+            summary[f'first_{var}'] -= offset
+            summary[f'last_{var}'] -= offset
 
     def __update_accumulator_val(self, var: str, row, summary, rowhash: dict):
         """
