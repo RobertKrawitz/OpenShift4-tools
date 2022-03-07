@@ -50,7 +50,7 @@ $(indent 2 container_resources_yaml)
     value: "$verbose"
 $(indent 2 bootstrap_command_yaml fio.pl)
   - "$namespace"
-  - "c${j}"
+  - "c${container}"
   - "$basetime"
   - "$baseoffset"
   - "$poddelay"

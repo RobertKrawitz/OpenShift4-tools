@@ -53,7 +53,7 @@ $(indent 2 bootstrap_command_yaml classic.pl)
   - "$sync_port_num"
   - "$log_host"
   - "$log_port"
-  - "$___classic_pod_sleep_time"
+  - "${workload_runtime:-10}"
 $(indent 2 volume_mounts_yaml "$namespace" "${instance}" "$secret_count")
 EOF
     done
@@ -137,40 +137,10 @@ function calculate_logs_required_classic() {
     echo $((namespaces * containers_per_pod * replicas * deps_per_namespace))
 }
 
-function help_options_classic() {
-    cat <<EOF
-    Classic Options:
-       --classic-pod-sleep-time=<seconds>
-                        Number of seconds pods should sleep before
-                        exiting.  Default infinity.
-EOF
-}
-
 function document_classic() {
     cat <<'EOF'
 * classic: a simple pod based on busybox that logs the date
   once per minute.  Useful for testing the control plane.
-EOF
-}
-
-function process_options_classic() {
-    local opt
-    local -a unknown_opts
-    for opt in "$@" ; do
-	read -r noptname1 noptname optvalue <<< "$(parse_option "$opt")"
-	case "$noptname1" in
-	    classicpodsleeptime) ___classic_pod_sleep_time=$optvalue ;;
-	    *) 			unknown_opts+=("$noptname ($noptname1)") ;;
-	esac
-    done
-    if [[ -n "${unknown_opts[*]:-}" ]] ; then
-	help "${unknown_opts[@]}"
-    fi
-}
-
-function report_options_classic() {
-    cat <<EOF
-"classic_pod_sleep_time": $___classic_pod_sleep_time
 EOF
 }
 

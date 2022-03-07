@@ -54,6 +54,7 @@ $(indent 2 bootstrap_command_yaml files.pl)
   - "$baseoffset"
   - "$poddelay"
   - "$(ts)"
+  - "$exit_at_end"
   - "$sync_service"
   - "$sync_port_num"
   - "$log_host"
