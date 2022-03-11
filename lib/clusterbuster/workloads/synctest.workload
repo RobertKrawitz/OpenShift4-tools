@@ -1,0 +1,189 @@
+#!/bin/bash
+
+# Copyright 2019-2022 Robert Krawitz/Red Hat
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+################################################################
+# Sysbench workload
+################################################################
+
+# Sysbench options
+declare -g ___synctest_count=5
+declare -g ___synctest_cluster_count=1
+declare -g ___synctest_sleep=0
+
+function _create_containers_synctest_yaml() {
+    local namespace=$1
+    local instance=$2
+    local secret_count=$3
+    local -i processes=$4
+    local -i containers_per_pod=$5
+    local log_host=${6:-}
+    local -i log_port=${7:-0}
+    local -i container
+    local sync_service=
+    local sync_port_num=
+    IFS=: read -r sync_service sync_port_num <<< $(get_sync)
+    # shellcheck disable=2031
+    local workdir=${common_workdir:-${emptydirs[0]:-/tmp}}
+    for container in $(seq 0 $((containers_per_pod - 1))) ; do
+	cat <<EOF
+- name: "c${container}"
+  image_pull_policy: $image_pull_policy
+  image: "$container_image"
+$(indent 2 container_resources_yaml)
+  env:
+  - name: VERBOSE
+    value: "$verbose"
+$(indent 2 bootstrap_command_yaml synctest.pl)
+  - "$namespace"
+  - "c${container}"
+  - "$basetime"
+  - "$baseoffset"
+  - "$(ts)"
+  - "$processes"
+  - "$exit_at_end"
+  - "$sync_service"
+  - "$sync_port_num"
+  - "$log_host"
+  - "$log_port"
+  - "$___synctest_count"
+  - "$___synctest_cluster_count"
+  - "$___synctest_sleep"
+$(indent 2 volume_mounts_yaml "$namespace" "$instance" "$secret_count")
+EOF
+    done
+}
+
+function _create_synctest_deployment() {
+    local namespace=$1
+    local instance=$2
+    local secret_count=$3
+    local name=${namespace}-synctest-${instance}
+    if [[ $deployment_type = pod ]] ; then
+	create_object -n "$namespace" "$name" <<EOF
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ${namespace}-synctest-${instance}
+$(indent 2 standard_all_metadata_yaml "$namespace" client)
+  selector:
+    matchLabels:
+      app: ${namespace}-synctest-${instance}
+$(indent 2 standard_labels_yaml synctest "$namespace" "$instance" 1)
+$(create_spec _create_containers_synctest_yaml "$@")
+  restartPolicy: Never
+EOF
+    else
+	create_object -n "$namespace" "$name" <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ${namespace}-synctest-$instance
+$(indent 2 standard_deployment_metadata_yaml "$namespace" client)
+$(indent 2 standard_labels_yaml)
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ${namespace}-synctest-$instance
+  strategy:
+    type: RollingUpdate
+  template:
+    metadata:
+$(indent 6 standard_labels_yaml synctest "$namespace" "$instance" 1)
+$(indent 6 standard_pod_metadata_yaml "$namespace" client)
+$(indent 4 create_spec _create_containers_synctest_yaml "$@")
+EOF
+    fi
+}
+
+function create_deployment_synctest() {
+    local namespace=$1
+    local count=${2:-1}
+    local secret_count=${3:-1}
+    local replicas=${4:-1}
+    local containers_per_pod=${5:-1}
+    local log_host=${6:-}
+    local -i log_port=${7:-0}
+    local -i instance
+    create_sync_service_if_needed "$namespace" "$(((___synctest_count * ___synctest_cluster_count) + 2))" "$((containers_per_pod * replicas * processes_per_pod * count))"
+    for instance in $(seq $first_deployment $((count + first_deployment - 1))) ; do
+	_create_synctest_deployment "$namespace" "$instance" "$secret_count"  "$replicas" "$containers_per_pod" "$log_host" "$log_port"
+    done
+}
+
+function list_configmaps_synctest() {
+    cat <<EOF
+${__podfile_dir__}/synctest.pl
+EOF
+}
+
+function help_options_synctest() {
+    cat <<'EOF'
+    Synctest General Options:
+       --synctest-count=n
+                        Run the test for n iterations
+       --synctest-cluster_count=n
+                        Run n syncs per iteration
+       --synctest-sleep=n
+                        Sleep for the specified time between iterations
+EOF
+}
+
+function document_synctest() {
+    cat <<'EOF'
+* synctest: tests internal sync
+EOF
+}
+
+function process_options_synctest() {
+    local opt
+    local -a unknown_opts=()
+    local ftest
+    for opt in "$@" ; do
+	read -r noptname1 noptname optvalue <<< "$(parse_option "$opt")"
+	case "$noptname1" in
+	# Synctest options
+	    synctestcount)		___synctest_count=$optvalue		;;
+	    synctestclustercount)	___synctest_cluster_count=$optvalue	;;
+	    synctestsleep)		___synctest_sleep=$optvalue		;;
+	    *) 			unknown_opts+=("$noptname ($noptname1)")	;;
+	esac
+    done
+    if [[ -n "${unknown_opts[*]:-}" ]] ; then
+	help "${unknown_opts[@]}"
+    fi
+}
+
+function calculate_logs_required_synctest() {
+    local -i namespaces=$1
+    local -i deps_per_namespace=${2:-1}
+    local -i replicas=${3:-1}
+    local -i containers_per_pod=${4:-1}
+    echo $((namespaces * processes_per_pod * containers_per_pod * replicas * deps_per_namespace))
+}
+
+function report_options_synctest() {
+    cat <<EOF
+"synctest_count": $___synctest_count,
+"synctest_sleep": $___synctest_sleep
+EOF
+}
+
+function supports_reporting_synctest() {
+    :
+}
+
+register_workload synctest dispatch_generic

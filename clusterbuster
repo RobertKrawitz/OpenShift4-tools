@@ -873,7 +873,6 @@ function list_configmaps() {
     cat <<EOF
 ${__podfile_dir__}/clientlib.pl
 ${__podfile_dir__}/sync.pl
-${__podfile_dir__}/sync_to.pl
 EOF
     call_api list_configmaps
 }
