@@ -37,7 +37,7 @@ sub runit() {
 
     my ($data_end_time) = xtime();
     my ($results) = print_json_report($namespace, $pod, $container, $$, $data_start_time,
-				     $data_end_time, $data_start_time - $data_end_time,
+				     $data_end_time, $data_end_time - $data_start_time,
 				     $ucpu1, $scpu1);
     if ($syncport) {
 	do_sync($synchost, $syncport, $results);
@@ -57,7 +57,5 @@ if ($processes > 1) {
 } else {
     runit();
 }
-
-				 
 
 finish($exit_at_end);
