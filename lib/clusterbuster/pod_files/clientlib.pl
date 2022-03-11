@@ -2,7 +2,15 @@
 
 use Time::HiRes qw(gettimeofday usleep);
 use Time::Piece;
-use File::Temp qw(:POSIX);
+use File::Temp qw(tempfile);
+use Socket;
+use Sys::Hostname;
+use strict;
+use JSON;
+use POSIX;
+
+my %timing_parameters = ();
+my ($last_sync_time) = -10;
 
 sub cputime() {
     my (@times) = times();
@@ -11,33 +19,92 @@ sub cputime() {
     return ($usercpu, $syscpu);
 }
 
-sub ts() {
+sub xtime(;$) {
+    my ($nocorrect) = @_;
     my (@now) = gettimeofday();
-    return sprintf("%s.%06d", gmtime($now[0])->strftime("%Y-%m-%dT%T"), $now[1]);
+    my ($t) = $now[0] + ($now[1] / 1000000.0);
+    if ((!defined $nocorrect || !$nocorrect) && defined $timing_parameters{'xtime_adjustment'}) {
+	return $t - $timing_parameters{'xtime_adjustment'};
+    } else {
+	return $t;
+    }
+}
+
+sub ts() {
+    my (@now) = POSIX::modf(xtime(1) - $timing_parameters{'local_offset_from_sync'});
+    return sprintf("%s.%06d", gmtime($now[1])->strftime("%Y-%m-%dT%T"), $now[0] * 1000000);
 }
 sub timestamp($) {
     my ($str) = @_;
     printf STDERR "%7d %s %s\n", $$, ts(), $str;
 }
 
-sub xtime() {
-    my (@now) = gettimeofday();
-    return $now[0] + ($now[1] / 1000000.0);
-}
-
 sub calibrate_time() {
+    my ($time_overhead) = 0;
     for (my $i = 0; $i < 1000; $i++) {
         my ($start) = xtime();
 	my ($end) = xtime();
 	$time_overhead += $end - $start;
     }
-    $time_overhead /= 1000;
+    return $time_overhead / 1000;
+}
+
+sub initialize_timing($$$$$) {
+    my ($basetime, $crtime, $sync_host, $sync_port, $name) = @_;
+    my ($start_time) = xtime();
+    my ($presync) = "timestamp: %s $name";
+    timestamp("About to sync");
+    my ($local_sync_start, $remote_sync_start, $absolute_sync_start,
+	$remote_sync_base, $remote_sync) = split(/ +/, do_sync($sync_host, $sync_port, $presync));
+    timestamp("Done sync");
+    my ($local_sync) = xtime();
+    my ($local_sync_rtt) = $local_sync - $local_sync_start;
+    my ($remote_sync_rtt) = $remote_sync - $remote_sync_start;
+    my ($local_offset_from_sync) =
+	($local_sync - $remote_sync) - (($local_sync_rtt - $remote_sync_rtt) / 2);
+    my ($adjusted_start_time) = $start_time - $local_offset_from_sync;
+
+    my ($local_relative_time_adjustment) = $absolute_sync_start - $local_offset_from_sync;
+    my ($sync_rtt_delta) = $local_sync_rtt - $remote_sync_rtt;
+    my ($xtime_adjustment) = $absolute_sync_start + $local_offset_from_sync;
+
+    %timing_parameters = (
+	'absolute_start_time' => $start_time + 0.0,
+	'absolute_sync_start' => $absolute_sync_start + 0.0,
+	'basetime' => $basetime + 0.0,
+	'crtime' => $crtime + 0.0,
+	'local_offset_from_sync' => $local_offset_from_sync + 0.0,
+	'local_relative_time_adjustment' => $local_relative_time_adjustment + 0.0,
+	'local_sync' => $local_sync + 0.0,
+	'local_sync_rtt' => $local_sync_rtt + 0.0,
+	'local_sync_start' => $local_sync_start + 0.0,
+	'local_sync_time' => $local_sync + 0.0,
+	'remote_sync' => $remote_sync + 0.0,
+	'remote_sync_base' => $remote_sync_base + 0.0,
+	'remote_sync_offset' => $remote_sync - $remote_sync_base + 0.0,
+	'remote_sync_rtt' => $remote_sync_rtt + 0.0,
+	'remote_sync_start' => $remote_sync_start + 0.0,
+	'start_time' => $start_time - $xtime_adjustment + 0.0,
+	'sync_rtt_delta' => $sync_rtt_delta + 0.0,
+	'xtime_adjustment' => $xtime_adjustment + 0.0,
+	);
+    timestamp("Timing parameters:");
+    map { timestamp(sprintf("%-32s %.6f", $_, $timing_parameters{$_})) } (sort keys %timing_parameters);
+}
+
+sub print_timing_parameters() {
+    my ($answer) = join(",\n", map { "    \"$_\": $timing_parameters{$_}" } (sort keys %timing_parameters));
+    return "{\n    $answer\n}";
+}
+
+sub get_timing_parameter($) {
+    my ($parameter) = @_;
+    return $timing_parameters{$parameter};
 }
 
 sub connect_to($$) {
     my ($addr, $port) = @_;
     my ($connected) = 0;
-    my ($ghbn_time, $stime);
     my ($fname,$faliases,$ftype,$flen,$faddr);
     my ($sock);
     do {
@@ -49,10 +116,8 @@ sub connect_to($$) {
         } else {
             my $straddr = inet_ntoa($faddr);
             timestamp("Connecting to $addr:$port ($fname, $ftype)");
-            $ghbn_time = xtime();
             my $sockmeta = pack($sockaddr, AF_INET, $port, $faddr);
             socket($sock, AF_INET, SOCK_STREAM, getprotobyname('tcp')) || die "can't make socket: $!";
-            $stime = xtime();
             if (connect($sock, $sockmeta)) {
                 $connected = 1;
                 timestamp("Connected to $addr:$port ($fname, $ftype), waiting for sync");
@@ -66,16 +131,70 @@ sub connect_to($$) {
     return ($sock);
 }
 
-# Configmaps are mounted noexec, so we have to copy sync_to somewhere that is executable.
-if (! -f "/var/tmp/sync_to.pl") {
-    open(COPYIN, "<", $ENV{'BAK_CONFIGMAP'} . "/sync_to.pl") || die "Can't open sync_to.pl to copy out: $!\n";
-    open(COPYOUT, ">", "/var/tmp/sync_to.pl") || die "Can't open /var/tmp/sync_to.pl to copy in: $!\n";
-    while (<COPYIN>) {
-	print COPYOUT;
+sub print_json_report($$$$$$$;$) {
+    my ($namespace, $pod, $container, $process_id, $data_start_time, $data_end_time,
+	$data_elapsed_time, $user_cpu, $sys_cpu, $extra) = @_;
+    my (%hash) = (
+	'application' => 'clusterbuster-json',
+	'namespace' => $namespace,
+	'pod' => $pod,
+	'container' => $container,
+	'process_id' => $process_id,
+	'pod_create_time' => get_timing_parameter('crtime') - get_timing_parameter('basetime'),
+	'pod_start_time' => get_timing_parameter('start_time'),
+	'data_start_time' => $data_start_time,
+	'data_end_time' => $data_end_time,
+	'data_elapsed_time' => $data_elapsed_time,
+	'user_cpu_time' => $user_cpu,
+	'system_cpu_time' => $sys_cpu,
+	'cpu_time' => $user_cpu + $sys_cpu,
+	'timing_parameters' => \%timing_parameters
+	);
+    
+    map { $hash{$_} = $$extra{$_} } keys %$extra;
+    return to_json(\%hash);
+}
+
+sub do_sync_internal($$$) {
+    my ($addr, $port, $token) = @_;
+    while (1) {
+	timestamp("Waiting for sync on $addr:$port");
+	my ($sync_conn) = connect_to($addr, $port);
+	my ($sbuf);
+	my ($ntoken) = $token;
+	if ($ntoken =~ /%s/) {
+	    my ($time) = xtime();
+	    $ntoken =~ s/%s/$time/;
+	}
+	my ($token_length) = sprintf('0x%08x', length $ntoken);
+	my ($tbuf) = "$token_length$ntoken";
+	my ($bytes_to_write) = length $tbuf;
+	my ($offset) = 0;
+	my ($answer);
+	while ($bytes_to_write > 0) {
+	    $answer = syswrite($sync_conn, $tbuf, length $tbuf, $offset);
+	    if (length $tbuf > 128) {
+		timestamp("Writing $token_length to sync");
+	    } else {
+		timestamp("Writing token $tbuf to sync");
+	    }
+	    if ($answer <= 0) {
+		timestamp("Write token failed: $!");
+		exit(1);
+	    } else {
+		$bytes_to_write -= $answer;
+		$offset += $answer;
+	    }
+	}
+	$answer = sysread($sync_conn, $sbuf, 1024);
+	my ($str) = sprintf("Got sync (%s, %d, %s)", $sbuf, length $sbuf, $!);
+	if ($!) {
+	    timestamp("$str, retrying");
+	} else {
+	    timestamp("$str, good");
+	    return $sbuf;
+	}
     }
-    close(COPYIN);
-    close(COPYOUT) || die "Can't close /var/tmp/sync_to.pl: $!\n";
-    chmod(0555, "/var/tmp/sync_to.pl") || die "Can't chmod sync_to.pl: $!\n";
 }
 
 sub do_sync($$;$) {
@@ -83,7 +202,6 @@ sub do_sync($$;$) {
     if (not $addr) { return; }
     my ($fh) = undef;
     my ($file) = undef;
-
     if ($addr eq '-') {
 	$addr=`ip route get 1 |awk '{print \$(NF-2); exit}'`;
 	chomp $addr;
@@ -91,28 +209,11 @@ sub do_sync($$;$) {
     if ($token && $token =~ /clusterbuster-json/) {
 	$token =~ s,\n *,,g;
     } elsif (not $token) {
-        $token = sprintf('%s-%d', $pod, rand() * 999999999);
+        $token = sprintf('%s %s-%d', ts(), hostname(), rand() * 999999999);
+    } elsif (substr($token, 0, 10) ne 'timestamp:') {
+	$token = ts() . " $token";
     }
-    if (length $token > 64) {
-	($fh, $file) = tmpnam();
-	print $fh $token;
-	close $fh;
-    }
-    my $fh;
-    if (defined $file) {
-	open($fh, "-|", "/var/tmp/sync_to.pl", "-t", $file, $addr, $port) || die "Can't sync: $!\n";
-    } else {
-	open($fh, "-|", "/var/tmp/sync_to.pl", $addr, $port, $token) || die "Can't sync: $!\n";
-    }
-    my ($answer);
-    while (<$fh>) {
-	$answer .= $_;
-    }
-    if (! close $fh) {
-	if ($? == 0) {
-	    timestamp("Sync failed: $?");
-	}
-    }
+    my ($answer) = do_sync_internal($addr, $port, $token);
     return $answer;
 }
 

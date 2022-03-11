@@ -58,7 +58,6 @@ declare -i wait_for_secrets=1
 declare -i bytes_transfer=0
 declare -i bytes_transfer_max=0
 declare -i default_bytes_transfer=1000000000
-declare -i poddelay=0
 declare -i workload_run_time=0
 declare -i workload_run_time_max=0
 declare -i exit_at_end=1
@@ -452,7 +451,6 @@ $(_help_options_workloads)
                         work if pods cannot connect to the host from which
                         this tool is run.  Polling should be used unless
                         there is reason to believe it is not functioning.
-       --poddelay=N     Time in seconds to wait for pods to start data xfer
        --podsleep=N     Time for pod to sleep before exit
 
 Here is a brief description of all available workloads:
@@ -686,7 +684,6 @@ function process_option() {
 	objspercall)		    objs_per_call=$optvalue			;;
 	parallel)		    parallel=$optvalue				;;
 	sleep)			    sleeptime=$optvalue				;;
-	poddelay)		    poddelay=$optvalue				;;
 	firstdeployment)	    first_deployment=$optvalue			;;
 	parallelconfigmaps)	    parallel_configmaps=$optvalue		;;
 	parallelsecrets)	    parallel_secrets=$optvalue			;;
@@ -1301,12 +1298,16 @@ function get_logs() {
 	log_cmd=true
     fi
     local report_cmd=cat
-    if [[ -z "$*" ]] ; then
-	echo "Workload $requested_workload does not support reporting" 1>&2
-    elif [[ -n "$artifactdir" ]] ; then
-	_get_logs "$log_cmd" "$@" | tee "$artifactdir/clusterbuster-report.json" | print_report
+    if supports_api supports_reporting ; then
+	if [[ -z "$*" ]] ; then
+	    echo "Workload $requested_workload does not support reporting" 1>&2
+	elif [[ -n "$artifactdir" ]] ; then
+	    _get_logs "$log_cmd" "$@" | tee "$artifactdir/clusterbuster-report.json" | print_report
+	else
+	    _get_logs "$log_cmd" "$@" | print_report
+	fi
     else
-	_get_logs "$log_cmd" "$@" | print_report
+	echo "Workload $requested_workload does not support reporting" 1>&2
     fi
     return $((PIPESTATUS[0] || PIPESTATUS[1]))
 }
@@ -1923,14 +1924,12 @@ EOF
 function create_sync_deployment() {
     local namespace=$1; shift
     local sync_count=$1; shift
-    if [[ $deployment_type = pod ]] ; then
-	create_object -t Pod -n "$namespace" "${namespace}-sync" <<EOF
+    create_object -t Pod -n "$namespace" "${namespace}-sync" <<EOF
 apiVersion: v1
 kind: Pod
 metadata:
   name: ${namespace}-sync
-$(indent 2 namespace_yaml "$namespace")
-$(indent 2 privilege_yaml)
+$(indent 2 standard_all_metadata_yaml "$namespace" sync)
   selector:
     matchLabels:
       app: ${namespace}-sync
@@ -1942,33 +1941,6 @@ $(indent 2 standard_labels_yaml)
 $(create_spec -P -c sync -r '' create_container_sync "$namespace" 0 0 "$sync_count" "$@")
   restartPolicy: Never
 EOF
-    else
-	create_object -t Deployment -n "$namespace" "${namespace}-sync" <<EOF
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: ${namespace}-sync
-$(indent 2 namespace_yaml "$namespace")
-$(indent 2 privilege_yaml)
-  labels:
-$(indent 4 standard_labels_yaml)
-spec:
-  replicas: 1
-  strategy:
-    type: RollingUpdate
-  selector:
-    matchLabels:
-      app: ${namespace}-sync
-  template:
-    metadata:
-$(indent 6 standard_labels_yaml)
-        name: ${namespace}-sync
-        app: ${namespace}-sync
-        k8s-app: ${namespace}-sync
-        ${basename}-sync: "$run_uuid"
-$(indent 4 create_spec -P -c sync -r '' create_container_sync "$namespace" 0 0 "$sync_count" "$@")
-EOF
-    fi
 }
 
 ################################################################

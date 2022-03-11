@@ -52,7 +52,6 @@ $(indent 2 bootstrap_command_yaml files.pl)
   - "c${container}"
   - "$basetime"
   - "$baseoffset"
-  - "$poddelay"
   - "$(ts)"
   - "$exit_at_end"
   - "$sync_service"
@@ -126,7 +125,7 @@ function create_deployment_files() {
     local log_host=${6:-}
     local -i log_port=${7:-0}
     local -i instance
-    create_sync_service_if_needed "$namespace" 5 "$((containers_per_pod * processes_per_pod * replicas * count))"
+    create_sync_service_if_needed "$namespace" 6 "$((containers_per_pod * processes_per_pod * replicas * count))"
     for instance in $(seq $first_deployment $((count + first_deployment - 1))) ; do
 	_create_files_deployment "$namespace" "$instance" "$secret_count"  "$replicas" "$containers_per_pod" "$log_host" "$log_port"
     done

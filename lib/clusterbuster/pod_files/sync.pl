@@ -9,6 +9,9 @@ use Getopt::Long;
 Getopt::Long::Configure("bundling", "no_ignore_case", "pass_through");
 GetOptions("v!"  => \$verbose,
 	   "f:s" => \$sync_file);
+my ($dir) = $ENV{'BAK_CONFIGMAP'};
+require "$dir/clientlib.pl";
+my ($start_time) = xtime();
 
 $SIG{TERM} = sub { POSIX::_exit(0); };
 my ($listen_port, $expected_clients, $sync_count) = @ARGV;
@@ -30,7 +33,6 @@ bind(SOCK, pack($sockaddr, AF_INET, $listen_port, "\0\0\0\0")) || die "bind: $!\
 my $mysockaddr = getsockname(SOCK);
 my ($junk, $port, $addr) = unpack($sockaddr, $mysockaddr);
 die "can't get port $port: $!\n" if ($port ne $listen_port);
-my (@clients);
 
 my ($tmp_sync_file_base) = (defined($sync_file) && $sync_file ne '') ? "${sync_file}-tmp" : undef;
 
@@ -66,6 +68,7 @@ sub read_token($) {
     return $tbuf
 }
 
+my ($first_pass) = 1;
 while ($sync_count < 0 || $sync_count-- > 0) {
     my ($tmp_sync_file) = undef;
     # Ensure that all of the accepted connections get closed by exiting
@@ -76,31 +79,63 @@ while ($sync_count < 0 || $sync_count-- > 0) {
 	timestamp("Listening on port $listen_port");
 	listen(SOCK, 5) || die "listen: $!";
 	print STDERR "Expect $expected_clients clients\n";
+	my (@clients);
+	# Ensure that the client file descriptors do not get gc'ed,
+	# closing it prematurely.  This is used when we don't
+	# need to send a meaningful reply.
+	# Tested with
+	# clusterbuster -P synctest --synctest-count=10 --synctest-cluster-count=3 --precleanup
+	#     --deployments=10 --cleanup=0 --pin-node=whatever
+	my (@clients_protect_against_gc);
 	while ($expected_clients > 0) {
 	    my ($client);
 	    accept($client, SOCK) || next;
 	    my $peeraddr = getpeername($client);
 	    my ($port, $addr) = sockaddr_in($peeraddr);
-	    my $peerhost = gethostbyaddr($addr, AF_INET);
+	    # Reverse hostname lookup adds significant overhead
+	    # when using sync to establish the timebase.
+	    #my $peerhost = gethostbyaddr($addr, AF_INET);
 	    my $peeraddr = inet_ntoa($addr);
 	    my ($tbuf) = read_token($client);
 	    if (! defined $tbuf) {
-		timestamp("Read token from $peerhost failed: $!");
+		timestamp("Read token from $peeraddr  failed: $!");
 	    }
-	    timestamp("Accepted connection from $peerhost ($peeraddr) on $port, token $tbuf");
-	    if ($tbuf =~ /clusterbuster-json/ && defined $tmp_sync_file_base) {
+	    timestamp("Accepted connection from $peeraddr on $port, token $tbuf");
+	    if (substr($tbuf, 0, 10) eq 'timestamp:')  {
+		my ($ignore, $ts, $ignore) = split(/ +/, $tbuf);
+		push @clients, [$client, "$ts " . xtime()];
+		if ($ts < $start_time) {
+		    $start_time = $ts;
+		}
+	    } elsif ($tbuf =~ /clusterbuster-json/ && defined $tmp_sync_file_base) {
 		$tmp_sync_file = sprintf("%s-%d", $tmp_sync_file_base, $expected_clients);
 		chomp $tbuf;
 		open TMP, ">", "$tmp_sync_file" || die("Can't open sync file $tmp_sync_file: $!\n");
 		print TMP "$tbuf\n";
 		close TMP || die "Can't close sync file: $!\n";
+	    } else {
+		push @clients_protect_against_gc, $client;
 	    }
-	    push @clients, $client;
 	    $expected_clients--;
 	}
-	timestamp("Waiting 1 second to sync:");
-	sleep(1);
 	timestamp("Done!");
+	my ($first_time, $last_time);
+	my ($start) = xtime();
+	# Only reply to clients who provided a timestamp
+	my (@ts_msgs) = ();
+	if (@clients) {
+	    timestamp("Returning client sync start time, sync start time, sync sent time");
+	    foreach my $client (@clients) {
+		my ($time) = xtime();
+		my ($client_fd, $client_ts) = @$client;
+		my ($tbuf) = "$client_ts $start_time $start $time";
+		syswrite($client_fd, $tbuf, length $tbuf);
+		close($client_fd);
+	    }
+	    my ($end) = xtime();
+	    my ($et) = $end - $start;
+	    timestamp("Sending sync time took $et seconds");
+	}
         POSIX::_exit(0);
     } elsif ($child < 1) {
         timestamp("Fork failed: $!");
@@ -108,6 +143,7 @@ while ($sync_count < 0 || $sync_count-- > 0) {
     } else {
         wait();
     }
+    $first_pass = 0;
 }
 if (@tmp_sync_files) {
     my ($tmp_sync_file) = "${tmp_sync_file_base}";

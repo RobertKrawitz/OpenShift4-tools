@@ -46,7 +46,6 @@ $(indent 2 bootstrap_command_yaml classic.pl)
   - "c$container"
   - "$basetime"
   - "$baseoffset"
-  - "$poddelay"
   - "$(ts)"
   - "$exit_at_end"
   - "$sync_service"

@@ -10,7 +10,7 @@ use File::Basename;
 my ($dir) = $ENV{'BAK_CONFIGMAP'};
 require "$dir/clientlib.pl";
 
-our ($namespace, $container, $basetime, $baseoffset, $poddelay, $crtime, $exit_at_end, $sync_host, $sync_port, $log_host, $log_port, $dirs, $files_per_dir, $blocksize, $block_count, $processes, @dirs) = @ARGV;
+our ($namespace, $container, $basetime, $baseoffset, $crtime, $exit_at_end, $sync_host, $sync_port, $log_host, $log_port, $dirs, $files_per_dir, $blocksize, $block_count, $processes, @dirs) = @ARGV;
 my ($start_time, $elapsed_time, $end_time, $user, $sys, $cuser, $csys);
 
 $SIG{TERM} = sub { POSIX::_exit(0); };
@@ -19,6 +19,8 @@ $crtime += $baseoffset;
 $start_time = xtime();
 
 my ($pod) = hostname;
+initialize_timing($basetime, $crtime, $sync_host, $sync_port, "$namespace:$pod:$container");
+$start_time = get_timing_parameter('start_time');
 
 if ($#dirs < 0) {
     @dirs=("/tmp");
@@ -96,8 +98,8 @@ sub makethem($) {
     return $ops;
 }
 
-sub run_one_operation($$$$$$$) {
-    my ($op_name0, $op_name1, $op_name2, $op_func, $sync_host, $sync_port, $process) = @_;
+sub run_one_operation($$$$$$$$) {
+    my ($op_name0, $op_name1, $op_name2, $op_func, $sync_host, $sync_port, $process, $data_start_time) = @_;
     my ($op_format_string) = <<'EOF';
 "%s": {
   "operation_elapsed_time": %f,
@@ -105,8 +107,8 @@ sub run_one_operation($$$$$$$) {
   "system_cpu_time": %f,
   "cpu_time": %f,
   "cpu_utilization": %f,
-  "operation_start_time_offset_from_base": %f,
-  "operation_end_time_offset_from_base": %f,
+  "operation_start": %f,
+  "operation_end": %f,
   "operations": %d,
   "operations_per_second": %f
 }
@@ -116,21 +118,28 @@ EOF
     do_sync($sync_host, $sync_port);
     timestamp("$op_name0 files...");
     my ($ucpu0, $scpu0) = cputime();
-    my ($op_start_time) = xtime() - $basetime;
+    my ($op_start_time) = xtime() - $data_start_time;
     my ($ops) = &$op_func($process);
     system("sync");
-    my ($op_end_time) = xtime() - $basetime;
+    my ($op_end_time) = xtime() - $data_start_time;
     my ($op_elapsed_time) = $op_end_time - $op_start_time;
     my ($ucpu1, $scpu1) = cputime();
     $ucpu1 -= $ucpu0;
     $scpu1 -= $scpu0;
-    my ($answer) = sprintf($op_format_string, $op_name2, $op_elapsed_time,
-			   $ucpu1, $scpu1, $ucpu1 + $scpu1, ($ucpu1 + $scpu1) / $op_elapsed_time,
-			   $op_start_time, $op_end_time,
-			   $ops, $ops / $op_elapsed_time);
+    my (%answer) = (
+	'operation_elapsed_time' => $op_elapsed_time,
+	'user_cpu_time' => $ucpu1,
+	'system_cpu_time' => $scpu1,
+	'cpu_time' => $ucpu1 + $scpu1,
+	'cpu_utilization' => ($ucpu1 + $scpu1) / $op_elapsed_time,
+	'operation_start' => $op_start_time,
+	'operation_end' => $op_end_time,
+	'operations' => $ops,
+	'operations_per_second' => $ops / $op_elapsed_time
+	);
     timestamp("$op_name1 files...");
     do_sync($sync_host, $sync_port);
-    return ($answer, $op_start_time, $op_end_time, $ucpu1, $scpu1);
+    return (\%answer, $op_start_time, $op_end_time, $ucpu1, $scpu1);
 }
 
 sub runit($) {
@@ -138,19 +147,16 @@ sub runit($) {
     my ($basecpu) = cputime();
     my ($prevcpu) = $basecpu;
     my ($iterations) = 1;
-
-    my $delaytime = $basetime + $poddelay - $start_time;
-    if ($delaytime > 0) {
-	timestamp("Sleeping $delaytime seconds to synchronize");
-	usleep($delaytime * 1000000);
-    }
+    my ($data_start_time) = xtime();
     # Make sure everything is cleared out first...but don't count the time here.
     removethem($process, 1);
     system("sync");
+    my (%extras);
 
     my ($answer_create, $create_start_time, $create_end_time, $create_ucpu, $create_scpu) =
 	run_one_operation('Creating', 'Created', 'create', \&makethem,
-			  $sync_host, $sync_port, $process);
+			  $sync_host, $sync_port, $process, $data_start_time);
+    $extras{'create'} = $answer_create;
     my ($create_et) = $create_end_time - $create_start_time;
 
     timestamp("Sleeping for 60 seconds");
@@ -158,41 +164,19 @@ sub runit($) {
     timestamp("Back from sleep");
     my ($answer_remove, $remove_start_time, $remove_end_time, $remove_ucpu, $remove_scpu) =
 	run_one_operation('Creating', 'Removed', 'remove', \&removethem,
-			  $sync_host, $sync_port, $process);
+			  $sync_host, $sync_port, $process, $data_start_time);
+    $extras{'remove'} = $answer_remove;
     my ($remove_et) = $remove_end_time - $remove_start_time;
     my ($data_start_time) = $create_start_time;
     my ($data_end_time) = $remove_end_time;
     my ($data_elapsed_time) = $create_et + $remove_et;
     my ($user_cpu) = $create_ucpu + $remove_ucpu;
     my ($system_cpu) = $create_scpu + $remove_scpu;
-
-    my ($fstring) = <<'EOF';
-{
-  "application": "clusterbuster-json",
-  "namespace": "%s",
-  "pod": "%s",
-  "container": "%s",
-  "process_id": %d,
-  "pod_create_time_offset_from_base": %f,
-  "pod_start_time_offset_from_base": %f,
-  "data_start_time_offset_from_base": %f,
-  "data_end_time_offset_from_base": %f,
-  "data_elapsed_time": %f,
-  "user_cpu_time": %f,
-  "system_cpu_time": %f,
-  "cpu_time": %f,
-  "block_count": %d,
-  "block_size": %d,
-%s,
-%s
-}
-EOF
-    my ($answer) = sprintf($fstring, $namespace, $pod, $container, $$, $crtime - $basetime,
-			   $start_time - $basetime, $data_start_time, $data_end_time,
-			   $data_elapsed_time, $user_cpu, $system_cpu, $user_cpu + $system_cpu, $block_count, $blocksize,
-			   $answer_create, $answer_remove);
-    $answer =~ s/[ \n]+//g;
-    timestamp("$answer");
+    my ($answer) = print_json_report($namespace, $pod, $container, $$,
+				     $data_start_time, $data_end_time,
+				     $data_elapsed_time,
+				     $user_cpu, $system_cpu, \%extras);
+    
     do_sync($sync_host, $sync_port, "$answer");
     if ($log_port > 0) {
 	do_sync($log_host, $log_port, "$answer");

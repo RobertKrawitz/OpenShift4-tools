@@ -53,7 +53,6 @@ $(indent 2 bootstrap_command_yaml sysbench.pl)
   - "$basetime"
   - "$baseoffset"
   - "$(ts)"
-  - "$poddelay"
   - "$processes"
   - "$workdir"
   - "$workload_run_time"
@@ -123,7 +122,7 @@ function create_deployment_sysbench() {
     local log_host=${6:-}
     local -i log_port=${7:-0}
     local -i instance
-    create_sync_service_if_needed "$namespace" "$(( (${#___sysbench_fileio_tests[@]} * 3) + 1))" "$((containers_per_pod * replicas * count))"
+    create_sync_service_if_needed "$namespace" "$(( (${#___sysbench_fileio_tests[@]} * 3) + 2))" "$((containers_per_pod * replicas * count))"
     for instance in $(seq $first_deployment $((count + first_deployment - 1))) ; do
 	_create_sysbench_deployment "$namespace" "$instance" "$secret_count"  "$replicas" "$containers_per_pod" "$log_host" "$log_port"
     done

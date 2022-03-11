@@ -11,12 +11,15 @@ use File::Basename;
 my ($dir) = $ENV{'BAK_CONFIGMAP'};
 require "$dir/clientlib.pl";
 
-our ($namespace, $container, $basetime, $baseoffset, $crtime, $poddelay, $processes, $rundir, $runtime, $exit_at_end, $synchost, $syncport, $loghost, $logport, $sysbench_generic_args, $sysbench_cmd, $sysbench_fileio_args, $sysbench_modes) = @ARGV;
+our ($namespace, $container, $basetime, $baseoffset, $crtime, $processes, $rundir, $runtime, $exit_at_end, $synchost, $syncport, $loghost, $logport, $sysbench_generic_args, $sysbench_cmd, $sysbench_fileio_args, $sysbench_modes) = @ARGV;
+
+$SIG{TERM} = sub() { docleanup() };
+$basetime += $baseoffset;
+$crtime += $baseoffset;
 
 my ($pod) = hostname;
+initialize_timing($basetime, $crtime, $synchost, $syncport, "$namespace:$pod:$container");
 my ($localrundir) = "$rundir/$pod/$$";
-
-my ($start_time) = xtime();
 
 sub removeRundir() {
     if (-d "$localrundir") {
@@ -34,9 +37,6 @@ sub docleanup()  {
     kill 'KILL', -1;
     POSIX::_exit(0);
 }
-$SIG{TERM} = sub() { docleanup() };
-$basetime += $baseoffset;
-$crtime += $baseoffset;
 
 my (%units_multiplier) = (
     'kb'  => 1000,
@@ -71,30 +71,7 @@ sub runit() {
         timestamp("Cannot cd $localrundir: $!");
 	exit(1);
     }
-    my (@op_answers) = ();
-    my ($op_answer_fstring) = <<'EOF';
-"%s": {
-  "read_ops": %d,
-  "write_ops": %d,
-  "fsync_ops": %d,
-  "read_rate_mb_sec": %d,
-  "write_rate_mb_sec": %d,
-  "elapsed_time": %d,
-  "min_latency_sec": %f,
-  "mean_latency_sec": %f,
-  "max_latency_sec": %f,
-  "p95_latency_sec": %f,
-  "files": %d,
-  "filesize": %d,
-  "blocksize": %d,
-  "rdwr_ratio": %f,
-  "fsync_frequency": %d,
-  "final_fsync_enabled": "%s",
-  "io_mode": "%s",
-  "user_cpu_time": %f,
-  "sys_cpu_time": %f
-}
-EOF
+    my (%op_answers) = ();
     my ($firsttime) = 1;
     my ($avgcpu) = 0;
     my ($weight) = .25;
@@ -102,14 +79,9 @@ EOF
     my ($interval) = 5;
     my $data_start_time = xtime();
 
-    my $delaytime = $basetime + $poddelay - $start_time;
-    if ($delaytime > 0) {
-	timestamp("Sleeping $delaytime seconds to synchronize");
-	usleep($delaytime * 1000000);
-    }
     my ($base0_user, $base0_sys) = cputime();
     foreach my $mode (@known_sysbench_fileio_modes) {
-	do_sync($synchost, $syncport);
+	do_sync($synchost, $syncport, "$namespace:$pod:$container:$$:$mode+prepare");
 	timestamp("Preparing...");
 	timestamp("sysbench --time=$runtime $sysbench_generic_args $sysbench_cmd prepare --file-test-mode=$mode $sysbench_fileio_args");
 	open(PREPARE, "-|", "sysbench --time=$runtime $sysbench_generic_args $sysbench_cmd prepare --file-test-mode=$mode $sysbench_fileio_args") || die "Can't run sysbench: $!\n";
@@ -129,61 +101,50 @@ EOF
 	}
 	close PREPARE;
 
-	do_sync($synchost, $syncport);
+	do_sync($synchost, $syncport, "$namespace:$pod:$container:$$:$mode+start");
 	my ($op0_user, $op0_sys) = cputime();
 	timestamp("Running...");
 	timestamp("sysbench --time=$runtime $sysbench_generic_args $sysbench_cmd run --file-test-mode=$mode $sysbench_fileio_args");
 	open(RUN, "-|", "sysbench --time=$runtime $sysbench_generic_args $sysbench_cmd run --file-test-mode=$mode $sysbench_fileio_args") || die "Can't run sysbench: $!\n";
-	my ($files) = 0;
-	my ($filesize) = 0;
-	my ($blocksize) = 0;
-	my ($rdwr_ratio) = 1.0;
-	my ($fsync_frequency) = 0;
-	my ($final_fsync_enabled) = 'Disabled';
-	my ($io_mode) = 'unknown';
-	my ($readops) = 0;
-	my ($writeops) = 0;
-	my ($fsyncops) = 0;
-	my ($readrate) = 0;
-	my ($writerate) = 0;
-	my ($min_lat) = 0;
-	my ($avg_lat) = 0;
-	my ($max_lat) = 0;
-	my ($p95_lat) = 0;
+	my (%op_answer) = (
+	    'final_fsync_enabled' => 'Disabled',
+	    'io_mode' => 'unknown',
+	    'rdwr_ratio' => 1.0,
+	    );
 	while (<RUN>) {
 	    if      ($_ =~ m;^[[:space:]]*([[:digit:]]+) *files, *([[:digit:]]+)([KMGT]i?B);) {
-		$files = $1;
-		$filesize = $2 * (defined $units_multiplier{lc $3} ? $units_multiplier{lc $3} : 1);
+		$op_answer{'files'} = $1 + 0.0;
+		$op_answer{'filesize'} = $2 * (defined $units_multiplier{lc $3} ? $units_multiplier{lc $3} : 1);
 	    } elsif ($_ =~ m;^[[:space:]]*Block size *([[:digit:]]+)([KMGT]i?B);) {
-		$blocksize = $1 * (defined $units_multiplier{lc $2} ? $units_multiplier{lc $2} : 1);
+		$op_answer{'blocksize'} = $1 * (defined $units_multiplier{lc $2} ? $units_multiplier{lc $2} : 1);
 	    } elsif ($_ =~ m;^[[:space:]]*Read/Write ratio for combined random IO test: *([[:digit:]]+(\.[[:digit:]]+)?);) {
-		$rdwr_ratio = $1 * 1.0;
+		$op_answer{'rdwr_ratio'} = $1 * 1.0;
 	    } elsif ($_ =~ m;^[[:space:]]*Periodic FSYNC enabled, calling fsync\(\) each ([[:digit:]]+);) {
-		$fsync_frequency = $1;
+		$op_answer{'fsync_frequency'} = $1 + 0.0;
 	    } elsif ($_ =~ m;^[[:space:]]*calling fsync\(\) at the end of test, (enabled|disabled);i) {
-		$final_fsync_enabled = $1;
+		$op_answer{'final_fsync_enabled'} = $1 + 0.0;
 	    } elsif ($_ =~ m;^[[:space:]]*Using (.*) I/O mode;) {
-		$io_mode = $1;
+		$op_answer{'io_mode'} = $1 + 0.0;
 	    } elsif ($_ =~ m;^[[:space:]]*reads/s:[[:space:]]*([[:digit:].]+);) {
-		$readops = $1;
+		$op_answer{'read_ops'} = $1 + 0.0;
 	    } elsif ($_ =~ m;^[[:space:]]*writes/s:[[:space:]]*([[:digit:].]+);) {
-		$writeops = $1;
+		$op_answer{'write_ops'} = $1 + 0.0;
 	    } elsif ($_ =~ m;^[[:space:]]*fsyncs/s:[[:space:]]*([[:digit:].]+);) {
-		$fsyncops = $1;
+		$op_answer{'fsync_ops'} = $1 + 0.0;
 	    } elsif ($_ =~ m;^[[:space:]]*read, MiB/s:[[:space:]]*([[:digit:].]+);) {
-		$readrate = $1;
+		$op_answer{'read_rate_mb_sec'} = $1 + 0.0;
 	    } elsif ($_ =~ m;^[[:space:]]*written, MiB/s:[[:space:]]*([[:digit:].]+);) {
-		$writerate = $1;
+		$op_answer{'write_rate_mb_sec'} = $1 + 0.0;
 	    } elsif ($_ =~ m;^[[:space:]]*total time:[[:space:]]*([[:digit:].]+)s;) {
-		$et = $1;
+		$op_answer{'elapsed_time'} = $1 + 0.0;
 	    } elsif ($_ =~ m;^[[:space:]]*min:[[:space:]]*([[:digit:].]+);) {
-		$min_lat = $1 / 1000.0;
+		$op_answer{'min_latency_sec'} = $1 / 1000.0;
 	    } elsif ($_ =~ m;^[[:space:]]*avg:[[:space:]]*([[:digit:].]+);) {
-		$avg_lat = $1 / 1000.0;
+		$op_answer{'avg_latency_sec'} = $1 / 1000.0;
 	    } elsif ($_ =~ m;^[[:space:]]*max:[[:space:]]*([[:digit:].]+);) {
-		$max_lat = $1 / 1000.0;
+		$op_answer{'max_latency_sec'} = $1 / 1000.0;
 	    } elsif ($_ =~ m;^[[:space:]]*95th percentile:[[:space:]]*([[:digit:].]+);) {
-		$p95_lat = $1 / 1000.0;
+		$op_answer{'p95_latency_sec'} = $1 / 1000.0;
 	    }
 	    if ($ENV{"VERBOSE"} > 0) {
 		chomp;
@@ -191,8 +152,11 @@ EOF
 	    }
 	}
 	close RUN;
+	wait();
 	my ($op1_user, $op1_sys) = cputime();
-	do_sync($synchost, $syncport);
+	$op_answer{'user_cpu_time'} = $op1_user - $op0_user;
+	$op_answer{'sys_cpu_time'} = $op1_sys - $op0_sys;
+	do_sync($synchost, $syncport, "$namespace:$pod:$container:$$:$mode+finish");
 	timestamp("Cleanup...");
 	timestamp("sysbench --time=$runtime $sysbench_generic_args $sysbench_cmd cleanup --file-test-mode=$mode $sysbench_fileio_args");
 	open(CLEANUP, "-|", "sysbench --time=$runtime $sysbench_generic_args $sysbench_cmd cleanup --file-test-mode=$mode $sysbench_fileio_args") || die "Can't run sysbench: $!\n";
@@ -203,40 +167,18 @@ EOF
 	    }
 	}
 	close CLEANUP;
-	my ($op_answer) = sprintf($op_answer_fstring, $mode, $readops, $writeops, $fsyncops, $readrate,
-				     $writerate, $et, $min_lat, $avg_lat, $max_lat, $p95_lat,
-				     $files, $filesize, $blocksize, $rdwr_ratio, $fsync_frequency,
-				     $final_fsync_enabled, $io_mode, $op1_user - $op0_user,
-				     $op1_sys - $op0_sys);
-	push @op_answers, $op_answer;
+	$op_answers{$mode} = \%op_answer;
     }
     my $data_end_time = xtime();
     my ($elapsed_time) = $data_end_time - $data_start_time;
     my ($base1_user, $base1_sys) = cputime();
     my ($user) = $base1_user - $base0_user;
     my ($sys) = $base1_sys - $base0_sys;
-    my ($fstring) = <<'EOF';
-{
-  "application": "clusterbuster-json",
-  "namespace": "%s",
-  "pod": "%s",
-  "container": "%s",
-  "process_id": %d,
-  "pod_create_time_offset_from_base": %f,
-  "pod_start_time_offset_from_base": %f,
-  "data_start_time_offset_from_base": %f,
-  "data_end_time_offset_from_base": %f,
-  "data_elapsed_time": %f,
-  "user_cpu_time": %f,
-  "system_cpu_time": %f,
-  "cpu_time": %f,
-  "workloads": {%s}
-}
-EOF
-    my ($answer) = sprintf($fstring, $namespace, $pod, $container, $$, $crtime - $basetime,
-			   $start_time - $basetime, $data_start_time - $basetime,
-			   $data_end_time - $basetime, $elapsed_time, $user, $sys, $user + $sys,
-			   join(",", @op_answers));
+    my (%extras) = (
+	'workloads' => \%op_answers
+	);
+    my ($answer) = print_json_report($namespace, $pod, $container, $$, $data_start_time,
+				     $data_end_time, $elapsed_time, $user, $sys, \%extras);
     print STDERR "$answer\n";
     do_sync($synchost, $syncport, $answer);
     if ($logport > 0) {
