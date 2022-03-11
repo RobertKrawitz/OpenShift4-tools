@@ -1990,7 +1990,6 @@ function find_first_deployment() {
 		deployment=${deployment#${ns}-}
 		deployment=${deployment%-*}
 		echo _OC get deployments -l "$basename" -A --no-headers 1>&2
-		echo "|$basename|$deployment|$first_deployment|" 1>&2
 		if (( deployment + 1 > first_deployment )) ; then
 		    first_deployment=$((deployment + 1))
 		fi
