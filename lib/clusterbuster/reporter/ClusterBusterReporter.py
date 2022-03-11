@@ -112,8 +112,11 @@ class ClusterBusterReporter:
                                       self._jdata['metadata']['controller_first_start_timestamp'])
         else:
             start_time_offset = self._summary['first_pod_start_time']
-        for var in self._timeline_vars:
-            self.__normalize_timeline_val(var, self._summary, start_time_offset)
+        # We have no good way to ensure that time is in sync between the run host and the pods.
+        # We synchronize time between the sync pod and workers, which is about as good
+        # as we can do.
+        # for var in self._timeline_vars:
+        #     self.__normalize_timeline_val(var, self._summary, start_time_offset)
         results['Start time offset'] = f"{start_time_offset:.3f}"
         if start_time_uncertainty is not None:
             results['Start time uncertainty'] = f"{start_time_uncertainty:.3f}"
