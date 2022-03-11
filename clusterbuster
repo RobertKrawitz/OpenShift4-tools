@@ -406,11 +406,6 @@ $(print_workloads_supporting_reporting '                        - ')
                         Index number of first namespace to be created
        --first_deployment=N
                         Index number of first pod to be created
-       --objs_per_call=N  Number of objects per CLI call
-                        Below options default to objs_per_call
-       --objs_per_call_secrets=N
-       --objs_per_call_namespaces=N
-       --objs_per_call_deployments=N
 
        --sleep=N        Number of seconds between object creations
                         Below options default to sleeptime
@@ -418,8 +413,21 @@ $(print_workloads_supporting_reporting '                        - ')
        --sleep_between_namespaces=N
        --sleep_between_deployments=N
 
-       --parallel=N     Number of operations in parallel
-                        Below options default to parallel
+       --objs_per_call=N
+			Number of objects per CLI call.  Only objects
+       			within a namespace can be created this way;
+			to improve creation performance with multiple
+			namespaces, use --parallel.
+                        Below options all default to objs_per_call
+       --objs_per_call_secrets=N
+       --objs_per_call_namespaces=N
+       --objs_per_call_deployments=N
+
+       --parallel=N     Number of operations in parallel.  Only
+       			operations across namespaces can be
+			parallelized; to improve performance
+			within one namespace, use --objs_per_call.
+                        Below options all default to parallel
        --parallel_secrets=N
        --parallel_namespaces=N
        --parallel_deployments=N
