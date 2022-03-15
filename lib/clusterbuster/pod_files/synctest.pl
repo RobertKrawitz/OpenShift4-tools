@@ -12,6 +12,7 @@ my ($dir) = $ENV{'BAK_CONFIGMAP'};
 require "$dir/clientlib.pl";
 
 our ($namespace, $container, $basetime, $baseoffset, $crtime, $processes, $exit_at_end, $synchost, $syncport, $loghost, $logport, $sync_count, $sync_cluster_count, $sync_sleep) = @ARGV;
+my ($start_time) = xtime();
 
 $SIG{TERM} = sub() { docleanup() };
 $basetime += $baseoffset;
@@ -20,7 +21,7 @@ $crtime += $baseoffset;
 my ($pod) = hostname;
 
 sub runit() {
-    initialize_timing($basetime, $crtime, $synchost, $syncport, "$namespace:$pod:$container");
+    initialize_timing($basetime, $crtime, $synchost, $syncport, "$namespace:$pod:$container", $start_time);
     my ($data_start_time) = xtime();
     my ($ucpu0, $scpu0) = cputime();
     foreach my $i (1..$sync_count) {

@@ -12,6 +12,7 @@ require "$dir/clientlib.pl";
 
 my ($namespace, $container, $basetime, $baseoffset, $crtime, $exit_at_end, $synchost, $syncport, $loghost, $logport, $srvhost, $connect_port, $data_rate, $bytes, $bytes_max, $msg_size, $xfertime, $xfertime_max) = @ARGV;
 my ($start_time, $data_start_time, $data_end_time, $elapsed_time, $end_time, $user, $sys, $cuser, $csys);
+$start_time = xtime();
 
 $SIG{TERM} = sub { POSIX::_exit(0); };
 $basetime += $baseoffset;
@@ -20,14 +21,13 @@ $crtime += $baseoffset;
 my ($data_sent);
 my ($mean_latency, $max_latency, $stdev_latency);
 
-$start_time = xtime();
 my $pass = 0;
 my $ex = 0;
 my $ex2 = 0;
 my ($cfail) = 0;
 my ($refused) = 0;
 my ($pod) = hostname;
-initialize_timing($basetime, $crtime, $synchost, $syncport, "$namespace:$pod:$container");
+initialize_timing($basetime, $crtime, $synchost, $syncport, "$namespace:$pod:$container", $start_time);
 $start_time = get_timing_parameter('start_time');
 
 $SIG{TERM} = sub { POSIX::_exit(0); };

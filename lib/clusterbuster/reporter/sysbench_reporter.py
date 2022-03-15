@@ -60,7 +60,7 @@ class sysbench_reporter(ClusterBusterReporter):
         # I'd like to do this, but if the nodes are out of sync time-wise, this will not
         # function correctly.
         ClusterBusterReporter._generate_summary(self, results)
-        sample_row = self._jdata['Results'][0]['workloads']
+        sample_row = self._jdata['Results']['worker_results'][0]['workloads']
         self.__update_report(results, self._summary['workloads'], sample_row)
 
     def _generate_row(self, results: dict, row: dict):

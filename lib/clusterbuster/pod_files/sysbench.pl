@@ -12,13 +12,14 @@ my ($dir) = $ENV{'BAK_CONFIGMAP'};
 require "$dir/clientlib.pl";
 
 our ($namespace, $container, $basetime, $baseoffset, $crtime, $processes, $rundir, $runtime, $exit_at_end, $synchost, $syncport, $loghost, $logport, $sysbench_generic_args, $sysbench_cmd, $sysbench_fileio_args, $sysbench_modes) = @ARGV;
+my ($start_time) = xtime();
 
 $SIG{TERM} = sub() { docleanup() };
 $basetime += $baseoffset;
 $crtime += $baseoffset;
 
 my ($pod) = hostname;
-initialize_timing($basetime, $crtime, $synchost, $syncport, "$namespace:$pod:$container");
+initialize_timing($basetime, $crtime, $synchost, $syncport, "$namespace:$pod:$container", $start_time);
 my ($localrundir) = "$rundir/$pod/$$";
 
 sub removeRundir() {

@@ -4,26 +4,33 @@ use POSIX;
 use strict;
 use Time::Piece;
 use Time::HiRes qw(gettimeofday usleep);
-my ($verbose, $sync_file);
+use JSON;
+my ($verbose, $sync_file, $controller_timestamp_file);
+my ($offset_from_controller) = 0;
 use Getopt::Long;
 Getopt::Long::Configure("bundling", "no_ignore_case", "pass_through");
 GetOptions("v!"  => \$verbose,
+	   "t:s" => \$controller_timestamp_file,
 	   "f:s" => \$sync_file);
 my ($dir) = $ENV{'BAK_CONFIGMAP'};
 require "$dir/clientlib.pl";
 my ($start_time) = xtime();
+my ($base_start_time) = $start_time;
 
 $SIG{TERM} = sub { POSIX::_exit(0); };
 my ($listen_port, $expected_clients, $sync_count) = @ARGV;
 if (! $sync_count) {
     $sync_count = 1;
 }
-sub timestamp($) {
-    my ($str) = @_;
-    my (@now) = gettimeofday();
-    printf STDERR  "sync %s.%06d %s\n", gmtime($now[0])->strftime("%Y-%m-%dT%T"), $now[1], $str;
+sub ytime() {
+    return xtime() + $offset_from_controller;
 }
-timestamp("Clusterbuster sync starting");
+sub timestamp1($) {
+    my ($str) = @_;
+    my (@now) = POSIX::modf(ytime());
+    printf STDERR  "sync %s.%06d %s\n", gmtime(int($now[1]))->strftime("%Y-%m-%dT%T"), $now[0], $str;
+}
+timestamp1("Clusterbuster sync starting");
 my $sockaddr = "S n a4 x8";
 socket(SOCK, AF_INET, SOCK_STREAM, getprotobyname('tcp')) || die "socket: $!";
 $SIG{TERM} = sub { close SOCK; POSIX::_exit(0); };
@@ -42,11 +49,11 @@ sub read_token($) {
     my ($client) = @_;
     my ($tbuf) = '';
     if (sysread($client, $tbuf, 10) != 10) {
-	timestamp("Unable to read token");
+	timestamp1("Unable to read token");
 	return undef;
     }
     if (!($tbuf =~ /0x[[:xdigit:]]{8}/)) {
-	timestamp("Bad token $tbuf!");
+	timestamp1("Bad token $tbuf!");
 	return undef;
     }
     my ($bytes_to_read) = hex($tbuf);
@@ -55,10 +62,10 @@ sub read_token($) {
     while ($bytes_to_read > 0) {
 	my ($bytes) = sysread($client, $tbuf, $bytes_to_read, $offset);
 	if ($bytes == 0) {
-	    timestamp("Short read: got zero bytes with $bytes_to_read left at $offset");
+	    timestamp1("Short read: got zero bytes with $bytes_to_read left at $offset");
 	    return undef;
 	} elsif ($bytes < 0) {
-	    timestamp("Bad read with $bytes_to_read left at $offset: $!");
+	    timestamp1("Bad read with $bytes_to_read left at $offset: $!");
 	    return undef;
 	} else {
 	    $bytes_to_read -= $bytes;
@@ -69,6 +76,27 @@ sub read_token($) {
 }
 
 my ($first_pass) = 1;
+timestamp1("Waiting to receive controller time data");
+my ($controller_timestamp_data);
+my ($controller_offset_from_sync);
+if ($controller_timestamp_file) {
+    while (! -f $controller_timestamp_file) {
+	sleep(1);
+    }
+    open TIMESTAMP, "<", $controller_timestamp_file || die "Can't open timestamp file $controller_timestamp_file: $!\n";
+    my ($controller_json_data) = "";
+    while (<TIMESTAMP>) {
+	$controller_json_data .= $_;
+    }
+    close TIMESTAMP;
+    $controller_timestamp_data = from_json($controller_json_data);
+    timestamp1("About to adjust timestamp");
+    $offset_from_controller = $$controller_timestamp_data{'second_controller_ts'} - $$controller_timestamp_data{'sync_ts'};
+    $start_time += $offset_from_controller;
+    timestamp1("Adjusted timebase by $offset_from_controller seconds $base_start_time => $start_time");
+    timestamp1(sprintf("Max timebase error %f" , $$controller_timestamp_data{'second_controller_ts'} - $$controller_timestamp_data{'first_controller_ts'}));
+    unlink($controller_timestamp_file);
+}
 while ($sync_count < 0 || $sync_count-- > 0) {
     my ($tmp_sync_file) = undef;
     # Ensure that all of the accepted connections get closed by exiting
@@ -76,7 +104,7 @@ while ($sync_count < 0 || $sync_count-- > 0) {
     # clients and close them manually.
     my $child = fork();
     if ($child == 0) {
-	timestamp("Listening on port $listen_port");
+	timestamp1("Listening on port $listen_port");
 	listen(SOCK, 5) || die "listen: $!";
 	print STDERR "Expect $expected_clients clients\n";
 	my (@clients);
@@ -98,15 +126,12 @@ while ($sync_count < 0 || $sync_count-- > 0) {
 	    my $peeraddr = inet_ntoa($addr);
 	    my ($tbuf) = read_token($client);
 	    if (! defined $tbuf) {
-		timestamp("Read token from $peeraddr  failed: $!");
+		timestamp1("Read token from $peeraddr  failed: $!");
 	    }
-	    timestamp("Accepted connection from $peeraddr on $port, token $tbuf");
+	    timestamp1("Accepted connection from $peeraddr on $port, token $tbuf");
 	    if (substr($tbuf, 0, 10) eq 'timestamp:')  {
 		my ($ignore, $ts, $ignore) = split(/ +/, $tbuf);
-		push @clients, [$client, "$ts " . xtime()];
-		if ($ts < $start_time) {
-		    $start_time = $ts;
-		}
+		push @clients, [$client, "$ts " . ytime()];
 	    } elsif ($tbuf =~ /clusterbuster-json/ && defined $tmp_sync_file_base) {
 		$tmp_sync_file = sprintf("%s-%d", $tmp_sync_file_base, $expected_clients);
 		chomp $tbuf;
@@ -118,27 +143,27 @@ while ($sync_count < 0 || $sync_count-- > 0) {
 	    }
 	    $expected_clients--;
 	}
-	timestamp("Done!");
+	timestamp1("Done!");
 	my ($first_time, $last_time);
-	my ($start) = xtime();
+	my ($start) = ytime();
 	# Only reply to clients who provided a timestamp
 	my (@ts_msgs) = ();
 	if (@clients) {
-	    timestamp("Returning client sync start time, sync start time, sync sent time");
+	    timestamp1("Returning client sync start time, sync start time, sync sent time");
 	    foreach my $client (@clients) {
-		my ($time) = xtime();
+		my ($time) = ytime();
 		my ($client_fd, $client_ts) = @$client;
-		my ($tbuf) = "$client_ts $start_time $start $time";
+		my ($tbuf) = "$client_ts $start_time $start $time $base_start_time";
 		syswrite($client_fd, $tbuf, length $tbuf);
 		close($client_fd);
 	    }
-	    my ($end) = xtime();
+	    my ($end) = ytime();
 	    my ($et) = $end - $start;
-	    timestamp("Sending sync time took $et seconds");
+	    timestamp1("Sending sync time took $et seconds");
 	}
         POSIX::_exit(0);
     } elsif ($child < 1) {
-        timestamp("Fork failed: $!");
+        timestamp1("Fork failed: $!");
 	POSIX::_exit(1);
     } else {
         wait();
@@ -148,6 +173,7 @@ while ($sync_count < 0 || $sync_count-- > 0) {
 if (@tmp_sync_files) {
     my ($tmp_sync_file) = "${tmp_sync_file_base}";
     open (TMP, ">", $tmp_sync_file) || die "Can't open sync file $tmp_sync_file: $!\n";
+    my (%result);
     my (@data);
     foreach my $file (@tmp_sync_files) {
 	-f $file || next;
@@ -157,16 +183,18 @@ if (@tmp_sync_files) {
 	    $datum .= $_;
 	}
 	close FILE;
-	push @data, $datum;
+	push @data, from_json($datum);
     }
-    print TMP join(",", @data);
+    $result{'controller_timing'} = $controller_timestamp_data;
+    $result{'worker_results'} = \@data;
+    print TMP to_json(\%result);
     close TMP || die "Can't close temporary sync file: $!\n";
     rename($tmp_sync_file, $sync_file) || die "Can't rename $sync_file to $tmp_sync_file: $!\n";
-    timestamp("Waiting for sync file $sync_file to be removed");
+    timestamp1("Waiting for sync file $sync_file to be removed");
     while (-f $sync_file) {
 	sleep(5);
     }
-    timestamp("Sync file $sync_file removed, exiting");
+    timestamp1("Sync file $sync_file removed, exiting");
 }
 
 POSIX::_exit(0);

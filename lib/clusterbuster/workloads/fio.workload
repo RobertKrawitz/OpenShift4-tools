@@ -42,7 +42,7 @@ function _create_containers_fio_yaml() {
     for container in $(seq 0 $((containers_per_pod - 1))) ; do
 	cat <<EOF
 - name: "c${container}"
-  image_pull_policy: $image_pull_policy
+  imagePullPolicy: $image_pull_policy
   image: "$container_image"
 $(indent 2 container_resources_yaml)
   env:

@@ -14,13 +14,14 @@ require "$dir/clientlib.pl";
 
 our ($namespace, $container, $basetime, $baseoffset, $crtime, $exit_at_end, $synchost, $syncport, $loghost, $logport,
      $processes, $rundir, $runtime, $jobfiles_dir, $fio_blocksizes, $fio_patterns, $fio_generic_args) = @ARGV;
+my ($start_time) = xtime();
 
 $SIG{TERM} = sub() { docleanup() };
 $basetime += $baseoffset;
 $crtime += $baseoffset;
 
 my ($pod) = hostname;
-initialize_timing($basetime, $crtime, $synchost, $syncport, "$namespace:$pod:$container");
+initialize_timing($basetime, $crtime, $synchost, $syncport, "$namespace:$pod:$container", $start_time);
 my ($localrundir) = "$rundir/$pod/$$";
 
 sub removeRundir() {

@@ -13,6 +13,7 @@ require "$dir/clientlib.pl";
 my ($namespace, $container, $basetime, $baseoffset,
     $crtime, $exit_at_end, $synchost, $syncport, $loghost, $logport, $sleep_time) = @ARGV;
 my ($start_time, $data_start_time, $data_end_time, $elapsed_time, $end_time, $user, $sys, $cuser, $csys);
+my ($start_time) = xtime();
 
 $SIG{TERM} = sub { POSIX::_exit(0); };
 $basetime += $baseoffset;
@@ -25,7 +26,8 @@ my ($cfail) = 0;
 my ($refused) = 0;
 my $time_overhead = 0;
 my ($pod) = hostname;
-initialize_timing($basetime, $crtime, $synchost, $syncport, "$namespace:$pod:$container");
+initialize_timing($basetime, $crtime, $synchost, $syncport,
+		  "$namespace:$pod:$container", $start_time);
 $start_time = get_timing_parameter('start_time');
 
 timestamp("Clusterbuster pod starting");

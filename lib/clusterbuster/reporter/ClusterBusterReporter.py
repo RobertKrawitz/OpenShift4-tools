@@ -48,14 +48,15 @@ class ClusterBusterReporter:
         self._header_keys = {}
         self._fields_to_copy = []
         self._add_timeline_vars(['data_start_time', 'data_end_time', 'pod_start_time', 'pod_create_time'])
-        self._add_accumulators(['user_cpu_time', 'system_cpu_time', 'cpu_time', 'data_elapsed_time', 'timing_parameters.sync_rtt_delta'])
+        self._add_accumulators(['user_cpu_time', 'system_cpu_time', 'cpu_time', 'data_elapsed_time',
+                                'timing_parameters.sync_rtt_delta'])
 
     def create_report(self, outfile=sys.stdout):
         """
         Create a report
         """
-        if 'Results' in self._jdata:
-            rows = self._jdata['Results']
+        if 'Results' in self._jdata and 'worker_results' in self._jdata['Results']:
+            rows = self._jdata['Results']['worker_results']
         else:
             rows = []
         for row in rows:
@@ -94,6 +95,7 @@ class ClusterBusterReporter:
 
         :param results: Summary results that are updated
         """
+        metadata = self._jdata['metadata']
         results['Total Clients'] = self._summary['total_instances']
         results['Elapsed Time Average'] = f"{self._summary['elapsed_time_average']:.{3}f}"
         results['Pod creation interval'] = f"{self._summary['pod_create_interval']:.5f}"
@@ -104,22 +106,6 @@ class ClusterBusterReporter:
         results['User CPU seconds'] = f"{self._summary['user_cpu_time']:.3f}"
         results['System CPU seconds'] = f"{self._summary['system_cpu_time']:.3f}"
         results['CPU seconds'] = f"{self._summary['cpu_time']:.3f}"
-        start_time_uncertainty = None
-        if 'controller_first_start_timestamp' in self._jdata['metadata']:
-            start_time_offset = (self._jdata['metadata']['cluster_start_timestamp'] -
-                                 self._jdata['metadata']['controller_second_start_timestamp'])
-            start_time_uncertainty = (self._jdata['metadata']['controller_second_start_timestamp'] -
-                                      self._jdata['metadata']['controller_first_start_timestamp'])
-        else:
-            start_time_offset = self._summary['first_pod_start_time']
-        # We have no good way to ensure that time is in sync between the run host and the pods.
-        # We synchronize time between the sync pod and workers, which is about as good
-        # as we can do.
-        # for var in self._timeline_vars:
-        #     self.__normalize_timeline_val(var, self._summary, start_time_offset)
-        results['Start time offset'] = f"{start_time_offset:.3f}"
-        if start_time_uncertainty is not None:
-            results['Start time uncertainty'] = f"{start_time_uncertainty:.3f}"
         results['CPU utilization'] = self._safe_div(self._summary['cpu_time'],
                                                     self._summary['data_run_interval'], 5, as_string=True)
         results['First pod start'] = f"{self._summary['first_pod_start_time']:.3f}"
@@ -138,6 +124,9 @@ class ClusterBusterReporter:
         results['First run end'] = f"{self._summary['first_data_end_time']:.3f}"
         results['Last run end'] = f"{self._summary['last_data_end_time']:.3f}"
         results['Net elapsed time'] = f"{self._summary['data_run_interval']:.3f}"
+        results['Sync offset from host'] = f"{metadata['sync_timestamp'] - metadata['controller_postsync_timestamp']:5f}"
+        offset_error = metadata['controller_postsync_timestamp'] - metadata['controller_presync_timestamp']
+        results['Possible controller-sync offset error'] = f"{offset_error:.5f}"
 
     def _generate_row(self, results, row: dict):
         """

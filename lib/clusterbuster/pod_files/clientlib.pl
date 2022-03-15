@@ -49,13 +49,15 @@ sub calibrate_time() {
     return $time_overhead / 1000;
 }
 
-sub initialize_timing($$$$$) {
-    my ($basetime, $crtime, $sync_host, $sync_port, $name) = @_;
-    my ($start_time) = xtime();
+sub initialize_timing($$$$$;$) {
+    my ($basetime, $crtime, $sync_host, $sync_port, $name, $start_time) = @_;
+    if (! defined $start_time) {
+	($start_time) = xtime();
+    }
     my ($presync) = "timestamp: %s $name";
     timestamp("About to sync");
     my ($local_sync_start, $remote_sync_start, $absolute_sync_start,
-	$remote_sync_base, $remote_sync) = split(/ +/, do_sync($sync_host, $sync_port, $presync));
+	$remote_sync_base, $remote_sync, $sync_base_start_time) = split(/ +/, do_sync($sync_host, $sync_port, $presync));
     timestamp("Done sync");
     my ($local_sync) = xtime();
     my ($local_sync_rtt) = $local_sync - $local_sync_start;
@@ -63,18 +65,18 @@ sub initialize_timing($$$$$) {
     my ($local_offset_from_sync) =
 	($local_sync - $remote_sync) - (($local_sync_rtt - $remote_sync_rtt) / 2);
     my ($adjusted_start_time) = $start_time - $local_offset_from_sync;
+    my ($start_offset_from_base) = $adjusted_start_time - $basetime;
+    my ($local_offset_from_base) = $local_offset_from_sync + $start_offset_from_base;
 
-    my ($local_relative_time_adjustment) = $absolute_sync_start - $local_offset_from_sync;
     my ($sync_rtt_delta) = $local_sync_rtt - $remote_sync_rtt;
-    my ($xtime_adjustment) = $absolute_sync_start + $local_offset_from_sync;
+    my ($xtime_adjustment) = $basetime + $local_offset_from_sync;
 
     %timing_parameters = (
-	'absolute_start_time' => $start_time + 0.0,
-	'absolute_sync_start' => $absolute_sync_start + 0.0,
-	'basetime' => $basetime + 0.0,
-	'crtime' => $crtime + 0.0,
+	'sync_pod_start' => $absolute_sync_start + 0.0,
+	'controller_basetime' => $basetime + 0.0,
+	'controller_crtime' => $crtime + 0.0,
 	'local_offset_from_sync' => $local_offset_from_sync + 0.0,
-	'local_relative_time_adjustment' => $local_relative_time_adjustment + 0.0,
+	'local_start_time' => $adjusted_start_time + 0.0,
 	'local_sync' => $local_sync + 0.0,
 	'local_sync_rtt' => $local_sync_rtt + 0.0,
 	'local_sync_start' => $local_sync_start + 0.0,
@@ -84,9 +86,13 @@ sub initialize_timing($$$$$) {
 	'remote_sync_offset' => $remote_sync - $remote_sync_base + 0.0,
 	'remote_sync_rtt' => $remote_sync_rtt + 0.0,
 	'remote_sync_start' => $remote_sync_start + 0.0,
-	'start_time' => $start_time - $xtime_adjustment + 0.0,
+	'start_time' => $start_offset_from_base + 0.0,
 	'sync_rtt_delta' => $sync_rtt_delta + 0.0,
 	'xtime_adjustment' => $xtime_adjustment + 0.0,
+	'remote_sync_base_start_time' => $sync_base_start_time + 0.0,
+	'local_base_start_time' => $start_time + 0.0,
+	'local_offset_from_sync' => $local_offset_from_sync + 0.0,
+	'local_offset_from_base' => $local_offset_from_base + 0.0,
 	);
     timestamp("Timing parameters:");
     map { timestamp(sprintf("%-32s %.6f", $_, $timing_parameters{$_})) } (sort keys %timing_parameters);
@@ -140,7 +146,7 @@ sub print_json_report($$$$$$$;$) {
 	'pod' => $pod,
 	'container' => $container,
 	'process_id' => $process_id,
-	'pod_create_time' => get_timing_parameter('crtime') - get_timing_parameter('basetime'),
+	'pod_create_time' => get_timing_parameter('controller_crtime') - get_timing_parameter('controller_basetime'),
 	'pod_start_time' => get_timing_parameter('start_time'),
 	'data_start_time' => $data_start_time,
 	'data_end_time' => $data_end_time,

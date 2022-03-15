@@ -12,14 +12,14 @@ require "$dir/clientlib.pl";
 
 our ($namespace, $container, $basetime, $baseoffset, $crtime, $exit_at_end, $sync_host, $sync_port, $log_host, $log_port, $dirs, $files_per_dir, $blocksize, $block_count, $processes, @dirs) = @ARGV;
 my ($start_time, $elapsed_time, $end_time, $user, $sys, $cuser, $csys);
+$start_time = xtime();
 
 $SIG{TERM} = sub { POSIX::_exit(0); };
 $basetime += $baseoffset;
 $crtime += $baseoffset;
-$start_time = xtime();
 
 my ($pod) = hostname;
-initialize_timing($basetime, $crtime, $sync_host, $sync_port, "$namespace:$pod:$container");
+initialize_timing($basetime, $crtime, $sync_host, $sync_port, "$namespace:$pod:$container", xtime());
 $start_time = get_timing_parameter('start_time');
 
 if ($#dirs < 0) {

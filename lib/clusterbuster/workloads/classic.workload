@@ -18,8 +18,6 @@
 # Simple workloads (pause pod, clusterbuster, logging)
 ################################################################
 
-declare -g ___classic_pod_sleep_time=0
-
 function _create_containers_classic_yaml() {
     local namespace=$1
     local instance=$2
@@ -35,7 +33,7 @@ function _create_containers_classic_yaml() {
     for container in $(seq 0 $((containers_per_pod - 1))) ; do
 	cat <<EOF
 - name: "c$container"
-  image_pull_policy: $image_pull_policy
+  imagePullPolicy: $image_pull_policy
   image: "$container_image"
 $(indent 2 container_resources_yaml)
   env:
@@ -52,7 +50,7 @@ $(indent 2 bootstrap_command_yaml classic.pl)
   - "$sync_port_num"
   - "$log_host"
   - "$log_port"
-  - "${workload_runtime:-10}"
+  - "${workload_run_time:-10}"
 $(indent 2 volume_mounts_yaml "$namespace" "${instance}" "$secret_count")
 EOF
     done

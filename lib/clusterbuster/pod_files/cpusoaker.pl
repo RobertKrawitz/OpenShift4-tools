@@ -11,13 +11,14 @@ my ($dir) = $ENV{'BAK_CONFIGMAP'};
 require "$dir/clientlib.pl";
 
 our ($namespace, $container, $basetime, $baseoffset, $crtime, $exit_at_end, $synchost, $syncport, $loghost, $logport, $processes, $runtime) = @ARGV;
+my ($start_time) = xtime();
 $SIG{TERM} = sub { kill 'KILL', -1; POSIX::_exit(0); };
 $basetime += $baseoffset;
 $crtime += $baseoffset;
 
 sub runit() {
     my ($pod) = hostname;
-    initialize_timing($basetime, $crtime, $synchost, $syncport, "$namespace:$pod:$container:$$");
+    initialize_timing($basetime, $crtime, $synchost, $syncport, "$namespace:$pod:$container:$$", $start_time);
     my ($iterations) = 0;
     my ($loops_per_iteration) = 10000;
     my ($firsttime) = 1;

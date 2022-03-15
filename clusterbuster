@@ -53,6 +53,7 @@ declare -i log_port=0
 declare sync_host=
 declare -i affinity=0
 declare -A pin_nodes=()
+declare -A runtime_classes=()
 declare -i verbose=0
 declare -i wait_for_secrets=1
 declare -i bytes_transfer=0
@@ -67,7 +68,7 @@ declare baseoffset=0
 declare requested_workload=ClusterBuster
 declare basename=clusterbuster
 declare deployment_type=pod
-declare -i basetime
+declare basetime
 declare opt
 declare -r nl=$'\n'
 declare -a resource_requests=()
@@ -77,7 +78,6 @@ declare -a namespaces_to_create=()
 declare -i scale_ns=0
 declare -i scale_deployments=1
 declare -i sync_start=1
-declare runtime_class=
 declare -a emptydirs=()
 declare -a volumes=()
 declare -A volume_mount_paths=()
@@ -121,6 +121,7 @@ declare debug=
 declare global_sync_service=
 
 declare -r sync_flag_file="/tmp/syncfile";
+declare -r controller_timestamp_file="/tmp/timing.json";
 # shellcheck disable=2155
 declare -r run_uuid=$(uuidgen -r)
 
@@ -142,6 +143,11 @@ OC=${OC:-$(type -p kubectl)}	# kubectl might not work, though...
 function fatal() {
     echo "$*" 1>&2
     exit 1
+}
+
+function killthemall() {
+    echo "${*:-Exiting!}" 1>&2
+    kill -TERM -- -$$
 }
 
 function warn() {
@@ -373,9 +379,8 @@ $(print_workloads_supporting_reporting '                        - ')
                         Resource requests
        --limit=<resource=value>
                         Resource limits
-       --runtimeclass=class
+       --runtimeclass=[class1,class2...]=class
                         Run the pods in the designated runtimeclass.
-       -K
        --kata           Synonym for --runtimeclass=${kata_runtime_class}
        --tolerate=<key:operator:effect>
                         Apply the specified tolerations to created pods.
@@ -611,6 +616,24 @@ function process_pin_node() {
     fi
 }
 
+function process_runtimeclass() {
+    local runtimespec=$1
+    runtimespec=${runtimespec// /}
+    [[ -n "$runtimespec" ]] || return
+    if [[ $runtimespec = *'='* ]] ; then
+	local runtime=${runtimespec#*=}
+	local class=${runtimespec%%=*}
+	class=${class//,/ }
+	# shellcheck disable=SC2206
+	local -a classes=($class)
+	for class in "${classes[@]}" ; do
+	    runtime_classes[$class]="$runtime"
+	done
+    else
+	runtime_classes[default]="$runtimespec"
+    fi
+}
+
 function process_option() {
     local noptname
     local noptname1
@@ -666,9 +689,9 @@ function process_option() {
 	replicas)		    replicas=$optvalue				;;
 	limit)			    resource_limits+=("$optvalue")		;;
 	request)		    resource_requests+=("$optvalue")		;;
-	kata)			    runtime_class=${kata_runtime_class}		;;
+	kata)			    process_runtimeclass "kata"			;;
 	podannotation)		    pod_annotations+=("$optvalue")		;;
-	runtimeclass)		    runtime_class=$optvalue			;;
+	runtimeclass)		    process_runtimeclass "$optvalue"		;;
 	uuid)			    run_uuid=$optvalue				;;
 	secrets)		    secrets=$optvalue				;;
 	workloadruntime)	    set_runtime "$optvalue"			;;
@@ -949,9 +972,15 @@ function create_sync_service_if_needed() {
 # Logging
 ################################################################
 
+function get_pod_timestamp() {
+    local format=${1:-%s.%N}
+    shift
+    _OC exec "$@" -- /bin/sh -c "date '+$format'"
+}
+
 function get_prometheus_pod_timestamp() {
-    local format=${1:-%s}
-    _OC exec -n openshift-monitoring prometheus-k8s-0 -c prometheus -- /bin/sh -c "date '+$format'"
+    local format=${1:-%s.%N}
+    get_pod_timestamp '%s.%N' -n openshift-monitoring prometheus-k8s-0 -c prometheus
 }
 
 function readable_timestamp() {
@@ -964,6 +993,40 @@ function set_start_timestamps() {
     prometheus_exact_starting_timestamp=$(get_prometheus_pod_timestamp '%s.%N')
     prometheus_starting_timestamp=${prometheus_exact_starting_timestamp%%.*}
     second_start_timestamp=$(date +%s.%N)
+}
+
+function get_pod_and_local_timestamps() {
+    until __OC exec "$@" -- /bin/sh -c "date +%s.%N" </dev/null >/dev/null 2>/dev/null ; do
+	local status
+	status=$(__OC get pod "$@" -o jsonpath="{.status.phase}" 2>/dev/null)
+	case "$status" in
+	    Error|Failed)
+		echo "Sync pod failed to start:" 1>&2
+		__OC logs "$@" | tail -10 1>&2
+		exit 1
+		;;
+	    *)  ;;
+	esac
+	sleep 2
+    done
+    local first_local_ts
+    local remote_ts
+    local second_local_ts
+    first_local_ts=$(date +%s.%N)
+    remote_ts=$(__OC exec "$@" -- /bin/sh -c "date +%s.%N" </dev/null)
+    second_local_ts=$(date +%s.%N)
+    _OC exec --stdin=true "$@" -- /bin/sh -c "cat > '$controller_timestamp_file'" <<EOF
+{
+  "first_controller_ts": $first_local_ts,
+  "sync_ts": $remote_ts,
+  "second_controller_ts": $second_local_ts
+}
+EOF
+    # shellcheck disable=SC2181
+    if (( $? != 0 )) ; then
+	fatal "Unable to write timing data to sync pod"
+    fi
+    echo "$first_local_ts" "$remote_ts" "$second_local_ts"
 }
 
 function start_prometheus_snapshot() {
@@ -1004,17 +1067,14 @@ function timestamp() {
     done
 }
 
-trap exit INT
-
 function monitor_pods() {
     exec 0</dev/null 1>/dev/null
     local arg
     local -i timeout=-1
     local -i ppid=0
     local OPTIND=0
-    while getopts "t:p:" arg "$@" ; do
+    while getopts "t:" arg "$@" ; do
 	case "$arg" in
-	    p) ppid="$OPTARG"    ;;
 	    t) timeout="$OPTARG" ;;
 	    *)                   ;;
 	esac
@@ -1031,22 +1091,13 @@ function monitor_pods() {
 		    echo "Pod -n $namespace $name $status!" 1>&2
 		    echo "Tail end of logs:" 1>&2
 		    oc logs -n "$namespace" "$name" |tail -20 1>&2
-		    if (( ppid > 0 )) ; then
-			exec 2>/dev/null
-			kill -USR1 "$ppid"
-		    fi
-		    return 1
+		    killthemall
 		    ;;
 		*)  ;;
 	    esac
 	done <<< "$(__OC get pods -A --no-headers "$@" 2>/dev/null)"
 	if ((timeout > 0 && $(date +%s) > timeout)) ; then
-	    echo "Monitor pods timeout!" 1>&2
-	    if (( ppid > 0 )) ; then
-		exec 2>/dev/null
-		kill -USR1 "$ppid"
-	    fi
-	    return 1
+	    killthemall "Monitor pods timeout!"
 	fi
 	sleep 5
     done
@@ -1063,9 +1114,6 @@ function run_logger() {
     done
     shift $((OPTIND-1))
     "$@" </dev/null &
-    trap '[[ -n "${pids_to_kill[*]}" ]] && exec 2>/dev/null && kill $(jobs -p) && kill "${pids_to_kill[@]}" && return 1' TERM INT HUP USR1 USR2
-    # shellcheck disable=2207
-    pids_to_kill+=($(jobs -p))
     wait
     # shellcheck disable=SC2046
     if [[ -n "${pids_to_kill[*]}" ]] ; then
@@ -1115,22 +1163,11 @@ function _get_logs_poll() {
 	# shellcheck disable=SC2086
 	local cleanup_command="; sleep 1; rm -f '$sync_flag_file'"
 	local mypid=$BASHPID
-	monitor_pods -p "$mypid" -- -l "${basename}-id=$run_uuid" &
+	monitor_pods -- -l "${basename}-id=$run_uuid" &
 	# shellcheck disable=SC2086
-	run_logger -p "$mypid" "$OC" exec $pod -- sh -c "while [[ ! -f '$sync_flag_file' ]] ; do sleep 5; done; cat '$sync_flag_file' $cleanup_command" &
-	# We need to kill our parent, since it's capturing output in a way that it can't
-	# see that we failed.
-	trap '[[ -n "$(jobs -p)" ]] && kill $(jobs -p) ${__PARENT_PID__}; return 2' INT TERM HUP
-	trap 'kill $(jobs -p) ${__PARENT_PID__}; return 3' USR1
+	run_logger -p "$mypid" -- "$OC" exec --stdin=false $pod -- sh -c "while [[ ! -f '$sync_flag_file' ]] ; do sleep 5; done; cat '$sync_flag_file' $cleanup_command" &
 	trap 'kill $(jobs -p) && wait' USR2
 	wait
-	# shellcheck disable=SC2046
-	if [[ -n "$(jobs -p)" ]] ; then
-	    exec 3>&2 2>/dev/null
-	    kill $(jobs -p)
-	    wait
-	    exec 2>&3 3>&-
-	fi
 	if ((--counter > 0)) ; then
 	    echo ','
 	fi
@@ -1144,9 +1181,7 @@ function get_logs_poll() {
     _get_logs_poll "$@" > "$tfile"
     local status=$?
     if ((status == 0)) ; then
-	echo '"Results": ['
-	indent 4 < "$tfile"
-	echo '],'
+	echo -n '"Results":'; cat < "$tfile"; echo ','
 	echo '"Status": "Success"'
     else
 	echo '"Status": "Fail"'
@@ -1211,6 +1246,15 @@ function _report_pin_nodes() {
     (IFS=$',\n '; echo "${nodes[*]}")
 }
 
+function _report_runtime_classes() {
+    local -a runtimeclasses
+    local class
+    for class in "${!runtime_classes[@]}" ; do
+	runtimeclasses+=("\"$class\": \"${runtime_classs[$class]}\"")
+    done
+    (IFS=$',\n '; echo "${runtimeclasses[*]}")
+}
+
 function _extract_metrics() {
     if [[ -r "$metrics_file" ]] ; then
 	cat <<EOF
@@ -1221,16 +1265,23 @@ EOF
 }
 
 function _get_logs() {
-    # We need to be killed by our logger, since we're capturing output
-    # in a way that we can't see that it failed.
-    export __PARENT_PID__=${BASHPID}
-    trap 'echo "}"; exit 1' INT TERM HUP USR1 USR2
+    local first_local_ts
+    local remote_ts
+    local second_local_ts
+    # shellcheck disable=SC2206
+    local -a podname=($*)
+    read -r first_local_ts remote_ts second_local_ts <<< "$(get_pod_and_local_timestamps "${podname[@]:1}")"
+    if [[ -z "$remote_ts" ]] ; then
+	fatal "Unable to retrieve sync timestamp"
+    fi
+    sync_ts_error_interval=$(bc <<< "$second_local_ts - $first_local_ts")
+    sync_ts_delta=$(bc <<< "$second_local_ts - $first_local_ts")
     cat <<EOF
 {
 "metadata": {
   "kind": "clusterbusterResults",
   "controller_first_start_timestamp": $first_start_timestamp,
-  "cluster_start_timestamp": $prometheus_exact_starting_timestamp,
+  "prometheus_start_timestamp": $prometheus_exact_starting_timestamp,
   "controller_second_start_timestamp": $second_start_timestamp,
   "cluster_start_time": "$(readable_timestamp "${prometheus_starting_timestamp}")",
   "job_name": "$job_name",
@@ -1241,6 +1292,9 @@ function _get_logs() {
   "expanded_command_line": [$(quote_list "${processed_options[@]}")],
   "runHost": "$(hostname -f)",
   "workload_metadata": {$(generate_workload_metadata)},
+  "controller_presync_timestamp": $first_local_ts,
+  "sync_timestamp": $remote_ts,
+  "controller_postsync_timestamp": $second_local_ts,
   "options": {
     "basename": "$basename",
     "containers_per_pod": $containers_per_pod,
@@ -1257,7 +1311,7 @@ function _get_logs() {
     "container_image": "$container_image",
     "node_selector": "$node_selector",
     $(indent 4 container_resources_json)
-    "runtime_class": "$runtime_class",
+    "runtime_classes": {$(_report_runtime_classes)},
     $(indent 4 _report_emptydirs)
     "target_data_rate": $target_data_rate,
     "workloadOptions": {
@@ -1664,7 +1718,7 @@ function create_spec() {
     local OPTIND=0
     local OPTARG
     local ns_yaml=${node_selector:+"nodeSelector:${nl}  $node_selector: \"\""}
-    local rc=${runtime_class:+runtimeClassName: "$runtime_class"}
+    local rc=
     local use_pbench=1
     while getopts "A:c:r:Pp" opt "$@" ; do
 	case "$opt" in
@@ -1687,6 +1741,13 @@ function create_spec() {
     elif [[ -n "${pin_nodes[default]:-}" ]] ; then
 	affinity_yaml=
 	ns_yaml="nodeSelector:${nl}  kubernetes.io/hostname: \"${pin_nodes[default]}\""
+    fi
+    if [[ $node_class != sync ]] ; then
+	if [[ -n "$node_class" && -n "${runtime_classes[$node_class]:-}" ]] ; then
+	    rc="runtimeClassName: \"${runtime_classes[$node_class]}\""
+	elif [[ -n "${runtime_classes[default]:-}" ]] ; then
+	    rc="runtimeClassName: \"${runtime_classes[default]}\""
+	fi
     fi
     if (( $# < 4 )) ; then
 	echo "Usage: create_spec <container_func> namespace instance secret_count args..." 1>&2
@@ -1716,7 +1777,7 @@ EOF
 
 function really_create_objects() {
     if [[ $doit -ne 0 && -n $accumulateddata ]] ; then
-	(_OC --validate=false apply -f - <<< "$accumulateddata" | timestamp 1>&2) || exit 1
+	(_OC --validate=false apply -f - <<< "$accumulateddata" | timestamp 1>&2) || killthemall
 	accumulateddata=
 	objs_item_count=0
     fi
@@ -1786,9 +1847,9 @@ function create_object_from_file() {
 	[[ -r "$file" ]] || fatal "Can't read file $file!"
     done
     # shellcheck disable=SC2046
-    (_OC create "$objtype" $(_ns) "$objname" "${@/#/--from-file=}" | echo_if_desired 1>&2) || exit 1
+    (_OC create "$objtype" $(_ns) "$objname" "${@/#/--from-file=}" | echo_if_desired 1>&2) || killthemall
     # shellcheck disable=SC2046
-    (_OC label "$objtype" $(_ns) "$objname" 'clusterbusterbase=true' "clusterbuster-run_uuid=${run_uuid}" "${basename}-id=$run_uuid" "${basename}=true" | echo_if_desired 1>&2) || exit 1
+    (_OC label "$objtype" $(_ns) "$objname" 'clusterbusterbase=true' "clusterbuster-run_uuid=${run_uuid}" "${basename}-id=$run_uuid" "${basename}=true" | echo_if_desired 1>&2) || killthemall
     if (( doit )) ; then
 	if [[ -n "$artifactdir" ]] ; then
 	    mkdir -p "$artifactdir/$objtype"
@@ -1921,6 +1982,8 @@ function create_container_sync() {
 $(indent 2 bootstrap_command_yaml sync.pl)
   - "-f"
   - "$sync_flag_file"
+  - "-t"
+  - "$controller_timestamp_file"
   - "$sync_port"
   - "$expected_clients"
   - "$sync_count"
@@ -1955,7 +2018,6 @@ EOF
 ################################################################
 
 function create_objects_n() {
-    trap exit INT
     local objtype=$1; shift
     local parallel=$1; shift
     local objs_per_call=$1; shift
@@ -2008,31 +2070,28 @@ function find_first_deployment() {
 
 function create_all_namespaces() {
     local i
-    trap 'kill -9 $(jobs -p); exit' INT
     for i in $(seq 0 "$((parallel_namespaces - 1))") ; do
 	create_objects_n namespace "$parallel_namespaces" "$objs_per_call_namespaces" "$i" "$sleep_between_namespaces" &
     done
-    wait || exit 1
+    wait || killthemall
 }
 
 function create_all_secrets() {
     local i
-    trap 'kill -9 $(jobs -p); exit' INT
     for i in $(seq 0 "$((parallel_secrets - 1))") ; do
 	create_objects_n secrets "$parallel_secrets" "$objs_per_call_secrets" "$i" "$sleep_between_secrets" "$deps_per_namespace" "$secrets" &
     done
-    wait || exit 1
+    wait || killthemall
 }
 
 function create_system_configmap() {
     if supports_api list_configmaps ; then
 	local -a systemfiles
 	readarray -t systemfiles < <(list_configmaps)
-	trap 'kill -9 $(jobs -p); exit' INT
 	for i in $(seq 0 "$((parallel_configmaps - 1))") ; do
 	    create_objects_n configmaps "$parallel_configmaps" "$objs_per_call_configmaps" "$i" "$sleep_between_configmaps" "systemconfigmap" "${systemfiles[@]}"&
 	done
-	wait || exit 1
+	wait || killthemall
     fi
 }
 
@@ -2040,20 +2099,18 @@ function create_all_configmaps() {
     create_system_configmap
     (( ${#configmap_files[@]} )) || return;
     local i
-    trap 'kill -9 $(jobs -p); exit' INT
     for i in $(seq 0 "$((parallel_configmaps - 1))") ; do
 	create_objects_n configmaps "$parallel_configmaps" "$objs_per_call_configmaps" "$i" "$sleep_between_configmaps" "configmap" "${configmap_files[@]}"&
     done
-    wait || exit 1
+    wait || killthemall
 }
 
 function create_all_deployments() {
     local i
-    trap 'kill -9 $(jobs -p); exit' INT
     for i in $(seq 0 "$((parallel_deployments - 1))") ; do
 	create_objects_n deployment "$parallel_deployments" "$objs_per_call_deployments" "$i" "$sleep_between_deployments" "$deps_per_namespace" "$secrets" "$replicas" "$containers_per_pod" "$log_host" "$log_port" &
     done
-    wait || exit 1
+    wait || killthemall
 }
 
 function create_all_objects() {
@@ -2081,7 +2138,9 @@ function create_all_objects() {
     done < <("create_all_${objtype}" "$@" 2>&1)
 }
 
+# shellcheck disable=SC2120
 function do_cleanup() {
+    echo "do_cleanup" > /tmp/x.log
     local -a objects_to_clean
     local objtype
     (( doit )) || return
@@ -2091,14 +2150,17 @@ function do_cleanup() {
 	objects_to_clean=("$deployment_type" configmap secret service)
     fi
     for objtype in "${objects_to_clean[@]}" ; do
-	if (( report_object_creation )) ; then
+	# It appears that allowing processes to write to stderr inside
+	# a trap results in the subprocess not doing everything
+	# (in this case, oc delete doesn't complete).
+	if [[ -n $* ]] ; then
+	    exec >/dev/null
+	    exec 2>/dev/null
+	    "$OC" delete "$objtype" -l "$basename"
+	elif (( report_object_creation )) ; then
 	    _OC delete "$objtype" -l "$basename" 1>&2
 	else
-	    local objects_deleted
-	    objects_deleted=$(_OC delete "$objtype" -l "$basename" |grep -c "^${objtype}.*deleted\$")
-	    if ((objects_deleted > 0 && report_object_creation)) ; then
-		printf "Deleted %d %s%s\n" "$objects_deleted" "$objtype" "${plurals[$((objects_deleted == 1))]}" 1>&2
-	    fi
+	    _OC delete "$objtype" -l "$basename" >/dev/null 2>&1
 	fi
     done
 }
@@ -2168,14 +2230,15 @@ function do_logging() {
 	get_logs -p "$log_port" -c "$logs_expected" &
     fi
     local -i get_logs_pid=$!
-    trap '[[ -n "$(jobs -p)" ]] && kill -HUP $(jobs -p)' INT TERM HUP
     if ((timeout > 0)) ; then
+	local -i itimeout=$timeout
 	local -i finis=0
 	while (( timeout < 0 || timeout-- )) ; do
 	    # CreateContainerError is not necessarily fatal
 	    if _OC get pods -A -l "$basename" |grep -q -E -e '([^r]Error|Evicted|Crash)' ; then
 		echo "Run failed:" 1>&2
 		_OC get pods -A -l "$basename" |grep -E -e '([^r]Error|Evicted|Crash)'
+		finis=-1
 		break
 	    fi
 	    # Commands in a pipeline are each run in subshells.  Background jobs are child
@@ -2191,19 +2254,12 @@ function do_logging() {
 		break
 	    fi
 	done
-	if (( ! finis )) ; then
-	    if [[ -n "$get_logs_pid" ]] ; then
-		echo "Killing logger '$get_logs_pid'"
-		exec 3>&2 2>/dev/null
-		kill "$get_logs_pid"
-		sleep 3
-		kill -9 "$get_logs_pid"
-		exec 2>&3 3>&-
-		wait "$get_logs_pid"
-		get_logs_pid=
+	if (( finis <= 0 )) ; then
+	    if ((finis < 0)) ; then
+		killthemall "Run failed"
+	    else
+		killthemall "Run did not terminate in $itimeout seconds"
 	    fi
-	    echo "Run did not terminate" 1>&2
-	    status=1
 	fi
     fi
     if (( get_logs_pid > 1 )) ; then
@@ -2225,6 +2281,11 @@ function run_clusterbuster_1() {
     local -A expected_secrets=()
     local -i status=0
     (( precleanup && doit )) && do_cleanup 1>&2
+    if ((cleanup)) ; then
+	trap 'doit=1; do_cleanup force; exit 1' TERM INT HUP
+    else
+	trap 'exit 1' TERM HUP INT
+    fi
     if [[ $take_prometheus_snapshot -gt 0 && -n "$artifactdir" ]] ; then
 	start_prometheus_snapshot
     else
@@ -2240,7 +2301,6 @@ function run_clusterbuster_1() {
     fi
     allocate_namespaces
     find_first_deployment
-    trap 'if [[ -n "$(jobs -p)" ]] ; then kill -INT $(jobs -p); fi; exit' INT
     create_all_objects namespaces
     if get_sync -q ; then
 	if [[ $use_namespaces ]] ; then
@@ -2256,7 +2316,7 @@ function run_clusterbuster_1() {
 
     create_secrets_top_level
 
-    basetime=$(printf '%(%s)T' -1)
+    basetime=$(date +%s.%N)
     create_all_objects deployments || exit 1
     (( doit )) || return
 
@@ -2327,7 +2387,6 @@ fi
 (( !objs_per_call_namespaces )) && objs_per_call_namespaces=$objs_per_call
 (( !objs_per_call_deployments )) && objs_per_call_deployments=$objs_per_call
 
-[[ -n $runtime_class ]]
 [[ -n "$report_format" ]] && report=1
 
 if [[ $deployment_type != pod && $deployment_type != deployment ]] ; then
@@ -2373,4 +2432,4 @@ fi
 
 [[ -z "$*" ]] || warn "Warning: extraneous arguments $* after basename will be ignored!"
 
-(run_clusterbuster_1)
+run_clusterbuster_1

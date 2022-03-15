@@ -41,7 +41,7 @@ function _create_containers_files_yaml() {
 	# shellcheck disable=2030
 	cat <<EOF
 - name: "c${container}"
-  image_pull_policy: $image_pull_policy
+  imagePullPolicy: $image_pull_policy
   image: "$container_image"
 $(indent 2 container_resources_yaml)
   env:

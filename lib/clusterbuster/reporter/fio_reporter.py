@@ -71,7 +71,7 @@ class fio_reporter(ClusterBusterReporter):
         # I'd like to do this, but if the nodes are out of sync time-wise, this will not
         # function correctly.
         ClusterBusterReporter._generate_summary(self, results)
-        sample_row = self._jdata['Results'][0]['results'][self._job_names[0]]['job_results']
+        sample_row = self._jdata['Results']['worker_results'][0]['results'][self._job_names[0]]['job_results']
         results['FIO version'] = sample_row['fio version']
         for k, v in sample_row['global options'].items():
             if k not in ['rw', 'bs']:
