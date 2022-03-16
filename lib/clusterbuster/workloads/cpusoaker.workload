@@ -18,7 +18,7 @@
 # CPU soaker workload
 ################################################################
 
-function _create_containers_soaker_yaml() {
+function _create_containers_cpusoaker_yaml() {
     local namespace=$1
     local instance=$2
     local secret_count=$3
@@ -57,13 +57,13 @@ EOF
     done
 }
 
-function _create_soaker_deployment() {
+function _create_cpusoaker_deployment() {
     local namespace=$1
     local instance=$2
     if [[ $deployment_type = pod ]] ; then
 	local -i replica=0
 	while (( replica++ < replicas )) ; do
-	    local name=${namespace}-soaker-${instance}-${replica}
+	    local name=${namespace}-cpusoaker-${instance}-${replica}
 	    create_object -n "$namespace" "$name" <<EOF
 apiVersion: v1
 kind: Pod
@@ -72,14 +72,14 @@ metadata:
 $(indent 2 standard_all_metadata_yaml "$namespace" client)
   selector:
     matchLabels:
-      app: ${namespace}-soaker-${instance}
-$(indent 2 standard_labels_yaml soaker "$namespace" "$instance" 1)
-$(create_spec _create_containers_soaker_yaml "$@")
+      app: ${namespace}-cpusoaker-${instance}
+$(indent 2 standard_labels_yaml cpusoaker "$namespace" "$instance" 1)
+$(create_spec _create_containers_cpusoaker_yaml "$@")
   restartPolicy: Never
 EOF
 	done
     else
-	local name=${namespace}-soaker-${instance}
+	local name=${namespace}-cpusoaker-${instance}
 	create_object -n "$namespace" "$name" <<EOF
 apiVersion: apps/v1
 kind: Deployment
@@ -90,19 +90,19 @@ spec:
   replicas: $replicas
   selector:
     matchLabels:
-      app: ${namespace}-soaker-${instance}
+      app: ${namespace}-cpusoaker-${instance}
   strategy:
     type: RollingUpdate
   template:
     metadata:
-$(indent 6 standard_labels_yaml soaker "$namespace" "$instance" 1)
+$(indent 6 standard_labels_yaml cpusoaker "$namespace" "$instance" 1)
 $(indent 6 standard_pod_metadata_yaml "$namespace" client)
-$(indent 4 create_spec _create_containers_soaker_yaml "$@")
+$(indent 4 create_spec _create_containers_cpusoaker_yaml "$@")
 EOF
     fi
 }
 
-function create_deployment_soaker() {
+function create_deployment_cpusoaker() {
     local namespace=$1
     local count=${2:-1}
     local secret_count=${3:-1}
@@ -113,17 +113,17 @@ function create_deployment_soaker() {
     local -i instance
     create_sync_service_if_needed "$namespace" 2 "$((containers_per_pod * replicas * processes_per_pod * count))"
     for instance in $(seq $first_deployment $((count + first_deployment - 1))) ; do
-	_create_soaker_deployment "$namespace" "$instance" "$secret_count"  "$((processes_per_pod))" "$containers_per_pod" "$log_host" "$log_port"
+	_create_cpusoaker_deployment "$namespace" "$instance" "$secret_count"  "$((processes_per_pod))" "$containers_per_pod" "$log_host" "$log_port"
     done
 }
 
-function list_configmaps_soaker() {
+function list_configmaps_cpusoaker() {
     cat <<EOF
 ${__podfile_dir__}/cpusoaker.pl
 EOF
 }
 
-function calculate_logs_required_soaker() {
+function calculate_logs_required_cpusoaker() {
     local -i namespaces=$1
     local -i deps_per_namespace=${2:-1}
     local -i replicas=${3:-1}
@@ -131,14 +131,14 @@ function calculate_logs_required_soaker() {
     echo $((namespaces * processes_per_pod * containers_per_pod * replicas * deps_per_namespace))
 }
 
-function document_soaker() {
+function document_cpusoaker() {
     cat <<'EOF'
-* soaker: a simple CPU soaker running a continuous tight loop.
+* cpusoaker: a simple CPU soaker running a continuous tight loop.
 EOF
 }
 
-function supports_reporting_soaker() {
+function supports_reporting_cpusoaker() {
     :
 }
 
-register_workload soaker dispatch_generic cpu cpusoak soak cpusoaker
+register_workload cpusoaker dispatch_generic cpu cpusoak 

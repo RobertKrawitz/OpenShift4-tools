@@ -1,8 +1,8 @@
 # Run as
-# clusterbuster -f clusterbuster-server-jobfile
+# clusterbuster -f cpusoaker
 
 cleanup
-workload=cpu
+workload=cpusoaker
 workloadruntime=10
 precleanup=1
 no-report-object-creation

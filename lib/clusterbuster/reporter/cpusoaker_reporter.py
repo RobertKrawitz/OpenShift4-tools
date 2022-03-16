@@ -17,7 +17,7 @@
 from lib.clusterbuster.reporter.ClusterBusterReporter import ClusterBusterReporter
 
 
-class soaker_reporter(ClusterBusterReporter):
+class cpusoaker_reporter(ClusterBusterReporter):
     def __init__(self, jdata: dict, report_format: str):
         ClusterBusterReporter.__init__(self, jdata, report_format)
         self._add_accumulators(['work_iterations'])
