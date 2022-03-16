@@ -17,7 +17,7 @@
 from lib.clusterbuster.reporter.ClusterBusterReporter import ClusterBusterReporter
 
 
-class synctest_reporter(ClusterBusterReporter):
+class generic_reporter(ClusterBusterReporter):
     # Not necessary to override anything; we're not adding anything on
     # top of the base class.
     def __init__(self, jdata: dict, report_format: str):

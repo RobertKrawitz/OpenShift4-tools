@@ -182,6 +182,10 @@ function report_options_synctest() {
 EOF
 }
 
+function workload_reporting_class_synctest() {
+    echo generic
+}
+
 function supports_reporting_synctest() {
     :
 }

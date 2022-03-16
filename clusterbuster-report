@@ -72,6 +72,8 @@ else:
     else:
         if args.workload:
             workload = args.workload
+        elif 'workload_reporting_class' in jdata['metadata']:
+            workload = jdata["metadata"]["workload_reporting_class"]
         else:
             workload = jdata["metadata"]["workload"]
         if True or args.debug:

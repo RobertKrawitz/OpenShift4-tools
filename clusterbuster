@@ -119,6 +119,8 @@ declare job_name=
 declare -i job_start_time=$(date +%s)
 declare debug=
 declare global_sync_service=
+declare -i predelay=0
+declare -i postdelay=0
 
 declare -r sync_flag_file="/tmp/syncfile";
 declare -r controller_timestamp_file="/tmp/timing.json";
@@ -272,6 +274,10 @@ Extended Options:
        --sync           Synchronize start of workload instances (default yes)
        --precleanup     Clean up any prior objects
        --cleanup        Clean up generated objects
+       --predelay=N     Delay for the specified time after workload
+                        starts before it starts running.
+       --postdelay=N    Delay for the specified time after workload
+                        completes.
        --timeout=N      Time out reporting after N seconds
        --report_object_creation=<1,0>
                         Report creation of individual objects (default 1)
@@ -661,6 +667,8 @@ function process_option() {
 	verbosereport)		    report_format=verbose			;;
 	reportobjectcreation)	    report_object_creation=$(bool "$optvalue")	;;
 	prometheussnapshot)	    take_prometheus_snapshot=$(bool "$optvalue");;
+	predelay)		    predelay=$optvalue				;;
+	postdelay)		    postdelay=$optvalue				;;
 	timeout)		    timeout=$optvalue				;;
 	# Basic options
 	jobname)		    job_name=$optvalue				;;
@@ -1250,7 +1258,7 @@ function _report_runtime_classes() {
     local -a runtimeclasses
     local class
     for class in "${!runtime_classes[@]}" ; do
-	runtimeclasses+=("\"$class\": \"${runtime_classs[$class]}\"")
+	runtimeclasses+=("\"$class\": \"${runtime_classes[$class]}\"")
     done
     (IFS=$',\n '; echo "${runtimeclasses[*]}")
 }
@@ -1261,6 +1269,14 @@ function _extract_metrics() {
 ,
 "metrics": $("${__mydir__}/experimental/prom-extract" -m "$metrics_file" --metrics-only --start_time="$prometheus_starting_timestamp" --post-settling-time=0)
 EOF
+    fi
+}
+
+function _workload_reporting_class() {
+    if supports_api workload_reporting_class ; then
+	call_api workload_reporting_class
+    else
+	echo $requested_workload
     fi
 }
 
@@ -1287,6 +1303,7 @@ function _get_logs() {
   "job_name": "$job_name",
   "run_uuid": "$run_uuid",
   "workload": "$requested_workload",
+  "workload_reporting_class": "$(_workload_reporting_class)",
   "kubernetes_version": $(__OC version -ojson),
   "command_line": [$(quote_list "${saved_argv[@]}")],
   "expanded_command_line": [$(quote_list "${processed_options[@]}")],
@@ -1323,10 +1340,8 @@ function _get_logs() {
 "api_objects": $( __OC get all -A -l "clusterbuster-id=$run_uuid" -ojson | jq -r '[foreach .items[]? as $item ([[],[]];0; {kind: $item.kind, namespace: $item.metadata.namespace, name: $item.metadata.name, nodeName: $item.spec.nodeName, labels: $item.metadata.labels})]'),
 "csvs": $(__OC get csv -A -ojson | jq -r '[foreach .items[]? as $item ([[],[]];0; {name: $item.metadata.name, namespace: $item.metadata.namespace, version: $item.spec.version})]'),
 EOF
-    cat <<EOF
-$("$@")
-$(_extract_metrics)
-EOF
+    "$@"
+    _extract_metrics
     echo '}'
     if [[ -n "$artifactdir" ]] ; then
 	while read -r namespace pod container ; do
@@ -1984,6 +1999,10 @@ $(indent 2 bootstrap_command_yaml sync.pl)
   - "$sync_flag_file"
   - "-t"
   - "$controller_timestamp_file"
+  - "-d"
+  - "$predelay"
+  - "-D"
+  - "$postdelay"
   - "$sync_port"
   - "$expected_clients"
   - "$sync_count"
@@ -2388,6 +2407,10 @@ fi
 (( !objs_per_call_deployments )) && objs_per_call_deployments=$objs_per_call
 
 [[ -n "$report_format" ]] && report=1
+
+if [[ -n "$metrics_file" && ! -r "$metrics_file" ]] ; then
+    fatal "Cannot read metrics file $metrics_file"
+fi
 
 if [[ $deployment_type != pod && $deployment_type != deployment ]] ; then
     echo "--deployment_type must be either pod or deployment"

@@ -7,10 +7,14 @@ use Time::HiRes qw(gettimeofday usleep);
 use JSON;
 my ($verbose, $sync_file, $controller_timestamp_file);
 my ($offset_from_controller) = 0;
+my ($predelay) = 0;
+my ($postdelay) = 0;
 use Getopt::Long;
 Getopt::Long::Configure("bundling", "no_ignore_case", "pass_through");
 GetOptions("v!"  => \$verbose,
 	   "t:s" => \$controller_timestamp_file,
+	   "d:i" => \$predelay,
+	   "D:i" => \$postdelay,
 	   "f:s" => \$sync_file);
 my ($dir) = $ENV{'BAK_CONFIGMAP'};
 require "$dir/clientlib.pl";
@@ -28,7 +32,7 @@ sub ytime() {
 sub timestamp1($) {
     my ($str) = @_;
     my (@now) = POSIX::modf(ytime());
-    printf STDERR  "sync %s.%06d %s\n", gmtime(int($now[1]))->strftime("%Y-%m-%dT%T"), $now[0], $str;
+    printf STDERR  "sync %s.%06d %s\n", gmtime(int($now[1]))->strftime("%Y-%m-%dT%T"), $now[0] * 1000000, $str;
 }
 timestamp1("Clusterbuster sync starting");
 my $sockaddr = "S n a4 x8";
@@ -129,6 +133,7 @@ while ($sync_count < 0 || $sync_count-- > 0) {
 		timestamp1("Read token from $peeraddr  failed: $!");
 	    }
 	    timestamp1("Accepted connection from $peeraddr on $port, token $tbuf");
+	    push @clients_protect_against_gc, $client;
 	    if (substr($tbuf, 0, 10) eq 'timestamp:')  {
 		my ($ignore, $ts, $ignore) = split(/ +/, $tbuf);
 		push @clients, [$client, "$ts " . ytime()];
@@ -138,12 +143,17 @@ while ($sync_count < 0 || $sync_count-- > 0) {
 		open TMP, ">", "$tmp_sync_file" || die("Can't open sync file $tmp_sync_file: $!\n");
 		print TMP "$tbuf\n";
 		close TMP || die "Can't close sync file: $!\n";
-	    } else {
-		push @clients_protect_against_gc, $client;
 	    }
 	    $expected_clients--;
 	}
 	timestamp1("Done!");
+	if ($first_pass && $predelay > 0) {
+	    timestamp1("Waiting $predelay seconds before start");
+	    sleep($predelay);
+	} elsif ($sync_count == 0 && $postdelay > 0) {
+	    timestamp1("Waiting $postdelay seconds before end");
+	    sleep($postdelay);
+	}
 	my ($first_time, $last_time);
 	my ($start) = ytime();
 	# Only reply to clients who provided a timestamp
@@ -161,6 +171,7 @@ while ($sync_count < 0 || $sync_count-- > 0) {
 	    my ($et) = $end - $start;
 	    timestamp1("Sending sync time took $et seconds");
 	}
+	timestamp1("Sync complete, about to exit");
         POSIX::_exit(0);
     } elsif ($child < 1) {
         timestamp1("Fork failed: $!");
