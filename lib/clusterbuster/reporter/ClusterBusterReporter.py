@@ -47,6 +47,7 @@ class ClusterBusterReporter:
         self._verbose_indent = 0
         self._header_keys = {}
         self._fields_to_copy = []
+        self._expect_row_data = True
         self._add_timeline_vars(['data_start_time', 'data_end_time', 'pod_start_time', 'pod_create_time'])
         self._add_accumulators(['user_cpu_time', 'system_cpu_time', 'cpu_time', 'data_elapsed_time',
                                 'timing_parameters.sync_rtt_delta'])
@@ -97,36 +98,38 @@ class ClusterBusterReporter:
         """
         metadata = self._jdata['metadata']
         results['Total Clients'] = self._summary['total_instances']
-        results['Elapsed Time Average'] = f"{self._summary['elapsed_time_average']:.{3}f}"
-        results['Pod creation interval'] = f"{self._summary['pod_create_interval']:.5f}"
-        results['Average pods created/sec'] = self._safe_div(self._summary['total_instances'],
-                                                             (self._summary['last_pod_create_time'] -
-                                                              self._summary['first_pod_create_time']),
-                                                             precision=3, as_string=True)
-        results['User CPU seconds'] = f"{self._summary['user_cpu_time']:.3f}"
-        results['System CPU seconds'] = f"{self._summary['system_cpu_time']:.3f}"
-        results['CPU seconds'] = f"{self._summary['cpu_time']:.3f}"
-        results['CPU utilization'] = self._safe_div(self._summary['cpu_time'],
-                                                    self._summary['data_run_interval'], 5, as_string=True)
-        results['First pod start'] = f"{self._summary['first_pod_start_time']:.3f}"
-        results['Last pod start'] = f"{self._summary['last_pod_start_time']:.3f}"
-        results['Pod start interval'] = f"{self._summary['pod_start_interval']:.5f}"
-        results['Average pods start/sec'] = self._safe_div(self._summary['total_instances'],
-                                                           (self._summary['last_pod_start_time'] -
-                                                            self._summary['first_pod_start_time']),
-                                                           precision=3, as_string=True)
-        results['First run start'] = f"{self._summary['first_data_start_time']:.3f}"
-        results['Last run start'] = f"{self._summary['last_data_start_time']:.3f}"
-        results['Run start interval'] = f"{self._summary['data_start_interval']:.5f}"
-        results['Synchronization error'] = f"{self._summary['overlap_error']:.5f}"
-        results['Sync max RTT delta'] = f"{self._summary['timing_parameters']['max_sync_rtt_delta']:.5f}"
-        results['Sync avg RTT delta'] = f"{self._summary['timing_parameters']['avg_sync_rtt_delta']:.5f}"
-        results['First run end'] = f"{self._summary['first_data_end_time']:.3f}"
-        results['Last run end'] = f"{self._summary['last_data_end_time']:.3f}"
-        results['Net elapsed time'] = f"{self._summary['data_run_interval']:.3f}"
-        results['Sync offset from host'] = f"{metadata['sync_timestamp'] - metadata['controller_postsync_timestamp']:5f}"
-        offset_error = metadata['controller_postsync_timestamp'] - metadata['controller_presync_timestamp']
-        results['Possible controller-sync offset error'] = f"{offset_error:.5f}"
+        if 'elapsed_time_average' in self._summary:
+            results['Elapsed Time Average'] = f"{self._summary['elapsed_time_average']:.{3}f}"
+            results['Pod creation interval'] = f"{self._summary['pod_create_interval']:.5f}"
+            results['Average pods created/sec'] = self._safe_div(self._summary['total_instances'],
+                                                                 (self._summary['last_pod_create_time'] -
+                                                                  self._summary['first_pod_create_time']),
+                                                                 precision=3, as_string=True)
+            results['User CPU seconds'] = f"{self._summary['user_cpu_time']:.3f}"
+            results['System CPU seconds'] = f"{self._summary['system_cpu_time']:.3f}"
+            results['CPU seconds'] = f"{self._summary['cpu_time']:.3f}"
+            results['CPU utilization'] = self._safe_div(self._summary['cpu_time'],
+                                                        self._summary['data_run_interval'], 5, as_string=True)
+            results['First pod start'] = f"{self._summary['first_pod_start_time']:.3f}"
+            results['Last pod start'] = f"{self._summary['last_pod_start_time']:.3f}"
+            results['Pod start interval'] = f"{self._summary['pod_start_interval']:.5f}"
+            results['Average pods start/sec'] = self._safe_div(self._summary['total_instances'],
+                                                               (self._summary['last_pod_start_time'] -
+                                                                self._summary['first_pod_start_time']),
+                                                               precision=3, as_string=True)
+            results['First run start'] = f"{self._summary['first_data_start_time']:.3f}"
+            results['Last run start'] = f"{self._summary['last_data_start_time']:.3f}"
+            results['Run start interval'] = f"{self._summary['data_start_interval']:.5f}"
+            results['Synchronization error'] = f"{self._summary['overlap_error']:.5f}"
+            results['Sync max RTT delta'] = f"{self._summary['timing_parameters']['max_sync_rtt_delta']:.5f}"
+            results['Sync avg RTT delta'] = f"{self._summary['timing_parameters']['avg_sync_rtt_delta']:.5f}"
+            results['First run end'] = f"{self._summary['first_data_end_time']:.3f}"
+            results['Last run end'] = f"{self._summary['last_data_end_time']:.3f}"
+            results['Net elapsed time'] = f"{self._summary['data_run_interval']:.3f}"
+            timing = self._jdata['Results']['controller_timing']
+            results['Sync offset from host'] = f"{timing['sync_ts'] - timing['second_controller_ts']:5f}"
+            offset_error = timing['second_controller_ts'] - timing['first_controller_ts']
+            results['Possible controller-sync offset error'] = f"{offset_error:.5f}"
 
     def _generate_row(self, results, row: dict):
         """
@@ -150,18 +153,19 @@ class ClusterBusterReporter:
 
         """
         rowhash = {}
-        rowhash['namespace'] = row['namespace']
-        rowhash['pod'] = row['pod']
-        rowhash['container'] = row['container']
-        rowhash['node'] = self.__find_node_for_pod(namespace=row['namespace'], pod=row['pod'])
-        rowhash['process_id'] = row['process_id']
         self._summary['total_instances'] += 1
-        for var in self._timeline_vars:
-            self.__update_timeline_val(var, row, self._summary)
-        for accumulator in self._accumulator_vars:
-            self.__update_accumulator_val(accumulator, row, self._summary, rowhash)
-        for field_to_copy in self._fields_to_copy:
-            self.__copy_field(field_to_copy, row, rowhash)
+        if 'namespace' in row:
+            rowhash['namespace'] = row['namespace']
+            rowhash['pod'] = row['pod']
+            rowhash['container'] = row['container']
+            rowhash['node'] = self.__find_node_for_pod(namespace=row['namespace'], pod=row['pod'])
+            rowhash['process_id'] = row['process_id']
+            for var in self._timeline_vars:
+                self.__update_timeline_val(var, row, self._summary)
+            for accumulator in self._accumulator_vars:
+                self.__update_accumulator_val(accumulator, row, self._summary, rowhash)
+            for field_to_copy in self._fields_to_copy:
+                self.__copy_field(field_to_copy, row, rowhash)
 
         self._rows.append(rowhash)
         return len(self._rows)-1
@@ -171,15 +175,16 @@ class ClusterBusterReporter:
         Add summary information that can only be computed at the end.
         This is mostly for timeline variables.
         """
-        self._summary['elapsed_time_average'] = self._safe_div(self._summary['data_elapsed_time'], self._summary['total_instances'])
-        self._summary['pod_create_interval'] = self._summary['last_pod_create_time'] - self._summary['first_pod_create_time']
-        self._summary['data_run_interval'] = self._summary['last_data_end_time'] - self._summary['first_data_start_time']
-        self._summary['pod_start_interval'] = self._summary['last_pod_start_time'] - self._summary['first_pod_start_time']
-        self._summary['data_start_interval'] = self._summary['last_data_start_time'] - self._summary['first_data_start_time']
-        self._summary['data_end_interval'] = self._summary['last_data_end_time'] - self._summary['first_data_end_time']
-        self._summary['overlap_error'] = self._safe_div(((self._summary['data_start_interval'] +
-                                                          self._summary['data_end_interval']) / 2),
-                                                        self._summary['elapsed_time_average'])
+        if 'data_elapsed_time' in self._summary:
+            self._summary['elapsed_time_average'] = self._safe_div(self._summary['data_elapsed_time'], self._summary['total_instances'])
+            self._summary['pod_create_interval'] = self._summary['last_pod_create_time'] - self._summary['first_pod_create_time']
+            self._summary['data_run_interval'] = self._summary['last_data_end_time'] - self._summary['first_data_start_time']
+            self._summary['pod_start_interval'] = self._summary['last_pod_start_time'] - self._summary['first_pod_start_time']
+            self._summary['data_start_interval'] = self._summary['last_data_start_time'] - self._summary['first_data_start_time']
+            self._summary['data_end_interval'] = self._summary['last_data_end_time'] - self._summary['first_data_end_time']
+            self._summary['overlap_error'] = self._safe_div(((self._summary['data_start_interval'] +
+                                                              self._summary['data_end_interval']) / 2),
+                                                            self._summary['elapsed_time_average'])
 
     def _add_timeline_vars(self, vars_to_update: list):
         """
@@ -583,7 +588,7 @@ class ClusterBusterReporter:
             self._rows.sort(key=self.__row_name)
             for row in self._rows:
                 self._generate_row(results['Detail'], row)
-        if len(self._rows) > 0:
+        if len(self._rows) > 0 or not self._expect_row_data:
             results['Summary'] = {}
             self._generate_summary(results['Summary'])
             results['Overview']['Status'] = 'Success'

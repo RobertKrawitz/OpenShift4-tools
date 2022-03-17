@@ -58,12 +58,16 @@ else:
         try:
             with open(args.filename) as f:
                 jdata = json.load(f)
+        except KeyboardInterrupt:
+            sys.exit(1)
         except Exception as err:
             print(f"Cannot read {args.filename} as JSON: {err}")
             sys.exit(1)
     else:
         try:
             jdata = json.load(sys.stdin)
+        except KeyboardInterrupt:
+            sys.exit(1)
         except Exception as err:
             print(f"Cannot read JSON: {err}")
             sys.exit(1)
@@ -81,6 +85,8 @@ else:
         else:
             try:
                 do_report(workload)
+            except KeyboardInterrupt:
+                sys.exit(1)
             except Exception as exc:
                 if args.force:
                     json.dump(jdata, sys.stdout, indent = 4)

@@ -130,6 +130,7 @@ function _create_deployment_simple() {
     local replicas=${4:-1}
     local containers_per_pod=${5:-1}
     local -i instance
+    create_sync_service_if_needed "$namespace" 0 $((replicas * (count + first_deployment)))
     for instance in $(seq $first_deployment $((count + first_deployment - 1))) ; do
 	_create_deployment_simple_yaml "$namespace" "${instance}" "$secret_count"  "$replicas" "$containers_per_pod"
     done
@@ -137,6 +138,42 @@ function _create_deployment_simple() {
 
 # The simple workloads do not support logging or synchronization.
 # The Log workload is about log generation
+
+function supports_reporting_simple() {
+    :
+}
+
+function supports_reporting_pausepod() {
+    :
+}
+
+function list_configmaps_simple() {
+    :
+}
+
+function list_configmaps_pausepod() {
+    :
+}
+
+function workload_reporting_class_simple() {
+    echo generic_nodata
+}
+
+function workload_reporting_class_pausepod() {
+    echo generic_nodata
+}
+
+function calculate_logs_required_simple() {
+    local -i namespaces=$1
+    local -i deps_per_namespace=${2:-1}
+    local -i replicas=${3:-1}
+    local -i containers_per_pod=${4:-1}
+    echo $((namespaces * replicas * deps_per_namespace))
+}
+
+function calculate_logs_required_pausepod() {
+    calculate_logs_required_simple "$@"
+}
 
 function list_configmaps_log() {
     cat <<EOF

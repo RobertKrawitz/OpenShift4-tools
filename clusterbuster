@@ -88,7 +88,7 @@ declare common_workdir=
 declare -i report=0
 declare report_format=summary
 declare log_strategy=poll
-declare -i precleanup=0
+declare -i precleanup=1
 declare -i cleanup=0
 declare -i timeout=-1
 declare pathdir=${0%/*}
@@ -128,7 +128,7 @@ declare -r controller_timestamp_file="/tmp/timing.json";
 declare -r run_uuid=$(uuidgen -r)
 
 declare kata_runtime_class=kata
-declare image_pull_policy=Always
+declare image_pull_policy=
 declare container_image=quay.io/rkrawitz/bench-army-knife
 
 declare accumulateddata=
@@ -391,7 +391,7 @@ $(print_workloads_supporting_reporting '                        - ')
        --tolerate=<key:operator:effect>
                         Apply the specified tolerations to created pods.
        --image_pull_policy=<policy>
-                        Image pull policy (default $image_pull_policy)
+                        Image pull policy (system default)
        --node_selector=selector
                         Annotate pods with the specified node selector
                         Default $node_selector
@@ -695,8 +695,8 @@ function process_option() {
 	jobfile)		    process_job_file "$optvalue"		;;
 	pinnode)		    process_pin_node "$optvalue"		;;
 	replicas)		    replicas=$optvalue				;;
-	limit)			    resource_limits+=("$optvalue")		;;
-	request)		    resource_requests+=("$optvalue")		;;
+	limit|limits)		    resource_limits+=("$optvalue")		;;
+	request|requests)	    resource_requests+=("$optvalue")		;;
 	kata)			    process_runtimeclass "kata"			;;
 	podannotation)		    pod_annotations+=("$optvalue")		;;
 	runtimeclass)		    process_runtimeclass "$optvalue"		;;
@@ -964,14 +964,18 @@ function get_sync() {
 
 function create_sync_service_if_needed() {
     local namespace=$1
-    local sync_count=$2
-    local sync_clients=$3
+    local sync_count=${2:-0}
+    local sync_clients=${3:-0}
     if get_sync -q ; then
 	if [[ $namespace = "${namespaces_to_create[0]:-}" ]] ; then
-	    create_service "$namespace" "${namespace}-sync" "$sync_port"
+	    if ((sync_count > 0)) ; then
+		create_service "$namespace" "${namespace}-sync" "$sync_port"
+	    fi
 	    create_sync_deployment "$namespace" "$sync_count" $((sync_clients * ${#namespaces_to_create[@]}))
 	else
-	    create_external_service "$namespace" "${namespace}-sync" "$sync_port" "$global_sync_service"
+	    if ((sync_count > 0)) ; then
+		create_external_service "$namespace" "${namespace}-sync" "$sync_port" "$global_sync_service"
+	    fi
 	fi
     fi
 }
@@ -1091,8 +1095,14 @@ function monitor_pods() {
     if ((timeout > 0)) ; then
 	timeout=$(($(date +%s) + timeout))
     fi
+    local pods_pending=''
+    local -i pods_unchanged_countdown=10
     while : ; do
 	# shellcheck disable=2034
+	local -a pending_pods=()
+	local -i running_pod_count=0
+	local -i finished_pod_count=0
+	local -i other_pod_count=0
 	while read -r namespace name rdy status rest ; do
 	    case "${status,,}" in
 		error|failed)
@@ -1101,9 +1111,41 @@ function monitor_pods() {
 		    oc logs -n "$namespace" "$name" |tail -20 1>&2
 		    killthemall
 		    ;;
-		*)  ;;
+		pending)
+		    other_pod_count=$((other_pod_count+1))
+		    pending_pods+=("$namespace/$name")
+		    ;;
+		running)
+		    running_pod_count=$((running_pod_count+1))
+		    ;;
+		completed|terminated)
+		    finished_pod_count=$((finished_pod_count+1))
+		    ;;
+		*)
+		    other_pod_count=$((other_pod_count+1))
+		    ;;
 	    esac
 	done <<< "$(__OC get pods -A --no-headers "$@" 2>/dev/null)"
+	if ! supports_api supports_reporting ; then
+	    if (( running_pod_count + finished_pod_count > 0 && other_pod_count == 0 )) ; then
+		sleep $workload_run_time
+		return
+	    fi
+	fi
+
+	if [[ -n "${pending_pods[*]}" ]] ; then
+	    pods_now_pending=$(IFS=$'\n'; echo "${pending_pods[*]}" | sort)
+	    if [[ "$pods_now_pending" != "$pods_pending" ]] ; then
+		pods_unchanged_countdown=10
+		pods_pending="$pods_now_pending"
+	    else
+		if ((pods_unchanged_countdown <= 0)) ; then
+		    killthemall "No progress with pods after 10 retries, ${#pending_pods[@]} pods still pending."
+		fi
+		pods_unchanged_countdown=$((pods_unchanged_countdown-1))
+		echo "${#pending_pods[@]} pods pending (will retry $pods_unchanged_countdown times)" 1>&2
+	    fi
+	fi
 	if ((timeout > 0 && $(date +%s) > timeout)) ; then
 	    killthemall "Monitor pods timeout!"
 	fi
@@ -1173,7 +1215,9 @@ function _get_logs_poll() {
 	local mypid=$BASHPID
 	monitor_pods -- -l "${basename}-id=$run_uuid" &
 	# shellcheck disable=SC2086
-	run_logger -p "$mypid" -- "$OC" exec --stdin=false $pod -- sh -c "while [[ ! -f '$sync_flag_file' ]] ; do sleep 5; done; cat '$sync_flag_file' $cleanup_command" &
+	if supports_api supports_reporting ; then
+	    run_logger -p "$mypid" -- "$OC" exec --stdin=false $pod -- sh -c "while [[ ! -f '$sync_flag_file' ]] ; do sleep 5; done; cat '$sync_flag_file' $cleanup_command" &
+	fi
 	trap 'kill $(jobs -p) && wait' USR2
 	wait
 	if ((--counter > 0)) ; then
@@ -1185,7 +1229,7 @@ function _get_logs_poll() {
 function get_logs_poll() {
     local tfile
     tfile=$(mktemp -t '_clusterbusterlogs.XXXXXXXXXX')
-    trap 'rm -f "$tfile"; echo "Status: Fail"' INT TERM HUP USR1 USR2
+    trap 'rm -f "$tfile"; echo "Status: Fail"; return 1' INT TERM HUP USR1
     _get_logs_poll "$@" > "$tfile"
     local status=$?
     if ((status == 0)) ; then
@@ -1280,20 +1324,19 @@ function _workload_reporting_class() {
     fi
 }
 
-function _get_logs() {
+function _report_objects() {
     local first_local_ts
     local remote_ts
     local second_local_ts
     # shellcheck disable=SC2206
     local -a podname=($*)
-    read -r first_local_ts remote_ts second_local_ts <<< "$(get_pod_and_local_timestamps "${podname[@]:1}")"
+    read -r first_local_ts remote_ts second_local_ts <<< "$(get_pod_and_local_timestamps "$@")"
     if [[ -z "$remote_ts" ]] ; then
 	fatal "Unable to retrieve sync timestamp"
     fi
     sync_ts_error_interval=$(bc <<< "$second_local_ts - $first_local_ts")
     sync_ts_delta=$(bc <<< "$second_local_ts - $first_local_ts")
     cat <<EOF
-{
 "metadata": {
   "kind": "clusterbusterResults",
   "controller_first_start_timestamp": $first_start_timestamp,
@@ -1340,15 +1383,24 @@ function _get_logs() {
 "api_objects": $( __OC get all -A -l "clusterbuster-id=$run_uuid" -ojson | jq -r '[foreach .items[]? as $item ([[],[]];0; {kind: $item.kind, namespace: $item.metadata.namespace, name: $item.metadata.name, nodeName: $item.spec.nodeName, labels: $item.metadata.labels})]'),
 "csvs": $(__OC get csv -A -ojson | jq -r '[foreach .items[]? as $item ([[],[]];0; {name: $item.metadata.name, namespace: $item.metadata.namespace, version: $item.spec.version})]'),
 EOF
-    "$@"
-    _extract_metrics
-    echo '}'
+}
+
+function _retrieve_artifacts() {
     if [[ -n "$artifactdir" ]] ; then
 	while read -r namespace pod container ; do
 	    mkdir -p "$artifactdir/Logs"
 	    __OC logs -n "$namespace" -c "$container" "$pod" > "$artifactdir/Logs/${namespace}:${pod}:${container}"
 	done <<< "$(_OC get pod -A -l "clusterbuster-id=$run_uuid" -ojson | jq -r '[foreach .items[]? as $item ([[],[]];0; (if ($item.kind == "Pod") then ([foreach $item.spec.containers[]? as $container ([[],[]];0; $item.metadata.namespace + " " + $item.metadata.name + " " + $container.name)]) else null end))] | flatten | map (select (. != null))[]')"
     fi
+}
+
+function _get_logs() {
+    echo '{'
+    _report_objects ${@:2}
+    "$@"
+    _extract_metrics
+    echo '}'
+    _retrieve_artifacts
 }
 
 function print_report() {
@@ -1483,7 +1535,7 @@ function container_resources_json() {
 	if (( ${#resource_requests[@]} )) ; then
 	    res_data+=("$(resource_json requests "${resource_requests[@]}")")
 	fi
-	(IFS=$',\n    '; echo "${res_data[@]}")
+	(IFS=$',\n    '; echo "${res_data[*]}")
 	echo "},"
     fi
 }
@@ -1583,7 +1635,7 @@ function pbench_agent_yaml() {
 	cat <<EOF
 - name: "pbench-agent"
   image: "$container_image"
-  imagePullPolicy: $image_pull_policy
+  ${image_pull_policy:+imagePullPolicy: $image_pull_policy}
   securityContext:
     privileged: false
     capabilities:
