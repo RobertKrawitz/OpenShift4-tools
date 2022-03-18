@@ -121,12 +121,10 @@ sub connect_to($$) {
             sleep(1);
         } else {
             my $straddr = inet_ntoa($faddr);
-            timestamp("Connecting to $addr:$port ($fname, $ftype)");
             my $sockmeta = pack($sockaddr, AF_INET, $port, $faddr);
             socket($sock, AF_INET, SOCK_STREAM, getprotobyname('tcp')) || die "can't make socket: $!";
             if (connect($sock, $sockmeta)) {
                 $connected = 1;
-                timestamp("Connected to $addr:$port ($fname, $ftype), waiting for sync");
             } else {
                 timestamp("Could not connect to $addr on port $port: $!");
                 close $sock;
@@ -164,7 +162,7 @@ sub print_json_report($$$$$$$;$) {
 sub do_sync_internal($$$) {
     my ($addr, $port, $token) = @_;
     while (1) {
-	timestamp("Waiting for sync on $addr:$port");
+	timestamp("sync on $addr:$port");
 	my ($sync_conn) = connect_to($addr, $port);
 	my ($sbuf);
 	my ($ntoken) = $token;
@@ -180,7 +178,7 @@ sub do_sync_internal($$$) {
 	while ($bytes_to_write > 0) {
 	    $answer = syswrite($sync_conn, $tbuf, length $tbuf, $offset);
 	    if (length $tbuf > 128) {
-		timestamp("Writing $token_length to sync");
+		timestamp(sprintf("Writing %d bytes to sync", length $ntoken));
 	    } else {
 		timestamp("Writing token $tbuf to sync");
 	    }
@@ -193,11 +191,10 @@ sub do_sync_internal($$$) {
 	    }
 	}
 	$answer = sysread($sync_conn, $sbuf, 1024);
-	my ($str) = sprintf("Got sync (%s, %d, %s)", $sbuf, length $sbuf, $!);
 	if ($!) {
-	    timestamp("$str, retrying");
+	    timestamp('sync failed, retrying');
 	} else {
-	    timestamp("$str, good");
+	    timestamp(sprintf('sync complete, response %s', $sbuf));
 	    return $sbuf;
 	}
     }
