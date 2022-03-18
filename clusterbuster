@@ -1996,10 +1996,27 @@ function create_configmaps() {
     create_object_from_file configmap "$namespace" "${mapname}-${namespace}" "$@"
 }
 
+function _create_service_ports() {
+    local basename=$1
+    shift
+    local i
+    local p
+    for i in "$@" ; do
+	for p in TCP UDP ; do
+	    cat <<EOF
+- name: ${basename}-${i}-${p,,}
+  protocol: $p
+  port: $i
+  targetPort: $i
+EOF
+	done
+    done
+}
+
 function create_service() {
     local namespace=$1
     local deployment=$2
-    local portnum=$3
+    shift 2
     create_object -t Service -n "$namespace" "service-${deployment}" <<EOF
 apiVersion: v1
 kind: Service
@@ -2009,8 +2026,7 @@ $(indent 2 namespace_yaml "$namespace")
 $(indent 2 standard_labels_yaml)
 spec:
   ports:
-  - port: $portnum
-    targetPort: $portnum
+$(indent 4 _create_service_ports "service-${deployment}" "$@")
   selector:
     name: "${deployment}"
 EOF
