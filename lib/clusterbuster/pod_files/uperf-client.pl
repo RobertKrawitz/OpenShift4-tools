@@ -58,10 +58,9 @@ my (%options) = (
 
 process_file("$dir/uperf-mini.xml", "/tmp/fio-test.xml", %options);
 # Ensure that uperf server is running before we try to do anything.
-timestamp("uperf -P $connect_port -m /tmp/fio-test.xml");
-timestamp(`uperf -V`);
-timestamp(`uperf -h`);
-system("bash", "-c", "until uperf -P $connect_port -m /tmp/fio-test.xml ; do sleep 1; done");
+timestamp("Waiting for uperf server $srvhost:$connect_port to come online...");
+system("bash", "-c", "until uperf -P $connect_port -m /tmp/fio-test.xml >/dev/null; do sleep 1; done");
+timestamp("Connected to uperf server");
 
 my ($counter) = 1;
 
@@ -84,13 +83,12 @@ sub compute_seconds($) {
 }
 
 my (%results);
-$results{cases} = {};
+my (@cases);
 my (@failed_cases) = ();
 
 my ($ucpu0, $scpu0) = cputime();
 foreach my $test (@tests) {
     my ($test_type, $proto, $size, $nthr) = split(/, */, $test);
-    timestamp("$test|$test_type|$proto|$size|$nthr|$runtime|$iterations");
     my ($base_test_name) = "${proto}-${test_type}-${size}B-${nthr}i";
     my (%options) = (
 	'srvhost' => $srvhost,
@@ -105,6 +103,13 @@ foreach my $test (@tests) {
     process_file($test_template, $testfile, %options);
     my (@iterations);
     my ($test_name) = sprintf('%04i-%s', $counter, $base_test_name);
+    my (%metadata) = (
+	'protocol' => $proto,
+	'test_type' => $test_type,
+	'message_size' => $size,
+	'thread_count' => $nthr,
+	'test_name' => $test_name
+	);
     foreach my $iteration (1..$iterations) {
 	my ($test_full_name) = sprintf('%04i-%02i-%s', $counter, $iteration, $base_test_name);
 	my ($failed) = 0;
@@ -129,6 +134,7 @@ foreach my $test (@tests) {
 	    'read' => {},
 	    'total' => {},
 	    );
+	my ($failure_message) = '';
 	while (<RUN>) {
 	    chomp;
 	    if (/^timestamp_ms:([[:digit:].]+) +name:([[:alnum:]]+) +nr_bytes:([[:digit:]]+) +nr_ops:([[:digit:]]+)/) {
@@ -187,13 +193,23 @@ foreach my $test (@tests) {
 	$summary{'job_end'} = $data_end_time;
 	$data{'timeseries'} = \@timeseries;
 	$data{'summary'} = \%summary;
+	$data{'metadata'} = \%metadata;
+	$data{'status'} => (
+	    'condition' => $failed ? 'FAIL' : 'PASS',
+	    'message' => $failure_message,
+	    );
 	push @iterations, \%data;
 	$elapsed_time += $summary{'elapsed_time'};
     }
     $counter++;
-    $results{'cases'}{$test_name} = \@iterations;
-    $results{'failed_cases'} = \@failed_cases;
+    my (%case) = (
+	'metadata' => \%metadata,
+	'iterations' => \@iterations,
+	);
+    push @cases, \%case;
 }
+$results{'test_cases'} = \@cases;
+$results{'failed_cases'} = \@failed_cases;
 
 my ($ucpu1, $scpu1) = cputime();
 $ucpu1 -= $ucpu0;
@@ -202,8 +218,6 @@ $scpu1 -= $scpu0;
 my ($results) = print_json_report($namespace, $pod, $container, $$, $data_start_time,
 				  $data_end_time, $elapsed_time, $ucpu1, $scpu1, \%results);
 timestamp("Done");
-print STDERR "$results\n";
-print STDERR "FINIS\n";
 if ($syncport) {
     do_sync($synchost, $syncport, $results);
 }
