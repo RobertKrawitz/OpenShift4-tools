@@ -283,7 +283,7 @@ function process_options_uperf() {
     if [[ -n "${unknown_opts[*]:-}" ]] ; then
 	help "${unknown_opts[@]}"
     fi
-    if (( ___msg_size <= 0 )) ; then
+    if (( ___uperf_msg_sizes <= 0 )) ; then
 	fatal "Message size must be positive, exiting!"
     fi
     local -i msgsize
