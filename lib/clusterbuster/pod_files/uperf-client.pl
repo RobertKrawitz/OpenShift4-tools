@@ -147,6 +147,7 @@ foreach my $test (@tests) {
 		if ($name eq 'Txn2') {
 		    if ($start_time == 0) {
 			$start_time = $ts;
+			$last_time = $ts;
 		    } else {
 			my (%row) = (
 			    'time' => $ts - $start_time,
@@ -187,17 +188,31 @@ foreach my $test (@tests) {
 	$summary{'elapsed_time'} = $last_time - $start_time;
 	$summary{'nbytes'} = $last_nbytes;
 	$summary{'nops'} = $last_nops;
+	$summary{'computed_nbytes'} = 0;
+	$summary{'computed_nops'} = 0;
+	$summary{'computed_time'} = 0;
+	$summary{'computed_bytes_sec'} = 0;
+	$summary{'computed_ops_sec'} = 0;
+	map {
+	    $summary{'computed_nbytes'} += $$_{'bytes'};
+	    $summary{'computed_nops'} += $$_{'nops'};
+	    $summary{'computed_time'} += $$_{'timedelta'};
+	} grep { $summary{'elapsed_time'} < 10 || ($$_{'time'} >= 3 && $$_{'time'} < $summary{'elapsed_time'} - 3) } @timeseries;
 	$summary{'avg_ops_sec'} = $summary{'nops'} / $summary{'elapsed_time'};
-	$summary{'avg_bytes_sec'} = $summary{'bytes'} / $summary{'elapsed_time'};
+	$summary{'avg_bytes_sec'} = $summary{'nbytes'} / $summary{'elapsed_time'};
+	if ($summary{'computed_time'} > 0) {
+	    $summary{'computed_bytes_sec'} = $summary{'computed_nbytes'} / $summary{'computed_time'};
+	    $summary{'computed_ops_sec'} = $summary{'computed_nops'} / $summary{'computed_time'};
+	}
 	$summary{'job_start'} = $job_start_time;
 	$summary{'job_end'} = $data_end_time;
 	$data{'timeseries'} = \@timeseries;
 	$data{'summary'} = \%summary;
-	$data{'metadata'} = \%metadata;
-	$data{'status'} => (
+	my (%status) = (
 	    'condition' => $failed ? 'FAIL' : 'PASS',
 	    'message' => $failure_message,
 	    );
+	$data{'status'} = \%status;
 	push @iterations, \%data;
 	$elapsed_time += $summary{'elapsed_time'};
     }
