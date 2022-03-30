@@ -246,6 +246,7 @@ Usage: $0 [options] [name]
                        A number of examples are provided in the
                        examples/clusterbuster directory.
        -n              Print what would be done without doing it
+       -o              Specify report format, as --report-format
        -P workload     workload (mandatory), one of:
 $(print_workloads '                       - ')
        -q              Do not print verbose log messages (default)
@@ -307,6 +308,7 @@ $(print_workloads_supporting_reporting '                        - ')
                         for metrics extraction if promextract
                         reporting is in use.
        --report         Print summary report (deprecated)
+                        With an argument, behaves like --report-format
        --verbose-report Print detailed report (deprecated)
        --json-report    Print JSON report (deprecated)
        --raw-report     Print unprocessed report (deprecated)
@@ -663,7 +665,7 @@ function process_option() {
 	reportformat)		    report_format=$optvalue			;;
 	jsonreport)		    report_format=json				;;
 	rawreport)		    report_format=raw				;;
-	report)		    	    report_format=summary			;;
+	report)		    	    report_format=${optvalue:-summary}		;;
 	verbosereport)		    report_format=verbose			;;
 	reportobjectcreation)	    report_object_creation=$(bool "$optvalue")	;;
 	prometheussnapshot)	    take_prometheus_snapshot=$(bool "$optvalue");;
@@ -2429,7 +2431,7 @@ function run_clusterbuster_1() {
 
 load_workloads
 
-while getopts ":B:Eef:HhnP:Qqv-:" opt ; do
+while getopts ":B:Eef:Hhno:P:Qqv-:" opt ; do
     case "$opt" in
 	B) process_option "basename=$OPTARG"	 ;;
 	E) process_option "exit_at_end=0"	 ;;
@@ -2438,6 +2440,7 @@ while getopts ":B:Eef:HhnP:Qqv-:" opt ; do
 	h) help					 ;;
 	H) help_extended			 ;;
 	n) process_option "doit=0"		 ;;
+	o) process_option "reportformat=$OPTARG" ;;
 	P) process_option "workload=$OPTARG"     ;;
 	Q) process_option "reportobjectcreate=0" ;;
 	q) process_option "verbose=0"		 ;;
