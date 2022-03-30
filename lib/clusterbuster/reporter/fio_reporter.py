@@ -51,21 +51,21 @@ class fio_reporter(ClusterBusterReporter):
                     if op not in dest:
                         dest[job][op] = {}
                     dest1 = dest[job][op]
-                    dest1['io_kbytes'] = self._fformat(source1['io_kbytes'], 0)
-                    dest1['total_ios'] = self._fformat(source1['total_ios'], 0)
-                    if 'runtime_counter' in source1 and source1['runtime_counter'] > 0:
-                        divisor = source1['runtime_counter']
-                    else:
-                        divisor = 1
-                    dest1['runtime_sec'] = self._fformat(source1['runtime'] / divisor / rows / 1000.0, 3)
-                    dest1['io_mb/sec'] = self._safe_div(source1['io_kbytes'] / 1000.0,
-                                                        source1['runtime'] / divisor / 1000.0, 3)
-                    dest1['slat_max_ms'] = self._fformat(source1['slat_ns'][max_key] / 1000000.0, 3)
-                    dest1['slat_mean_ms'] = self._fformat(source1['slat_ns']['mean'] / rows / 1000000.0, 3)
-                    dest1['clat_max_ms'] = self._fformat(source1['clat_ns'][max_key] / 1000000.0, 3)
-                    dest1['clat_mean_ms'] = self._fformat(source1['clat_ns']['mean'] / rows / 1000000.0, 3)
-                    dest1['lat_max_ms'] = self._fformat(source1['lat_ns'][max_key] / 1000000.0, 3)
-                    dest1['lat_mean_ms'] = self._fformat(source1['lat_ns']['mean'] / rows / 1000000.0, 3)
+                    dest1['io_bytes'] = self._prettyprint(source1['io_kbytes'] * 1000, precision=3, suffix='B')
+                    dest1['total_ios'] = self._prettyprint(source1['total_ios'], base=1000, precision=3)
+                    dest1['runtime'] = self._prettyprint(source1['runtime'] / rows / 1000.0, base=1000, precision=3, suffix='sec')
+                    dest1['io_data_rate'] = self._prettyprint(self._safe_div(source1['io_kbytes'] * 1024.0,
+                                                                             source1['runtime'] / rows / 1000.0),
+                                                              precision=3, suffix='B/sec')
+                    dest1['io_rate'] = self._prettyprint(self._safe_div(source1['total_ios'],
+                                                                        source1['runtime'] / rows / 1000.0),
+                                                         precision=3, base=1000, suffix='/sec')
+                    dest1['slat_max'] = self._prettyprint(source1['slat_ns'][max_key] / 1000000000.0, base=1000, precision=3, suffix='sec')
+                    dest1['slat_mean'] = self._prettyprint(source1['slat_ns']['mean'] / rows / 1000000000.0, base=1000, precision=3, suffix='sec')
+                    dest1['clat_max'] = self._prettyprint(source1['clat_ns'][max_key] / 1000000000.0, base=1000, precision=3, suffix='sec')
+                    dest1['clat_mean'] = self._prettyprint(source1['clat_ns']['mean'] / rows / 1000000000.0, base=1000, precision=3, suffix='sec')
+                    dest1['lat_max'] = self._prettyprint(source1['lat_ns'][max_key] / 1000000000.0, base=1000, precision=3, suffix='sec')
+                    dest1['lat_mean'] = self._prettyprint(source1['lat_ns']['mean'] / rows / 1000000000.0, base=1000, precision=3, suffix='sec')
 
     def _generate_summary(self, results: dict):
         # I'd like to do this, but if the nodes are out of sync time-wise, this will not

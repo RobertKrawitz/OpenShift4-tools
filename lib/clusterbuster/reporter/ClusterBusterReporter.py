@@ -15,6 +15,7 @@
 # limitations under the License.
 
 import json
+import re
 import sys
 import textwrap
 from copy import deepcopy
@@ -48,7 +49,7 @@ class ClusterBusterReporter:
         self._header_keys = {}
         self._fields_to_copy = []
         self._expect_row_data = True
-        self._add_timeline_vars(['data_start_time', 'data_end_time', 'pod_start_time', 'pod_create_time'])
+        self._add_explicit_timeline_vars(['data_start_time', 'data_end_time', 'pod_start_time', 'pod_create_time'])
         self._add_accumulators(['user_cpu_time', 'system_cpu_time', 'cpu_time', 'data_elapsed_time',
                                 'timing_parameters.sync_rtt_delta'])
 
@@ -99,37 +100,36 @@ class ClusterBusterReporter:
         metadata = self._jdata['metadata']
         results['Total Clients'] = self._summary['total_instances']
         if 'elapsed_time_average' in self._summary:
-            results['Elapsed Time Average'] = f"{self._summary['elapsed_time_average']:.{3}f}"
-            results['Pod creation interval'] = f"{self._summary['pod_create_interval']:.5f}"
-            results['Average pods created/sec'] = self._safe_div(self._summary['total_instances'],
-                                                                 (self._summary['last_pod_create_time'] -
-                                                                  self._summary['first_pod_create_time']),
-                                                                 precision=3, as_string=True)
-            results['User CPU seconds'] = f"{self._summary['user_cpu_time']:.3f}"
-            results['System CPU seconds'] = f"{self._summary['system_cpu_time']:.3f}"
-            results['CPU seconds'] = f"{self._summary['cpu_time']:.3f}"
-            results['CPU utilization'] = self._safe_div(self._summary['cpu_time'],
-                                                        self._summary['data_run_interval'], 5, as_string=True)
-            results['First pod start'] = f"{self._summary['first_pod_start_time']:.3f}"
-            results['Last pod start'] = f"{self._summary['last_pod_start_time']:.3f}"
-            results['Pod start interval'] = f"{self._summary['pod_start_interval']:.5f}"
-            results['Average pods start/sec'] = self._safe_div(self._summary['total_instances'],
-                                                               (self._summary['last_pod_start_time'] -
-                                                                self._summary['first_pod_start_time']),
-                                                               precision=3, as_string=True)
-            results['First run start'] = f"{self._summary['first_data_start_time']:.3f}"
-            results['Last run start'] = f"{self._summary['last_data_start_time']:.3f}"
-            results['Run start interval'] = f"{self._summary['data_start_interval']:.5f}"
-            results['Synchronization error'] = f"{self._summary['overlap_error']:.5f}"
-            results['Sync max RTT delta'] = f"{self._summary['timing_parameters']['max_sync_rtt_delta']:.5f}"
-            results['Sync avg RTT delta'] = f"{self._summary['timing_parameters']['avg_sync_rtt_delta']:.5f}"
-            results['First run end'] = f"{self._summary['first_data_end_time']:.3f}"
-            results['Last run end'] = f"{self._summary['last_data_end_time']:.3f}"
-            results['Net elapsed time'] = f"{self._summary['data_run_interval']:.3f}"
+            results['Elapsed time average'] = self._prettyprint(self._summary['elapsed_time_average'], precision=3, suffix='sec')
+            results['Pod creation interval'] = self._prettyprint(self._summary['pod_create_interval'], precision=3, suffix='sec')
+            results['Pod creation rate'] = self._prettyprint(self._safe_div(self._summary['total_instances'],
+                                                                            (self._summary['last_pod_create_time'] -
+                                                                             self._summary['first_pod_create_time'])),
+                                                             precision=3, suffix='pods/sec')
+            results['User CPU time'] = self._prettyprint(self._summary['user_cpu_time'], precision=3, suffix='sec')
+            results['System CPU seconds'] = self._prettyprint(self._summary['system_cpu_time'], precision=3, suffix='sec')
+            results['CPU seconds'] = self._prettyprint(self._summary['cpu_time'], precision=3, suffix='sec')
+            results['CPU utilization'] = f"{self._safe_div(self._summary['cpu_time'] * 100, self._summary['data_run_interval'], 3, as_string=True)} %"
+            results['First pod start'] = self._prettyprint(self._summary['first_pod_start_time'], precision=3, suffix='sec')
+            results['Last pod start'] = self._prettyprint(self._summary['last_pod_start_time'], precision=3, suffix='sec')
+            results['Pod start interval'] = self._prettyprint(self._summary['pod_start_interval'], precision=3, suffix='sec')
+            results['Pod start rate'] = self._prettyprint(self._safe_div(self._summary['total_instances'],
+                                                                         (self._summary['last_pod_start_time'] -
+                                                                          self._summary['first_pod_start_time'])),
+                                                          precision=3, suffix='pods/sec')
+            results['First run start'] = self._prettyprint(self._summary['first_data_start_time'], precision=3, suffix='sec')
+            results['Last run start'] = self._prettyprint(self._summary['last_data_start_time'], precision=3, suffix='sec')
+            results['Run start interval'] = self._prettyprint(self._summary['data_start_interval'], precision=3, suffix='sec')
+            results['Relative sync error'] = f"{self._summary['overlap_error']:.5f}"
+            results['Sync max RTT delta'] = self._prettyprint(self._summary['timing_parameters']['max_sync_rtt_delta'], precision=3, suffix='sec')
+            results['Sync avg RTT delta'] = self._prettyprint(self._summary['timing_parameters']['avg_sync_rtt_delta'], precision=3, suffix='sec')
+            results['First run end'] = self._prettyprint(self._summary['first_data_end_time'], precision=3, suffix='sec')
+            results['Last run end'] = self._prettyprint(self._summary['last_data_end_time'], precision=3, suffix='sec')
+            results['Net elapsed time'] = self._prettyprint(self._summary['data_run_interval'], precision=3, suffix='sec')
             timing = self._jdata['Results']['controller_timing']
-            results['Sync offset from host'] = f"{timing['sync_ts'] - timing['second_controller_ts']:5f}"
+            results['Sync offset from host'] = self._prettyprint(timing['sync_ts'] - timing['second_controller_ts'], precision=3, suffix='sec')
             offset_error = timing['second_controller_ts'] - timing['first_controller_ts']
-            results['Possible controller-sync offset error'] = f"{offset_error:.5f}"
+            results['Possible controller-sync offset error'] = self._prettyprint(offset_error, precision=3, suffix='sec')
 
     def _generate_row(self, results, row: dict):
         """
@@ -165,7 +165,7 @@ class ClusterBusterReporter:
             for accumulator in self._accumulator_vars:
                 self.__update_accumulator_val(accumulator, row, self._summary, rowhash)
             for field_to_copy in self._fields_to_copy:
-                self.__copy_field(field_to_copy, row, rowhash)
+                self.__copy_field(field_to_copy, row, self._summary, rowhash)
 
         self._rows.append(rowhash)
         return len(self._rows)-1
@@ -186,7 +186,7 @@ class ClusterBusterReporter:
                                                               self._summary['data_end_interval']) / 2),
                                                             self._summary['elapsed_time_average'])
 
-    def _add_timeline_vars(self, vars_to_update: list):
+    def _add_explicit_timeline_vars(self, vars_to_update: list):
         """
         Add report variables of type timeline (e. g. absolute start
         and end times).  These are combined to determine absolute
@@ -203,6 +203,28 @@ class ClusterBusterReporter:
         :param vars_to_update: List of variables to add
         """
         self._timeline_vars.extend(vars_to_update)
+
+    def _add_timeline_vars(self, vars_to_update: list):
+        """
+        Add report variables of type timeline (e. g. absolute start
+        and end times).  These are combined to determine absolute
+        start and finish of various operations, and compute synchronization
+        errors, for summarization
+
+        first_<var>, last_<var>, and <var>_elapsed_time names are synthesized
+        in the summary.
+
+        Variables may be dotted components, in which case they are extracted
+        from the JSON structure.
+
+        Variables in this list that are not present in the output are ignored.
+
+        :param vars_to_update: List of variables to add
+        """
+        for var in vars_to_update:
+            self._timeline_vars.append(f'{var}_start')
+            self._timeline_vars.append(f'{var}_end')
+            self._fields_to_copy.append(f'{var}_elapsed_time')
 
     def _add_accumulators(self, accumulators: list):
         """
@@ -261,6 +283,51 @@ class ClusterBusterReporter:
         else:
             return int(round(num))
 
+    def _prettyprint(self, num: float, precision: float = 5, integer:int = 0, base: int = 1024, suffix: str = ''):
+        """
+        Return a pretty printed version of a float.
+        :param num:
+        :param precision:
+        :param base: 0, 1000 or 1024
+        :param integer: print as integer
+        :param suffix: trailing suffix (e. g. "B/sec")
+        """
+        if base == 0:
+            if suffix and suffix != '':
+                return f'{self._fformat(num, precision=precision)} {suffix}'
+            else:
+                return f'{self._fformat(num, precision=precision)}'
+        elif base == 1000 or base == 10:
+            infix = ''
+            base = 1000
+        elif base == 1024 or base == 2:
+            infix = 'i'
+            base = 1024
+        else:
+            raise(Exception(f'Illegal base {base} for prettyprint; must be 1000 or 1024'))
+        if abs(num) >= base ** 5:
+            return f'{self._fformat(num / (base ** 5), precision=precision)} P{infix}{suffix}'
+        elif abs(num) >= base ** 4:
+            return f'{self._fformat(num / (base ** 4), precision=precision)} T{infix}{suffix}'
+        elif abs(num) >= base ** 3:
+            return f'{self._fformat(num / (base ** 3), precision=precision)} G{infix}{suffix}'
+        elif abs(num) >= base ** 2:
+            return f'{self._fformat(num / (base ** 2), precision=precision)} M{infix}{suffix}'
+        elif abs(num) >= base ** 1:
+            return f'{self._fformat(num / base, precision=precision)} K{infix}{suffix}'
+        elif abs(num) >= 1 or num == 0:
+            if integer != 0 or num == 0:
+                precision=0
+            return f'{self._fformat(num, precision=precision)} {suffix}'
+        elif abs(num) >= 10 ** -3:
+            return f'{self._fformat(num * (1000), precision=precision)} m{suffix}'
+        elif abs(num) >= 10 ** -6:
+            return f'{self._fformat(num * (1000 ** 2), precision=precision)} u{suffix}'
+        elif abs(num) >= 10 ** -9:
+            return f'{self._fformat(num * (1000 ** 3), precision=precision)} n{suffix}'
+        else:
+            return f'{self._fformat(num * (1000 ** 4), precision=precision)} p{suffix}'
+
     def _safe_div(self, num: float, denom: float, precision: int = None, as_string: bool = False):
         """
         Safely divide two numbers.  Return 'N/A' if denominator is zero.
@@ -309,6 +376,32 @@ class ClusterBusterReporter:
             results1 = results1[key]
         results1[key] = value
 
+    def _copy_formatted_value(self, var:str, dest:dict, source: dict):
+        """
+        Copy a value from source to dest, with optional formatting of the form
+        var[:key1=val1:key2=val2...]
+        :param var: path to copy
+        :param dest: where to copy it to
+        :param source: where to copy it from
+        """
+        optstrings = var.split(':')
+        rvar = optstrings.pop(0)
+        if len(optstrings) > 0:
+            args = {}
+            for option in optstrings:
+                try:
+                    name, value = option.split('=', 1)
+                    try:
+                        value = int(value)
+                    except Exception:
+                        pass
+                    args[name] = value
+                except Exception as exc:
+                    raise Exception(f"Cannot parse option {option}")
+            dest[rvar] = self._prettyprint(source[rvar], **args)
+        else:
+            dest[var] = source[var]
+
     def __are_clients_all_on_same_node(self):
         """
         Determine whether all clients ran on the same node.  This is used to determine
@@ -345,9 +438,12 @@ class ClusterBusterReporter:
         :param row:
         :return: Row name suitable for sorting.
         """
-        return f'{row["namespace"]}~{row["pod"]}~{row["container"]}~{row.get("process_id", 0):#07d}'
+        if 'namespace' in row:
+            return f'{row["namespace"]}~{row["pod"]}~{row["container"]}~{row.get("process_id", 0):#07d}'
+        else:
+            return ''
 
-    def __copy_field(self, var: str, row, rowhash: dict):
+    def __copy_field(self, var: str, row, summary, rowhash: dict):
         """
         Copy one field from an input row to an output row.  This recurses for deep copy.
         :param var: Name of variable to copy
@@ -360,18 +456,23 @@ class ClusterBusterReporter:
                 return
             if (isinstance(row[components[0]], list)):
                 for element in row[components[0]]:
-                    self.__copy_field(components[1], element, rowhash)
+                    self.__copy_field(components[1], element, summary, rowhash)
             else:
                 if components[0] not in rowhash:
                     rowhash[components[0]] = {}
-                self.__copy_field(components[1], row[components[0]], rowhash[components[0]])
+                if components[0] not in summary:
+                    summary[components[0]] = {}
+                self.__copy_field(components[1], row[components[0]], summary[components[0]], rowhash[components[0]])
 
         if len(components) > 1:
             if components[0] not in rowhash:
                 [components[0]] = {}
-            self.__copy_field(components[1], row[components[0]], rowhash[components[0]])
+            if components[0] not in summary:
+                summary[components[0]] = {}
+            self.__copy_field(components[1], row[components[0]], summary[components[0]], rowhash[components[0]])
         else:
-            rowhash[var] = row[var]
+            self._copy_formatted_value(var, rowhash, row)
+            self._copy_formatted_value(var, summary, row)
 
     def __update_timeline_val(self, var: str, row, summary: dict):
         """
@@ -393,10 +494,23 @@ class ClusterBusterReporter:
                 self.__update_timeline_val(components[1], row[components[0]], summary[components[0]])
         else:
             row_val = row[f'{var}']
+            mvar = None
+            m = re.search(r'(.*)_(start|end)$', var)
+            if m:
+                mvar = f'{m.group(1)}'
+                tvar = f'{mvar}_elapsed_time'
+                svar = f'{mvar}_start'
+                evar = f'{mvar}_end'
             if f'first_{var}' not in summary or row_val < summary[f'first_{var}']:
                 summary[f'first_{var}'] = row_val
+                if var.endswith('_start'):
+                    summary[var] = row_val
             if f'last_{var}' not in summary or row_val > summary[f'last_{var}']:
                 summary[f'last_{var}'] = row_val
+                if var.endswith('_end'):
+                    summary[var] = row_val
+            if mvar and f'last_{evar}' in summary and f'first_{svar}' in summary:
+                summary[tvar] = summary[f'last_{evar}'] - summary[f'first_{svar}']
 
     def __normalize_timeline_val(self, var: str, summary: dict, offset: float):
         """
@@ -439,21 +553,48 @@ class ClusterBusterReporter:
             row_val = row[var]
             if var not in summary:
                 summary[var] = 0
-            if f'{var}_counter' not in summary:
-                summary[f'{var}_counter'] = 0
-                summary[f'{var}_sq'] = 0
-                summary[f'max_{var}'] = row_val
-                summary[f'min_{var}'] = row_val
-                summary[f'avg_{var}'] = row_val
+            var_counter = f'{var}_counter'
+            var_sq = f'{var}_sq'
+            var_stdev = f'stdev_{var}'
+            var_max = f'max_{var}'
+            var_min = f'min_{var}'
+            var_avg = f'avg_{var}'
+            if var_counter not in summary:
+                summary[var_counter] = 0
+                summary[var_max] = row_val
+                summary[var_min] = row_val
+                summary[var_avg] = row_val
+                summary[var_sq] = 0;
             summary[var] += row_val
-            summary[f'{var}_counter'] += 1
-            summary[f'{var}_sq'] += row_val * row_val
-            if (row_val > summary[f'max_{var}']):
-                summary[f'max_{var}'] = row_val
-            if (row_val < summary[f'min_{var}']):
-                summary[f'min_{var}'] = row_val
-            summary[f'avg_{var}'] = summary[var] / summary[f'{var}_counter']
+            summary[var_counter] += 1
+            summary[var_sq] += row_val * row_val
+            if (row_val > summary[var_max]):
+                summary[var_max] = row_val
+            if (row_val < summary[var_min]):
+                summary[var_min] = row_val
+            summary[var_avg] = summary[var] / summary[var_counter]
+            if summary[var_counter] >= 2:
+                # From https://www.strchr.com/standard_deviation_in_one_pass
+                summary[var_stdev] = ((summary[var_sq] / summary[var_counter]) - (summary[var_avg] ** 2)) ** 0.5
+            else:
+                summary[var_stdev] = 0
             rowhash[var] = row_val
+
+    def __strip_suffix(self, num):
+        n = str(num).strip()
+        try:
+            idx = n.index(' ')
+            return n[:idx]
+        except Exception:
+            return num
+
+    def __isnum(self, num):
+        num = self.__strip_suffix(num)
+        try:
+            t = float(num)
+            return True
+        except Exception:
+            return False
 
     def __compute_report_width(self, results: dict, indentation: int = None):
         """
@@ -479,7 +620,7 @@ class ClusterBusterReporter:
                 fwidth += indentation
             else:
                 try:
-                    nwidth = len(str(int(float(results[key]))))
+                    nwidth = len(str(int(float(self.__strip_suffix(results[key])))))
                 except Exception:
                     nwidth = 0
                 fwidth = len(key.strip())
@@ -533,8 +674,8 @@ class ClusterBusterReporter:
         for key in value_keys:
             value = results[key]
             try:
-                nwidth = len(str(int(float(value))))
-            except Exception:
+                nwidth = len(str(int(float(self.__strip_suffix(value)))))
+            except Exception as err:
                 value = str(value).strip()
                 if len(value) > integer_width:
                     nwidth = None

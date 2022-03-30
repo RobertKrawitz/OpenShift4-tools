@@ -11,8 +11,8 @@ my ($dir) = $ENV{'BAK_CONFIGMAP'};
 require "$dir/clientlib.pl";
 
 my ($namespace, $container, $basetime, $baseoffset, $crtime,
-    $exit_at_end, $synchost, $syncport, $loghost, $logport, $runtime,
-    $srvhost, $connect_port, $iterations, @tests) = @ARGV;
+    $exit_at_end, $synchost, $syncport, $loghost, $logport, $runtime, $ramp_time,
+    $srvhost, $connect_port, @tests) = @ARGV;
 my ($start_time, $data_start_time, $data_end_time, $elapsed_time, $end_time, $user, $sys, $cuser, $csys);
 $start_time = xtime();
 
@@ -68,13 +68,13 @@ sub compute_seconds($) {
     my ($value) = @_;
     if ($value =~ /^([[:digit:]]+(\.[[:digit:]]*)?)(ns|us|ms|s)$/) {
 	my ($base) = $1;
-	my ($modifier) = $2;
+	my ($modifier) = $3;
 	if ($modifier eq 'us') {
-	    return $base * 1000000.0;
+	    return $base / 1000000.0;
 	} elsif ($modifier eq 'ns') {
-	    return $base * 1000000000.0;
+	    return $base / 1000000000.0;
 	} elsif ($modifier eq 's') {
-	    return $base;
+	    return $base / 1.0;
 	} else {
 	    return $base / 1000.0;
 	}
@@ -83,7 +83,7 @@ sub compute_seconds($) {
 }
 
 my (%results);
-my (@cases);
+my (%cases);
 my (@failed_cases) = ();
 
 my ($ucpu0, $scpu0) = cputime();
@@ -95,13 +95,12 @@ foreach my $test (@tests) {
 	'proto' => $proto,
 	'test_type' => $test_type,
 	'size' => $size,
-	'runtime' => $runtime,
+	'runtime' => $runtime + (2 * $ramp_time),
 	'nthr' => $nthr,
 	);
     my ($test_template) = "$dir/uperf-${test_type}.xml";
     my ($testfile) = "/tmp/fio-test.xml";
     process_file($test_template, $testfile, %options);
-    my (@iterations);
     my ($test_name) = sprintf('%04i-%s', $counter, $base_test_name);
     my (%metadata) = (
 	'protocol' => $proto,
@@ -110,121 +109,144 @@ foreach my $test (@tests) {
 	'thread_count' => $nthr,
 	'test_name' => $test_name
 	);
-    foreach my $iteration (1..$iterations) {
-	my ($test_full_name) = sprintf('%04i-%02i-%s', $counter, $iteration, $base_test_name);
-	my ($failed) = 0;
-	do_sync($synchost, $syncport, "$namespace:$pod:$container:$$:$test_full_name");
-	my ($job_start_time) = xtime();
-	if (! defined $data_start_time) {
-	    $data_start_time = $job_start_time;
-	}
-	timestamp("Running test $test_full_name");
-	open(RUN, "-|", "uperf", "-f", "-P", "$connect_port", '-m', '/tmp/fio-test.xml', '-R', '-a', '-i', '.1', '-Tf') || die "Can't run uperf: $!\n";
-	my (%data);
-	my ($start_time) = 0;
-	my ($last_time) = 0;
-	my ($last_nbytes) = 0;
-	my ($last_nops) = 0;
-	my ($ts_count) = 0;
-	my (@timeseries);
-	my (%threads);
-	my (%flowops);
-	my (%summary) = (
-	    'write' => {},
-	    'read' => {},
-	    'total' => {},
-	    );
-	my ($failure_message) = '';
-	while (<RUN>) {
-	    chomp;
-	    if (/^timestamp_ms:([[:digit:].]+) +name:([[:alnum:]]+) +nr_bytes:([[:digit:]]+) +nr_ops:([[:digit:]]+)/) {
-		my ($ts) = $1 / 1000.0;
-		my ($name) = $2;
-		my ($nbytes) = $3 + 0.0;
-		my ($nops) = $4 + 0.0;
-		# We only care about Txn2 and threads; the other transactions are start
-		# and finish, and we want to ignore those
-		if ($name eq 'Txn2') {
-		    if ($start_time == 0) {
-			$start_time = $ts;
-			$last_time = $ts;
-		    } else {
-			my (%row) = (
-			    'time' => $ts - $start_time,
-			    'timedelta' => $ts - $last_time,
-			    'bytes' => $nbytes - $last_nbytes,
-			    'nops' => $nops - $last_nops,
-			    );
-			push @timeseries, \%row;
-			$last_time = $ts;
-			$last_nbytes = $nbytes;
-			$last_nops = $nops;
-		    }
-		} elsif ($name =~ /^Thr([[:digit:]])+/) {
+    my ($failed) = 0;
+    do_sync($synchost, $syncport, "$namespace:$pod:$container:$$:$test_name");
+    my ($job_start_time) = xtime();
+    if (! defined $data_start_time) {
+	$data_start_time = $job_start_time;
+    }
+    timestamp("Running test $test_name");
+    open(RUN, "-|", "uperf", "-f", "-P", "$connect_port", '-m', '/tmp/fio-test.xml', '-R', '-a', '-i', '1', '-Tf') || die "Can't run uperf: $!\n";
+    my ($start_time) = 0;
+    my ($last_time) = 0;
+    my ($last_nbytes) = 0;
+    my ($last_nops) = 0;
+    my ($ts_count) = 0;
+    my (%case);
+    my (@timeseries);
+    my (%threads);
+    my (%flowops);
+    my (%summary) = (
+	'write' => {},
+	'read' => {},
+	'total' => {},
+	);
+    my ($failure_message) = '';
+    while (<RUN>) {
+	chomp;
+	if (/^timestamp_ms:([[:digit:].]+) +name:([[:alnum:]]+) +nr_bytes:([[:digit:]]+) +nr_ops:([[:digit:]]+)/) {
+	    my ($ts) = $1 / 1000.0;
+	    my ($name) = $2;
+	    my ($nbytes) = $3 + 0.0;
+	    my ($nops) = $4 + 0.0;
+	    # We only care about Txn2 and threads; the other transactions are start
+	    # and finish, and we want to ignore those
+	    if ($name eq 'Txn2') {
+		if ($start_time == 0) {
+		    $start_time = $ts;
+		    $last_time = $ts;
+		} else {
 		    my (%row) = (
 			'time' => $ts - $start_time,
-			'bytes' => $nbytes,
-			'nops' => $nops,
+			'timedelta' => $ts - $last_time,
+			'bytes' => $nbytes - $last_nbytes,
+			'nops' => $nops - $last_nops,
 			);
-		    $threads{$name} = %row;
+		    push @timeseries, \%row;
+		    $last_time = $ts;
+		    $last_nbytes = $nbytes;
+		    $last_nops = $nops;
 		}
-	    } elsif (/^(Txn1|write|read)[ \t]/) {
-		my ($op, $count, $avg, $cpu, $max, $min) = split;
-		if ($op eq 'Txn1') {
-		    $op = 'total';
-		}
-		$summary{$op}{'time_avg'} = compute_seconds($avg);
-		$summary{$op}{'time_max'} = compute_seconds($max);
-		$summary{$op}{'time_min'} = compute_seconds($min);
-	    } elsif (/^[*]/) {
-		timestamp($_);
-	    } elsif (/WARNING: Errors/ && ! $failed) {
-		$failed = 1;
-		timestamp("Test case $test_full_name failed!");
-		push @failed_cases, $test_full_name;
+	    } elsif ($name =~ /^Thr([[:digit:]])+/) {
+		my (%row) = (
+		    'time' => $ts - $start_time,
+		    'bytes' => $nbytes,
+		    'nops' => $nops,
+		    );
+		$threads{$name} = %row;
 	    }
+	} elsif (/^(Txn1|write|read)[ \t]/) {
+	    my ($op, $count, $avg, $cpu, $max, $min) = split;
+	    if ($op eq 'Txn1') {
+		$op = 'total';
+	    }
+	    $summary{$op}{'time_avg'} = compute_seconds($avg);
+	    $summary{$op}{'time_max'} = compute_seconds($max);
+	    $summary{$op}{'time_min'} = compute_seconds($min);
+	} elsif (/^[*][*] Error/) {
+	    $failure_message = $_;
+	    $failed = 1;
+	    timestamp("Test case $test_name failed!");
+	    push @failed_cases, $test_name;
+	} elsif (/^[*]/) {
+	    timestamp($_);
+	} elsif (/WARNING: Errors/ && ! $failed) {
+	    $failure_message = $_;
+	    $failed = 1;
+	    timestamp("Test case $test_name failed!");
+	    push @failed_cases, $test_name;
 	}
-	$data_end_time = xtime();
-	$summary{'elapsed_time'} = $last_time - $start_time;
-	$summary{'nbytes'} = $last_nbytes;
-	$summary{'nops'} = $last_nops;
-	$summary{'computed_nbytes'} = 0;
-	$summary{'computed_nops'} = 0;
-	$summary{'computed_time'} = 0;
-	$summary{'computed_bytes_sec'} = 0;
-	$summary{'computed_ops_sec'} = 0;
-	map {
-	    $summary{'computed_nbytes'} += $$_{'bytes'};
-	    $summary{'computed_nops'} += $$_{'nops'};
-	    $summary{'computed_time'} += $$_{'timedelta'};
-	} grep { $summary{'elapsed_time'} < 10 || ($$_{'time'} >= 3 && $$_{'time'} < $summary{'elapsed_time'} - 3) } @timeseries;
-	$summary{'avg_ops_sec'} = $summary{'nops'} / $summary{'elapsed_time'};
-	$summary{'avg_bytes_sec'} = $summary{'nbytes'} / $summary{'elapsed_time'};
-	if ($summary{'computed_time'} > 0) {
-	    $summary{'computed_bytes_sec'} = $summary{'computed_nbytes'} / $summary{'computed_time'};
-	    $summary{'computed_ops_sec'} = $summary{'computed_nops'} / $summary{'computed_time'};
-	}
-	$summary{'job_start'} = $job_start_time;
-	$summary{'job_end'} = $data_end_time;
-	$data{'timeseries'} = \@timeseries;
-	$data{'summary'} = \%summary;
-	my (%status) = (
-	    'condition' => $failed ? 'FAIL' : 'PASS',
-	    'message' => $failure_message,
-	    );
-	$data{'status'} = \%status;
-	push @iterations, \%data;
-	$elapsed_time += $summary{'elapsed_time'};
     }
+    $data_end_time = xtime();
+    $summary{'raw_elapsed_time'} = $last_time - $start_time;
+    $summary{'raw_nbytes'} = $last_nbytes;
+    $summary{'raw_nops'} = $last_nops;
+    if ($summary{'raw_elapsed_time'} > 0) {
+	$summary{'raw_avg_ops_sec'} = $summary{'raw_nops'} / $summary{'raw_elapsed_time'};
+	$summary{'raw_avg_bytes_sec'} = $summary{'raw_nbytes'} / $summary{'raw_elapsed_time'};
+    }
+    $summary{'nbytes'} = 0;
+    $summary{'nops'} = 0;
+    $summary{'elapsed_time'} = 0;
+    $summary{'avg_bytes_sec'} = 0;
+    $summary{'avg_ops_sec'} = 0;
+    my ($ops_sec_sum) = 0;
+    my ($ops_sec_sq_sum) = 0;
+    my ($bytes_sec_sum) = 0;
+    my ($bytes_sec_sq_sum) = 0;
+    my ($stdev_counter) = 0;
+    map {
+	$summary{'nbytes'} += $$_{'bytes'};
+	$summary{'nops'} += $$_{'nops'};
+	$summary{'elapsed_time'} += $$_{'timedelta'};
+	my ($ops_sec) = $$_{'nops'} / $$_{'timedelta'};
+	my ($bytes_sec) = $$_{'bytes'} / $$_{'timedelta'};
+	$ops_sec_sum += $ops_sec;
+	$ops_sec_sq_sum += $ops_sec * $ops_sec;
+	$bytes_sec_sum += $bytes_sec;
+	$bytes_sec_sq_sum += $bytes_sec * $bytes_sec;
+	$stdev_counter++;
+    } grep { ($summary{'raw_elapsed_time'} < 10 ||
+	      ($$_{'time'} >= $ramp_time &&
+	       $$_{'time'} < $summary{'raw_elapsed_time'} - $ramp_time)) } @timeseries;
+    if ($summary{'elapsed_time'} > 0) {
+	$summary{'avg_bytes_sec'} = $summary{'nbytes'} / $summary{'elapsed_time'};
+	$summary{'avg_ops_sec'} = $summary{'nops'} / $summary{'elapsed_time'};
+	$summary{'bytes_sec_sq_sum'} = $bytes_sec_sq_sum;
+	$summary{'bytes_sec_sum'} = $bytes_sec_sum;
+	$summary{'ops_sec_sq_sum'} = $ops_sec_sq_sum;
+	$summary{'ops_sec_sum'} = $ops_sec_sum;
+	if ($stdev_counter >= 2) {
+	    $summary{'stdev_bytes_sec'} = (($bytes_sec_sq_sum / $stdev_counter) - ($summary{'avg_bytes_sec'} ** 2)) ** 0.5;
+	    $summary{'stdev_ops_sec'} = (($ops_sec_sq_sum / $stdev_counter) - ($summary{'avg_ops_sec'} ** 2)) ** 0.5;
+	} else {
+	    $summary{'stdev_bytes_sec'} = 0;
+	    $summary{'stdev_ops_sec'} = 0;
+	}
+    }
+    $summary{'job_start'} = $job_start_time;
+    $summary{'job_end'} = $data_end_time;
+    $case{'status'}{'condition'} = $failed ? 'FAIL' : 'PASS';
+    $case{'status'}{'message'} = $failure_message;
+    $case{'metadata'} = \%metadata;
+    $case{'summary'} = \%summary;
+    $case{'timeseries'} = \@timeseries;
+    $elapsed_time += $summary{'elapsed_time'};
     $counter++;
-    my (%case) = (
-	'metadata' => \%metadata,
-	'iterations' => \@iterations,
-	);
-    push @cases, \%case;
+    $cases{$test_name} = \%case;
 }
-$results{'test_cases'} = \@cases;
-$results{'failed_cases'} = \@failed_cases;
+$results{'results'} = \%cases;
+$results{'failed'} = \@failed_cases;
 
 my ($ucpu1, $scpu1) = cputime();
 $ucpu1 -= $ucpu0;

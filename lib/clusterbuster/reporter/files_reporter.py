@@ -21,11 +21,9 @@ class files_reporter(ClusterBusterReporter):
     def __init__(self, jdata: dict, report_format: str):
         ClusterBusterReporter.__init__(self, jdata, report_format)
         self._file_operations = ['create', 'remove']
-        self._add_timeline_vars(['create.operation_start', 'remove.operation_start'])
-        self._add_accumulators(['create.operation_elapsed_time', 'create.user_cpu_time',
-                                'create.system_cpu_time', 'create.cpu_time', 'create.operations',
-                                'remove.operation_elapsed_time', 'remove.user_cpu_time',
-                                'remove.system_cpu_time', 'remove.cpu_time', 'remove.operations'])
+        self._add_timeline_vars(['create.operation', 'remove.operation'])
+        self._add_accumulators(['create.user_cpu_time', 'create.system_cpu_time', 'create.cpu_time', 'create.operations',
+                                'remove.user_cpu_time', 'remove.system_cpu_time', 'remove.cpu_time', 'remove.operations'])
         self._set_header_components(['namespace', 'pod', 'container', 'process_id'])
 
     def __update_report(self, dest: dict, source: dict):

@@ -22,10 +22,10 @@ declare -ga ___uperf_msg_sizes=(1024)
 declare -ga ___uperf_test_types=(stream)
 declare -ga ___uperf_protos=(tcp)
 declare -ga ___uperf_nthrs=(1)
-declare -gi ___uperf_iterations=1
 declare -ag ___uperf_tests=()
 declare -gir ___uperf_port=30000
 declare -gir ___uperf_port_addrs=24
+declare -gi ___uperf_ramp_time=3
 
 function _create_uperf_server_container_yaml() {
     local namespace=$1
@@ -110,9 +110,9 @@ $(indent 2 bootstrap_command_yaml uperf-client.pl)
   - "$log_host"
   - "$log_port"
   - "$workload_run_time"
+  - "$___uperf_ramp_time"
   - "service-${namespace}-uperf-server-$instance"
   - "$___uperf_port"
-  - "$___uperf_iterations"
 $(indent 2 _create_uperf_tests "${___uperf_tests[@]}")
 $(indent 2 volume_mounts_yaml "$namespace" "$instance" "$secret_count")
 EOF
@@ -242,8 +242,6 @@ function calculate_logs_required_uperf() {
 function help_options_uperf() {
     cat <<'EOF'
     uperf options:
-       uperf-iterations
-                       How many iterations of each test to run
        workload-runtime
                        How many seconds to run each test for.
        pin_node=server=<node>
@@ -272,12 +270,12 @@ function process_options_uperf() {
 	# shellcheck disable=SC2206
 	# shellcheck disable=SC2034
 	case "$noptname1" in
-	    uperfmsgsize*) ___uperf_msg_sizes=(${optvalue//,/ }) ;;
+	    uperfmsgsize*) ___uperf_msg_sizes=(${optvalue//,/ })   ;;
 	    uperftesttype*) ___uperf_test_types=(${optvalue//,/ }) ;;
-	    uperfproto*) ___uperf_protos=(${optvalue//,/ }) ;;
-	    uperfnthr*) ___uperf_nthrs=(${optvalue//,/ }) ;;
-	    uperfiter*) ___uperf_iterations=$optvalue ;;
-	    *) unknown_opts+=("$noptname ($noptname1)")	;;
+	    uperfproto*) ___uperf_protos=(${optvalue//,/ })	   ;;
+	    uperfnthr*) ___uperf_nthrs=(${optvalue//,/ })	   ;;
+	    uperframp*) ___uperf_ramp_time=$optvalue		   ;;
+	    *) unknown_opts+=("$noptname ($noptname1)")		   ;;
 	esac
     done
     if [[ -n "${unknown_opts[*]:-}" ]] ; then
@@ -285,6 +283,9 @@ function process_options_uperf() {
     fi
     if (( ___uperf_msg_sizes <= 0 )) ; then
 	fatal "Message size must be positive, exiting!"
+    fi
+    if ((___uperf_ramp_time < 0)) ; then
+	___uperf_ramp_time=0
     fi
     local -i msgsize
     local testtype
@@ -305,8 +306,36 @@ function supports_reporting_uperf() {
     :
 }
 
-function workload_reporting_class_uperf() {
-    echo generic
+function generate_metadata_uperf() {
+    local -a jobs=()
+    local -i jobidx=1
+    local -i msgsize
+    local testtype
+    local proto
+    local -i nthr
+    echo '"run_time": ' $((workload_run_time - (2 * ___uperf_ramp_time))) ,
+    echo '"ramp_time": ' $___uperf_ramp_time ,
+    echo '"jobs": {'
+    for testtype in "${___uperf_test_types[@]}" ; do
+	for proto in "${___uperf_protos[@]}" ; do
+	    for msgsize in "${___uperf_msg_sizes[@]}" ; do
+		for nthr in "${___uperf_nthrs[@]}" ; do
+		    jobs+=("$(cat <<EOF
+$(printf '"%04d-%s-%s-%dB-%di"' $((jobidx)) "$proto" "$testtype" $msgsize $nthr): {
+  "test_type": "$testtype",
+  "proto": "$proto",
+  "msgsize": $msgsize,
+  "nthr": $nthr
+}
+EOF
+)")
+		    jobidx=$((jobidx+1))
+		done
+	    done
+	done
+    done
+    (IFS=$',\n'; echo "${jobs[*]}")
+    echo '}'
 }
 
 function report_options_uperf() {

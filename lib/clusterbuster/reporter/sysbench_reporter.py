@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import re
 from lib.clusterbuster.reporter.ClusterBusterReporter import ClusterBusterReporter
 
 
@@ -21,7 +22,8 @@ class sysbench_reporter(ClusterBusterReporter):
     def __init__(self, jdata: dict, report_format: str):
         ClusterBusterReporter.__init__(self, jdata, report_format)
         self._sysbench_operations = jdata['metadata']['options']['workloadOptions']['sysbench_fileio_tests']
-        self._sysbench_vars_to_copy = ['filesize', 'blocksize', 'rdwr_ratio',
+        self._sysbench_vars_to_copy = ['filesize:precision=3:suffix=B:base=1024',
+                                       'blocksize:precision=3:suffix=B:base=1024', 'rdwr_ratio',
                                        'fsync_frequency', 'final_fsync_enabled', 'io_mode']
         accumulators = []
         vars_to_copy = []
@@ -32,7 +34,7 @@ class sysbench_reporter(ClusterBusterReporter):
                         'mean_latency_sec', 'max_latency_sec', 'p95_latency_sec', 'files']:
                 accumulators.append(f'{workload}.{var}')
             for var in self._sysbench_vars_to_copy:
-                vars_to_copy.append(f'{workload}.{var}')
+                vars_to_copy.append(f'{workload}.{re.sub(r":.*", "", var)}')
         self._add_accumulators(accumulators)
         self._add_fields_to_copy(vars_to_copy)
         self._set_header_components(['namespace', 'pod', 'container', 'process_id'])
@@ -45,16 +47,21 @@ class sysbench_reporter(ClusterBusterReporter):
             dest[op] = {}
             dest[op]['Elapsed Time'] = self._fformat(source[op]['elapsed_time'], 3)
             dest[op]['CPU Time'] = self._fformat(source[op]['user_cpu_time'] + source[op]['sys_cpu_time'], 3)
-            for var in ['read_ops', 'write_ops', 'fsync_ops', 'files']:
-                dest[op][var] = source[op][var]
+            for var in ['read_ops:precision=3:suffix=ops:base=1000',
+                        'write_ops:precision=3:suffix=ops:base=1000',
+                        'fsync_ops:precision=3:suffix=ops:base=1000',
+                        'files:precision=3:suffix='':base=1000:integer=1']:
+                self._copy_formatted_value(var, dest[op], source[op])
             for var in self._sysbench_vars_to_copy:
-                dest[op][var] = sample_row[op][var]
-            dest[op]['read ops/sec'] = self._safe_div(dest[op]['read_ops'], dest[op]['Elapsed Time'], 3)
-            dest[op]['write ops/sec'] = self._safe_div(dest[op]['write_ops'], dest[op]['Elapsed Time'], 3)
-            dest[op]['read MiB/sec'] = self._safe_div(dest[op]['blocksize'] * dest[op]['read_ops'] / 1048576,
-                                                      dest[op]['Elapsed Time'], 3)
-            dest[op]['write MiB/sec'] = self._safe_div(dest[op]['blocksize'] * dest[op]['write_ops'] / 1048576,
-                                                       dest[op]['Elapsed Time'], 3)
+                self._copy_formatted_value(var, dest[op], source[op])
+            dest[op]['read ops rate'] = self._prettyprint(self._safe_div(source[op]['read_ops'], source[op]['elapsed_time']),
+                                                          precision=3, base=1000, suffix='ops/sec')
+            dest[op]['write ops rate'] = self._prettyprint(self._safe_div(source[op]['write_ops'], source[op]['elapsed_time']),
+                                                           precision=3, base=1000, suffix='ops/sec')
+            dest[op]['read data rate'] = self._prettyprint(self._safe_div(source[op]['blocksize'] * source[op]['read_ops'], source[op]['elapsed_time']),
+                                                           precision=3, base=1024, suffix='B/sec')
+            dest[op]['write MiB/sec'] = self._prettyprint(self._safe_div(source[op]['blocksize'] * source[op]['write_ops'], source[op]['elapsed_time']),
+                                                          precision=3, base=1024, suffix='B/sec')
 
     def _generate_summary(self, results: dict):
         # I'd like to do this, but if the nodes are out of sync time-wise, this will not
@@ -67,4 +74,4 @@ class sysbench_reporter(ClusterBusterReporter):
         ClusterBusterReporter._generate_row(self, results, row)
         result = {}
         self.__update_report(result, row['workloads'])
-        self._insert_into(results, [row['namespace'], row['pod'], row['container'], row['process_id']], result)
+        self._insert_into(results, [row['namespace'], row['pod'], row['container'], str(row['process_id'])], result)
