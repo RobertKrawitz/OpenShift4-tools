@@ -1,0 +1,10 @@
+# Run as
+# clusterbuster -f clusterbuster-classic-jobfile
+
+precleanup
+workload=pausepod
+precleanup=1
+no-report-object-creation
+deps-per-namespace=8
+namespaces=1
+exit_at_end
