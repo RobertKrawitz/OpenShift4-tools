@@ -1130,7 +1130,7 @@ function monitor_pods() {
 	done <<< "$(__OC get pods -A --no-headers "$@" 2>/dev/null)"
 	if ! supports_api supports_reporting ; then
 	    if (( running_pod_count + finished_pod_count > 0 && other_pod_count == 0 )) ; then
-		sleep $workload_run_time
+		sleep "$workload_run_time"
 		return
 	    fi
 	fi
@@ -1322,7 +1322,7 @@ function _workload_reporting_class() {
     if supports_api workload_reporting_class ; then
 	call_api workload_reporting_class
     else
-	echo $requested_workload
+	echo "$requested_workload"
     fi
 }
 
@@ -1398,6 +1398,7 @@ function _retrieve_artifacts() {
 
 function _get_logs() {
     echo '{'
+    # shellcheck disable=SC2068
     _report_objects ${@:2}
     "$@"
     _extract_metrics
