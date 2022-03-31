@@ -100,6 +100,11 @@ function fatal() {
     exit 1
 }
 
+function doit() {
+    echo "$*" 1>&2
+    "$@"
+}
+
 function warn() {
     echo "Warning: $*" 1>&2
 }
@@ -625,23 +630,32 @@ function setup_install_1() {
     tar -C "$cluster_install_dir" -xzf "$cachedir/openshift-client-linux-${VERSION}.tar.gz"
     tar -C "$cluster_install_dir" -xzf "$cachedir/openshift-install-linux-${VERSION}.tar.gz"
     PATH="${cluster_install_dir}:$PATH"
-    installerURL="https://raw.githubusercontent.com/openshift/installer/release-$RELEASE/data/data/rhcos.json"
-    echo "Fetching installer data from $installerURL"
-    installer_data="$(curl -s -S "$installerURL")"
     local -A paths
     local -A fn
-    baseURI=$(get_key "$installer_data" .baseURI)
+    local baseURI
 
-    paths[bios]=$(get_key "$installer_data" .images.metal.path)
+    # Should we even use this at all?
+    local installerURL="https://raw.githubusercontent.com/openshift/installer/release-$RELEASE/data/data/rhcos.json"
+    echo "Trying to fetch installer data from $installerURL"
+    if curl -f -s "$installerURL" ; then
+	local installer_data="$(curl -s -S "$installerURL")"
+	baseURI=$(get_key "$installer_data" .baseURI)
+	paths[bios]=$(get_key "$installer_data" .images.metal.path)
+	paths[kernel]=$(get_key "$installer_data" .images.kernel.path '.images."live-kernel".path')
+	paths[initramfs]=$(get_key "$installer_data" .images.initramfs.path '.images."live-initramfs".path')
+	paths[rootfs]=$(get_key "$installer_data" '.images."live-rootfs".path')
+    else
+	baseURI=https://mirror.openshift.com/pub/openshift-v4/dependencies/rhcos/$RELEASE/latest
+	echo "Using fallback $baseURI"
+	paths[bios]=rhcos-metal.x86_64.raw.gz
+	paths[kernel]=rhcos-live-kernel-x86_64
+	paths[initramfs]=rhcos-live-initramfs.x86_64.img
+	paths[rootfs]=rhcos-live-rootfs.x86_64.img
+    fi
+
     fn[bios]="rhcos-metal-bios.raw.gz"
-
-    paths[kernel]=$(get_key "$installer_data" .images.kernel.path '.images."live-kernel".path')
     fn[kernel]="rhcos-installer-kernel"
-
-    paths[initramfs]=$(get_key "$installer_data" .images.initramfs.path '.images."live-initramfs".path')
     fn[initramfs]="rhcos-installer-initramfs.img"
-
-    paths[rootfs]=$(get_key "$installer_data" '.images."live-rootfs".path')
     fn[rootfs]="rhcos-installer-rootfs"
 
     if [[ -d /var/www/html/ocp4-upi ]] ; then
@@ -657,7 +671,11 @@ function setup_install_1() {
 	if [[ -n "${paths[$f]:-}" ]] ; then
 	    dest="/var/www/html/ocp4-upi/${paths[$f]}"
 	    if [[ ! -f "/var/www/html/ocp4-upi/${paths[$f]}" ]] ; then
-		wget -nv -O "${dest}.tmp" "$baseURI/${paths[$f]}" && mv "${dest}.tmp" "$dest"
+		if doit wget -nv -O "${dest}.tmp" "$baseURI/${paths[$f]}" ; then
+		    mv "${dest}.tmp" "$dest"
+		else
+		    fatal "Cannot download $baseURI/${paths[$f]}"
+		fi
 	    fi
 	    ln -s "$dest" "/var/www/html/ocp4-upi/${fn[$f]}"
 	fi
@@ -850,8 +868,7 @@ function bootstrap_destroy() {
 
 function bootstrap_install() {
     bootstrap_destroy
-    echo virt-install -n ocp4-upi-bootstrap --pxe --os-type=Linux --os-variant=rhel8.1 --ram=8192 --vcpus=4 --network network=ocp4-upi,mac="$bootstrap_mac" --disk size=120,bus=scsi,sparse=yes --check disk_size=off --noautoconsole --wait -1 1>&2
-    virt-install -n ocp4-upi-bootstrap --pxe --os-type=Linux --os-variant=rhel8.1 --ram=8192 --vcpus=4 --network network=ocp4-upi,mac="$bootstrap_mac" --disk size=120,bus=scsi,sparse=yes --check disk_size=off --noautoconsole --wait -1
+    doit virt-install -n ocp4-upi-bootstrap --pxe --os-type=Linux --os-variant=rhel8.1 --ram=8192 --vcpus=4 --network network=ocp4-upi,mac="$bootstrap_mac" --disk size=120,bus=scsi,sparse=yes --check disk_size=off --noautoconsole --wait -1
 }
 
 function master_install() {
