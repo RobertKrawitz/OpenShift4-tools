@@ -54,6 +54,7 @@ declare sync_host=
 declare -i affinity=0
 declare -A pin_nodes=()
 declare -A runtime_classes=()
+declare runtime_class
 declare -i verbose=0
 declare -i wait_for_secrets=1
 declare -i bytes_transfer=0
@@ -289,7 +290,7 @@ Extended Options:
        --verbose        Print verbose log messages (-v)
 
     Reporting Options:
-       --report-format=<format>
+       --report=<format>
                         Print report in specified format.  Meaning of
                         report types is by type.  Default is summary
                         if not specified; if that is not reported,
@@ -299,7 +300,14 @@ $(list_report_formats '                        - ')
                         The following workloads support reporting:
 $(print_workloads_supporting_reporting '                        - ')
        --artifactdir=<dir>
-                        Save artifacts to <dir>
+                        Save artifacts to <dir>.  <dir> can have embedded
+                        format codes:
+                        %n              Job name
+                        %s              Timestamp of run
+                        %w              Workload
+                        %{var}          Variable's value is substituted
+                        %{var[item]}    to reference an array variable
+                        %{var:-default} to use a default value if not set
        --prometheus-snapshot
                         Take a Prometheus snapshot and save to the
                         artifacts directory
@@ -307,11 +315,6 @@ $(print_workloads_supporting_reporting '                        - ')
                         benchmark-runner compatible metrics file
                         for metrics extraction if promextract
                         reporting is in use.
-       --report         Print summary report (deprecated)
-                        With an argument, behaves like --report-format
-       --verbose-report Print detailed report (deprecated)
-       --json-report    Print JSON report (deprecated)
-       --raw-report     Print unprocessed report (deprecated)
 
     Workload sizing options:
        --containers_per_pod=N
@@ -627,6 +630,7 @@ function process_pin_node() {
 function process_runtimeclass() {
     local runtimespec=$1
     runtimespec=${runtimespec// /}
+    runtime_class=$runtimespec
     [[ -n "$runtimespec" ]] || return
     if [[ $runtimespec = *'='* ]] ; then
 	local runtime=${runtimespec#*=}
@@ -2385,6 +2389,13 @@ function run_clusterbuster_1() {
 	artifactdir=${artifactdir//%s/$(readable_timestamp "$prometheus_starting_timestamp")}
 	artifactdir=${artifactdir//%w/$requested_workload}
 	artifactdir=${artifactdir//%n/$job_name}
+	while [[ $artifactdir =~ (.*)(%\{([[:alnum:]_]+(\[[[:alnum:]]+\])?)(:-([^\}]*))?\})(.*) ]] ; do
+	    local prefix=${BASH_REMATCH[1]:-}
+	    local var=${BASH_REMATCH[3]:-}
+	    local replacement=${BASH_REMATCH[6]:-UNKNOWN$var}
+	    local suffix=${BASH_REMATCH[7]:-}
+	    artifactdir="${prefix}${!var:-$replacement}${suffix}"
+	done
 	mkdir -p "$artifactdir" || fatal "Can't create log directory $artifactdir"
 	echo "${saved_argv[@]@Q}" > "$artifactdir/commandline"
 	exec 2> >(tee "$artifactdir/stderr.log" >&2)
