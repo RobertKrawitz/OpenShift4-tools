@@ -29,13 +29,13 @@ class server_reporter(ClusterBusterReporter):
         ClusterBusterReporter._generate_summary(self, results)
         results['Total Messages Sent'] = self._prettyprint(self._summary['passes'], precision=3, base=1000, suffix='msgs')
         results['Total Data Sent'] = self._prettyprint(self._summary['data_sent_bytes'],
-                                                       precision=3, base=1000, suffix='B');
+                                                       precision=3, base=1000, suffix='B')
         results['Average Data Rate'] = self._prettyprint(self._safe_div(self._summary['data_sent_bytes'],
                                                                         self._summary['elapsed_time_average']),
-                                                         precision=3, base=1000, suffix='B/sec');
+                                                         precision=3, base=1000, suffix='B/sec')
         results['Average Data Rate'] = self._prettyprint(self._safe_div(self._summary['data_sent_bytes'],
                                                                         self._summary['elapsed_time_average']),
-                                                         precision=3, base=1000, suffix='B/sec');
+                                                         precision=3, base=1000, suffix='B/sec')
         results['Average RTT'] = self._prettyprint(self._summary['mean_latency_sec'] / self._summary['total_instances'],
                                                    precision=3, base=1000, suffix='sec')
         results['Max RTT'] = self._prettyprint(self._summary['max_max_latency_sec'],
@@ -48,7 +48,7 @@ class server_reporter(ClusterBusterReporter):
         result['Messages Sent'] = self._prettyprint(row['passes'], precision=3, base=1000, suffix='msgs')
         result['Data Sent'] = self._prettyprint(row['data_sent_bytes'], precision=3, base=1000, suffix='B')
         result['Data Rate'] = self._prettyprint(self._safe_div(row['data_sent_bytes'], row['data_elapsed_time']),
-                                                precision=3, base=1000, suffix='B/sec');
+                                                precision=3, base=1000, suffix='B/sec')
         result['Average RTT'] = self._prettyprint(row['mean_latency_sec'],
                                                   precision=3, base=1000, suffix='sec')
         result['Max RTT'] = self._prettyprint(row['max_latency_sec'],

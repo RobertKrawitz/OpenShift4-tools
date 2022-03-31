@@ -28,8 +28,12 @@ class cpusoaker_reporter(ClusterBusterReporter):
         # function correctly.
         ClusterBusterReporter._generate_summary(self, results)
         results['Interations'] = self._prettyprint(self._summary['work_iterations'], precision=3)
-        results['Iterations/sec'] = self._prettyprint(self._safe_div(self._summary['work_iterations'], self._summary['data_run_interval']), precision=3)
-        results['Interations/CPU sec'] = self._prettyprint(self._safe_div(self._summary['work_iterations'], self._summary['cpu_time']), precision=3)
+        results['Iterations/sec'] = self._prettyprint(self._safe_div(self._summary['work_iterations'],
+                                                                     self._summary['data_run_interval']),
+                                                      precision=3)
+        results['Interations/CPU sec'] = self._prettyprint(self._safe_div(self._summary['work_iterations'],
+                                                                          self._summary['cpu_time']),
+                                                           precision=3)
 
     def _generate_row(self, results: dict, row: dict):
         ClusterBusterReporter._generate_row(self, results, row)

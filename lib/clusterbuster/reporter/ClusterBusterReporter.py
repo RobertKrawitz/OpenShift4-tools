@@ -97,39 +97,60 @@ class ClusterBusterReporter:
 
         :param results: Summary results that are updated
         """
-        metadata = self._jdata['metadata']
         results['Total Clients'] = self._summary['total_instances']
         if 'elapsed_time_average' in self._summary:
-            results['Elapsed time average'] = self._prettyprint(self._summary['elapsed_time_average'], precision=3, suffix='sec')
-            results['Pod creation interval'] = self._prettyprint(self._summary['pod_create_interval'], precision=3, suffix='sec')
+            results['Elapsed time average'] = self._prettyprint(self._summary['elapsed_time_average'],
+                                                                precision=3, suffix='sec')
+            results['Pod creation interval'] = self._prettyprint(self._summary['pod_create_interval'],
+                                                                 precision=3, suffix='sec')
             results['Pod creation rate'] = self._prettyprint(self._safe_div(self._summary['total_instances'],
                                                                             (self._summary['last_pod_create_time'] -
                                                                              self._summary['first_pod_create_time'])),
-                                                             precision=3, suffix='pods/sec')
-            results['User CPU time'] = self._prettyprint(self._summary['user_cpu_time'], precision=3, suffix='sec')
-            results['System CPU seconds'] = self._prettyprint(self._summary['system_cpu_time'], precision=3, suffix='sec')
-            results['CPU seconds'] = self._prettyprint(self._summary['cpu_time'], precision=3, suffix='sec')
-            results['CPU utilization'] = f"{self._safe_div(self._summary['cpu_time'] * 100, self._summary['data_run_interval'], 3, as_string=True)} %"
-            results['First pod start'] = self._prettyprint(self._summary['first_pod_start_time'], precision=3, suffix='sec')
-            results['Last pod start'] = self._prettyprint(self._summary['last_pod_start_time'], precision=3, suffix='sec')
-            results['Pod start interval'] = self._prettyprint(self._summary['pod_start_interval'], precision=3, suffix='sec')
+                                                             precision=3, suffix='pods/sec', base=0)
+            results['User CPU time'] = self._prettyprint(self._summary['user_cpu_time'],
+                                                         precision=3, suffix='sec')
+            results['System CPU seconds'] = self._prettyprint(self._summary['system_cpu_time'],
+                                                              precision=3, suffix='sec')
+            results['CPU seconds'] = self._prettyprint(self._summary['cpu_time'],
+                                                       precision=3, suffix='sec')
+            cpu_utilization = self._safe_div(self._summary['cpu_time'] * 100, self._summary['data_run_interval'], 3, as_string=True)
+            results['CPU utilization'] = f"{cpu_utilization} %"
+            results['First pod start'] = self._prettyprint(self._summary['first_pod_start_time'],
+                                                           precision=3, suffix='sec')
+            results['Last pod start'] = self._prettyprint(self._summary['last_pod_start_time'],
+                                                          precision=3, suffix='sec')
+            results['Pod start interval'] = self._prettyprint(self._summary['pod_start_interval'],
+                                                              precision=3, suffix='sec')
             results['Pod start rate'] = self._prettyprint(self._safe_div(self._summary['total_instances'],
                                                                          (self._summary['last_pod_start_time'] -
                                                                           self._summary['first_pod_start_time'])),
-                                                          precision=3, suffix='pods/sec')
-            results['First run start'] = self._prettyprint(self._summary['first_data_start_time'], precision=3, suffix='sec')
-            results['Last run start'] = self._prettyprint(self._summary['last_data_start_time'], precision=3, suffix='sec')
-            results['Run start interval'] = self._prettyprint(self._summary['data_start_interval'], precision=3, suffix='sec')
-            results['Relative sync error'] = f"{self._summary['overlap_error']:.5f}"
-            results['Sync max RTT delta'] = self._prettyprint(self._summary['timing_parameters']['max_sync_rtt_delta'], precision=3, suffix='sec')
-            results['Sync avg RTT delta'] = self._prettyprint(self._summary['timing_parameters']['avg_sync_rtt_delta'], precision=3, suffix='sec')
-            results['First run end'] = self._prettyprint(self._summary['first_data_end_time'], precision=3, suffix='sec')
-            results['Last run end'] = self._prettyprint(self._summary['last_data_end_time'], precision=3, suffix='sec')
-            results['Net elapsed time'] = self._prettyprint(self._summary['data_run_interval'], precision=3, suffix='sec')
+                                                          precision=3, suffix='pods/sec', base=0)
+            results['First run start'] = self._prettyprint(self._summary['first_data_start_time'],
+                                                           precision=3, suffix='sec')
+            results['Last run start'] = self._prettyprint(self._summary['last_data_start_time'],
+                                                          precision=3, suffix='sec')
+            results['Run start interval'] = self._prettyprint(self._summary['data_start_interval'],
+                                                              precision=3, suffix='sec')
+            results['Absolute sync error'] = self._prettyprint((self._summary['data_start_interval'] +
+                                                                self._summary['data_end_interval']) / 2,
+                                                               precision=3, suffix='sec')
+            results['Relative sync error'] = f"{self._summary['overlap_error'] * 100:.3f} %"
+            results['Sync max RTT delta'] = self._prettyprint(self._summary['timing_parameters']['max_sync_rtt_delta'],
+                                                              precision=3, suffix='sec')
+            results['Sync avg RTT delta'] = self._prettyprint(self._summary['timing_parameters']['avg_sync_rtt_delta'],
+                                                              precision=3, suffix='sec')
+            results['First run end'] = self._prettyprint(self._summary['first_data_end_time'],
+                                                         precision=3, suffix='sec')
+            results['Last run end'] = self._prettyprint(self._summary['last_data_end_time'],
+                                                        precision=3, suffix='sec')
+            results['Net elapsed time'] = self._prettyprint(self._summary['data_run_interval'],
+                                                            precision=3, suffix='sec')
             timing = self._jdata['Results']['controller_timing']
-            results['Sync offset from host'] = self._prettyprint(timing['sync_ts'] - timing['second_controller_ts'], precision=3, suffix='sec')
+            results['Sync offset from host'] = self._prettyprint(timing['sync_ts'] - timing['second_controller_ts'],
+                                                                 precision=3, suffix='sec')
             offset_error = timing['second_controller_ts'] - timing['first_controller_ts']
-            results['Possible controller-sync offset error'] = self._prettyprint(offset_error, precision=3, suffix='sec')
+            results['Possible controller-sync offset error'] = self._prettyprint(offset_error,
+                                                                                 precision=3, suffix='sec')
 
     def _generate_row(self, results, row: dict):
         """
@@ -176,7 +197,8 @@ class ClusterBusterReporter:
         This is mostly for timeline variables.
         """
         if 'data_elapsed_time' in self._summary:
-            self._summary['elapsed_time_average'] = self._safe_div(self._summary['data_elapsed_time'], self._summary['total_instances'])
+            self._summary['elapsed_time_average'] = self._safe_div(self._summary['data_elapsed_time'],
+                                                                   self._summary['total_instances'])
             self._summary['pod_create_interval'] = self._summary['last_pod_create_time'] - self._summary['first_pod_create_time']
             self._summary['data_run_interval'] = self._summary['last_data_end_time'] - self._summary['first_data_start_time']
             self._summary['pod_start_interval'] = self._summary['last_pod_start_time'] - self._summary['first_pod_start_time']
@@ -283,12 +305,19 @@ class ClusterBusterReporter:
         else:
             return int(round(num))
 
-    def _prettyprint(self, num: float, precision: float = 5, integer:int = 0, base: int = 1024, suffix: str = ''):
+    def _prettyprint(self, num: float, precision: float = 5, integer: int = 0, base: int = 1024, suffix: str = ''):
         """
         Return a pretty printed version of a float.
+        Base 1000: print with decimal units (1000, 1000000...)
+        Base 1024: print with binary units (1024, 1048576...)
+                   This only applies to values larger than 1;
+                   smaller values are always printed with
+                   decimal units
+        Base 0:    do not use any units
+        Base -1:   Only print units for <1
         :param num:
         :param precision:
-        :param base: 0, 1000 or 1024
+        :param base: 0, 1000, 1024, or -1
         :param integer: print as integer
         :param suffix: trailing suffix (e. g. "B/sec")
         """
@@ -303,21 +332,21 @@ class ClusterBusterReporter:
         elif base == 1024 or base == 2:
             infix = 'i'
             base = 1024
-        else:
+        elif base != -10 or base != -1 or base != -1000:
             raise(Exception(f'Illegal base {base} for prettyprint; must be 1000 or 1024'))
-        if abs(num) >= base ** 5:
+        if base > 0 and abs(num) >= base ** 5:
             return f'{self._fformat(num / (base ** 5), precision=precision)} P{infix}{suffix}'
-        elif abs(num) >= base ** 4:
+        elif base > 0 and abs(num) >= base ** 4:
             return f'{self._fformat(num / (base ** 4), precision=precision)} T{infix}{suffix}'
-        elif abs(num) >= base ** 3:
+        elif base > 0 and abs(num) >= base ** 3:
             return f'{self._fformat(num / (base ** 3), precision=precision)} G{infix}{suffix}'
-        elif abs(num) >= base ** 2:
+        elif base > 0 and abs(num) >= base ** 2:
             return f'{self._fformat(num / (base ** 2), precision=precision)} M{infix}{suffix}'
-        elif abs(num) >= base ** 1:
+        elif base > 0 and abs(num) >= base ** 1:
             return f'{self._fformat(num / base, precision=precision)} K{infix}{suffix}'
         elif abs(num) >= 1 or num == 0:
             if integer != 0 or num == 0:
-                precision=0
+                precision = 0
             return f'{self._fformat(num, precision=precision)} {suffix}'
         elif abs(num) >= 10 ** -3:
             return f'{self._fformat(num * (1000), precision=precision)} m{suffix}'
@@ -376,7 +405,7 @@ class ClusterBusterReporter:
             results1 = results1[key]
         results1[key] = value
 
-    def _copy_formatted_value(self, var:str, dest:dict, source: dict):
+    def _copy_formatted_value(self, var: str, dest: dict, source: dict):
         """
         Copy a value from source to dest, with optional formatting of the form
         var[:key1=val1:key2=val2...]
@@ -397,7 +426,7 @@ class ClusterBusterReporter:
                         pass
                     args[name] = value
                 except Exception as exc:
-                    raise Exception(f"Cannot parse option {option}")
+                    raise Exception(f"Cannot parse option {option}: {exc}")
             dest[rvar] = self._prettyprint(source[rvar], **args)
         else:
             dest[var] = source[var]
@@ -564,7 +593,7 @@ class ClusterBusterReporter:
                 summary[var_max] = row_val
                 summary[var_min] = row_val
                 summary[var_avg] = row_val
-                summary[var_sq] = 0;
+                summary[var_sq] = 0
             summary[var] += row_val
             summary[var_counter] += 1
             summary[var_sq] += row_val * row_val
@@ -591,7 +620,7 @@ class ClusterBusterReporter:
     def __isnum(self, num):
         num = self.__strip_suffix(num)
         try:
-            t = float(num)
+            _ = float(num)
             return True
         except Exception:
             return False
@@ -664,40 +693,46 @@ class ClusterBusterReporter:
         if key_column > 0 and len(headers):
             headers = deepcopy(headers)
             header_name = headers.pop(0)
-        for key in header_keys:
-            if header_name:
-                print(f'{" " * key_column}{header_name}: {key}:', file=outfile)
-            else:
-                print(f'{" " * key_column}{key.strip()}:', file=outfile)
-            self.__print_subreport(results[key], headers, key_column=key_column + depth_indentation, value_column=value_column,
-                                   depth_indentation=depth_indentation, integer_width=integer_width, outfile=outfile)
-        for key in value_keys:
-            value = results[key]
-            try:
-                nwidth = len(str(int(float(self.__strip_suffix(value)))))
-            except Exception as err:
-                value = str(value).strip()
-                if len(value) > integer_width:
-                    nwidth = None
+        for key in results.keys():
+            if key.startswith('\n'):
+                print('', file=outfile)
+            if isinstance(results[key], dict):
+                if header_name:
+                    print(f'{" " * key_column}{header_name}: {key.strip()}:', file=outfile)
                 else:
-                    nwidth = len(value)
-            if nwidth is None:
-                integer_indent = 0
+                    print(f'{" " * key_column}{key.strip()}:', file=outfile)
+                self.__print_subreport(results[key], headers, key_column=key_column + depth_indentation, value_column=value_column,
+                                       depth_indentation=depth_indentation, integer_width=integer_width, outfile=outfile)
             else:
-                integer_indent = integer_width - nwidth
-            value = str(value)
-            if "\n" in value:
-                value = textwrap.indent(value, prefix=' ' * (key_column + 2))
-                print(f'{" " * key_column}{key}:\n{value}', file=outfile)
-            else:
-                print(f'{" " * key_column}{key}: {" " * (value_column + integer_indent - key_column - len(key))}{value}',
-                      file=outfile)
-        if len(header_keys) == 0:
-            print('', file=outfile)
+                value = results[key]
+                try:
+                    nwidth = len(str(int(float(self.__strip_suffix(value)))))
+                except Exception:
+                    value = str(value).strip()
+                    if len(value) > integer_width:
+                        nwidth = None
+                    else:
+                        nwidth = len(value)
+                if nwidth is None:
+                    integer_indent = 0
+                else:
+                    integer_indent = integer_width - nwidth
+                value = str(value)
+                if "\n" in value:
+                    value = textwrap.indent(value, prefix=' ' * (key_column + 2))
+                    print(f'{" " * key_column}{key.strip()}:\n{value}', file=outfile)
+                else:
+                    indentation = " " * (value_column + integer_indent - key_column - len(key.strip()))
+                    print(f'{" " * key_column}{key.strip()}: {indentation}{value}',
+                          file=outfile)
+            if key.endswith('\n'):
+                print('', file=outfile)
 
     def __print_report(self, results: dict, value_column=0, integer_width=0, outfile=sys.stdout):
         """
         Print report.  Headers are used by key.
+        Key names that start with a newline have a newline printed before each instance.
+        Key names that end with a newline have a newline printed after the data in each instance.
 
         :param results: Results to be printed
         :param value_column: Left column for printing of values

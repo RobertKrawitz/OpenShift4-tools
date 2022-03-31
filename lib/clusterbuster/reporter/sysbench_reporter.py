@@ -38,30 +38,32 @@ class sysbench_reporter(ClusterBusterReporter):
         self._add_accumulators(accumulators)
         self._add_fields_to_copy(vars_to_copy)
         self._set_header_components(['namespace', 'pod', 'container', 'process_id'])
-        self._set_summary_header_components(['Workload'])
 
     def __update_report(self, dest: dict, source: dict, sample_row: dict = None):
         if sample_row is None:
             sample_row = source
         for op in self._sysbench_operations:
-            dest[op] = {}
-            dest[op]['Elapsed Time'] = self._fformat(source[op]['elapsed_time'], 3)
-            dest[op]['CPU Time'] = self._fformat(source[op]['user_cpu_time'] + source[op]['sys_cpu_time'], 3)
+            pop = f'workload: {op}'
+            dest[pop] = {}
+            dest[pop]['Elapsed Time'] = self._fformat(source[op]['elapsed_time'], 3)
+            dest[pop]['CPU Time'] = self._fformat(source[op]['user_cpu_time'] + source[op]['sys_cpu_time'], 3)
             for var in ['read_ops:precision=3:suffix=ops:base=1000',
                         'write_ops:precision=3:suffix=ops:base=1000',
                         'fsync_ops:precision=3:suffix=ops:base=1000',
                         'files:precision=3:suffix='':base=1000:integer=1']:
-                self._copy_formatted_value(var, dest[op], source[op])
+                self._copy_formatted_value(var, dest[pop], source[op])
             for var in self._sysbench_vars_to_copy:
-                self._copy_formatted_value(var, dest[op], source[op])
-            dest[op]['read ops rate'] = self._prettyprint(self._safe_div(source[op]['read_ops'], source[op]['elapsed_time']),
-                                                          precision=3, base=1000, suffix='ops/sec')
-            dest[op]['write ops rate'] = self._prettyprint(self._safe_div(source[op]['write_ops'], source[op]['elapsed_time']),
+                self._copy_formatted_value(var, dest[pop], source[op])
+            dest[pop]['read ops rate'] = self._prettyprint(self._safe_div(source[op]['read_ops'], source[op]['elapsed_time']),
                                                            precision=3, base=1000, suffix='ops/sec')
-            dest[op]['read data rate'] = self._prettyprint(self._safe_div(source[op]['blocksize'] * source[op]['read_ops'], source[op]['elapsed_time']),
+            dest[pop]['write ops rate'] = self._prettyprint(self._safe_div(source[op]['write_ops'], source[op]['elapsed_time']),
+                                                            precision=3, base=1000, suffix='ops/sec')
+            dest[pop]['read data rate'] = self._prettyprint(self._safe_div(source[op]['blocksize'] * source[op]['read_ops'],
+                                                                           source[op]['elapsed_time']),
+                                                            precision=3, base=1024, suffix='B/sec')
+            dest[pop]['write MiB/sec'] = self._prettyprint(self._safe_div(source[op]['blocksize'] * source[op]['write_ops'],
+                                                                          source[op]['elapsed_time']),
                                                            precision=3, base=1024, suffix='B/sec')
-            dest[op]['write MiB/sec'] = self._prettyprint(self._safe_div(source[op]['blocksize'] * source[op]['write_ops'], source[op]['elapsed_time']),
-                                                          precision=3, base=1024, suffix='B/sec')
 
     def _generate_summary(self, results: dict):
         # I'd like to do this, but if the nodes are out of sync time-wise, this will not

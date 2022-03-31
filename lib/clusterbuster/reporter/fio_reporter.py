@@ -39,33 +39,41 @@ class fio_reporter(ClusterBusterReporter):
             accumulators.append('results.{job}.job_results.jobs.sync.lat_ns.mean')
         self._add_accumulators(accumulators)
         self._set_header_components(['namespace', 'pod', 'container', 'job', 'operation'])
-        self._set_summary_header_components(['job', 'operation'])
 
     def __update_report(self, dest: dict, source: dict, max_key: str, rows: int = 1):
         for job in self._job_names:
-            if job not in dest:
-                dest[job] = {}
+            pjob = f'job: {job}'
+            if pjob not in dest:
+                dest[pjob] = {}
             for op in self._fio_operations:
+                pop = f'operation: {op}'
                 source1 = source[job]['job_results'][op]
                 if source1['io_kbytes'] > 0:
                     if op not in dest:
-                        dest[job][op] = {}
-                    dest1 = dest[job][op]
+                        dest[pjob][pop] = {}
+                    dest1 = dest[pjob][pop]
                     dest1['io_bytes'] = self._prettyprint(source1['io_kbytes'] * 1000, precision=3, suffix='B')
                     dest1['total_ios'] = self._prettyprint(source1['total_ios'], base=1000, precision=3)
-                    dest1['runtime'] = self._prettyprint(source1['runtime'] / rows / 1000.0, base=1000, precision=3, suffix='sec')
+                    dest1['runtime'] = self._prettyprint(source1['runtime'] / rows / 1000.0,
+                                                         base=1000, precision=3, suffix='sec')
                     dest1['io_data_rate'] = self._prettyprint(self._safe_div(source1['io_kbytes'] * 1024.0,
                                                                              source1['runtime'] / rows / 1000.0),
                                                               precision=3, suffix='B/sec')
                     dest1['io_rate'] = self._prettyprint(self._safe_div(source1['total_ios'],
                                                                         source1['runtime'] / rows / 1000.0),
                                                          precision=3, base=1000, suffix='/sec')
-                    dest1['slat_max'] = self._prettyprint(source1['slat_ns'][max_key] / 1000000000.0, base=1000, precision=3, suffix='sec')
-                    dest1['slat_mean'] = self._prettyprint(source1['slat_ns']['mean'] / rows / 1000000000.0, base=1000, precision=3, suffix='sec')
-                    dest1['clat_max'] = self._prettyprint(source1['clat_ns'][max_key] / 1000000000.0, base=1000, precision=3, suffix='sec')
-                    dest1['clat_mean'] = self._prettyprint(source1['clat_ns']['mean'] / rows / 1000000000.0, base=1000, precision=3, suffix='sec')
-                    dest1['lat_max'] = self._prettyprint(source1['lat_ns'][max_key] / 1000000000.0, base=1000, precision=3, suffix='sec')
-                    dest1['lat_mean'] = self._prettyprint(source1['lat_ns']['mean'] / rows / 1000000000.0, base=1000, precision=3, suffix='sec')
+                    dest1['slat_max'] = self._prettyprint(source1['slat_ns'][max_key] / 1000000000.0,
+                                                          base=1000, precision=3, suffix='sec')
+                    dest1['slat_mean'] = self._prettyprint(source1['slat_ns']['mean'] / rows / 1000000000.0,
+                                                           base=1000, precision=3, suffix='sec')
+                    dest1['clat_max'] = self._prettyprint(source1['clat_ns'][max_key] / 1000000000.0,
+                                                          base=1000, precision=3, suffix='sec')
+                    dest1['clat_mean'] = self._prettyprint(source1['clat_ns']['mean'] / rows / 1000000000.0,
+                                                           base=1000, precision=3, suffix='sec')
+                    dest1['lat_max'] = self._prettyprint(source1['lat_ns'][max_key] / 1000000000.0,
+                                                         base=1000, precision=3, suffix='sec')
+                    dest1['lat_mean'] = self._prettyprint(source1['lat_ns']['mean'] / rows / 1000000000.0,
+                                                          base=1000, precision=3, suffix='sec')
 
     def _generate_summary(self, results: dict):
         # I'd like to do this, but if the nodes are out of sync time-wise, this will not
@@ -76,8 +84,9 @@ class fio_reporter(ClusterBusterReporter):
         for k, v in sample_row['global options'].items():
             if k not in ['rw', 'bs']:
                 results[k] = v
-        self.__update_report(results, self._summary['results'], 'max_max', int(self._summary['total_instances']))
-        results['FIO job file'] = base64.b64decode(self._jdata['metadata']['options']['workloadOptions']['fio_job_file']).decode()
+        results['\nFIO job file'] = base64.b64decode(self._jdata['metadata']['options']['workloadOptions']['fio_job_file']).decode()
+        results['\nJobs'] = {}
+        self.__update_report(results['\nJobs'], self._summary['results'], 'max_max', int(self._summary['total_instances']))
 
     def _generate_row(self, results: dict, row: dict):
         ClusterBusterReporter._generate_row(self, results, row)
