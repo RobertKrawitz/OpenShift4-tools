@@ -74,7 +74,6 @@ class uperf_reporter(ClusterBusterReporter):
         if 'failed' in sample:
             failures = sample['failed']
             results['Failed jobs'] = {}
-            print(sample)
             for failure in failures:
                 results['Failed jobs'][failure] = sample["results"][failure]["status"]["message"]
         results['\nJob Detail'] = {}
