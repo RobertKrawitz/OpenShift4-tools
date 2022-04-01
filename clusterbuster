@@ -148,9 +148,59 @@ function fatal() {
     exit 1
 }
 
+function childrenof() {
+    function is_descendent() {
+	local pid=$1
+	local ancestor=$2
+	if ((pid == ancestor)) ; then
+	    true
+	else
+	    parent=${ps_parents[$pid]:-1}
+	    case "$parent" in
+		1)         false ;;
+		$ancestor) true  ;;
+		*)         is_descendent "$parent" "$ancestor" ;;
+	    esac
+	fi
+    }
+    local -A exclude=()
+    OPTIND=0
+    while getopts 'e:' opt "$@" ; do
+	case "$opt" in
+	    e) exclude[$OPTARG]=1 ;;
+	    *)                    ;;
+	esac
+    done
+    shift $((OPTIND-1))
+    local pid=$1
+    local -A ps_parents=()
+    local target=$1
+    local -i ppid
+    local -i pid
+    local ignore
+    while read -r pid ppid ignore ; do
+	ps_parents["$pid"]=$ppid
+    done <<< "$(ps -axo pid,ppid,command | tail -n +2)"
+    for pid in "${!ps_parents[@]}" ; do
+	if [[ -z "${!exclude[$pid]:-}" ]] ; then
+	    if is_descendent $pid $target ; then
+		echo "$pid"
+	    fi
+	fi
+    done
+}
+
 function killthemall() {
     echo "${*:-Exiting!}" 1>&2
-    kill -TERM -- -$$
+    kill -TERM -- -$$ >/dev/null 2>&1
+    # RHEL 8 doesn't support kill -<pgrp> syntax
+    # so fall back on a more complex mechanism.
+    local -a pids_to_kill=()
+    readarray -t pids_to_kill <<< "$(childrenof -e "$BASHPID" $$)"
+    if [[ -n "${pids_to_kill[*]}" ]] ; then
+	/bin/kill -TERM "${pids_to_kill[@]}" 1>&2
+    fi
+    exit 1
 }
 
 function warn() {
@@ -1051,6 +1101,14 @@ function start_prometheus_snapshot() {
     ((doit)) || return 0
     echo "Starting Prometheus snapshot" | echo_if_desired 1>&2
     _OC delete pod -n openshift-monitoring prometheus-k8s-0
+    local -i retry=12
+    until _OC get pod -n openshift-monitoring prometheus-k8s-0 >/dev/null 2>&1 ; do
+	if ((retry <= 0)) ; then
+	    fatal "Prometheus pod did not restart!"
+	fi
+	retry=$((retry-1))
+	sleep 5
+    done
     _OC wait --for=condition=Ready -n openshift-monitoring pod/prometheus-k8s-0 || fatal "Prometheus pod did not go ready"
     set_start_timestamps
     # Wait for prometheus pod to fully initialize
@@ -1148,8 +1206,10 @@ function monitor_pods() {
 		if ((pods_unchanged_countdown <= 0)) ; then
 		    killthemall "No progress with pods after 10 retries, ${#pending_pods[@]} pods still pending."
 		fi
+		local times=times
+		if ((pods_unchanged_countdown == 1)) ; then times=time; fi
+		echo "${#pending_pods[@]} pods pending (will retry $pods_unchanged_countdown $times)" 1>&2
 		pods_unchanged_countdown=$((pods_unchanged_countdown-1))
-		echo "${#pending_pods[@]} pods pending (will retry $pods_unchanged_countdown times)" 1>&2
 	    fi
 	fi
 	if ((timeout > 0 && $(date +%s) > timeout)) ; then
@@ -1361,6 +1421,7 @@ function _report_objects() {
   "controller_presync_timestamp": $first_local_ts,
   "sync_timestamp": $remote_ts,
   "controller_postsync_timestamp": $second_local_ts,
+  "artifact_directory": "$artifactdir",
   "options": {
     "basename": "$basename",
     "containers_per_pod": $containers_per_pod,
