@@ -321,7 +321,12 @@ class ClusterBusterReporter:
         :param integer: print as integer
         :param suffix: trailing suffix (e. g. "B/sec")
         """
-        if base == 0:
+        if 'parseable' in self._format:
+            if integer != 0 or num == 0:
+                return str(int(num))
+            else:
+                return self._fformat(num, precision=precision)
+        elif base == 0:
             if suffix and suffix != '':
                 return f'{self._fformat(num, precision=precision)} {suffix}'
             else:
@@ -385,8 +390,11 @@ class ClusterBusterReporter:
         :param text: String to wrap
         :return: Filled string
         """
-        return textwrap.fill(text, width=self._report_width, subsequent_indent='  ',
-                             break_long_words=False, break_on_hyphens=False)
+        if 'parseable' in self._format:
+            return text
+        else:
+            return textwrap.fill(text, width=self._report_width, subsequent_indent='  ',
+                                 break_long_words=False, break_on_hyphens=False)
 
     def _insert_into(self, results: dict, path: list, value):
         """
@@ -659,7 +667,16 @@ class ClusterBusterReporter:
                 integer_width = nwidth
         return [width, integer_width]
 
-    def __print_subreport(self, results: dict, headers: list, key_column=0, value_column=0,
+    def __parseable_path(self, path: list):
+        return '.'.join([elt.replace(':', '') for elt in path]).replace(' ', '_').replace(',', '_').replace('\n', '').lower()
+
+    def __indent(self, string: str, target_column: int):
+        if 'parseable' in self._format:
+            return string
+        else:
+            return textwrap.indent(string, prefix=' ' * (target_column + 2))[target_column+2:]
+
+    def __print_subreport(self, path: list, results: dict, headers: list, key_column=0, value_column=0,
                           depth_indentation=None, integer_width=0, outfile=sys.stdout):
         """
         Print a sub-report recursively
@@ -675,8 +692,6 @@ class ClusterBusterReporter:
                                so that if possible strings are right aligned with
                                integers
         """
-        def indent(string: str, target_column: int):
-            return textwrap.indent(string, prefix=' ' * (target_column + 2))[target_column+2:]
 
         header_keys = []
         value_keys = []
@@ -694,38 +709,43 @@ class ClusterBusterReporter:
             headers = deepcopy(headers)
             header_name = headers.pop(0)
         for key in results.keys():
-            if key.startswith('\n'):
+            if 'parseable' not in self._format and key.startswith('\n'):
                 print('', file=outfile)
+            npath = path + [key]
             if isinstance(results[key], dict):
-                if header_name:
-                    print(f'{" " * key_column}{header_name}: {key.strip()}:', file=outfile)
-                else:
-                    print(f'{" " * key_column}{key.strip()}:', file=outfile)
-                self.__print_subreport(results[key], headers, key_column=key_column + depth_indentation, value_column=value_column,
+                if 'parseable' not in self._format:
+                    if header_name:
+                        print(f'{" " * key_column}{header_name}: {key.strip()}:', file=outfile)
+                    else:
+                        print(f'{" " * key_column}{key.strip()}:', file=outfile)
+                self.__print_subreport(npath, results[key], headers, key_column=key_column + depth_indentation, value_column=value_column,
                                        depth_indentation=depth_indentation, integer_width=integer_width, outfile=outfile)
             else:
                 value = results[key]
-                try:
-                    nwidth = len(str(int(float(self.__strip_suffix(value)))))
-                except Exception:
-                    value = str(value).strip()
-                    if len(value) > integer_width:
-                        nwidth = None
+                if 'parseable' in self._format:
+                    print(f'{self.__parseable_path(npath)}: {value}', file=outfile)
+                else:
+                    try:
+                        nwidth = len(str(int(float(self.__strip_suffix(value)))))
+                    except Exception:
+                        value = str(value).strip()
+                        if len(value) > integer_width:
+                            nwidth = None
+                        else:
+                            nwidth = len(value)
+                    if nwidth is None:
+                        integer_indent = 0
                     else:
-                        nwidth = len(value)
-                if nwidth is None:
-                    integer_indent = 0
-                else:
-                    integer_indent = integer_width - nwidth
-                value = str(value)
-                if "\n" in value:
-                    value = textwrap.indent(value, prefix=' ' * (key_column + 2))
-                    print(f'{" " * key_column}{key.strip()}:\n{value}', file=outfile)
-                else:
-                    indentation = " " * (value_column + integer_indent - key_column - len(key.strip()))
-                    print(f'{" " * key_column}{key.strip()}: {indentation}{value}',
-                          file=outfile)
-            if key.endswith('\n'):
+                        integer_indent = integer_width - nwidth
+                    value = str(value)
+                    if "\n" in value:
+                        value = textwrap.indent(value, prefix=' ' * (key_column + 2))
+                        print(f'{" " * key_column}{key.strip()}:\n{value}', file=outfile)
+                    else:
+                        indentation = " " * (value_column + integer_indent - key_column - len(key.strip()))
+                        print(f'{" " * key_column}{key.strip()}: {indentation}{value}',
+                              file=outfile)
+            if 'parseable' not in self._format and key.endswith('\n'):
                 print('', file=outfile)
 
     def __print_report(self, results: dict, value_column=0, integer_width=0, outfile=sys.stdout):
@@ -747,8 +767,9 @@ class ClusterBusterReporter:
             if key in self._header_keys:
                 headers = self._header_keys[key]
             if len(results[key].keys()):
-                print(f'{key}:', file=outfile)
-                self.__print_subreport(results[key], headers=headers, key_column=self._summary_indent, value_column=value_column,
+                if 'parseable' not in self._format:
+                    print(f'{key}:', file=outfile)
+                self.__print_subreport([key], results[key], headers=headers, key_column=self._summary_indent, value_column=value_column,
                                        depth_indentation=self._summary_indent, integer_width=integer_width, outfile=outfile)
 
     def __create_text_report(self, outfile=sys.stdout):
@@ -759,7 +780,7 @@ class ClusterBusterReporter:
         results['Overview'] = {}
         results['Overview']['Job Name'] = self._jdata['metadata']['job_name']
         results['Overview']['Start Time'] = self._jdata['metadata']['cluster_start_time']
-        if self._format == 'verbose' and len(self._rows):
+        if 'verbose' in self._format and len(self._rows):
             results['Detail'] = {}
             self._rows.sort(key=self.__row_name)
             for row in self._rows:
@@ -780,6 +801,9 @@ class ClusterBusterReporter:
             results['Overview']['OpenShift Version'] = self._jdata['metadata']['kubernetes_version']['openshiftVersion']
         key_width, integer_width = self.__compute_report_width(results)
         cmdline = ' '.join(self._jdata['metadata']['expanded_command_line'])
-        cmdline = self._wrap_text(' '.join(self._jdata['metadata']['expanded_command_line']))
+        if 'parseable' in self._format:
+            cmdline = ' '.join(self._jdata['metadata']['expanded_command_line'])
+        else:
+            cmdline = self._wrap_text(' '.join(self._jdata['metadata']['expanded_command_line']))
         results['Overview']['Command line'] = cmdline
         self.__print_report(results, value_column=key_width, integer_width=integer_width, outfile=outfile)

@@ -25,7 +25,8 @@ from lib.clusterbuster.reporter.ClusterBusterReporter import ClusterBusterReport
 parser = argparse.ArgumentParser(description='Generate ClusterBuster report')
 
 report_formats={'summary', 'verbose', 'raw',
-                'json-summary', 'json', 'json-verbose'}
+                'json-summary', 'json', 'json-verbose',
+                'parseable-summary', 'parseable-verbose'}
 
 parser.add_argument('-o', '--format', '--output_format', '--output', default='summary', type=str,
                     choices=report_formats)
