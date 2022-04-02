@@ -157,9 +157,9 @@ function childrenof() {
 	else
 	    parent=${ps_parents[$pid]:-1}
 	    case "$parent" in
-		1)         false ;;
-		$ancestor) true  ;;
-		*)         is_descendent "$parent" "$ancestor" ;;
+		1)           false ;;
+		"$ancestor") true  ;;
+		*)           is_descendent "$parent" "$ancestor" ;;
 	    esac
 	fi
     }
@@ -174,16 +174,20 @@ function childrenof() {
     shift $((OPTIND-1))
     local pid=$1
     local -A ps_parents=()
+    local -A ps_commands=()
     local target=$1
     local -i ppid
     local -i pid
     local ignore
-    while read -r pid ppid ignore ; do
+    while read -r pid ppid command ; do
 	ps_parents["$pid"]=$ppid
+	ps_commands["$pid"]=$command
     done <<< "$(ps -axo pid,ppid,command | tail -n +2)"
     for pid in "${!ps_parents[@]}" ; do
-	if [[ -z "${!exclude[$pid]:-}" ]] ; then
-	    if is_descendent $pid $target ; then
+	# Don't kill loggers and the report generator; we still want
+	# output even if there's a failure.
+	if [[ -z "${!exclude[$pid]:-}" && "${ps_commands[$pid]}" != 'tee'* && "${ps_commands[$pid]}" != *'clusterbuster-report'* ]] ; then
+	    if is_descendent "$pid" "$target" ; then
 		echo "$pid"
 	    fi
 	fi
@@ -198,7 +202,7 @@ function killthemall() {
     local -a pids_to_kill=()
     readarray -t pids_to_kill <<< "$(childrenof -e "$BASHPID" $$)"
     if [[ -n "${pids_to_kill[*]}" ]] ; then
-	/bin/kill -TERM "${pids_to_kill[@]}" 1>&2
+	/bin/kill -TERM "${pids_to_kill[@]}" >/dev/null 2>&1
     fi
     exit 1
 }
@@ -1002,8 +1006,7 @@ function __OC() {
 
 function _OC() {
     if ! __OC "$@" ; then
-	echo "__KUBEFAIL__ $OC $* failed!"
-	exit 1
+	fatal "__KUBEFAIL__ $OC $* failed!"
     fi
 }
 
@@ -1092,7 +1095,7 @@ function get_pod_and_local_timestamps() {
 EOF
     # shellcheck disable=SC2181
     if (( $? != 0 )) ; then
-	fatal "Unable to write timing data to sync pod"
+	killthemall "Unable to write timing data to sync pod"
     fi
     echo "$first_local_ts" "$remote_ts" "$second_local_ts"
 }
@@ -1102,14 +1105,15 @@ function start_prometheus_snapshot() {
     echo "Starting Prometheus snapshot" | echo_if_desired 1>&2
     _OC delete pod -n openshift-monitoring prometheus-k8s-0
     local -i retry=12
-    until _OC get pod -n openshift-monitoring prometheus-k8s-0 >/dev/null 2>&1 ; do
+    until __OC get pod -n openshift-monitoring prometheus-k8s-0 >/dev/null 2>&1 ; do
+	echo "Promtheus pod did not start, $retry attempt(s) left" | echo_if_desired 1>&2
 	if ((retry <= 0)) ; then
-	    fatal "Prometheus pod did not restart!"
+	    killthemall "Prometheus pod did not restart!"
 	fi
 	retry=$((retry-1))
 	sleep 5
     done
-    _OC wait --for=condition=Ready -n openshift-monitoring pod/prometheus-k8s-0 || fatal "Prometheus pod did not go ready"
+    __OC wait --for=condition=Ready -n openshift-monitoring pod/prometheus-k8s-0 || killthemall "Prometheus pod did not go ready"
     set_start_timestamps
     # Wait for prometheus pod to fully initialize
     sleep 60
@@ -1200,15 +1204,15 @@ function monitor_pods() {
 	if [[ -n "${pending_pods[*]}" ]] ; then
 	    pods_now_pending=$(IFS=$'\n'; echo "${pending_pods[*]}" | sort)
 	    if [[ "$pods_now_pending" != "$pods_pending" ]] ; then
-		pods_unchanged_countdown=10
+		pods_unchanged_countdown=12
 		pods_pending="$pods_now_pending"
 	    else
 		if ((pods_unchanged_countdown <= 0)) ; then
 		    killthemall "No progress with pods after 10 retries, ${#pending_pods[@]} pods still pending."
 		fi
 		local times=times
-		if ((pods_unchanged_countdown == 1)) ; then times=time; fi
-		echo "${#pending_pods[@]} pods pending (will retry $pods_unchanged_countdown $times)" 1>&2
+		if ((pods_unchanged_countdown == 1)) ; then times='time' ; fi
+		echo "${#pending_pods[@]} pods pending (will retry $pods_unchanged_countdown $times)" | echo_if_desired 1>&2
 		pods_unchanged_countdown=$((pods_unchanged_countdown-1))
 	    fi
 	fi
@@ -1398,7 +1402,7 @@ function _report_objects() {
     local -a podname=($*)
     read -r first_local_ts remote_ts second_local_ts <<< "$(get_pod_and_local_timestamps "$@")"
     if [[ -z "$remote_ts" ]] ; then
-	fatal "Unable to retrieve sync timestamp"
+	killthemall "Unable to retrieve sync timestamp"
     fi
     sync_ts_error_interval=$(bc <<< "$second_local_ts - $first_local_ts")
     sync_ts_delta=$(bc <<< "$second_local_ts - $first_local_ts")
@@ -1454,10 +1458,10 @@ EOF
 
 function _retrieve_artifacts() {
     if [[ -n "$artifactdir" ]] ; then
+	mkdir -p "$artifactdir/Logs"
 	while read -r namespace pod container ; do
-	    mkdir -p "$artifactdir/Logs"
-	    __OC logs -n "$namespace" -c "$container" "$pod" > "$artifactdir/Logs/${namespace}:${pod}:${container}"
-	done <<< "$(_OC get pod -A -l "clusterbuster-id=$run_uuid" -ojson | jq -r '[foreach .items[]? as $item ([[],[]];0; (if ($item.kind == "Pod") then ([foreach $item.spec.containers[]? as $container ([[],[]];0; $item.metadata.namespace + " " + $item.metadata.name + " " + $container.name)]) else null end))] | flatten | map (select (. != null))[]')"
+	    __OC logs -n "$namespace" -c "$container" "$pod" 2>/dev/null > "$artifactdir/Logs/${namespace}:${pod}:${container}" || echo "Unable to retrieve logs for pod $namespace/$pod:$container" 1>&2
+	done <<< "$(__OC get pod -A -l "clusterbuster-id=$run_uuid" -ojson | jq -r '[foreach .items[]? as $item ([[],[]];0; (if ($item.kind == "Pod") then ([foreach $item.spec.containers[]? as $container ([[],[]];0; $item.metadata.namespace + " " + $item.metadata.name + " " + $container.name)]) else null end))] | flatten | map (select (. != null))[]')"
     fi
 }
 
@@ -2194,7 +2198,7 @@ function allocate_namespaces() {
 	    if [[ -n "$ns" ]] ; then
 		namespaces_in_use[${ns#namespace/}]=1
 	    fi
-        done < <(_OC get ns -l "$basename" --no-headers -o name 2>/dev/null)
+        done < <(__OC get ns -l "$basename" --no-headers -o name 2>/dev/null)
     fi
     while (( ns_count++ < namespaces )) ; do
         while [[ -n "${namespaces_in_use[${basename}-$ns_idx]:-}" ]] ; do
@@ -2214,12 +2218,12 @@ function find_first_deployment() {
 	    if [[ -n "$deployment" ]] ; then
 		deployment=${deployment#${ns}-}
 		deployment=${deployment%-*}
-		echo _OC get deployments -l "$basename" -A --no-headers 1>&2
+		echo __OC get deployments -l "$basename" -A --no-headers 1>&2
 		if (( deployment + 1 > first_deployment )) ; then
 		    first_deployment=$((deployment + 1))
 		fi
 	    fi
-        done < <(_OC get deployments -l "$basename" -A --no-headers 2>/dev/null)
+        done < <(__OC get deployments -l "$basename" -A --no-headers 2>/dev/null)
     fi
 }
 
@@ -2313,9 +2317,9 @@ function do_cleanup() {
 	    exec 2>/dev/null
 	    "$OC" delete "$objtype" -l "$basename"
 	elif (( report_object_creation )) ; then
-	    _OC delete "$objtype" -l "$basename" 1>&2
+	    __OC delete "$objtype" -l "$basename" 1>&2
 	else
-	    _OC delete "$objtype" -l "$basename" >/dev/null 2>&1
+	    __OC delete "$objtype" -l "$basename" >/dev/null 2>&1
 	fi
     done
 }
@@ -2350,7 +2354,7 @@ function create_secrets_top_level() {
 	    echo "Expect ${#expected_secrets[@]}" 1>&2
 	    while read -r secname ; do
 		[[ -n "${secname:-}" ]] && unset "expected_secrets[$secname]"
-	    done < <(_OC get secret -oname --no-headers -l "$basename" -A)
+	    done < <(__OC get secret -oname --no-headers -l "$basename" -A)
 	    if (( ${#expected_secrets[@]} )) ; then
 		echo "Still waiting for ${#expected_secrets[@]} to be created."
 		sleep 10
@@ -2381,7 +2385,7 @@ function do_logging() {
     else
 	log_host=$(hostname -f)
 	log_port=$("${__libdir__}/find_free_port")
-	(( log_port )) || fatal "Can't get port to listen for logs on!"
+	(( log_port )) || killthemall "Can't get port to listen for logs on!"
 	get_logs -p "$log_port" -c "$logs_expected" &
     fi
     local -i get_logs_pid=$!
@@ -2390,9 +2394,9 @@ function do_logging() {
 	local -i finis=0
 	while (( timeout < 0 || timeout-- )) ; do
 	    # CreateContainerError is not necessarily fatal
-	    if _OC get pods -A -l "$basename" |grep -q -E -e '([^r]Error|Evicted|Crash)' ; then
+	    if __OC get pods -A -l "$basename" |grep -q -E -e '([^r]Error|Evicted|Crash)' ; then
 		echo "Run failed:" 1>&2
-		_OC get pods -A -l "$basename" |grep -E -e '([^r]Error|Evicted|Crash)'
+		__OC get pods -A -l "$basename" |grep -E -e '([^r]Error|Evicted|Crash)'
 		finis=-1
 		break
 	    fi
