@@ -300,10 +300,13 @@ class ClusterBusterReporter:
         :param num:
         :param precision:
         """
-        if precision > 1:
-            return f'{num:.{precision}f}'
-        else:
-            return int(round(num))
+        try:
+            if precision > 1:
+                return f'{num:.{precision}f}'
+            else:
+                return int(round(num))
+        except Exception:
+            return num
 
     def _prettyprint(self, num: float, precision: float = 5, integer: int = 0, base: int = 1024, suffix: str = ''):
         """
