@@ -76,6 +76,7 @@ declare -a resource_requests=()
 declare -a resource_limits=()
 declare -A namespaces_in_use=()
 declare -a namespaces_to_create=()
+declare sync_namespace=
 declare -i scale_ns=0
 declare -i scale_deployments=1
 declare -i sync_start=1
@@ -172,10 +173,9 @@ function childrenof() {
 	esac
     done
     shift $((OPTIND-1))
-    local pid=$1
+    local target=$1
     local -A ps_parents=()
     local -A ps_commands=()
-    local target=$1
     local -i ppid
     local -i pid
     local ignore
@@ -196,9 +196,10 @@ function childrenof() {
 
 function killthemall() {
     echo "${*:-Exiting!}" 1>&2
-    kill -TERM -- -$$ >/dev/null 2>&1
-    # RHEL 8 doesn't support kill -<pgrp> syntax
-    # so fall back on a more complex mechanism.
+    # Selectively kill all processes.  We don't want to kill
+    # processes between us and the root, or processes that
+    # aren't actually clusterbuster (e. g. reporting)
+    # Also, RHEL 8 doesn't support kill -<pgrp> syntax
     local -a pids_to_kill=()
     readarray -t pids_to_kill <<< "$(childrenof -e "$BASHPID" $$)"
     if [[ -n "${pids_to_kill[*]}" ]] ; then
@@ -1025,17 +1026,13 @@ function create_sync_service_if_needed() {
     local namespace=$1
     local sync_count=${2:-0}
     local sync_clients=${3:-0}
+    if ((sync_count <= 0)) ; then return; fi
     if get_sync -q ; then
 	if [[ $namespace = "${namespaces_to_create[0]:-}" ]] ; then
-	    if ((sync_count > 0)) ; then
-		create_service "$namespace" "${namespace}-sync" "$sync_port"
-	    fi
-	    create_sync_deployment "$namespace" "$sync_count" $((sync_clients * ${#namespaces_to_create[@]}))
-	else
-	    if ((sync_count > 0)) ; then
-		create_external_service "$namespace" "${namespace}-sync" "$sync_port" "$global_sync_service"
-	    fi
+	    create_service "$sync_namespace" "$sync_namespace" "$sync_port"
+	    create_sync_deployment "$sync_namespace" "$sync_count" $((sync_clients * ${#namespaces_to_create[@]}))
 	fi
+	create_external_service "$namespace" "${namespace}-sync" "$sync_port" "$global_sync_service"
     fi
 }
 
@@ -1164,7 +1161,8 @@ function monitor_pods() {
 	timeout=$(($(date +%s) + timeout))
     fi
     local pods_pending=''
-    local -i pods_unchanged_countdown=10
+    local -i pods_pending_retry=12
+    local -i pods_unchanged_countdown=$pods_pending_retry
     while : ; do
 	# shellcheck disable=2034
 	local -a pending_pods=()
@@ -1204,7 +1202,7 @@ function monitor_pods() {
 	if [[ -n "${pending_pods[*]}" ]] ; then
 	    pods_now_pending=$(IFS=$'\n'; echo "${pending_pods[*]}" | sort)
 	    if [[ "$pods_now_pending" != "$pods_pending" ]] ; then
-		pods_unchanged_countdown=12
+		pods_unchanged_countdown=$pods_pending_retry
 		pods_pending="$pods_now_pending"
 	    else
 		if ((pods_unchanged_countdown <= 0)) ; then
@@ -1459,9 +1457,19 @@ EOF
 function _retrieve_artifacts() {
     if [[ -n "$artifactdir" ]] ; then
 	mkdir -p "$artifactdir/Logs"
+	local -i failcount=0
 	while read -r namespace pod container ; do
-	    __OC logs -n "$namespace" -c "$container" "$pod" 2>/dev/null > "$artifactdir/Logs/${namespace}:${pod}:${container}" || echo "Unable to retrieve logs for pod $namespace/$pod:$container" 1>&2
+	    if ! __OC logs -n "$namespace" -c "$container" "$pod" 2>/dev/null > "$artifactdir/Logs/${namespace}:${pod}:${container}" ; then
+		rm -f "$artifactdir/Logs/${namespace}:${pod}:${container}"
+		failcount=$((failcount+1))
+		if ((failcount <= 5)) ; then
+		    echo "Unable to retrieve logs for pod $namespace/$pod:$container" 1>&2
+		fi
+	    fi
 	done <<< "$(__OC get pod -A -l "clusterbuster-id=$run_uuid" -ojson | jq -r '[foreach .items[]? as $item ([[],[]];0; (if ($item.kind == "Pod") then ([foreach $item.spec.containers[]? as $container ([[],[]];0; $item.metadata.namespace + " " + $item.metadata.name + " " + $container.name)]) else null end))] | flatten | map (select (. != null))[]')"
+	if ((failcount > 5)) ; then
+	    echo "+ $((failcount - 5)) more" 1>&2
+	fi
     fi
 }
 
@@ -1484,6 +1492,7 @@ function print_report() {
 }
 
 function get_logs() {
+    trap '' TERM
     local extra_arg=
     if [[ ${report_format,,} = none ]] ; then
 	return
@@ -1927,10 +1936,12 @@ function create_object() {
     local namespace=
     local objtype=${deployment_type^}
     local objname=
-    while getopts 'n:t:' opt "$@" ; do
+    local force=0
+    while getopts 'n:t:f' opt "$@" ; do
 	case "$opt" in
 	    n) namespace=$OPTARG ;;
 	    t) objtype=$OPTARG   ;;
+	    f) force=1           ;;
 	    *)                   ;;
 	esac
     done
@@ -1955,7 +1966,7 @@ function create_object() {
 	    echo "$data" > "$artifactdir/${objtype}/${namespace}:$objname"
 	fi
 	accumulateddata+="$data"
-	if (( ++objs_item_count >= objs_per_call )) ; then
+	if (( force || (++objs_item_count >= objs_per_call) )) ; then
 	    really_create_objects
 	    (( !sleeptime )) || sleep "$sleeptime"
 	fi
@@ -2010,9 +2021,19 @@ function create_object_from_file() {
 }
 
 function create_namespace() {
+    local OPTIND=0
+    local force=
+    local opt=
+    while getopts 'f' opt "$@" ; do
+	case "$opt" in
+	    f) force=-f ;;
+	    *)          ;;
+	esac
+    done
+    shift $((OPTIND-1))
     local namespace=$1
     if ((use_namespaces)) ; then
-	create_object -t namespace "$namespace" <<EOF
+	create_object $force -t namespace "$namespace" <<EOF
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -2129,7 +2150,7 @@ function create_container_sync() {
     local sync_count=${4:-1}
     local expected_clients=$5
     cat <<EOF
-- name: ${namespace}-sync
+- name: ${namespace}
   image_pull_policy: $image_pull_policy
   image: "$container_image"
   ports:
@@ -2157,15 +2178,15 @@ function create_sync_deployment() {
 apiVersion: v1
 kind: Pod
 metadata:
-  name: ${namespace}-sync
+  name: ${namespace}
 $(indent 2 standard_all_metadata_yaml "$namespace" sync)
   selector:
     matchLabels:
-      app: ${namespace}-sync
+      app: ${namespace}
 $(indent 2 standard_labels_yaml)
-    name: ${namespace}-sync
-    app: ${namespace}-sync
-    k8s-app: ${namespace}-sync
+    name: ${namespace}
+    app: ${namespace}
+    k8s-app: ${namespace}
     ${basename}-sync: "$run_uuid"
 $(create_spec -P -c sync -r '' create_container_sync "$namespace" 0 0 "$sync_count" "$@")
   restartPolicy: Never
@@ -2206,6 +2227,7 @@ function allocate_namespaces() {
         done
         namespaces_to_create+=("${basename}-$((ns_idx++))")
     done
+    sync_namespace="${basename}-sync"
 }
 
 function find_first_deployment() {
@@ -2247,6 +2269,9 @@ function create_system_configmap() {
     if supports_api list_configmaps ; then
 	local -a systemfiles
 	readarray -t systemfiles < <(list_configmaps)
+	if [[ -n "$sync_namespace" ]] ; then
+	    create_configmaps "$sync_namespace" "systemconfigmap" "${systemfiles[@]}"
+	fi
 	for i in $(seq 0 "$((parallel_configmaps - 1))") ; do
 	    create_objects_n configmaps "$parallel_configmaps" "$objs_per_call_configmaps" "$i" "$sleep_between_configmaps" "systemconfigmap" "${systemfiles[@]}"&
 	done
@@ -2370,6 +2395,7 @@ function do_logging() {
     local -i logs_expected=0
     logs_expected="$(calculate_logs_required "$namespaces" "$deps_per_namespace" "$replicas" "$containers_per_pod")"
     ((logs_expected > 0)) || return 0
+    trap 'wait; return 1' TERM
 
     if [[ $log_strategy = poll ]] ; then
 	local -a sync_pods=()
@@ -2422,7 +2448,7 @@ function do_logging() {
 	fi
     fi
     if (( get_logs_pid > 1 )) ; then
-	wait "$get_logs_pid"
+	wait "$get_logs_pid" 2>/dev/null
 	status=$?
     fi
 }
@@ -2441,9 +2467,9 @@ function run_clusterbuster_1() {
     local -i status=0
     (( precleanup && doit )) && do_cleanup 1>&2
     if ((cleanup)) ; then
-	trap 'doit=1; do_cleanup force; exit 1' TERM INT HUP
+	trap 'wait; doit=1; do_cleanup force; exit 1' TERM INT HUP
     else
-	trap 'exit 1' TERM HUP INT
+	trap 'wait; exit 1' TERM HUP INT
     fi
     if [[ $take_prometheus_snapshot -gt 0 && -n "$artifactdir" ]] ; then
 	start_prometheus_snapshot
@@ -2467,10 +2493,13 @@ function run_clusterbuster_1() {
     fi
     allocate_namespaces
     find_first_deployment
+    if [[ -n "$sync_namespace" ]] ; then
+	create_namespace -f "$sync_namespace"
+    fi
     create_all_objects namespaces
     if get_sync -q ; then
 	if [[ $use_namespaces ]] ; then
-	    global_sync_service="service-${namespaces_to_create[0]}-sync.${namespaces_to_create[0]}.svc.cluster.local"
+	    global_sync_service="service-${sync_namespace}.${sync_namespace}.svc.cluster.local"
 	else
 	    global_sync_service="service-${basename}-0-sync"
 	fi
