@@ -19,6 +19,7 @@ import re
 import sys
 import textwrap
 from copy import deepcopy
+from lib.clusterbuster.reporter.metrics.PrometheusMetrics import PrometheusMetrics
 
 
 class ClusterBusterReporter:
@@ -115,6 +116,10 @@ class ClusterBusterReporter:
                                                        precision=3, suffix='sec')
             cpu_utilization = self._safe_div(self._summary['cpu_time'] * 100, self._summary['data_run_interval'], 3, as_string=True)
             results['CPU utilization'] = f"{cpu_utilization} %"
+            if 'metrics' in self._summary:
+                results['Metrics'] = {}
+                for key, value in self._summary['metrics'].items():
+                    results[key] = value
             results['First pod start'] = self._prettyprint(self._summary['first_pod_start_time'],
                                                            precision=3, suffix='sec')
             results['Last pod start'] = self._prettyprint(self._summary['last_pod_start_time'],
@@ -191,10 +196,22 @@ class ClusterBusterReporter:
         self._rows.append(rowhash)
         return len(self._rows)-1
 
+    def __format_memory_value(self, number):
+        return self._prettyprint(number, precision=3, suffix='B')
+
+    def __format_byte_rate_value(self, number):
+        return self._prettyprint(number, precision=3, base=1000, suffix='B/sec')
+
+    def __format_pkt_rate_value(self, number):
+        return self._prettyprint(number, precision=3, base=1000, suffix='pkts/sec')
+
+    def __format_cpu_value(self, number):
+        return self._prettyprint(number * 100, precision=3, suffix='%')
+
     def _add_summary(self):
         """
         Add summary information that can only be computed at the end.
-        This is mostly for timeline variables.
+        This is mostly for timeline variables and metrics
         """
         if 'data_elapsed_time' in self._summary:
             self._summary['elapsed_time_average'] = self._safe_div(self._summary['data_elapsed_time'],
@@ -207,6 +224,20 @@ class ClusterBusterReporter:
             self._summary['overlap_error'] = self._safe_div(((self._summary['data_start_interval'] +
                                                               self._summary['data_end_interval']) / 2),
                                                             self._summary['elapsed_time_average'])
+        if 'metrics' in self._jdata:
+            metrics = PrometheusMetrics(self._jdata['metrics'])
+            self._summary['metrics'] = {}
+            mtr = self._summary['metrics']
+            mtr['Maximum memory working set'] = metrics.get_max_value_by_key('containerMemoryWorkingSet-clusterbuster',
+                                                                             printfunc=self.__format_memory_value)
+            mtr['Receive bytes/sec'] = metrics.get_max_value_by_key('rxNetworkBytes-WorkerByNode',
+                                                                    printfunc=self.__format_byte_rate_value)
+            mtr['Transmit bytes/sec'] = metrics.get_max_value_by_key('txNetworkBytes-WorkerByNode',
+                                                                     printfunc=self.__format_byte_rate_value)
+            mtr['Receive packets/sec'] = metrics.get_max_value_by_key('rxNetworkPackets-WorkerByNode',
+                                                                      printfunc=self.__format_pkt_rate_value)
+            mtr['Transmit packets/sec'] = metrics.get_max_value_by_key('txNetworkPackets-WorkerByNode',
+                                                                       printfunc=self.__format_pkt_rate_value)
 
     def _add_explicit_timeline_vars(self, vars_to_update: list):
         """
@@ -311,6 +342,7 @@ class ClusterBusterReporter:
     def _prettyprint(self, num: float, precision: float = 5, integer: int = 0, base: int = 1024, suffix: str = ''):
         """
         Return a pretty printed version of a float.
+        Base 100:  print percent
         Base 1000: print with decimal units (1000, 1000000...)
         Base 1024: print with binary units (1024, 1048576...)
                    This only applies to values larger than 1;
@@ -334,6 +366,8 @@ class ClusterBusterReporter:
                 return f'{self._fformat(num, precision=precision)} {suffix}'
             else:
                 return f'{self._fformat(num, precision=precision)}'
+        elif base == 100:
+            return f'{self._fformat(num * 100, precision=precision)} %'
         elif base == 1000 or base == 10:
             infix = ''
             base = 1000
@@ -721,8 +755,11 @@ class ClusterBusterReporter:
                         print(f'{" " * key_column}{header_name}: {key.strip()}:', file=outfile)
                     else:
                         print(f'{" " * key_column}{key.strip()}:', file=outfile)
-                self.__print_subreport(npath, results[key], headers, key_column=key_column + depth_indentation, value_column=value_column,
-                                       depth_indentation=depth_indentation, integer_width=integer_width, outfile=outfile)
+                self.__print_subreport(npath, results[key], headers,
+                                       key_column=key_column + depth_indentation,
+                                       value_column=value_column,
+                                       depth_indentation=depth_indentation,
+                                       integer_width=integer_width, outfile=outfile)
             else:
                 value = results[key]
                 if 'parseable' in self._format:
@@ -772,8 +809,10 @@ class ClusterBusterReporter:
             if len(results[key].keys()):
                 if 'parseable' not in self._format:
                     print(f'{key}:', file=outfile)
-                self.__print_subreport([key], results[key], headers=headers, key_column=self._summary_indent, value_column=value_column,
-                                       depth_indentation=self._summary_indent, integer_width=integer_width, outfile=outfile)
+                self.__print_subreport([key], results[key], headers=headers,
+                                       key_column=self._summary_indent, value_column=value_column,
+                                       depth_indentation=self._summary_indent,
+                                       integer_width=integer_width, outfile=outfile)
 
     def __create_text_report(self, outfile=sys.stdout):
         """

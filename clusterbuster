@@ -123,6 +123,7 @@ declare debug=
 declare global_sync_service=
 declare -i predelay=0
 declare -i postdelay=0
+declare -r default_metrics_file=metrics-default.yaml
 
 declare -r sync_flag_file="/tmp/syncfile";
 declare -r controller_timestamp_file="/tmp/timing.json";
@@ -366,10 +367,11 @@ $(print_workloads_supporting_reporting '                        - ')
        --prometheus-snapshot
                         Take a Prometheus snapshot and save to the
                         artifacts directory
-       --metrics-file=<file>
+       --metrics[=<file>]
                         benchmark-runner compatible metrics file
                         for metrics extraction if promextract
-                        reporting is in use.
+                        reporting is in use.  With no argument, uses
+                        default in $default_metrics_file.
 
     Workload sizing options:
        --containers_per_pod=N
@@ -701,6 +703,13 @@ function process_runtimeclass() {
     fi
 }
 
+function set_metrics_file() {
+    metrics_file=${1:-}
+    if [[ -z "$metrics_file" || $metrics_file == 1 ]] ; then
+	metrics_file="$__libdir__/$default_metrics_file"
+    fi
+}
+
 function process_option() {
     local noptname
     local noptname1
@@ -720,7 +729,7 @@ function process_option() {
 	# Reporting
 	artifactdir)		    artifactdir="$optvalue"			;;
 	logstrategy)		    log_strategy=$optvalue			;;
-	metricsfile)		    metrics_file="$optvalue"			;;
+	metrics|metricsfile)	    set_metrics_file "$optvalue"		;;
 	reportformat)		    report_format=$optvalue			;;
 	jsonreport)		    report_format=json				;;
 	rawreport)		    report_format=raw				;;
@@ -1231,14 +1240,21 @@ function run_logger() {
 	esac
     done
     shift $((OPTIND-1))
-    "$@" </dev/null &
-    wait
+    "$@" </dev/null
     # shellcheck disable=SC2046
     if [[ -n "${pids_to_kill[*]}" ]] ; then
 	exec 2>/dev/null
 	kill -USR2 "${pids_to_kill[@]}"
 	[[ -n "$(jobs -p)" ]] && kill $(jobs -p)
     fi
+}
+
+function _log_helper() {
+    until [[ $("$OC" get pod -ojsonpath='{.status.phase}' "$@" 2>/dev/null) != 'Running' ]] ; do
+	"$OC" exec --stdin=false "$@" -- sh -c "while [[ ! -f '$sync_flag_file' ]] ; do sleep 5; echo . 1>&2; done; jq -rS . '$sync_flag_file'" 2>/dev/null && break
+	sleep 5
+    done
+    "$OC" exec --stdin=false "$@" -- sh -c "rm -f '$sync_flag_file'" || fatal "Can't terminate sync"
 }
 
 function _get_logs_poll() {
@@ -1284,7 +1300,8 @@ function _get_logs_poll() {
 	monitor_pods -- -l "${basename}-id=$run_uuid" &
 	# shellcheck disable=SC2086
 	if supports_api supports_reporting ; then
-	    run_logger -p "$mypid" -- "$OC" exec --stdin=false $pod -- sh -c "while [[ ! -f '$sync_flag_file' ]] ; do sleep 5; done; cat '$sync_flag_file' $cleanup_command" &
+	    # Ensure that if there's a lot of output that we don't remove the sync file before it has all been flushed out
+	    run_logger -p "$mypid" -- _log_helper $pod &
 	fi
 	trap 'kill $(jobs -p) && wait' USR2
 	wait
