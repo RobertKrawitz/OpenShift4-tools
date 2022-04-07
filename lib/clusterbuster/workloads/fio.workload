@@ -31,6 +31,7 @@ declare -gi ___fio_ramp_time=5
 declare -gi ___fio_fdatasync=1
 declare -gi ___fio_filesize=$(parse_size "4Gi")
 declare -g ___fio_workdir="/tmp"
+declare -g ___fio_prepare_job_file
 declare -g ___fio_processed_job_file
 
 function _create_containers_fio_yaml() {
@@ -68,7 +69,7 @@ $(indent 2 bootstrap_command_yaml fio.pl)
   - "$log_host"
   - "$log_port"
   - "$processes"
-  - "$workdir"
+  - "$___fio_workdir"
   - "$workload_run_time"
   - "$configmap_mount_dir"
   - "${___fio_blocksizes[*]:-}"
@@ -163,6 +164,13 @@ function help_options_fio() {
        --fio-patterns=<patterns>
                         Comma-separated list of patterns to use.
                         Any pattern supported by fio may be used.
+                        Most common patterns are:
+                        - read      (sequential read)
+                        - write     (sequential write)
+                        - randread  (random read)
+                        - randwrite (random write)
+                        - readwrite (sequential mixed read/write)
+                        - randrw    (random mixed read/write)
        --fio-blocksizes=<sizes>
                         Comma-separated list of I/O blocksizes to use.
        --fio-general-option=<options>
@@ -170,19 +178,19 @@ function help_options_fio() {
        --fio-jobfile=<file>
                         Name of fio job file to use (defaults to generic).
        --fio-ioengine=<engine>
-			Name of ioengine to use (default $___fio_ioengine)
+                        Name of ioengine to use (default $___fio_ioengine)
        --fio-iodepth=<n>
-			I/O depth (default $___fio_iodepth)
+                        I/O depth (default $___fio_iodepth)
        --fio-direct=<direct>
-			Use direct I/O (default $___fio_direct)
+                        Use direct I/O (default $___fio_direct)
        --fio-ramptime=<ramp time>
-       		        Ramp-up and down time (default $___fio_ramptime)
+                        Ramp-up and down time (default $___fio_ramptime)
        --fio-fdatasync=<fdatasync>
-			Use fdatasync (default $___fio_fdatasync)
+                        Use fdatasync (default $___fio_fdatasync)
        --fio-filesize=<size>
-			File size (default $___fio_filesize)
+                        File size (default $___fio_filesize)
        --fio-workdir=<dir>
-			Work directory (default $___fio_workdir)
+                        Work directory (default $___fio_workdir)
 EOF
 }
 
@@ -218,7 +226,6 @@ function process_options_fio() {
     done
     if [[ $___fio_job_file != *'/'* ]] ; then
 	___fio_job_file="${__libdir__}/workloads/fio/${___fio_job_file}"
-	echo "Looking in $___fio_job_file"
     fi
     if [[ ! -r "$___fio_job_file" ]] ; then
 	help "Can't find job file $___fio_job_file"
@@ -233,7 +240,9 @@ function process_options_fio() {
 	___fio_patterns=(${fiopattern//,/ })
     fi
 
-    ___fio_processed_job_file=$(mktemp -p "$cb_tempdir" -t "fiojobXXXXXX") || fatal "Can't create temporary jobfile"
+    ___fio_preload_job_file=$(mktemp -p "$cb_tempdir" -t "01-IGNORE-fiojobXXXXXX") || fatal "Can't create temporary jobfile"
+    ___fio_processed_job_file=$(mktemp -p "$cb_tempdir" -t "02-fiojobXXXXXX") || fatal "Can't create temporary jobfile"
+    expand_string "$(cat "$___fio_job_file")" 'workload_run_time=1' > "$___fio_preload_job_file"
     expand_string "$(cat "$___fio_job_file")" > "$___fio_processed_job_file"
 }
 

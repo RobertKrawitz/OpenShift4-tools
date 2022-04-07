@@ -79,6 +79,7 @@ sub runit(;$) {
 		$answer0 .= "$_";
 	    }
 	    close(RUN);
+	    timestamp("Done job $jobfile $jobname");
 	    my ($jtime1) = xtime();
 	    my ($jucpu1, $jscpu1) = cputime();
 	    my ($result) = from_json($answer0);
@@ -104,12 +105,14 @@ sub runit(;$) {
     my (%extras) = (
 	'results' => \%all_results
 	);
-    my ($answer) = print_json_report($namespace, $pod, $container, $$, $data_start_time,
-				     $data_end_time, $elapsed_time, $ucpu1, $scpu1, \%extras);
+    if (! ($jobfile =~ /-IGNORE-/)) {
+	my ($answer) = print_json_report($namespace, $pod, $container, $$, $data_start_time,
+					 $data_end_time, $elapsed_time, $ucpu1, $scpu1, \%extras);
 
-    do_sync($synchost, $syncport, $answer);
-    if ($logport > 0) {
-	do_sync($loghost, $logport, $answer);
+	do_sync($synchost, $syncport, $answer);
+	if ($logport > 0) {
+	    do_sync($loghost, $logport, $answer);
+	}
     }
 }
 
@@ -131,14 +134,12 @@ sub get_jobfiles($$$) {
 		chomp;
 		timestamp($_);
 		if (/^(\s*filename\s*=\s*)/) {
-		    $_ .= "/$localid";
+		    $_ .= "/$localid/$localid";
 		}
 		print WRITE_JOB "$_\n";
 	    }
 	    close READ_JOB;
 	    close WRITE_JOB || die "Can't close temporary jobfile $file: $!\n";
-	    `ls -l $nfile 1>&2`;
-	    `cat $nfile 1>&2`;
 	    push @nfiles, $nfile;
 	}
     }

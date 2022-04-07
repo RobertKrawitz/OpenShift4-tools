@@ -871,12 +871,24 @@ function validate_resource() {
 
 function expand_string() {
     local string=$1
+    shift
+    local -A _____dict_____=()
+    local -a arg
+    for arg in "$@" ; do
+	local noptname1 optname optvalue
+	read -r noptname optname optvalue <<< "$(parse_option "$arg")"
+	_____dict_____["$optname"]="$optvalue"
+    done
     while [[ $string =~ (.*)(%\{([[:alnum:]_]+(\[[[:alnum:]]+\])?)(:-([^\}]*))?\})(.*) ]] ; do
 	local prefix=${BASH_REMATCH[1]:-}
 	local var=${BASH_REMATCH[3]:-}
 	local replacement=${BASH_REMATCH[6]:-UNKNOWN$var}
 	local suffix=${BASH_REMATCH[7]:-}
-	string="${prefix}${!var:-$replacement}${suffix}"
+	if [[ -n "${_____dict_____[$var]+isset}" ]] ; then
+	    string="${prefix}${_____dict_____[$var]}${suffix}"
+	else
+	    string="${prefix}${!var:-$replacement}${suffix}"
+	fi
     done
     echo "$string"
 }
@@ -2568,8 +2580,8 @@ function remove_tmpdir() {
     [[ -n "${cb_tempdir:-}" && -d "$cb_tempdir" && $cb_tempdir = "/tmp/cbtmp_"* ]] && rm -rf "$cb_tempdir" && unset cb_tempdir
 }
 
-trap "remove_tmpdir" EXIT
-cb_tempdir=$(umask 77; mktemp -d -p /tmp) || fatal "Can't create temporary directory"
+trap "remove_tmpdir" EXIT TERM INT HUP
+cb_tempdir=$(umask 77; mktemp -d -p /tmp -t cbtmp_XXXXXXXX) || fatal "Can't create temporary directory"
 
 load_workloads
 
