@@ -1426,7 +1426,7 @@ function _extract_metrics() {
     if [[ -r "$metrics_file" ]] ; then
 	cat <<EOF
 ,
-"metrics": $("${__mydir__}/experimental/prom-extract" -m "$metrics_file" --metrics-only --start_time="$prometheus_starting_timestamp" --epoch="$metrics_epoch" --post-settling-time=0)
+"metrics": $("${__mydir__}/prom-extract" -m "$metrics_file" --metrics-only --start_time="$prometheus_starting_timestamp" --epoch="$metrics_epoch" --post-settling-time=0)
 EOF
     fi
 }
