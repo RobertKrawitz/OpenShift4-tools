@@ -66,6 +66,7 @@ declare -i exit_at_end=1
 declare -i report_object_creation=1
 declare -A objects_created=()
 declare baseoffset=0
+declare -i metrics_epoch=0
 declare requested_workload=ClusterBuster
 declare basename=clusterbuster
 declare deployment_type=pod
@@ -140,6 +141,7 @@ declare artifactdir=
 declare -a saved_argv=("$0" "$@")
 declare -a processed_options=("$0")
 declare -a pod_annotations=()
+declare cb_tempdir=
 
 declare OC=${OC:-${KUBECTL:-}}
 OC=${OC:-$(type -p oc)}
@@ -372,6 +374,9 @@ $(print_workloads_supporting_reporting '                        - ')
                         for metrics extraction if promextract
                         reporting is in use.  With no argument, uses
                         default in $default_metrics_file.
+       --metrics-epoch=<seconds>
+                        Number of seconds to look back for metrics prior
+                        to start of run (default $metrics_epoch)
 
     Workload sizing options:
        --containers_per_pod=N
@@ -730,6 +735,7 @@ function process_option() {
 	artifactdir)		    artifactdir="$optvalue"			;;
 	logstrategy)		    log_strategy=$optvalue			;;
 	metrics|metricsfile)	    set_metrics_file "$optvalue"		;;
+	metricsepoch)		    metrics_epoch=$optvalue			;;
 	reportformat)		    report_format=$optvalue			;;
 	jsonreport)		    report_format=json				;;
 	rawreport)		    report_format=raw				;;
@@ -861,6 +867,18 @@ function validate_resource() {
 	fi
     done
     return $status
+}
+
+function expand_string() {
+    local string=$1
+    while [[ $string =~ (.*)(%\{([[:alnum:]_]+(\[[[:alnum:]]+\])?)(:-([^\}]*))?\})(.*) ]] ; do
+	local prefix=${BASH_REMATCH[1]:-}
+	local var=${BASH_REMATCH[3]:-}
+	local replacement=${BASH_REMATCH[6]:-UNKNOWN$var}
+	local suffix=${BASH_REMATCH[7]:-}
+	string="${prefix}${!var:-$replacement}${suffix}"
+    done
+    echo "$string"
 }
 
 ################################################################
@@ -1396,7 +1414,7 @@ function _extract_metrics() {
     if [[ -r "$metrics_file" ]] ; then
 	cat <<EOF
 ,
-"metrics": $("${__mydir__}/experimental/prom-extract" -m "$metrics_file" --metrics-only --start_time="$prometheus_starting_timestamp" --post-settling-time=0)
+"metrics": $("${__mydir__}/experimental/prom-extract" -m "$metrics_file" --metrics-only --start_time="$prometheus_starting_timestamp" --epoch="$metrics_epoch" --post-settling-time=0)
 EOF
     fi
 }
@@ -1696,7 +1714,7 @@ EOF
 EOF
 	done
     fi
-    if [[ -n "${configmap_files[*]:-}" ]] ; then
+    if [[ $namespace != "$sync_namespace" && -n "${configmap_files[*]:-}" ]] ; then
 	cat <<EOF
 - name: "configmap-${namespace}"
   mountPath: "${configmap_mount_dir}"
@@ -1843,7 +1861,7 @@ EOF
 EOF
 	done
     fi
-    if [[ -n "${configmap_files[*]:-}" ]] ; then
+    if [[ $namespace != "$sync_namespace" && -n "${configmap_files[*]:-}" ]] ; then
 	cat <<EOF
 - name: "configmap-${namespace}"
   configMap:
@@ -2484,9 +2502,9 @@ function run_clusterbuster_1() {
     local -i status=0
     (( precleanup && doit )) && do_cleanup 1>&2
     if ((cleanup)) ; then
-	trap 'wait; doit=1; do_cleanup force; exit 1' TERM INT HUP
+	trap 'wait; remove_tmpdir; trap "remove_tmpdir; echo aborting 1>&2; exit 1" INT; doit=1; do_cleanup force; exit 1' TERM INT HUP
     else
-	trap 'wait; exit 1' TERM HUP INT
+	trap 'wait; remove_tmpdir; exit 1' TERM HUP INT
     fi
     if [[ $take_prometheus_snapshot -gt 0 && -n "$artifactdir" ]] ; then
 	start_prometheus_snapshot
@@ -2497,13 +2515,7 @@ function run_clusterbuster_1() {
 	artifactdir=${artifactdir//%s/$(readable_timestamp "$prometheus_starting_timestamp")}
 	artifactdir=${artifactdir//%w/$requested_workload}
 	artifactdir=${artifactdir//%n/$job_name}
-	while [[ $artifactdir =~ (.*)(%\{([[:alnum:]_]+(\[[[:alnum:]]+\])?)(:-([^\}]*))?\})(.*) ]] ; do
-	    local prefix=${BASH_REMATCH[1]:-}
-	    local var=${BASH_REMATCH[3]:-}
-	    local replacement=${BASH_REMATCH[6]:-UNKNOWN$var}
-	    local suffix=${BASH_REMATCH[7]:-}
-	    artifactdir="${prefix}${!var:-$replacement}${suffix}"
-	done
+	artifactdir="$(expand_string "$artifactdir")"
 	mkdir -p "$artifactdir" || fatal "Can't create log directory $artifactdir"
 	echo "${saved_argv[@]@Q}" > "$artifactdir/commandline"
 	exec 2> >(tee "$artifactdir/stderr.log" >&2)
@@ -2551,6 +2563,13 @@ function run_clusterbuster_1() {
 ################################################################
 # Top level
 ################################################################
+
+function remove_tmpdir() {
+    [[ -n "${cb_tempdir:-}" && -d "$cb_tempdir" && $cb_tempdir = "/tmp/cbtmp_"* ]] && rm -rf "$cb_tempdir" && unset cb_tempdir
+}
+
+trap "remove_tmpdir" EXIT
+cb_tempdir=$(umask 77; mktemp -d -p /tmp) || fatal "Can't create temporary directory"
 
 load_workloads
 

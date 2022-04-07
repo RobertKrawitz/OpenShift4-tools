@@ -2,25 +2,25 @@
 # cannot be indented.
 
 [global]
-runtime = 10
-#ioengine = sync
-iodepth = 32
-direct = 1
+runtime =%{workload_run_time}
+ioengine =%{___fio_ioengine}
+iodepth =%{___fio_iodepth}
+direct =%{___fio_direct}
 time_based = 1
 #clocksource = gettimeofday
-ramp_time = 5
+ramp_time =%{___fio_ramp_time}
 write_bw_log = fio
 write_iops_log = fio
 write_lat_log = fio
 log_avg_msec = 1000
 write_hist_log = fio
 log_hist_msec = 10000
-fdatasync = 1
+fdatasync =%{___fio_fdatasync}
 # log_hist_coarseness = 4 # 76 bins
 
 [job-tmp]
-#filename = /tmp
-size = 4194304
+filename =%{___fio_workdir}
+size =%{___fio_filesize}
 numjobs = 1
 
 #rate_iops=10

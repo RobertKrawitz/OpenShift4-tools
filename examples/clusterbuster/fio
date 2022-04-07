@@ -4,7 +4,6 @@
 cleanup
 workloadruntime=10
 workload=fio
-fio-jobfile=fio.jobfile
 replicas=1
 anti_affinity
 exit_at_end

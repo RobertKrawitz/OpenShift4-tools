@@ -21,8 +21,11 @@ $basetime += $baseoffset;
 $crtime += $baseoffset;
 
 my ($pod) = hostname;
-initialize_timing($basetime, $crtime, $synchost, $syncport, "$namespace:$pod:$container", $start_time);
-my ($localrundir) = "$rundir/$pod/$$";
+my ($idname) = "$namespace:$pod:$container";
+
+initialize_timing($basetime, $crtime, $synchost, $syncport, $idname, $start_time);
+
+my ($localrundir);
 
 sub removeRundir() {
     if (-d "$localrundir") {
@@ -39,16 +42,6 @@ sub docleanup()  {
     removeRundir();
     kill 'KILL', -1;
     POSIX::_exit(0);
-}
-
-removeRundir();
-
-if (! make_path($localrundir)) {
-    timestamp("Cannot create run directory $localrundir: $!");
-}
-if (! chdir($localrundir)) {
-    timestamp("Cannot cd $localrundir: $!");
-    exit(1);
 }
 
 sub runit(;$) {
@@ -120,36 +113,74 @@ sub runit(;$) {
     }
 }
 
-sub get_jobfiles($) {
-    my ($dir) = @_;
+sub get_jobfiles($$$) {
+    my ($dir, $tmpdir, $localid) = @_;
     opendir DIR, $dir || die "Can't find job files in $dir: #!\n";
 
     my @files = map { "$dir/$_" } grep { -f "$dir/$_" } sort readdir DIR;
     closedir DIR;
-    print STDERR "get_jobfiles($dir) => @files\n";
-    return @files;
+    my (@nfiles) = ();
+    foreach my $file (@files) {
+	my ($nfile) = $file;
+	if ($nfile =~ m,^(.*/)([^/]+)$,) {
+	    $nfile = "${tmpdir}/$2";
+	    timestamp("$file $1 $2 $nfile\n");
+	    open READ_JOB, "<", "$file" || die "Can't open jobfile $file to read: $!\n";
+	    open WRITE_JOB, ">", "$nfile" || die "Can't open temporary jobfile $file to write: $!\n";
+	    while (<READ_JOB>) {
+		chomp;
+		timestamp($_);
+		if (/^(\s*filename\s*=\s*)/) {
+		    $_ .= "/$localid";
+		}
+		print WRITE_JOB "$_\n";
+	    }
+	    close READ_JOB;
+	    close WRITE_JOB || die "Can't close temporary jobfile $file: $!\n";
+	    `ls -l $nfile 1>&2`;
+	    `cat $nfile 1>&2`;
+	    push @nfiles, $nfile;
+	}
+    }
+    print STDERR "get_jobfiles($dir) => @nfiles\n";
+    return @nfiles;
 }
 
-my (@jobfiles) = get_jobfiles($jobfiles_dir);
-
 sub runall() {
+    my ($localid) = $idname . ":$$";
+    $localid =~ s/:/_/g;
+    $localrundir = "$rundir/$localid";
+    my ($tmp_jobfilesdir) = "/tmp/fio-${localid}.job";
+    mkdir "$tmp_jobfilesdir" || die "Can't create job directory $tmp_jobfilesdir: $!\n";
+
+    removeRundir();
+
+    if (! make_path($localrundir)) {
+	timestamp("Cannot create run directory $localrundir: $!");
+    }
+    if (! chdir($localrundir)) {
+	timestamp("Cannot cd $localrundir: $!");
+	exit(1);
+    }
+    my (@jobfiles) = get_jobfiles($jobfiles_dir, $tmp_jobfilesdir, $localid);
     if ($#jobfiles >= 0) {
 	foreach my $file (@jobfiles) {
-	    runit($file)
+	    runit($file);
 	}
     } else {
-        runit()
+        runit();
     }
+    docleanup();
 }
 
 if ($processes > 1) {
     for (my $i = 0; $i < $processes; $i++) {
         if ((my $child = fork()) == 0) {
             runall();
-	    docleanup();
             exit(0);
         }
     }
+    wait();
 } else {
     runall();
 }

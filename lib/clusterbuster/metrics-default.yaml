@@ -40,20 +40,29 @@ metrics:
   - query: (sum(container_memory_working_set_bytes{pod!="",namespace=~"clusterbuster-[0-9]*",name!=""}) by (node)) > 0
     metricName: containerMemoryWorkingSet-clusterbuster
 
-  - query: (avg(irate(container_cpu_usage_seconds_total{name!="",container!="POD",namespace=~"clusterbuster-[0-9]*"}[2m]) * 100) by (node)) > 0
+  - query: (sum(irate(container_cpu_usage_seconds_total{container!="",namespace=~"clusterbuster-[0-9]*"}[2m])) by (node)) > 0
     metricName: containerCPU-clusterbuster
 
 # Node metrics
-  - query: (sum(irate(node_cpu_seconds_total[2m])) by (mode,instance) and on (instance) label_replace(kube_node_role{role="master"}, "instance", "$1", "node", "(.+)")) > 0
+  - query: (sum(irate(node_cpu_seconds_total{mode!="idle"}[2m])) by (mode,instance) and on (instance) label_replace(kube_node_role{role="master"}, "instance", "$1", "node", "(.+)")) > 0
     metricName: nodeCPU-Masters
 
-  - query: (sum(irate(node_cpu_seconds_total[2m])) by (mode,instance) and on (instance) label_replace(kube_node_role{role="worker"}, "instance", "$1", "node", "(.+)")) > 0
+  - query: (sum(irate(node_cpu_seconds_total{mode!="idle"}[2m])) by (mode,instance) and on (instance) label_replace(kube_node_role{role="worker"}, "instance", "$1", "node", "(.+)")) > 0
     metricName: nodeCPU-Workers
 
-  - query: (avg((sum(irate(node_cpu_seconds_total[2m])) by (mode,instance) and on (instance) label_replace(kube_node_role{role="worker"}, "instance", "$1", "node", "(.+)"))) by (mode)) > 0
+  - query: (sum(irate(node_cpu_seconds_total{mode!="idle"}[2m])) by (instance) and on (instance) label_replace(kube_node_role{role="worker"}, "instance", "$1", "node", "(.+)")) > 0
+    metricName: nodeCPUUtil-Workers
+
+  - query: (sum(irate(node_cpu_seconds_total{mode="user"}[2m])) by (instance) and on (instance) label_replace(kube_node_role{role="worker"}, "instance", "$1", "node", "(.+)")) > 0
+    metricName: nodeCPUUser-Workers
+
+  - query: (sum(irate(node_cpu_seconds_total{mode="system"}[2m])) by (instance) and on (instance) label_replace(kube_node_role{role="worker"}, "instance", "$1", "node", "(.+)")) > 0
+    metricName: nodeCPUSys-Workers
+
+  - query: (avg((sum(irate(node_cpu_seconds_total{mode!="idle"}[2m])) by (mode,instance) and on (instance) label_replace(kube_node_role{role="worker"}, "instance", "$1", "node", "(.+)"))) by (mode)) > 0
     metricName: nodeCPU-AggregatedWorkers
 
-  - query: (avg((sum(irate(node_cpu_seconds_total[2m])) by (mode,instance) and on (instance) label_replace(kube_node_role{role="infra"}, "instance", "$1", "node", "(.+)"))) by (mode)) > 0
+  - query: (avg((sum(irate(node_cpu_seconds_total{mode!="idle"}[2m])) by (mode,instance) and on (instance) label_replace(kube_node_role{role="infra"}, "instance", "$1", "node", "(.+)"))) by (mode)) > 0
     metricName: nodeCPU-AggregatedInfra
 
   - query: avg(node_memory_MemAvailable_bytes) by (instance) and on (instance) label_replace(kube_node_role{role="master"}, "instance", "$1", "node", "(.+)")

@@ -52,15 +52,15 @@ class fio_reporter(ClusterBusterReporter):
                     if op not in dest:
                         dest[pjob][pop] = {}
                     dest1 = dest[pjob][pop]
-                    dest1['io_bytes'] = self._prettyprint(source1['io_kbytes'] * 1000, precision=3, suffix='B')
-                    dest1['total_ios'] = self._prettyprint(source1['total_ios'], base=1000, precision=3)
-                    dest1['runtime'] = self._prettyprint(source1['runtime'] / rows / 1000.0,
-                                                         base=1000, precision=3, suffix='sec')
-                    dest1['io_data_rate'] = self._prettyprint(self._safe_div(source1['io_kbytes'] * 1024.0,
-                                                                             source1['runtime'] / rows / 1000.0),
+                    ios = source1['total_ios']
+                    nbytes = source1['io_kbytes'] * 1024
+                    runtime = source1['runtime'] / rows / 1000.0
+                    dest1['io_bytes'] = self._prettyprint(nbytes, precision=3, suffix='B', integer=1)
+                    dest1['total_ios'] = self._prettyprint(ios, base=1000, precision=3, integer=1)
+                    dest1['runtime'] = self._prettyprint(runtime, base=1000, precision=3, suffix='sec')
+                    dest1['io_data_rate'] = self._prettyprint(self._safe_div(nbytes, runtime),
                                                               precision=3, suffix='B/sec')
-                    dest1['io_rate'] = self._prettyprint(self._safe_div(source1['total_ios'],
-                                                                        source1['runtime'] / rows / 1000.0),
+                    dest1['io_rate'] = self._prettyprint(self._safe_div(ios, runtime),
                                                          precision=3, base=1000, suffix='/sec')
                     dest1['slat_max'] = self._prettyprint(source1['slat_ns'][max_key] / 1000000000.0,
                                                           base=1000, precision=3, suffix='sec')

@@ -19,6 +19,7 @@ import re
 import sys
 import textwrap
 from copy import deepcopy
+import base64
 from lib.clusterbuster.reporter.metrics.PrometheusMetrics import PrometheusMetrics
 
 
@@ -114,12 +115,12 @@ class ClusterBusterReporter:
                                                               precision=3, suffix='sec')
             results['CPU seconds'] = self._prettyprint(self._summary['cpu_time'],
                                                        precision=3, suffix='sec')
-            cpu_utilization = self._safe_div(self._summary['cpu_time'] * 100, self._summary['data_run_interval'], 3, as_string=True)
-            results['CPU utilization'] = f"{cpu_utilization} %"
+            cpu_utilization = self._safe_div(self._summary['cpu_time'], self._summary['data_run_interval'])
+            results['CPU utilization'] = self._prettyprint(cpu_utilization, precision=3, base=100, suffix='%')
             if 'metrics' in self._summary:
                 results['Metrics'] = {}
                 for key, value in self._summary['metrics'].items():
-                    results[key] = value
+                    results['Metrics'][key] = value
             results['First pod start'] = self._prettyprint(self._summary['first_pod_start_time'],
                                                            precision=3, suffix='sec')
             results['Last pod start'] = self._prettyprint(self._summary['last_pod_start_time'],
@@ -139,7 +140,8 @@ class ClusterBusterReporter:
             results['Absolute sync error'] = self._prettyprint((self._summary['data_start_interval'] +
                                                                 self._summary['data_end_interval']) / 2,
                                                                precision=3, suffix='sec')
-            results['Relative sync error'] = f"{self._summary['overlap_error'] * 100:.3f} %"
+            results['Relative sync error'] = self._prettyprint(self._summary['overlap_error'],
+                                                               precision=4, base=100, suffix='%')
             results['Sync max RTT delta'] = self._prettyprint(self._summary['timing_parameters']['max_sync_rtt_delta'],
                                                               precision=3, suffix='sec')
             results['Sync avg RTT delta'] = self._prettyprint(self._summary['timing_parameters']['avg_sync_rtt_delta'],
@@ -197,7 +199,7 @@ class ClusterBusterReporter:
         return len(self._rows)-1
 
     def __format_memory_value(self, number):
-        return self._prettyprint(number, precision=3, suffix='B')
+        return self._prettyprint(number, precision=3, suffix='B', integer=1)
 
     def __format_byte_rate_value(self, number):
         return self._prettyprint(number, precision=3, base=1000, suffix='B/sec')
@@ -206,7 +208,7 @@ class ClusterBusterReporter:
         return self._prettyprint(number, precision=3, base=1000, suffix='pkts/sec')
 
     def __format_cpu_value(self, number):
-        return self._prettyprint(number * 100, precision=3, suffix='%')
+        return self._prettyprint(number, precision=3, base=100, suffix='%')
 
     def _add_summary(self):
         """
@@ -238,6 +240,16 @@ class ClusterBusterReporter:
                                                                       printfunc=self.__format_pkt_rate_value)
             mtr['Transmit packets/sec'] = metrics.get_max_value_by_key('txNetworkPackets-WorkerByNode',
                                                                        printfunc=self.__format_pkt_rate_value)
+            mtr['CPU utilization'] = {
+                'User': metrics.get_max_value_by_key('nodeCPUUser-Workers',
+                                                     printfunc=self.__format_cpu_value),
+                'System': metrics.get_max_value_by_key('nodeCPUSys-Workers',
+                                                       printfunc=self.__format_cpu_value),
+                'Total': metrics.get_max_value_by_key('nodeCPUUtil-Workers',
+                                                      printfunc=self.__format_cpu_value),
+                'Total Workers': metrics.get_max_value_by_key('containerCPU-clusterbuster',
+                                                              printfunc=self.__format_cpu_value)
+                }
 
     def _add_explicit_timeline_vars(self, vars_to_update: list):
         """
@@ -356,10 +368,20 @@ class ClusterBusterReporter:
         :param integer: print as integer
         :param suffix: trailing suffix (e. g. "B/sec")
         """
+        if num is None:
+            return 'None'
         if 'parseable' in self._format:
             if integer != 0 or num == 0:
                 return str(int(num))
             else:
+                if base == 100:
+                    precision += 2
+                elif abs(float(num)) < .000001:
+                    precision += 9
+                elif abs(float(num)) < .001:
+                    precision += 6
+                elif abs(float(num)) < 1:
+                    precision += 3
                 return self._fformat(num, precision=precision)
         elif base == 0:
             if suffix and suffix != '':
@@ -405,7 +427,7 @@ class ClusterBusterReporter:
         :param num: Numerator
         :param denom: Denominator
         :param precision: Precision to round the result
-        :param as_string: If true, return value as strong
+        :param as_string: If true, return value as string
         """
         try:
             result = float(num) / float(denom)
@@ -705,7 +727,12 @@ class ClusterBusterReporter:
         return [width, integer_width]
 
     def __parseable_path(self, path: list):
-        return '.'.join([elt.replace(':', '') for elt in path]).replace(' ', '_').replace(',', '_').replace('\n', '').lower()
+        answer = '.'.join([elt.replace(':', '') for elt in path]).lower().replace('\n', '')
+        for char in [' ', ',', '/', '"', "'"]:
+            answer = answer.replace(char, '_')
+        while '__' in answer:
+            answer = answer.replace('__', '_')
+        return '.'.join([self._jdata['metadata']['job_name'], answer])
 
     def __indent(self, string: str, target_column: int):
         if 'parseable' in self._format:
@@ -763,6 +790,10 @@ class ClusterBusterReporter:
             else:
                 value = results[key]
                 if 'parseable' in self._format:
+                    if '\n' in str(value):
+                        value = base64.b64encode(value.encode('ascii')).decode()
+                    else:
+                        value = str(value).strip()
                     print(f'{self.__parseable_path(npath)}: {value}', file=outfile)
                 else:
                     try:

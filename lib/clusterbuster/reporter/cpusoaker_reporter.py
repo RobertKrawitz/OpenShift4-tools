@@ -27,7 +27,7 @@ class cpusoaker_reporter(ClusterBusterReporter):
         # I'd like to do this, but if the nodes are out of sync time-wise, this will not
         # function correctly.
         ClusterBusterReporter._generate_summary(self, results)
-        results['Interations'] = self._prettyprint(self._summary['work_iterations'], precision=3)
+        results['Interations'] = self._prettyprint(self._summary['work_iterations'], integer=1, precision=3)
         results['Iterations/sec'] = self._prettyprint(self._safe_div(self._summary['work_iterations'],
                                                                      self._summary['data_run_interval']),
                                                       precision=3)
@@ -39,7 +39,7 @@ class cpusoaker_reporter(ClusterBusterReporter):
         ClusterBusterReporter._generate_row(self, results, row)
         result = {}
         result['Elapsed Time'] = self._fformat(row['data_elapsed_time'], 3)
-        result['Iterations'] = self._prettyprint(row['work_iterations'], precision=3)
+        result['Iterations'] = self._prettyprint(row['work_iterations'], integer=1, precision=3)
         result['Iterations/sec'] = self._prettyprint(self._safe_div(row['work_iterations'], row['data_elapsed_time']), precision=3)
         result['Iterations/CPU sec'] = self._prettyprint(self._safe_div(row['work_iterations'], row['cpu_time']), precision=3)
         self._insert_into(results, [row['namespace'], row['pod'], row['container']], result)

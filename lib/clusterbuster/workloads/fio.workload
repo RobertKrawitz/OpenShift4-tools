@@ -23,7 +23,15 @@ declare -ag ___fio_blocksizes=(4096)
 declare -ag ___fio_patterns=(read)
 declare -g ___fio_blksize_count=1
 declare -g ___fio_workload_count=1
-declare -g ___fio_job_file
+declare -g ___fio_job_file=generic.jobfile
+declare -g ___fio_ioengine=libaio
+declare -gi ___fio_iodepth=1
+declare -gi ___fio_direct=0
+declare -gi ___fio_ramp_time=5
+declare -gi ___fio_fdatasync=1
+declare -gi ___fio_filesize=$(parse_size "4Gi")
+declare -g ___fio_workdir="/tmp"
+declare -g ___fio_processed_job_file
 
 function _create_containers_fio_yaml() {
     local namespace=$1
@@ -145,7 +153,7 @@ EOF
 
 function list_user_configmaps_fio() {
     cat <<EOF
-${___fio_job_file}
+${___fio_processed_job_file}
 EOF
 }
 
@@ -160,7 +168,21 @@ function help_options_fio() {
        --fio-general-option=<options>
                         General fio option.  May be repeated.
        --fio-jobfile=<file>
-                        Name of fio job file to use.
+                        Name of fio job file to use (defaults to generic).
+       --fio-ioengine=<engine>
+			Name of ioengine to use (default $___fio_ioengine)
+       --fio-iodepth=<n>
+			I/O depth (default $___fio_iodepth)
+       --fio-direct=<direct>
+			Use direct I/O (default $___fio_direct)
+       --fio-ramptime=<ramp time>
+       		        Ramp-up and down time (default $___fio_ramptime)
+       --fio-fdatasync=<fdatasync>
+			Use fdatasync (default $___fio_fdatasync)
+       --fio-filesize=<size>
+			File size (default $___fio_filesize)
+       --fio-workdir=<dir>
+			Work directory (default $___fio_workdir)
 EOF
 }
 
@@ -180,19 +202,27 @@ function process_options_fio() {
     for opt in "$@" ; do
 	read -r noptname1 noptname optvalue <<< "$(parse_option "$opt")"
 	case "$noptname1" in
-	    fiopatterns)	    fiopattern=$optvalue		  ;;     
-	    fioblocksizes)	    fioblksize=$optvalue		  ;;     
-	    fiogenericoption)	    ___fio_generic_options+=("$optvalue") ;;
-	    fiojobfile)
-		if [[ ! -f "$optvalue" ]] ; then
-		    echo "Job file $optvalue does not exist"
-		    help
-		fi
-		___fio_job_file=$optvalue
-		;;
+	    fiopatterns)	fiopattern=$optvalue		         ;;     
+	    fioblocksize*)	fioblksize=$optvalue		         ;;     
+	    fiogenericoption)	___fio_generic_options+=("$optvalue")    ;;
+	    fiojobfile)		___fio_job_file=$optvalue		 ;;
+	    fioioengine)	___fio_ioengine=$optvalue		 ;;
+	    fioiodepth)		___fio_iodepth=$optvalue		 ;;
+	    fiodirect)		___fio_direct=$(bool "$optvalue")	 ;;
+	    fioramptime)	___fio_ramptime=$optvalue		 ;;
+	    fiofdatasync)	___fio_fdatasync=$(bool "$optvalue")	 ;;
+	    fiofilesize)	___fio_filesize=$(parse_size "$optvalue");;
+	    fioworkdir)         ___fio_workdir=$optvalue		 ;;
 	    *) 			unknown_opts+=("$noptname ($noptname1)") ;;
 	esac
     done
+    if [[ $___fio_job_file != *'/'* ]] ; then
+	___fio_job_file="${__libdir__}/workloads/fio/${___fio_job_file}"
+	echo "Looking in $___fio_job_file"
+    fi
+    if [[ ! -r "$___fio_job_file" ]] ; then
+	help "Can't find job file $___fio_job_file"
+    fi
     if [[ -n "${unknown_opts[*]:-}" ]] ; then
 	help "${unknown_opts[@]}"
     fi
@@ -202,6 +232,9 @@ function process_options_fio() {
     if [[ -n "${fiopattern:-}" ]] ; then
 	___fio_patterns=(${fiopattern//,/ })
     fi
+
+    ___fio_processed_job_file=$(mktemp -p "$cb_tempdir" -t "fiojobXXXXXX") || fatal "Can't create temporary jobfile"
+    expand_string "$(cat "$___fio_job_file")" > "$___fio_processed_job_file"
 }
 
 function supports_reporting_fio() {
@@ -233,7 +266,14 @@ EOF
 function report_options_fio() {
     cat <<EOF
 "fio_general_options": "${___fio_general_options:-}",
-"fio_job_file": "$(base64 -w 0 < "$___fio_job_file")"
+"fio_job_file": "$(base64 -w 0 < "$___fio_processed_job_file")",
+"fio_ioengine": "$___fio_ioengine",
+"fio_iodepth": $___fio_iodepth,
+"fio_direct": $___fio_direct,
+"fio_ramp_time": $___fio_ramp_time,
+"fio_fdatasync": $___fio_fdatasync,
+"fio_filesize": $___fio_filesize,
+"fio_workdir": "$___fio_workdir"
 EOF
 }
 

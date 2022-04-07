@@ -47,9 +47,9 @@ class sysbench_reporter(ClusterBusterReporter):
             dest[pop] = {}
             dest[pop]['Elapsed Time'] = self._fformat(source[op]['elapsed_time'], 3)
             dest[pop]['CPU Time'] = self._fformat(source[op]['user_cpu_time'] + source[op]['sys_cpu_time'], 3)
-            for var in ['read_ops:precision=3:suffix=ops:base=1000',
-                        'write_ops:precision=3:suffix=ops:base=1000',
-                        'fsync_ops:precision=3:suffix=ops:base=1000',
+            for var in ['read_ops:precision=3:suffix=ops:base=1000:integer=1',
+                        'write_ops:precision=3:suffix=ops:base=1000:integer=1',
+                        'fsync_ops:precision=3:suffix=ops:base=1000:integer=1',
                         'files:precision=3:suffix='':base=1000:integer=1']:
                 self._copy_formatted_value(var, dest[pop], source[op])
             for var in self._sysbench_vars_to_copy:
