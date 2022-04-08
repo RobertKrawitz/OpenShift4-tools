@@ -370,6 +370,10 @@ class ClusterBusterReporter:
         """
         if num is None:
             return 'None'
+        try:
+            num = float(num)
+        except Exception:
+            return str(num)
         if 'parseable' in self._format:
             if integer != 0 or num == 0:
                 return str(int(num))
