@@ -210,7 +210,7 @@ function process_options_fio() {
     for opt in "$@" ; do
 	read -r noptname1 noptname optvalue <<< "$(parse_option "$opt")"
 	case "$noptname1" in
-	    fiopatterns)	fiopattern=$optvalue		         ;;     
+	    fiopattern*)	fiopattern=$optvalue		         ;;     
 	    fioblocksize*)	fioblksize=$optvalue		         ;;     
 	    fiogenericoption)	___fio_generic_options+=("$optvalue")    ;;
 	    fiojobfile)		___fio_job_file=$optvalue		 ;;
