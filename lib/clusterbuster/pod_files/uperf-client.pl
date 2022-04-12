@@ -134,6 +134,7 @@ foreach my $test (@tests) {
     my ($failure_message) = '';
     while (<RUN>) {
 	chomp;
+	timestamp($_);
 	if (/^timestamp_ms:([[:digit:].]+) +name:([[:alnum:]]+) +nr_bytes:([[:digit:]]+) +nr_ops:([[:digit:]]+)/) {
 	    my ($ts) = $1 / 1000.0;
 	    my ($name) = $2;
@@ -187,6 +188,7 @@ foreach my $test (@tests) {
 	    push @failed_cases, $test_name;
 	}
     }
+    close(RUN);
     $data_end_time = xtime();
     $summary{'raw_elapsed_time'} = $last_time - $start_time;
     $summary{'raw_nbytes'} = $last_nbytes;
