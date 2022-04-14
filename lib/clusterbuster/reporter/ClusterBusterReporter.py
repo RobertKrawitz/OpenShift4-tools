@@ -512,10 +512,10 @@ class ClusterBusterReporter:
         """
         node = None
         for obj in self._jdata['api_objects']:
-            if obj['kind'] == 'Pod' and 'clusterbuster-client' in obj['labels'] and obj['labels']['clusterbuster-client']:
+            if obj['kind'] == 'Pod' and 'clusterbuster-client' in obj['metadata']['labels'] and obj['metadata']['labels']['clusterbuster-client']:
                 if not node:
-                    node = obj['nodeName']
-                elif obj['nodeName'] != node:
+                    node = obj['spec']['nodeName']
+                elif obj['spec']['nodeName'] != node:
                     return False
         return True
 
@@ -527,8 +527,8 @@ class ClusterBusterReporter:
         :return:
         """
         for obj in self._jdata['api_objects']:
-            if obj['kind'] == 'Pod' and obj['namespace'] == namespace and obj['name'] == pod:
-                return obj['nodeName']
+            if obj['kind'] == 'Pod' and obj['metadata']['namespace'] == namespace and obj['metadata']['name'] == pod:
+                return obj['spec']['nodeName']
         return None
 
     def __row_name(self, row: dict):

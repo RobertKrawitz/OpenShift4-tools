@@ -34,10 +34,10 @@ parser.add_argument('-w', '--workload', default=None, type=str, help='Override w
 parser.add_argument('-f', '--force', '--fallback', action='store_true', help='Force raw dump if workload is unhandled')
 parser.add_argument('--debug', action='store_true', help='Simplify debugging')
 parser.add_argument('--list_formats', action='store_true', help='List available report formats')
-parser.add_argument('filename', metavar='file', type=str, nargs='?', help='File to process')
+parser.add_argument("files", metavar='file', type=str, nargs='*', help='Files to process')
 args = parser.parse_args()
 
-def do_report(workload: str):
+def do_report(workload: str, jdata: dict):
 #    try:
         imported_lib = importlib.import_module(f'lib.clusterbuster.reporter.{workload}_reporter', 'reporter')
         try:
@@ -51,46 +51,52 @@ def do_report(workload: str):
 #        ClusterBusterReporter(jdata, args.format).create_report()
 
 
-if args.list_formats:
-    print('\n'.join(sorted(report_formats)))
-else:
-    jdata=''
-    if args.filename:
-        try:
-            with open(args.filename) as f:
-                jdata = json.load(f)
-        except KeyboardInterrupt:
-            sys.exit(1)
-        except Exception as err:
-            print(f"Cannot read {args.filename} as JSON: {err}")
-            sys.exit(1)
+def process_report(jdata: dict):
+    if args.workload:
+        workload = args.workload
+    elif 'workload_reporting_class' in jdata['metadata']:
+        workload = jdata["metadata"]["workload_reporting_class"]
+    else:
+        workload = jdata["metadata"]["workload"]
+    if True or args.debug:
+        do_report(workload, jdata)
     else:
         try:
-            jdata = json.load(sys.stdin)
+            do_report(workload, jdata)
         except KeyboardInterrupt:
             sys.exit(1)
-        except Exception as err:
-            print(f"Cannot read JSON: {err}")
-            sys.exit(1)
+        except Exception as exc:
+            if args.force:
+                json.dump(jdata, sys.stdout, indent = 4)
+            else:
+                print(f"Cannot load handler for workload '{workload}': {exc}", file=sys.stderr)
+                sys.exit(1)
+
+def process_json(jdata: dict):
     if args.format == 'raw':
         json.dump(jdata, sys.stdout, indent = 4)
     else:
-        if args.workload:
-            workload = args.workload
-        elif 'workload_reporting_class' in jdata['metadata']:
-            workload = jdata["metadata"]["workload_reporting_class"]
-        else:
-            workload = jdata["metadata"]["workload"]
-        if True or args.debug:
-            do_report(workload)
-        else:
-            try:
-                do_report(workload)
-            except KeyboardInterrupt:
-                sys.exit(1)
-            except Exception as exc:
-                if args.force:
-                    json.dump(jdata, sys.stdout, indent = 4)
-                else:
-                    print(f"Cannot load handler for workload '{workload}': {exc}", file=sys.stderr)
-                    sys.exit(1)
+        process_report(jdata)
+
+if args.list_formats:
+    print('\n'.join(sorted(report_formats)))
+elif args.files:
+    for filename in args.files:
+        if os.path.isdir(filename):
+            filename = os.path.join(filename, "clusterbuster-report.json")
+        try:
+            with open(filename) as f:
+                process_json(json.load(f))
+        except KeyboardInterrupt:
+            sys.exit(1)
+        except Exception as err:
+            print(f"Cannot read {filename} as JSON: {err}")
+            sys.exit(1)
+else:
+    try:
+        process_json(json.load(sys.stdin))
+    except KeyboardInterrupt:
+        sys.exit(1)
+    except Exception as err:
+        print(f"Cannot read JSON: {err}")
+        sys.exit(1)

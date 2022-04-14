@@ -168,7 +168,7 @@ function childrenof() {
 	fi
     }
     local -A exclude=()
-    OPTIND=0
+    local OPTIND=0
     while getopts 'e:' opt "$@" ; do
 	case "$opt" in
 	    e) exclude[$OPTARG]=1 ;;
@@ -1068,7 +1068,7 @@ function create_sync_service_if_needed() {
     if ((sync_count <= 0)) ; then return; fi
     if get_sync -q ; then
 	if [[ $namespace = "${namespaces_to_create[0]:-}" ]] ; then
-	    create_service "$sync_namespace" "$sync_namespace" "$sync_port"
+	    create_service -h "$sync_namespace" "$sync_namespace" "$sync_port"
 	    create_sync_deployment "$sync_namespace" "$sync_count" $((sync_clients * ${#namespaces_to_create[@]}))
 	fi
 	create_external_service "$namespace" "${namespace}-sync" "$sync_port" "$global_sync_service"
@@ -1343,7 +1343,7 @@ function _get_logs_poll() {
 
 function get_logs_poll() {
     local tfile
-    tfile=$(mktemp -t '_clusterbusterlogs.XXXXXXXXXX')
+    tfile=$(mktemp -p "$cb_tempdir" -t '_clusterbusterlogs.XXXXXXXXXX')
     trap 'rm -f "$tfile"; echo "Status: Fail"; return 1' INT TERM HUP USR1
     _get_logs_poll "$@" > "$tfile"
     local status=$?
@@ -1496,7 +1496,7 @@ function _report_objects() {
   }
 },
 "nodes": $(__OC get nodes -ojson),
-"api_objects": $( __OC get all -A -l "clusterbuster-id=$run_uuid" -ojson | jq -r '[foreach .items[]? as $item ([[],[]];0; {kind: $item.kind, namespace: $item.metadata.namespace, name: $item.metadata.name, nodeName: $item.spec.nodeName, labels: $item.metadata.labels})]'),
+"api_objects": $( __OC get all -A -l "clusterbuster-id=$run_uuid" -ojson |jq -r .items?),
 "csvs": $(__OC get csv -A -ojson | jq -r '[foreach .items[]? as $item ([[],[]];0; {name: $item.metadata.name, namespace: $item.metadata.namespace, version: $item.spec.version})]'),
 EOF
 }
@@ -1972,7 +1972,11 @@ EOF
 
 function really_create_objects() {
     if [[ $doit -ne 0 && -n $accumulateddata ]] ; then
-	(_OC --validate=false apply -f - <<< "$accumulateddata" | timestamp 1>&2) || killthemall
+	(__OC --validate=false apply -f - <<< "$accumulateddata" | timestamp 1>&2) || {
+	    echo "Create objects failed:" 1>&2
+	    echo "$accumulateddata" 1>&2
+	    killthemall
+	}
 	accumulateddata=
 	objs_item_count=0
     fi
@@ -2154,6 +2158,15 @@ EOF
 }
 
 function create_service() {
+    local OPTIND=0
+    local headless=
+    while getopts 'h' opt ; do
+	case "$opt" in
+	    h) headless='clusterIP: "None"' ;;
+	    *) ;;
+	esac
+    done
+    shift $((OPTIND-1))
     local namespace=$1
     local deployment=$2
     shift 2
@@ -2165,6 +2178,7 @@ metadata:
 $(indent 2 namespace_yaml "$namespace")
 $(indent 2 standard_labels_yaml)
 spec:
+  $headless
   ports:
 $(indent 4 _create_service_ports "service-${deployment}" "$@")
   selector:
@@ -2292,7 +2306,7 @@ function find_first_deployment() {
 		    first_deployment=$((deployment + 1))
 		fi
 	    fi
-        done < <(__OC get deployments -l "$basename" -A --no-headers 2>/dev/null)
+        done <<< "$(__OC get deployments -l "$basename" -A --no-headers 2>/dev/null)"
     fi
 }
 
