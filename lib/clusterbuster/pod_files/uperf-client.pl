@@ -111,11 +111,12 @@ foreach my $test (@tests) {
 	);
     my ($failed) = 0;
     do_sync($synchost, $syncport, "$namespace:$pod:$container:$$:$test_name");
+    timestamp("Running test $test_name");
+    system("cat /tmp/fio-test.xml 1>&2");
     my ($job_start_time) = xtime();
     if (! defined $data_start_time) {
 	$data_start_time = $job_start_time;
     }
-    timestamp("Running test $test_name");
     open(RUN, "-|", "uperf", "-f", "-P", "$connect_port", '-m', '/tmp/fio-test.xml', '-R', '-a', '-i', '1', '-Tf') || die "Can't run uperf: $!\n";
     my ($start_time) = 0;
     my ($last_time) = 0;
