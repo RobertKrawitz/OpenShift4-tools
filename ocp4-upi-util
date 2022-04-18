@@ -638,7 +638,8 @@ function setup_install_1() {
     local installerURL="https://raw.githubusercontent.com/openshift/installer/release-$RELEASE/data/data/rhcos.json"
     echo "Trying to fetch installer data from $installerURL"
     if curl -f -s "$installerURL" ; then
-	local installer_data="$(curl -s -S "$installerURL")"
+	local installer_data
+	installer_data="$(curl -s -S "$installerURL")"
 	baseURI=$(get_key "$installer_data" .baseURI)
 	paths[bios]=$(get_key "$installer_data" .images.metal.path)
 	paths[kernel]=$(get_key "$installer_data" .images.kernel.path '.images."live-kernel".path')
@@ -936,14 +937,20 @@ function _get_ns_version() {
     oc get csv -n "$ns" -ojsonpath='{.items[0].spec.version}'
 }
 
-function _get_operator_csv() {
-    local operator=$1
-    oc get packagemanifest -n openshift-marketplace "$operator" -ojsonpath='{.status.channels[0].currentCSV}'
-}
-
 function _get_operator_channel() {
     local operator=$1
-    oc get packagemanifest -n openshift-marketplace "$operator" -ojsonpath='{.status.channels[0].name}'
+    oc get packagemanifest -n openshift-marketplace sandboxed-containers-operator -ojsonpath='{.status.defaultChannel}'
+}
+
+function _get_operator_field() {
+    local operator=$1
+    local channel=$2
+    local field=$3
+    oc get packagemanifest -n openshift-marketplace sandboxed-containers-operator -ojson | jq -r '[foreach .status.channels[] as $channel ([[],[]];0; (if ($channel.name == "'"$channel"'") then $channel.'"$field"' else null end))] | flatten | map (select (. != null))[]'
+}
+
+function _get_operator_csv() {
+    _get_operator_field "$@" "currentCSV"
 }
 
 function _get_operator_catalog_source() {
@@ -952,20 +959,19 @@ function _get_operator_catalog_source() {
 }
 
 function _get_operator_namespace() {
-    local operator=$1
-    oc get packagemanifest -n openshift-marketplace "$operator" -ojsonpath='{.status.channels[0].currentCSVDesc.annotations.operatorframework\.io/suggested-namespace}'
+    _get_operator_field "$@" 'currentCSVDesc.annotations."operatorframework.io/suggested-namespace"'
 }
 
 function generate_operator_yaml() {
     local operator=$1
-    local csv
-    csv=$(_get_operator_csv "$operator")
     local channel
     channel=$(_get_operator_channel "$operator")
+    local csv
+    csv=$(_get_operator_csv "$operator" "$channel")
     local catalog_source
     catalog_source=$(_get_operator_catalog_source "$operator")
     local namespace
-    namespace=$(_get_operator_namespace "$operator")
+    namespace=$(_get_operator_namespace "$operator" "$channel")
     cat <<EOF
 apiVersion: v1
 kind: Namespace
