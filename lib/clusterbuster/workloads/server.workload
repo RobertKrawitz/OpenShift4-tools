@@ -220,7 +220,7 @@ function create_deployment_server() {
     create_sync_service_if_needed "$namespace" 2 "$((containers_per_pod * replicas * count))"
 
     for instance in $(seq $first_deployment $((count + first_deployment - 1))) ; do
-	create_service -h "$namespace" "${namespace}-server-${instance}" "$port"
+	create_service "$namespace" "${namespace}-server-${instance}" "$port"
 	if [[ $deployment_type = pod ]] ; then
 	    _create_server_deployment "$namespace" "$instance" "$secret_count" "$((containers_per_pod * replicas))"
 	else
