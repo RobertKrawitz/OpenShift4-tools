@@ -2594,7 +2594,7 @@ function run_clusterbuster_1() {
     create_secrets_top_level
 
     basetime=$(date +%s.%N)
-    drop_host_caches
+    (drop_host_caches)
     create_all_objects deployments || exit 1
     (( doit )) || return
 
