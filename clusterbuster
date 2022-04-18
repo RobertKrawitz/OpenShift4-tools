@@ -125,6 +125,8 @@ declare global_sync_service=
 declare -i predelay=0
 declare -i postdelay=0
 declare -r default_metrics_file=metrics-default.yaml
+declare -i drop_node_cache=0
+declare -i drop_all_node_cache=0
 
 declare -r sync_flag_file="/tmp/syncfile";
 declare -r controller_timestamp_file="/tmp/timing.json";
@@ -418,6 +420,9 @@ $(print_workloads_supporting_reporting '                        - ')
                         in a client-server workload.  Default is neither
                         affinity nor anti-affinity.  Use of a pin node
                         overrides anti-affinity.
+       --drop_cache     Drop the buffer cache in all pin nodes; if no
+                        pin nodes are defined, drop all workers' caches.
+       --drop_all_cache Drop the buffer cache on all workers.
 
     Generic workload storage options:
        --emptydir=dir   Mount an emptydir volume at the specified mount point.
@@ -782,6 +787,8 @@ function process_option() {
 	workload_size)		    set_workload_bytes "$optvalue"		;;
 	targetdatarate)		    target_data_rate=$(parse_size "$optvalue")	;;
 	tolerate|toleration)	    tolerations+=("$optvalue")			;;
+	dropcache)                  drop_node_cache=$(bool "$optvalue")         ;;
+	dropallcache)		    drop_all_node_cache=$(bool "$optvalue")     ;;
 	affinity)
 	    case "$optvalue" in
 		1|'') affinity=1      ;;
@@ -2350,6 +2357,26 @@ function create_all_configmaps() {
     wait || killthemall
 }
 
+function drop_host_caches() {
+    ((doit || !drop_node_cache || !drop_all_node_cache)) || return
+    local -a nodes_to_drop
+    if [[ -n "${pin_nodes[*]}" && $drop_all_node_cache -eq 0 ]] ; then
+	local n
+	local -A tmp_nodes_to_drop
+	for n in "${pin_nodes[@]}" ; do
+	    tmp_nodes_to_drop[$n]=1
+	done
+	nodes_to_drop=("${!tmp_nodes_to_drop[@]}")
+    else
+	readarray -t nodes_to_drop <<< "$(oc get -l node-role.kubernetes.io/worker node -ojsonpath="{range .items[*]}{.metadata.name}{'\n'}{end}")"
+    fi
+    for n in "${nodes_to_drop[@]}" ; do
+	((report_object_creation)) && echo "Dropping buffer cache: $n"
+	oc debug --no-tty=true "node/$n" -- chroot /host sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches' 2>/dev/null &
+    done
+    wait
+}
+
 function create_all_deployments() {
     local i
     for i in $(seq 0 "$((parallel_deployments - 1))") ; do
@@ -2567,6 +2594,7 @@ function run_clusterbuster_1() {
     create_secrets_top_level
 
     basetime=$(date +%s.%N)
+    drop_host_caches
     create_all_objects deployments || exit 1
     (( doit )) || return
 
