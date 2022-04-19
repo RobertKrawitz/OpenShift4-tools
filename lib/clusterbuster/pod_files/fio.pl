@@ -16,7 +16,7 @@ our ($namespace, $container, $basetime, $baseoffset, $crtime, $exit_at_end, $syn
      $processes, $rundir, $runtime, $jobfiles_dir, $fio_blocksizes, $fio_patterns, $fio_generic_args) = @ARGV;
 my ($start_time) = xtime();
 
-$SIG{TERM} = sub() { docleanup() };
+$SIG{TERM} = sub() { removeRundir() };
 $basetime += $baseoffset;
 $crtime += $baseoffset;
 
@@ -29,19 +29,9 @@ my ($localrundir);
 
 sub removeRundir() {
     if (-d "$localrundir") {
-	open(CLEANUP, "-|", "rm -rf '$localrundir'");
-	while (<CLEANUP>) {
-	    1;
-	}
-	close(CLEANUP);
+	timestamp("Cleaning up run directory $localrundir");
+	system('rm', '-rf', $localrundir);
     }
-}
-
-sub docleanup()  {
-    print STDERR "CLEANUP\n";
-    removeRundir();
-    kill 'KILL', -1;
-    POSIX::_exit(0);
 }
 
 sub runit(;$) {
@@ -76,6 +66,7 @@ sub runit(;$) {
 	    my ($jucpu0, $jscpu0) = cputime();
 	    open(RUN, "-|", "fio --rw=$pattern --bs=$size $fio_generic_args --output-format=json+ $jobfile | jq -c .") || die "Can't run fio: $!\n";
 	    while (<RUN>) {
+		timestamp($_);
 		$answer0 .= "$_";
 	    }
 	    close(RUN);
@@ -171,7 +162,7 @@ sub runall() {
     } else {
         runit();
     }
-    docleanup();
+    removeRundir();
 }
 
 if ($processes > 1) {
