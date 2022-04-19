@@ -1,0 +1,423 @@
+#!/bin/bash
+
+# Copyright 2022 Robert Krawitz/Red Hat
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+set -u
+set -e
+
+declare OC=${OC:-${KUBECTL:-}}
+OC=${OC:-$(type -p oc)}
+OC=${OC:-$(type -p kubectl)}	# kubectl might not work, though...
+
+declare client_pin_node=
+declare server_pin_node=
+declare sync_pin_node=
+declare -i job_runtime=60
+declare -i job_timeout=-1200
+declare artifactdir='/tmp/logz/%s-%n'
+declare report_format=parseable-summary
+
+declare -a workloads=(scaling uperf fio)
+declare -a runtimeclasses=('' '--kata')
+
+declare -i scaling_starting_namespaces=1
+declare -i scaling_deps_per_namespace=5
+declare -i scaling_job_runtime=0
+declare -i scaling_job_timeout=0
+
+declare -a uperf_msg_sizes=(64 1024 8192)
+declare -a uperf_nthrs=(1 4)
+declare -a uperf_ninst=(1 4)
+declare -a uperf_test_types=(stream rr)
+declare -i uperf_job_runtime=0
+declare -i uperf_job_timeout=0
+
+declare -a fio_engines=(sync libaio)
+declare -a fio_ninst=(1 4)
+declare -a fio_blocksizes=(4096 1048576)
+declare -a fio_patterns=(read write randread randwrite)
+declare -i fio_job_runtime=0
+declare fio_workdir=/var/tmp
+declare -i fio_filesize=
+declare -i fio_fdatasync=1
+declare -i fio_direct=0
+declare -i fio_io_depth=1
+declare -i fio_ramptime=5
+declare -i fio_job_timeout=-3600
+declare -i fio_pod_memsize=
+
+declare -i fail=0
+declare -i counter=0
+declare -i hard_fail_on_error=0
+
+declare -a failures=()
+declare -a jobs=()
+declare -A job_runtimes=()
+
+declare job_datestamp
+
+function finis() {
+    if [[ -n "${starting_timestamp:-}" ]] ; then
+	local ending_timestamp
+	ending_timestamp=$(date +%s)
+
+	echo "Run times:"
+	local job
+	for job in "${jobs[@]}" ; do
+	    printf "%10s %s\n" "${job_runtimes[$job]}" "$job"
+	done
+	if [[ -n "${failures[*]}" ]] ; then
+	    echo "Failing jobs:"
+	    for job in "${failures[@]}" ; do
+		printf "%10s %s\n" "${job_runtimes[$job]}" "$job"
+	    done
+	    fail=1
+	fi
+
+	echo "Run took $(to_hms "$starting_timestamp" "$ending_timestamp")"
+    fi
+    exit $fail
+}
+
+function fatal() {
+    echo "$*" 1>&2
+    fail=1
+    finis
+}
+
+function bool() {
+    local value=${1:-}
+    case "${value,,}" in
+	''|1|y|yes|tru*) echo 1 ;;
+	*)               echo 0 ;;
+    esac
+}
+
+function parse_size() {
+    local size
+    for size in "$@" ; do
+	if [[ $size =~ (-?[[:digit:]]+)([[:alpha:]]*) ]] ; then
+	    local size=${BASH_REMATCH[1]}
+	    local size_modifier=${BASH_REMATCH[2],,}
+	    local -i size_multiplier=1
+	    case "$size_modifier" in
+		''|b)             size_multiplier=1              ;;
+		k|kb|kilobytes)   size_multiplier=1000           ;;
+		ki|kib|kibibytes) size_multiplier=1024           ;;
+		m|mb|megabytes)   size_multiplier=1000000        ;;
+		mi|mib|mebibytes) size_multiplier=1048576        ;;
+		g|gb|gigabytes)   size_multiplier=1000000000     ;;
+		gi|gib|gibibytes) size_multiplier=1073741824     ;;
+		t|tb|terabytes)   size_multiplier=1000000000000  ;;
+		ti|tib|tebibytes) size_multiplier=1099511627776  ;;
+		*) fatal "Cannot parse size $optvalue"           ;;
+	    esac
+	    echo $((size*size_multiplier))
+	else
+	    fatal "Cannot parse filesize $optvalue"
+	fi
+    done
+}
+
+function parse_option() {
+    local option=$1
+    option=${option## }
+    option=${option%% }
+    if [[ $option =~ ^([^=]+)\ *=\ *([^\ ].*)? ]] ; then
+	option="${BASH_REMATCH[1]}=${BASH_REMATCH[2]}"
+    fi
+    [[ -n "$option" ]] || return
+    local optname
+    local optvalue
+    optname=${option%%=*}
+    optname=${optname,,}
+    optvalue=${option#*=}
+    noptname=${optname//-/_}
+    if [[ $option != *'='* ]] ; then
+	if [[ $noptname = "no_"* || $optname = "dont_"* ]] ; then
+	    noptname=${noptname#dont_}
+	    noptname=${noptname#no_}
+	    optvalue=0
+	else
+	    optvalue=1
+	fi
+    fi
+    local noptname1=${noptname//_/}
+    echo "$noptname1 $noptname $optvalue"
+}
+
+function splitarg() {
+    echo "${*//,/ }"
+}
+
+function set_pin_nodes() {
+    if [[ -z "$client_pin_node" || -z "$server_pin_node" || -z "$sync_pin_node" ]] ; then
+	local -a nodes
+	nodes=($(${OC} get node -l node-role.kubernetes.io/worker= -o jsonpath='{.items[*].metadata.name}'))
+	local -i node_count=${#nodes[@]}
+	[[ -z "$client_pin_node" ]] && client_pin_node=${nodes[$((0 % node_count))]}
+	[[ -z "$server_pin_node" ]] && server_pin_node=${nodes[$((1 % node_count))]}
+	[[ -z "$sync_pin_node" ]] && sync_pin_node=${nodes[$((2 % node_count))]}
+    fi
+}
+
+function get_node_memory() {
+    local node=$1
+    local mem
+    mem=$(oc get node "$node" -ojsonpath='{.status.allocatable.memory}')
+    parse_size "$mem"
+}
+
+function process_option() {
+    local noptname
+    local noptname1
+    local optvalue
+    read -r noptname1 noptname optvalue <<< "$(parse_option "$1")"
+    optvalue=$(splitarg "$optvalue")
+    case "$noptname1" in
+	clientpin*) client_pin_node=$optvalue				;;
+	serverpin*) server_pin_node=$optvalue				;;
+	syncpin*) sync_pin_node=$optvalue				;;
+	jobruntime|runtime) job_runtime=$optvalue			;;
+	jobtimeout|timeout) job_timeout=$optvalue			;;
+	artifact*) artifactdir=$optvalue				;;
+	report*) report_format=$optvalue				;;
+	runtimeclass*) readarray -t runtimeclasses <<< "$optvalue"	;;
+
+	scalingstarting*) scaling_starting_namespaces=$optvalue		;;
+	scalingdeps*) scaling_deps_per_namespace=$optvalue		;;
+	scaling*runtime) scaling_job_runtime=$optvalue			;;
+	scaling*timeout) scaling_job_timeout=$optvalue			;;
+
+	uperfmsg*) readarray -t uperf_msg_sizes <<< "$optvalue"		;;
+	uperfnthr*) readarray -t uperf_nthrs <<< "$optvalue"		;;
+	uperfninst*) readarray -t uperf_ninst <<< "$optvalue"		;;
+	uperftest*) readarray -t uperf_test_types <<< "$optvalue"	;;
+	uperf*runtime) uperf_job_runtime=$optvalue			;;
+	uperf*timeout) uperf_job_timeout=$optvalue			;;
+
+	fioeng*) readarray -t fio_engines <<< "$optvalue"		;;
+	fioninst*) readarray -t fio_ninst <<< "$optvalue"		;;
+	fioblock*) readarray -t fio_blocksizes <<< "$optvalue"		;;
+	fiopat*) readarray -t fio_patterns <<< "$optvalue"		;;
+	fioworkdir) fio_workdir=$optvalue				;;
+	fio*runtime) fio_job_runtime=$optvalue				;;
+	fioiodepth) fio_io_depth=$optvalue				;;
+	fiofdatasync) fio_fdatasync=$(bool "$optvalue")			;;
+	fiodirect) fio_direct=$(bool "$optvalue")			;;
+	fioramp*) fio_ramptime=$optvalue				;;
+	fiofilesize) fio_filesize=$(parse_size "$optvalue")		;;
+	fio*timeout) fio_job_timeout=$optvalue				;;
+	fio*memsize) fio_pod_memsize=$(parse_size "$optvalue")		;;
+
+	*) fatal "Unknown option --$1"					;;
+    esac
+}
+
+while getopts 'h-:' opt ; do
+    case "$opt" in
+	-) process_option "$OPTARG"	;;
+	h) echo "help"; exit 1		;;
+	*)				;;
+    esac
+done
+shift $((OPTIND - 1))
+if [[ -n "$*" ]] ; then
+    workloads=("$@")
+fi
+
+((scaling_job_runtime <= 0)) && scaling_job_runtime=$job_runtime
+((uperf_job_runtime <= 0)) && uperf_job_runtime=$job_runtime
+((fio_job_runtime <= 0)) && fio_job_runtime=$job_runtime
+
+((scaling_job_timeout <= 0 && job_timeout != 0)) && scaling_job_timeout=$job_timeout
+((scaling_job_timeout < 0)) && scaling_job_timeout=$((-scaling_job_timeout))
+
+((uperf_job_timeout <= 0 && job_timeout != 0)) && uperf_job_timeout=$job_timeout
+((uperf_job_timeout < 0)) && uperf_job_timeout=$((-uperf_job_timeout))
+
+((fio_job_timeout <= 0 && job_timeout != 0)) && fio_job_timeout=$job_timeout
+((fio_job_timeout < 0)) && fio_job_timeout=$((-fio_job_timeout))
+
+set_pin_nodes
+
+((fio_filesize <= 0)) && fio_filesize=$(($(get_node_memory "$client_pin_node") * 2))
+
+function to_hms() {
+    local -i start=$1
+    local -i end=$2
+    local -i interval=$((end-start))
+
+    local -i h=$((interval / 3600))
+    local -i m=$(((interval % 3600) / 60))
+    local -i s=$((interval % 60))
+    if ((h > 0)) ; then
+	printf "%d:%02d:%02d\n" "$h" "$m" "$s"
+    else
+	printf "%d:%02d\n" "$m" "$s"
+    fi
+}
+
+function xruntimeclass() {
+    local runtimeclass=$1
+    if [[ $runtimeclass == --kata ]] ; then
+	echo kata
+    else
+	echo nonkata
+    fi
+}
+
+function run_cb() {
+    local OPTIND=0
+    local opt
+    local -i error_is_failure=1
+    while getopts 'yn' opt "$@" ; do
+	case "$opt" in
+	    y) error_is_failure=0 ;;
+	    n) error_is_failure=1 ;;
+	    *)                    ;;
+	esac
+    done
+    shift $((OPTIND-1))
+    local jobname="$1"; shift
+    local -i status=0
+    echo "clusterbuster " "--jobname=$jobname" "$@"
+    local -i job_start
+    local -i job_end
+    job_start=$(date +%s)
+    clusterbuster "--jobname=$jobname" "$@" || status=1
+    job_end=$(date +%s)
+    ((status == 0)) && jobs+=("$jobname")
+    job_runtimes[$jobname]="$(to_hms "$job_start" "$job_end")"
+    if ((status != 0)) ; then
+	((error_is_failure)) && failures+=("$jobname")
+	((hard_fail_on_error)) && finis
+    fi
+    return $status
+}
+
+function get_counter() {
+    printf '%04d' $counter
+}
+
+function test_scaling() {
+    local runtimeclass=$1
+    namespaces=$scaling_starting_namespaces
+    while :; do
+	echo
+	job_name="$(get_counter)-podscale-$(xruntimeclass "$runtimeclass")-$((namespaces*scaling_deps_per_namespace))"
+	counter=$((counter+1))
+	echo "*** Running $((namespaces * scaling_deps_per_namespace)) pods"
+	if run_cb -y "$job_name" --workload=cpusoaker --deployments="$scaling_deps_per_namespace" \
+		  --namespaces="$namespaces" --workload-runtime="$job_runtime" \
+		  --objs_per_call=6 --parallel=100 --precleanup --no-cleanup \
+		  ${artifactdir:+"--artifactdir=$artifactdir"} \
+		  --image-pull-policy=IfNotPresent --drop-cache \
+		  ${client_pin_node:+"--pin-node=client=$client_pin_node"} \
+		  ${sync_pin_node:+"--pin-node=sync=$sync_pin_node"} \
+		  --metrics --report="$report_format" --no-report-object-creation \
+		  ${runtimeclass:+"$runtimeclass"} --timeout="$scaling_job_timeout" ; then
+	    namespaces=$((namespaces+1))
+	else
+	    echo "Run failed: $?"
+	    break
+	fi
+    done
+    echo Done
+}
+
+function test_uperf() {
+    local runtimeclass=$1
+    local -i msg_size
+    local -i nthr
+    local -i ninst
+    local test_type
+    for msg_size in "${uperf_msg_sizes[@]}" ; do
+	for nthr in "${uperf_nthrs[@]}" ; do
+	    for ninst in "${uperf_ninst[@]}" ; do
+		for test_type in "${uperf_test_types[@]}" ; do
+		    job_name="$(get_counter)-uperf-$(xruntimeclass "$runtimeclass")-${msg_size}B-${nthr}i-${ninst}P-${test_type}"
+		    counter=$((counter+1))
+		    run_cb "$job_name" --workload=uperf --workload_runtime="$job_runtime" \
+			   --uperf_msg_size="$msg_size" \
+			   --uperf_test_type="$test_type" \
+			   --uperf_proto=tcp \
+			   --uperf_nthr="$nthr" \
+			   --pod-annotation="io.katacontainers.config.hypervisor.default_vcpus: \"$nthr\"" \
+			   --precleanup --no-cleanup \
+			   ${artifactdir:+"--artifactdir=$artifactdir"} \
+			   --image-pull-policy=IfNotPresent --drop-cache \
+			   ${client_pin_node:+"--pin-node=client=$client_pin_node"} \
+			   ${server_pin_node:+"--pin-node=server=$server_pin_node"} \
+			   ${sync_pin_node:+"--pin-node=sync=$sync_pin_node"} \
+			   --metrics --report="$report_format" --no-report-object-creation \
+			   ${runtimeclass:+"$runtimeclass"} --timeout="$uperf_job_timeout"
+		done
+	    done
+	done
+    done
+}
+
+function test_fio() {
+    local runtimeclass=$1
+    local -i ninst
+    local engine
+    local memory_annotation=
+    if ((fio_pod_memsize > 0)) ; then
+	memory_annotation=--pod-annotation="io.katacontainers.config.hypervisor.default_memory: \"$fio_pod_memsize\""
+    fi
+    for ninst in "${fio_ninst[@]}" ; do
+	local filesize=$((fio_filesize / ninst))
+	for engine in "${fio_engines[@]}" ; do
+	    job_name="$(get_counter)-fio-$(xruntimeclass "$runtimeclass")-$(IFS=,; echo "${fio_blocksizes[*]}")Bi-${ninst}P-${engine}"
+	    counter=$((counter+1))
+	    run_cb "$job_name" --workload=fio --workload_runtime="$job_runtime" \
+		   --fio-blocksize="$(IFS=,; echo "${fio_blocksizes[*]}")" \
+		   --fio-patterns="$(IFS=,; echo "${fio_patterns[*]}")" \
+		   --fio-ioengine="$engine" \
+		   --fio_filesize="$filesize" \
+		   --fio_ramp_time="$fio_ramptime" \
+		   --fio_iodepth="$fio_io_depth" \
+		   --fio_direct="$fio_direct" \
+		   --fio_fdatasync="$fio_fdatasync" \
+		   --fio_workdir="$fio_workdir" \
+		   ${memory_annotation:+"$memory_annotation"} \
+		   --precleanup --no-cleanup \
+		   ${artifactdir:+"--artifactdir=$artifactdir"} \
+		   --image-pull-policy=IfNotPresent --drop-cache \
+		   ${client_pin_node:+"--pin-node=client=$client_pin_node"} \
+		   ${sync_pin_node:+"--pin-node=sync=$sync_pin_node"} \
+		   --metrics --report="$report_format" --no-report-object-creation \
+		   ${runtimeclass:+"$runtimeclass"} --timeout="$fio_job_timeout"
+	done
+    done
+}
+
+declare starting_timestamp
+starting_timestamp=$(date +%s)
+job_datestamp=$(date -u '+%Y_%m_%dT%H_%M_%S%z' --date=@"$starting_timestamp")
+artifactdir=${artifactdir//%s/$job_datestamp}
+trap 'fail=2; finis' TERM HUP INT EXIT
+
+for runtimeclass in "${runtimeclasses[@]}" ; do
+    for workload in "${workloads[@]}" ; do
+	case "$workload" in
+	    scal*) test_scaling "$runtimeclass" ;;
+	    uperf) test_uperf "$runtimeclass" ;;
+	    fio) test_fio "$runtimeclass" ;;
+	    *) fatal "Unknown workload $workload" ;;
+	esac
+    done
+done
