@@ -21,18 +21,16 @@
 declare -ag ___fio_generic_options=()
 declare -ag ___fio_blocksizes=(4096)
 declare -ag ___fio_patterns=(read)
-declare -g ___fio_blksize_count=1
-declare -g ___fio_workload_count=1
-declare -g ___fio_job_file=generic.jobfile
-declare -g ___fio_ioengine=libaio
-declare -gi ___fio_iodepth=1
-declare -gi ___fio_direct=0
+declare -ag ___fio_iodepths=(1)
+declare -ag ___fio_directs=(0)
+declare -ag ___fio_fdatasyncs=(1)
+declare -ag ___fio_ioengines=(libaio)
+declare -g  ___fio_job_file=generic.jobfile
 declare -gi ___fio_ramp_time=5
-declare -gi ___fio_fdatasync=1
-declare -gi ___fio_filesize=$(parse_size "4Gi")
-declare -g ___fio_workdir="/tmp"
-declare -g ___fio_prepare_job_file
-declare -g ___fio_processed_job_file
+declare -gi ___fio_filesize=; ___fio_filesize=$(parse_size "4Gi")
+declare -g  ___fio_workdir="/tmp"
+declare -g  ___fio_prepare_job_file
+declare -g  ___fio_processed_job_file
 
 function _create_containers_fio_yaml() {
     local namespace=$1
@@ -45,7 +43,7 @@ function _create_containers_fio_yaml() {
     local -i container
     local sync_service=
     local sync_port_num=
-    IFS=: read -r sync_service sync_port_num <<< $(get_sync)
+    IFS=: read -r sync_service sync_port_num <<< "$(get_sync)"
     # shellcheck disable=2031
     local workdir=${common_workdir:-${emptydirs[0]:-/tmp}}
     for container in $(seq 0 $((containers_per_pod - 1))) ; do
@@ -74,7 +72,12 @@ $(indent 2 bootstrap_command_yaml fio.pl)
   - "$configmap_mount_dir"
   - "${___fio_blocksizes[*]:-}"
   - "${___fio_patterns[*]:-}"
+  - "${___fio_iodepths[*]:-}"
+  - "${___fio_fdatasyncs[*]:-}"
+  - "${___fio_directs[*]:-}"
+  - "${___fio_ioengines[*]:-}"
   - "${___fio_generic_options[*]:-}"
+
 $(indent 2 volume_mounts_yaml "$namespace" "${instance}" "$secret_count")
 EOF
     done
@@ -95,7 +98,7 @@ $(indent 2 standard_all_metadata_yaml "$namespace" client)
   selector:
     matchLabels:
       app: ${namespace}-fio-${instance}
-$(indent 2 standard_labels_yaml fio "$namespace" $instance 1)
+$(indent 2 standard_labels_yaml fio "$namespace" "$instance" 1)
 $(create_spec _create_containers_fio_yaml "$@")
   restartPolicy: Never
 EOF
@@ -115,7 +118,7 @@ spec:
     type: RollingUpdate
   template:
     metadata:
-$(indent 6 standard_labels_yaml fio "$namespace" $instance 1)
+$(indent 6 standard_labels_yaml fio "$namespace" "$instance" 1)
 $(indent 6 standard_pod_metadata_yaml "$namespace" client)
 $(indent 4 create_spec _create_containers_fio_yaml "$@")
 EOF
@@ -131,9 +134,9 @@ function create_deployment_fio() {
     local log_host=${6:-}
     local -i log_port=${7:-0}
     local -i instance
-    local -i syncs_needed=$((2 + (${#___fio_patterns[@]} * ${#___fio_blocksizes[@]}) ))
+    local -i syncs_needed=$((2 + (${#___fio_patterns[@]} * ${#___fio_blocksizes[@]} * ${#___fio_iodepths[@]} * ${#___fio_directs[@]} * ${#___fio_fdatasyncs[@]} * ${#___fio_ioengines[@]}) ))
     create_sync_service_if_needed "$namespace" "$syncs_needed" "$((containers_per_pod * replicas * count))"
-    for instance in $(seq $first_deployment $((count + first_deployment - 1))) ; do
+    for instance in $(seq "$first_deployment" $((count + first_deployment - 1))) ; do
 	_create_fio_deployment "$namespace" "${instance}" "$secret_count"  "$replicas" "$containers_per_pod" "$log_host" "$log_port"
     done
 }
@@ -177,16 +180,20 @@ function help_options_fio() {
                         General fio option.  May be repeated.
        --fio-jobfile=<file>
                         Name of fio job file to use (defaults to generic).
-       --fio-ioengine=<engine>
-                        Name of ioengine to use (default $___fio_ioengine)
+       --fio-ioengines=<engines>
+                        Comma-separated list of names of ioengines to use
+			(default ${___fio_ioenginse[*]})
        --fio-iodepth=<n>
-                        I/O depth (default $___fio_iodepth)
-       --fio-direct=<direct>
-                        Use direct I/O (default $___fio_direct)
+                        Comma-separated list of names of I/O depths to use
+                        I/O depth (default ${___fio_iodepths[*]})
+       --fio-direct=<directs>
+                        Comma-separated list of whether to use direct I/O
+			(default ${___fio_directs[*]}), values are 0 or 1.
        --fio-ramptime=<ramp time>
                         Ramp-up and down time (default $___fio_ramptime)
-       --fio-fdatasync=<fdatasync>
-                        Use fdatasync (default $___fio_fdatasync)
+       --fio-fdatasync=<fdatasyncs>
+                        Comma-separated list of whether to use fdatasync 
+			(default ${___fio_fdatasyncs[*]}), values are 0 or 1.
        --fio-filesize=<size>
                         File size (default $___fio_filesize)
        --fio-workdir=<dir>
@@ -207,6 +214,10 @@ function process_options_fio() {
     local -a unknown_opts=()
     local fioblksize=
     local fiopattern=
+    local fioiodepth=
+    local fiodirect=
+    local fiofdatasync=
+    local fioioengine=
     for opt in "$@" ; do
 	read -r noptname1 noptname optvalue <<< "$(parse_option "$opt")"
 	case "$noptname1" in
@@ -214,11 +225,11 @@ function process_options_fio() {
 	    fioblocksize*)	fioblksize=$optvalue		         ;;     
 	    fiogenericoption)	___fio_generic_options+=("$optvalue")    ;;
 	    fiojobfile)		___fio_job_file=$optvalue		 ;;
-	    fioioengine)	___fio_ioengine=$optvalue		 ;;
-	    fioiodepth)		___fio_iodepth=$optvalue		 ;;
-	    fiodirect)		___fio_direct=$(bool "$optvalue")	 ;;
+	    fioioengine*)	fioioengine=$optvalue			 ;;
+	    fioiodepth*)	fioiodepth=$optvalue			 ;;
+	    fiodirect*)		fiodirect=$(bool "$optvalue")		 ;;
 	    fioramptime)	___fio_ramptime=$optvalue		 ;;
-	    fiofdatasync)	___fio_fdatasync=$(bool "$optvalue")	 ;;
+	    fiofdatasync*)	fiofdatasync=$optvalue			 ;;
 	    fiofilesize)	___fio_filesize=$(parse_size "$optvalue");;
 	    fioworkdir)         ___fio_workdir=$optvalue		 ;;
 	    *) 			unknown_opts+=("$noptname ($noptname1)") ;;
@@ -236,8 +247,20 @@ function process_options_fio() {
     if [[ -n "${fioblksize:-}" ]] ; then
 	readarray -t ___fio_blocksizes <<< "$(parse_size ${fioblksize//,/ })"
     fi
+    if [[ -n "${fioiodepth:-}" ]] ; then
+	readarray -t ___fio_iodepths <<< "$(parse_size ${fioiodepth//,/ })"
+    fi
     if [[ -n "${fiopattern:-}" ]] ; then
 	___fio_patterns=(${fiopattern//,/ })
+    fi
+    if [[ -n "${fioioengine:-}" ]] ; then
+	___fio_ioengines=(${fioioengine//,/ })
+    fi
+    if [[ -n "${fiodirect:-}" ]] ; then
+	readarray -t ___fio_directs <<< "$(parse_size ${fiodirect//,/ })"
+    fi
+    if [[ -n "${fiofdatasync:-}" ]] ; then
+	readarray -t ___fio_fdatasyncs <<< "$(parse_size ${fiofdatasync//,/ })"
     fi
 
     ___fio_preload_job_file=$(mktemp -p "$cb_tempdir" -t "01-IGNORE-fiojobXXXXXX") || fatal "Can't create temporary jobfile"
@@ -255,17 +278,33 @@ function generate_metadata_fio() {
     local -i jobidx=1
     local pattern
     local -i blocksize
+    local -i iodepth
+    local -i fdatasync
+    local -i direct
+    local ioengine
     echo '"jobs": {'
     for blocksize in "${___fio_blocksizes[@]}" ; do
 	for pattern in "${___fio_patterns[@]}" ; do
-	    jobs+=("$(cat <<EOF
-$(printf '"%03d-%s-%d"' $((jobidx)) "$pattern" "$blocksize"): {
+	    for iodepth in "${___fio_iodepths[@]}" ; do
+		for fdatasync in "${___fio_fdatasyncs[@]}" ; do
+		    for direct in "${___fio_directs[@]}" ; do
+			for ioengine in "${___fio_ioengines[@]}" ; do
+			    jobs+=("$(cat <<EOF
+$(printf '"%04d-%s-%d-%d-%d-%d-%s"' $((jobidx)) "$pattern" "$blocksize" "$iodepth" "$fdatasync" "$direct" "$ioengine"): {
     "pattern": "$pattern",
-    "blocksize": $blocksize
+    "blocksize": $blocksize,
+    "iodepth": $iodepth,
+    "fdatasync": $fdatasync,
+    "direct": $direct,
+    "ioengine": "$ioengine"
 }
 EOF
 )")
-	    jobidx=$((jobidx+1))
+			    jobidx=$((jobidx+1))
+			done
+		    done
+		done
+	    done
 	done
     done
     (IFS=$',\n'; echo "${jobs[*]}")
@@ -273,14 +312,27 @@ EOF
 }
 
 function report_options_fio() {
+    function mk_num_list() {
+	echo "[$(IFS=','; echo "$*")]"
+    }
+    function mk_str_list() {
+	local _strings=()
+	local _arg
+	for _arg in "$@" ; do
+	    _strings+=("\"$_arg\"")
+	done
+	echo "[$(IFS=','; echo "${_strings[*]}")]"
+    }
+	
     cat <<EOF
 "fio_general_options": "${___fio_general_options:-}",
 "fio_job_file": "$(base64 -w 0 < "$___fio_processed_job_file")",
-"fio_ioengine": "$___fio_ioengine",
-"fio_iodepth": $___fio_iodepth,
-"fio_direct": $___fio_direct,
+"fio_ioengine": $(mk_str_list "${___fio_ioengines[@]}"),
+"fio_iodepth": $(mk_num_list "${___fio_iodepths[@]}"),
+"fio_direct": $(mk_num_list "${___fio_directs[@]}"),
+"fio_fdatasync": $(mk_num_list "${___fio_fdatasyncs[@]}"),
+"fio_ioengines": $(mk_str_list "${___fio_ioengines[@]}"),
 "fio_ramp_time": $___fio_ramp_time,
-"fio_fdatasync": $___fio_fdatasync,
 "fio_filesize": $___fio_filesize,
 "fio_workdir": "$___fio_workdir"
 EOF

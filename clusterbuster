@@ -646,11 +646,13 @@ function parse_volume_spec() {
 }
 
 function bool() {
-    local value=${1:-}
-    case "${value,,}" in
-	''|1|y|yes|tru*) echo 1 ;;
-	*)               echo 0 ;;
-    esac
+    local value
+    for value in "$@" ; do
+	case "${value,,}" in
+	    ''|1|y|yes|tru*) echo 1 ;;
+	    *)               echo 0 ;;
+	esac
+    done
 }
 
 function parse_option() {
@@ -1356,7 +1358,7 @@ function _get_logs_poll() {
 function get_logs_poll() {
     local tfile
     tfile=$(mktemp -p "$cb_tempdir" -t '_clusterbusterlogs.XXXXXXXXXX') || fatal "Cannot create temporary file"
-    trap 'rm -f "$tfile"; echo "Status: Fail"; return 1' INT TERM HUP USR1
+    trap "rm -f '$tfile'; echo 'Status: Fail'; return 1" INT TERM HUP USR1
     _get_logs_poll "$@" > "$tfile"
     local status=$?
     if ((status == 0)) ; then

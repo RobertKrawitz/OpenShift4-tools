@@ -1,0 +1,371 @@
+#!/usr/bin/env perl
+# Copyright 2022 Robert Krawitz/Red Hat
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+use strict;
+
+my (%scaling_data);
+my (%uperf_data);
+my (%fio_data);
+
+sub read_summary($) {
+    my ($fh) = @_;
+    while (<$fh>) {
+	chomp;
+	my ($jobname, $data) = split(/\./, $_, 2);
+	my ($key, $value) = split(/: */, $data, 2);
+	my ($workload, $runtime_env, $idx, @rest) = split(/-/, $jobname);
+	if ($runtime_env ne 'kata' && $runtime_env ne 'nonkata') {
+	    warn("Unknown runtime_env $runtime_env ($_)\n");
+	    next;
+	}
+	if ($workload eq 'podscale' || $workload eq 'cpusoaker') {
+	    my ($count) = int($rest[0]);
+	    if (! defined $scaling_data{$count}{$runtime_env}) {
+		$scaling_data{$count}{$runtime_env} = {};
+	    }
+	    if ($key eq 'summary.pod_start_rate') {
+		$scaling_data{$count}{$runtime_env}{'start_rate'} = $value;
+	    } elsif ($key eq 'summary.first_pod_start') {
+		$scaling_data{$count}{$runtime_env}{'first_pod_start'} = $value;
+	    } elsif ($key eq 'summary.last_pod_start') {
+		$scaling_data{$count}{$runtime_env}{'last_pod_start'} = $value;
+	    } elsif ($key eq 'summary.iterations_cpu_sec' ||
+		     $key eq 'summary.interations_cpu_sec') {
+		$scaling_data{$count}{$runtime_env}{'iterations_cpu_sec'} = $value;
+	    } elsif ($key eq 'summary.iterations_sec' ||
+		     $key eq 'summary.interations_sec') {
+		$scaling_data{$count}{$runtime_env}{'iterations_sec'} = $value;
+	    } elsif ($key =~ 'summary.metrics.maximum_memory_working_set') {
+		if (! defined $scaling_data{$count}{$runtime_env}{'memory'} ||
+		    ($scaling_data{$count}{$runtime_env}{'memory'} < $value)) {
+		    $scaling_data{$count}{$runtime_env}{'memory'} = $value;
+		}
+	    }
+	} elsif ($workload eq 'uperf') {
+	    if ($jobname =~ /([[:digit:]]+)B-([[:digit:]])i-([[:digit:]])P-(stream|rr)/) {
+		my ($msgsize) = $1;
+		my ($threads) = $2;
+		my ($pods) = $3;
+		my ($op) = $4;
+		if (! defined $uperf_data{$pods}{$msgsize}{$threads}{$runtime_env}) {
+		    $uperf_data{$pods}{$msgsize}{$threads}{$runtime_env} = {};
+		}
+		if ($op eq 'stream') {
+		    if ($key =~ /summary\.job_detail.*\.bytes_sec/) {
+			$uperf_data{$pods}{$msgsize}{$threads}{$runtime_env}{'rate'} = $value;
+		    }
+		} elsif ($op eq 'rr') {
+		    if ($key =~ /summary\.job_detail.*\.ops_sec/) {
+			$uperf_data{$pods}{$msgsize}{$threads}{$runtime_env}{'ops_sec'} = $value;
+		    } elsif ($key =~ /summary\.job_detail.*\.total.avg_time_op/) {
+			$uperf_data{$pods}{$msgsize}{$threads}{$runtime_env}{'avg_time_op'} = $value;
+		    } elsif ($key =~ /summary\.job_detail.*\.total.max_time_op/) {
+			$uperf_data{$pods}{$msgsize}{$threads}{$runtime_env}{'max_time_op'} = $value;
+		    }
+		}
+		if ($key =~ /summary\.cpu_utilization/) {
+		    $uperf_data{$pods}{$msgsize}{$threads}{$runtime_env}{"cpu_util_$op"} = $value;
+		}
+	    }
+	} elsif ($workload eq 'fio') {
+	    my ($pods, $engine, $workload, $blocksize, $iodepth, $fdatasync, $direct, $op);
+	    if ($jobname =~ /([[:digit:]]*)P/) {
+		$pods = $1;
+	    } else {
+		next;
+	    }
+	    if ($key =~ /\.job_[[:digit:]]+-([[:alpha:]]+)-([[:digit:]]+)-([[:digit:]]+)-([[:digit:]]+)-([[:digit:]]+)-([[:alpha:]]+)\.operation_([[:alpha:]]+)/) {
+		$workload = $1;
+		$blocksize = $2;
+		$iodepth = $3;
+		$fdatasync = $4;
+		$direct = $5;
+		$engine = $6;
+		$op = $7;
+	    } else {
+		next;
+	    }
+	    if ($key =~ /io_rate$/) {
+		$fio_data{$pods}{$engine}{$iodepth}{$fdatasync}{$direct}{$workload}{$blocksize}{$runtime_env}{$op}{'iops'} = $value;
+		$fio_data{$pods}{$engine}{$iodepth}{$fdatasync}{$direct}{$workload}{$blocksize}{$runtime_env}{'total'}{'iops'} += $value;
+	    } elsif ($key =~ /io_data_rate$/) {
+		$fio_data{$pods}{$engine}{$iodepth}{$fdatasync}{$direct}{$workload}{$blocksize}{$runtime_env}{$op}{'throughput'} = $value;
+		$fio_data{$pods}{$engine}{$iodepth}{$fdatasync}{$direct}{$workload}{$blocksize}{$runtime_env}{'total'}{'throughput'} += $value;
+	    }
+	} else {
+	    warn("Unknown workload $workload ($_)\n");
+	}
+    }
+}
+
+sub print_value_bin($$) {
+    my ($value, $suffix) = @_;
+    if (! defined $value) {
+	return '';
+    } elsif ($value < 1024) {
+	return sprintf("%4d     $suffix", $value);
+    } elsif ($value < 1024 * 1024) {
+	return sprintf("%8.3f Ki$suffix", $value / 1024);
+    } elsif ($value < 1024 * 1024 * 1024) {
+	return sprintf("%8.3f Mi$suffix", $value / 1024 / 1024);
+    } elsif ($value < 1024 * 1024 * 1024 * 1024) {
+	return sprintf("%8.3f Gi$suffix", $value / 1024 / 1024 / 1024);
+    } else {
+	return sprintf("%8.3f Ti$suffix", $value / 1024 / 1024 / 1024 / 1024);
+    }
+}
+
+sub print_value_pct($) {
+    my ($value) = @_;
+    return sprintf("%8.2f%%", $value * 100);
+}
+
+sub safe_div_pct($$) {
+    my ($divisor, $dividend) = @_;
+    if (! $divisor && ! $dividend) {
+	return '';
+    } elsif (! $dividend) {
+	return 'N/A';
+    } else {
+	return print_value_pct($divisor / $dividend);
+    }
+}
+
+sub print_value_dec($$) {
+    my ($value, $suffix) = @_;
+    if (! defined $value) {
+	return '';
+    } elsif ($value < .000001) {
+	return sprintf("%7.3f n$suffix", $value * 1000 * 1000 * 1000);
+    } elsif ($value < .001) {
+	return sprintf("%7.3f u$suffix", $value * 1000 * 1000);
+    } elsif ($value < 1) {
+	return sprintf("%7.3f m$suffix", $value * 1000);
+    } elsif ($value < 1000) {
+	if ($value == int($value)) {
+	    return sprintf("%4d     $suffix", $value);
+	} else {
+	    return sprintf("%7.3f  $suffix", $value);
+	}
+    } elsif ($value < 1000 * 1000) {
+	return sprintf("%7.3f K$suffix", $value / 1000);
+    } elsif ($value < 1000 * 1000 * 1000) {
+	return sprintf("%7.3f M$suffix", $value / 1000 / 1000);
+    } elsif ($value < 1000 * 1000 * 1000 * 1000) {
+	return sprintf("%7.3f G$suffix", $value / 1000 / 1000 / 1000);
+    } else {
+	return sprintf("%7.3f T$suffix", $value / 1000 / 1000 / 1000 / 1000);
+    }
+}
+
+sub process_scaling() {
+    my (@scaling_keys) = sort {$a <=> $b} keys %scaling_data;
+    return if (!@scaling_keys);
+    print "Scaling: memory\n";
+    printf("%4s %13s %13s %13s %13s\n", 'Pods', 'Non-Kata mem', 'Kata mem', 'ratio', 'Kata ovhd');
+    foreach my $key (@scaling_keys) {
+	if (defined $scaling_data{$key}{'kata'} && defined $scaling_data{$key}{'kata'}{'memory'}) {
+	    printf("%4d %13s %13s %13.3f %13s\n",
+		   $key,
+		   print_value_bin($scaling_data{$key}{'nonkata'}{'memory'} / $key, "B"),
+		   print_value_bin($scaling_data{$key}{'kata'}{'memory'} / $key, "B"),
+		   $scaling_data{$key}{'kata'}{'memory'} / $scaling_data{$key}{'nonkata'}{'memory'},
+		   print_value_bin(($scaling_data{$key}{'kata'}{'memory'} - $scaling_data{$key}{'nonkata'}{'memory'}) / $key, 'B'));
+	} elsif (defined $scaling_data{$key}{'nonkata'}{'memory'}) {
+	    printf("%4d %13s\n",
+		   $key,
+		   print_value_bin($scaling_data{$key}{'nonkata'}{'memory'} / $key, "B"));
+	}
+    }
+
+    print "\nScaling: pod starts\n";
+    printf("%4s %8s %8s %8s %8s %13s %13s %13s %13s\n", 'Pods', 'Non-Kata', 'Kata', 'ratio', 'Non-Kata 1st', 'Non-Kata last', 'Kata 1st', 'Kata last');
+    foreach my $key (@scaling_keys) {
+	if (defined $scaling_data{$key}{'kata'} && defined $scaling_data{$key}{'kata'}{'start_rate'}) {
+	    printf("%4d %8.3f %8.3f %8.3f %13.3f %13.3f %13.3f %13.3f\n",
+		   $key,
+		   $scaling_data{$key}{'nonkata'}{'start_rate'},
+		   $scaling_data{$key}{'kata'}{'start_rate'},
+		   $scaling_data{$key}{'kata'}{'start_rate'} / $scaling_data{$key}{'nonkata'}{'start_rate'},
+		   $scaling_data{$key}{'nonkata'}{'first_pod_start'},
+		   $scaling_data{$key}{'nonkata'}{'last_pod_start'},
+		   $scaling_data{$key}{'kata'}{'first_pod_start'},
+		   $scaling_data{$key}{'kata'}{'last_pod_start'});
+	} elsif (defined $scaling_data{$key}{'nonkata'}{'memory'}) {
+	    printf("%4d %8.3f %8s %8s %13.3f %13.3f\n",
+		   $key,
+		   $scaling_data{$key}{'nonkata'}{'start_rate'},
+		   '',
+		   '',
+		   $scaling_data{$key}{'nonkata'}{'first_pod_start'},
+		   $scaling_data{$key}{'nonkata'}{'last_pod_start'});
+	}
+    }
+
+    print "\nScaling: CPU load (work iterations)\n";
+    printf("%4s %18s %18s %8s %18s %18s %8s\n", 'Pods', 'Non-Kata CPU', 'Kata CPU', 'Ratio', 'Non-Kata clock', 'Kata clock', 'Ratio');
+    foreach my $key (@scaling_keys) {
+	if (defined $scaling_data{$key}{'kata'} && defined $scaling_data{$key}{'kata'}{'start_rate'}) {
+	    printf("%4d %18s %18s %8.3f %18s %18s %8.3f\n",
+		   $key,
+		   print_value_dec($scaling_data{$key}{'nonkata'}{'iterations_cpu_sec'}, ' it/sec'),
+		   print_value_dec($scaling_data{$key}{'kata'}{'iterations_cpu_sec'}, ' it/sec'),
+		   $scaling_data{$key}{'kata'}{'iterations_cpu_sec'} / $scaling_data{$key}{'nonkata'}{'iterations_cpu_sec'},
+		   print_value_dec($scaling_data{$key}{'nonkata'}{'iterations_sec'}, ' it/sec'),
+		   print_value_dec($scaling_data{$key}{'kata'}{'iterations_sec'}, ' it/sec'),
+		   $scaling_data{$key}{'kata'}{'iterations_sec'} / $scaling_data{$key}{'nonkata'}{'iterations_sec'});
+	} elsif (defined $scaling_data{$key}{'nonkata'}{'memory'}) {
+	    printf("%4d %18s %18s %8s %18s\n",
+		   $key,
+		   print_value_dec($scaling_data{$key}{'nonkata'}{'iterations_cpu_sec'}, ' it/sec'),
+		   '',
+		   '',
+		   print_value_dec($scaling_data{$key}{'nonkata'}{'iterations_sec'}, ' it/sec'));
+
+	}
+    }
+}
+
+sub safe_div($$) {
+    my ($num, $denom) = @_;
+    if ($denom == 0) {
+	return -1;
+    } else {
+	return $num / $denom;
+    }
+}
+
+sub process_uperf() {
+    my (@uperf_pods) = keys %uperf_data;
+    return if (! @uperf_pods);
+    foreach my $pod_count (sort { $a <=> $b } @uperf_pods) {
+	printf("\nNetworking: %d pod%s\n", $pod_count, ($pod_count == 1 ? '' : 's'));
+	printf("%8s %4s %14s %14s %14s %14s %14s %14s %14s %14s %9s %9s\n",
+	       'msgsize', 'nthr',
+	       'runc thruput', 'runc latency', 'runc thru cpu', 'runc lat cpu',
+	       'kata thruput', 'kata latency', 'kata thru cpu', 'kata lat cpu',
+	       'thru %', 'lat %');
+	foreach my $msg_size (sort { $a <=> $b } keys %{$uperf_data{$pod_count}}) {
+	    foreach my $nthr (sort { $a <=> $b } keys %{$uperf_data{$pod_count}{$msg_size}}) {
+		my ($stuff) = $uperf_data{$pod_count}{$msg_size}{$nthr};
+		printf("%8d %4d %14s %14s %13.3f%% %13.3f%% %14s %14s %13.3f%% %13.3f%% %8.3f%% %8.3f%%\n",
+		       $msg_size, $nthr,
+		       print_value_dec($$stuff{'nonkata'}{'rate'}, 'B/sec'),
+		       print_value_dec($$stuff{'nonkata'}{'avg_time_op'}, 'sec'),
+		       print_value_pct($$stuff{'nonkata'}{'cpu_util_stream'}),
+		       print_value_pct($$stuff{'nonkata'}{'cpu_util_rr'}),
+		       print_value_dec($$stuff{'kata'}{'rate'}, 'B/sec'),
+		       print_value_dec($$stuff{'kata'}{'avg_time_op'}, 'sec'),
+		       print_value_pct($$stuff{'kata'}{'cpu_util_stream'}),
+		       print_value_pct($$stuff{'kata'}{'cpu_util_rr'}),
+		       print_value_pct(safe_div($$stuff{'kata'}{'rate'}, $$stuff{'nonkata'}{'rate'})),
+		       print_value_pct(safe_div($$stuff{'kata'}{'avg_time_op'}, $$stuff{'nonkata'}{'avg_time_op'})));
+	    }
+	}
+    }
+}
+
+sub process_fio() {
+    my (@fio_pods) = keys %fio_data;
+    return if (! @fio_pods);
+    foreach my $pod_count (sort { $a <=> $b } @fio_pods) {
+	foreach my $engine (sort keys %{$fio_data{$pod_count}}) {
+	    my ($f1) = $fio_data{$pod_count}{$engine};
+	    foreach my $iodepth (sort { $a <=> $b } keys %{$f1}) {
+		my ($f2) = $$f1{$iodepth};
+		foreach my $fdatasync (sort { $a <=> $b } keys %{$f2}) {
+		    my ($f3) = $$f2{$fdatasync};
+		    foreach my $direct (sort { $a <=> $b } keys %{$f3}) {
+			my ($stuff) = $$f3{$direct};
+			printf("\nI/O: engine %s, iodepth %d, fdatasync %d, direct %d, %d pod%s\n",
+			       $engine, $iodepth, $fdatasync, $direct, $pod_count, ($pod_count == 1 ? '' : 's'));
+			printf("%12s %12s %12s %12s %12s %12s %12s %12s %12s\n",
+			       "Runtime", "Workload", "Blocksize", "Read rate", "Read IOPS", "Write rate", "Write IOPS", "Total rate", "Total IOPS");
+			foreach my $workload (sort keys %$stuff) {
+			    my ($printed_workload) = 0;
+			    foreach my $blocksize (sort { $a <=> $b } keys %{$$stuff{$workload}}) {
+				my ($printed_blocksize) = 0;
+				my ($stuff1) = $$stuff{$workload}{$blocksize};
+				foreach my $runtime ('kata', 'nonkata') {
+				    printf("%12s %12s %12s %12s %12s %12s %12s %12s %12s\n",
+					   $runtime,
+					   $printed_workload++ ? '' : $workload,
+					   $printed_blocksize++ ? '' : $blocksize,
+					   print_value_dec($$stuff1{$runtime}{'read'}{'throughput'}, 'B/s'),
+					   print_value_dec($$stuff1{$runtime}{'read'}{'iops'}, 'IO/s'),
+					   print_value_dec($$stuff1{$runtime}{'write'}{'throughput'}, 'B/s'),
+					   print_value_dec($$stuff1{$runtime}{'write'}{'iops'}, 'IO/s'),
+					   print_value_dec($$stuff1{$runtime}{'total'}{'throughput'}, 'B/s'),
+					   print_value_dec($$stuff1{$runtime}{'total'}{'iops'}, 'IO/s'));
+				}
+				printf("%12s %12s %12s %12s %12s %12s %12s %12s %12s\n",
+				       'relative', '', '',
+				       safe_div_pct($$stuff1{'kata'}{'read'}{'throughput'},
+						    $$stuff1{'nonkata'}{'read'}{'throughput'}),
+				       safe_div_pct($$stuff1{'kata'}{'read'}{'throughput'},
+						    $$stuff1{'nonkata'}{'read'}{'throughput'}),
+				       safe_div_pct($$stuff1{'kata'}{'write'}{'throughput'},
+						    $$stuff1{'nonkata'}{'write'}{'throughput'}),
+				       safe_div_pct($$stuff1{'kata'}{'write'}{'throughput'},
+						    $$stuff1{'nonkata'}{'write'}{'throughput'}),
+				       safe_div_pct($$stuff1{'kata'}{'total'}{'throughput'},
+						    $$stuff1{'nonkata'}{'total'}{'throughput'}),
+				       safe_div_pct($$stuff1{'kata'}{'total'}{'throughput'},
+						    $$stuff1{'nonkata'}{'total'}{'throughput'}));
+				print("\n");
+			    }
+			}
+		    }
+		}
+	    }
+	}
+    }
+}
+
+sub analyze_directory($) {
+    my ($dir) = @_;
+    my ($analyze_cmd) = $0;
+    $analyze_cmd =~ s,[^/]*$,../clusterbuster-report,;
+    open(my $summary, '-|', $analyze_cmd, '-o', 'parseable-summary', $dir) || die "Can't run $analyze_cmd: $!\n";
+    read_summary($summary);
+    close($summary);
+}
+
+if (! @ARGV) {
+    warn("Reading summary from stdin\n");
+    read_summary(\*STDIN);
+} else {
+    foreach my $dir (@ARGV) {
+	if (-d $dir) {
+	    if (-f "$dir/clusterbuster-report.json") {
+		analyze_directory($dir);
+	    } elsif (opendir (my $dh, $dir)) {
+		while (readdir($dh)) {
+		    my ($fn) = "$dir/$_";
+		    if (-d $fn &&
+			/^(cpusoaker|fio|uperf)-(kata|nonkata)-[[:digit:]]+/ &&
+			! /(\.FAIL|\.tmp)$/) {
+			analyze_directory($fn);
+		    }
+		}
+		closedir($dh);
+	    }
+	}
+    }
+}
+
+process_scaling();
+process_uperf();
+process_fio();

@@ -13,7 +13,8 @@ my ($dir) = $ENV{'BAK_CONFIGMAP'};
 require "$dir/clientlib.pl";
 
 our ($namespace, $container, $basetime, $baseoffset, $crtime, $exit_at_end, $synchost, $syncport, $loghost, $logport,
-     $processes, $rundir, $runtime, $jobfiles_dir, $fio_blocksizes, $fio_patterns, $fio_generic_args) = @ARGV;
+     $processes, $rundir, $runtime, $jobfiles_dir, $fio_blocksizes, $fio_patterns, $fio_iodepths, $fio_fdatasyncs,
+     $fio_directs, $fio_ioengines, $fio_generic_args) = @ARGV;
 my ($start_time) = xtime();
 
 $SIG{TERM} = sub() { removeRundir() };
@@ -47,46 +48,62 @@ sub runit(;$) {
 
     my (@sizes) = split(/ +/, $fio_blocksizes);
     my (@patterns) = split(/ +/, $fio_patterns);
+    my (@iodepths) = split(/ +/, $fio_iodepths);
+    my (@fdatasyncs) = split(/ +/, $fio_fdatasyncs);
+    my (@directs) = split(/ +/, $fio_directs);
+    my (@ioengines) = split(/ +/, $fio_ioengines);
     my ($ucpu0, $scpu0) = cputime();
     my ($jobidx) = 1;
     my ($elapsed_time) = 0;
-    timestamp("Sizes: " . join(" ", @sizes));
-    timestamp("Patterns: " . join(" ", @patterns));
+    timestamp("Sizes:       " . join(" ", @sizes));
+    timestamp("Patterns:    " . join(" ", @patterns));
+    timestamp("I/O depths:  " . join(" ", @iodepths));
+    timestamp("Fdatasync:   " . join(" ", @fdatasyncs));
+    timestamp("Direct I/O:  " . join(" ", @directs));
+    timestamp("I/O engines: " . join(" ", @ioengines));
     foreach my $size (@sizes) {
 	foreach my $pattern (@patterns) {
-	    my ($jobname) = sprintf("%03d-%s-%d", $jobidx, $pattern, $size);
-	    do_sync($synchost, $syncport, "$namespace:$pod:$container:$$:$jobname");
-	    if ($jobidx == 1) {
-		timestamp("Running...");
-		$data_start_time = xtime();
+	    foreach my $iodepth (@iodepths) {
+		foreach my $fdatasync (@fdatasyncs) {
+		    foreach my $direct (@directs) {
+			foreach my $ioengine (@ioengines) {
+			    my ($jobname) = sprintf("%04d-%s-%d-%d-%d-%d-%s", $jobidx, $pattern, $size, $iodepth, $fdatasync, $direct, $ioengine);
+			    do_sync($synchost, $syncport, "$namespace:$pod:$container:$$:$jobname");
+			    if ($jobidx == 1) {
+				timestamp("Running...");
+				$data_start_time = xtime();
+			    }
+			    my ($answer0) = '';
+			    timestamp("fio --rw=$pattern --runtime=$runtime --bs=$size --iodepth=$iodepth --fdatasync=$fdatasync --direct=$direct --ioengine=$ioengine $fio_generic_args --output-format=json+ $jobfile");
+			    my ($jtime0) = xtime();
+			    my ($jucpu0, $jscpu0) = cputime();
+			    open(RUN, "-|", "fio --rw=$pattern --runtime=$runtime --bs=$size --iodepth=$iodepth --fdatasync=$fdatasync --direct=$direct --ioengine=$ioengine $fio_generic_args --output-format=json+ $jobfile | jq -c .") || die "Can't run fio: $!\n";
+			    while (<RUN>) {
+				timestamp($_);
+				$answer0 .= "$_";
+			    }
+			    close(RUN);
+			    timestamp("Done job $jobfile $jobname");
+			    my ($jtime1) = xtime();
+			    my ($jucpu1, $jscpu1) = cputime();
+			    my ($result) = from_json($answer0);
+			    $jtime1 -= $jtime0;
+			    $jucpu1 -= $jucpu0;
+			    $jscpu1 -= $jscpu0;
+			    $elapsed_time += $jtime1;
+			    my (%job_result) = (
+				'job_elapsed_time' => $jtime1,
+				'job_user_cpu_time' => $jucpu1,
+				'job_system_cpu_time' => $jscpu1,
+				'job_cpu_time' => $jscpu1 + $jucpu1,
+				'job_results' => $result
+				);
+			    $all_results{$jobname} = \%job_result;
+			    $jobidx++;
+			}
+		    }
+		}
 	    }
-	    my ($answer0) = '';
-	    timestamp("fio --rw=$pattern --bs=$size $fio_generic_args --output-format=json+ $jobfile");
-	    my ($jtime0) = xtime();
-	    my ($jucpu0, $jscpu0) = cputime();
-	    open(RUN, "-|", "fio --rw=$pattern --bs=$size $fio_generic_args --output-format=json+ $jobfile | jq -c .") || die "Can't run fio: $!\n";
-	    while (<RUN>) {
-		timestamp($_);
-		$answer0 .= "$_";
-	    }
-	    close(RUN);
-	    timestamp("Done job $jobfile $jobname");
-	    my ($jtime1) = xtime();
-	    my ($jucpu1, $jscpu1) = cputime();
-	    my ($result) = from_json($answer0);
-	    $jtime1 -= $jtime0;
-	    $jucpu1 -= $jucpu0;
-	    $jscpu1 -= $jscpu0;
-	    $elapsed_time += $jtime1;
-	    my (%job_result) = (
-		'job_elapsed_time' => $jtime1,
-		'job_user_cpu_time' => $jucpu1,
-		'job_system_cpu_time' => $jscpu1,
-		'job_cpu_time' => $jscpu1 + $jucpu1,
-		'job_results' => $result
-		);
-	    $all_results{$jobname} = \%job_result;
-	    $jobidx++;
 	}
     }
     my ($data_end_time) = xtime();

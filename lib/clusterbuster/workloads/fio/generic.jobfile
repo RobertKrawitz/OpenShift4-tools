@@ -2,10 +2,6 @@
 # cannot be indented.
 
 [global]
-runtime =%{workload_run_time}
-ioengine =%{___fio_ioengine}
-iodepth =%{___fio_iodepth}
-direct =%{___fio_direct}
 time_based = 1
 #clocksource = gettimeofday
 ramp_time =%{___fio_ramp_time}
@@ -15,7 +11,6 @@ write_lat_log = fio
 log_avg_msec = 1000
 write_hist_log = fio
 log_hist_msec = 10000
-fdatasync =%{___fio_fdatasync}
 # log_hist_coarseness = 4 # 76 bins
 
 [job-tmp]
