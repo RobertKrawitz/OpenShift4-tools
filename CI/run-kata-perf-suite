@@ -30,6 +30,7 @@ declare artifactdir=
 declare report_format=parseable-summary
 declare -i report_object_creation=0
 declare -i cleanup=0
+declare dontdoit=
 
 declare -a workloads=(scaling uperf fio)
 declare -a runtimeclasses=('' 'kata')
@@ -47,7 +48,7 @@ declare -i uperf_job_runtime=0
 declare -i uperf_job_timeout=0
 
 declare -a fio_blocksizes=(4096 1048576)
-declare -a fio_patterns=(read write randread randwrite)
+declare -a fio_patterns=(read write randread randwrite readwrite randrw)
 declare -a fio_directs=(0)
 declare -a fio_fdatasyncs=(0)
 declare -a fio_iodepths=(1)
@@ -68,6 +69,7 @@ declare -i restart=0
 declare -a failures=()
 declare -a jobs=()
 declare -A job_runtimes=()
+declare -a virtiofsd_flags=('"-o"' '"allow_direct_io"')
 
 declare starting_timestamp=
 declare job_datestamp
@@ -204,6 +206,9 @@ function process_option() {
 	runtimeclass*) readarray -t runtimeclasses <<< "$optvalue"		;;
 	reportobject*) report_object_creation=$(bool "$optvalue")		;;
 	cleanup*) cleanup=$(bool "$optvalue")					;;
+	virtiofsd_writeback) virtiofsd_flags+=('"-o"' '"writeback"')		;;
+	virtiofsd_threadpool)
+	    virtiofsd_flags+=("\"--thread-pool-size=$optvalue\"")		;;
 
 	scalingstarting*) scaling_starting_namespaces=$optvalue			;;
 	scalingdeps*) scaling_deps_per_namespace=$optvalue			;;
@@ -235,10 +240,11 @@ function process_option() {
     esac
 }
 
-while getopts 'h-:' opt ; do
+while getopts 'hn-:' opt ; do
     case "$opt" in
 	-) process_option "$OPTARG"	;;
 	h) echo "help"; exit 1		;;
+	n) dontdoit=-n			;;
 	*)				;;
     esac
 done
@@ -328,6 +334,11 @@ function run_clusterbuster() {
 	fi
     fi
     tmp_jobdir="${jobdir:+${jobdir}.tmp}"
+    local virtiofsd_annotation
+    if [[ -n "${virtiofsd_flags[*]}" ]] ; then
+	virtiofsd_annotation="--pod-annotation=io.katacontainers.config.hypervisor.virtio_fs_extra_args: '[$(IFS=,; echo "${virtiofsd_flags[*]}")]'"
+    fi
+	
     shift $((OPTIND-1))
     local -i status=0
     local -i job_start
@@ -335,8 +346,8 @@ function run_clusterbuster() {
     job_start=$(date +%s)
     echo
     echo "*** Running $jobname"
-    doit "clusterbuster" \
-	 --precleanup --cleanup="$cleanup" --image-pull-policy=IfNotPresent --drop-cache \
+    doit "clusterbuster" ${dontdoit:+"$dontdoit"} \
+	 --precleanup --cleanup="$cleanup" --image-pull-policy=IfNotPresent \
 	 --metrics --report="$report_format" --workload="$workload" \
 	 ${job_runtime:+"--workload_runtime=$job_runtime"} \
 	 ${client_pin_node:+"--pin-node=client=$client_pin_node"} \
@@ -346,6 +357,7 @@ function run_clusterbuster() {
 	 ${jobname:+"--jobname=$jobname"} \
 	 ${tmp_jobdir:+"--artifactdir=$tmp_jobdir"} \
 	 ${runtimeclass:+"--runtimeclass=$runtimeclass"} \
+	 ${virtiofsd_annotation:+"$virtiofsd_annotation"} \
 	 --report_object_creation="$report_object_creation" \
 	 "$@" || status=1
     job_end=$(date +%s)

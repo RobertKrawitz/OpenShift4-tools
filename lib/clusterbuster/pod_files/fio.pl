@@ -68,6 +68,7 @@ sub runit(;$) {
 		    foreach my $direct (@directs) {
 			foreach my $ioengine (@ioengines) {
 			    my ($jobname) = sprintf("%04d-%s-%d-%d-%d-%d-%s", $jobidx, $pattern, $size, $iodepth, $fdatasync, $direct, $ioengine);
+			    drop_cache("service-${pod}-drop-cache", 7779);
 			    do_sync($synchost, $syncport, "$namespace:$pod:$container:$$:$jobname");
 			    if ($jobidx == 1) {
 				timestamp("Running...");

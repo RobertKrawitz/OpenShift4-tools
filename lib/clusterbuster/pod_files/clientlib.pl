@@ -49,6 +49,19 @@ sub calibrate_time() {
     return $time_overhead / 1000;
 }
 
+sub drop_cache($$) {
+    my ($service, $port) = @_;
+    timestamp("Dropping local cache");
+    system('sync');
+    timestamp("Dropping host cache");
+    my ($sock) = connect_to($service, $port);
+    timestamp("Connected to $service:$port");
+    my ($sbuf);
+    my ($answer) = sysread($sock, $sbuf, 1024);
+    timestamp("Got confirmation");
+    close($sock);
+}
+
 sub initialize_timing($$$$$;$) {
     my ($basetime, $crtime, $sync_host, $sync_port, $name, $start_time) = @_;
     if (! defined $start_time) {

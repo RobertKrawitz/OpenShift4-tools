@@ -176,6 +176,7 @@ sub process_scaling() {
     print "Scaling: memory\n";
     printf("%4s %13s %13s %13s %13s\n", 'Pods', 'Non-Kata mem', 'Kata mem', 'ratio', 'Kata ovhd');
     foreach my $key (@scaling_keys) {
+	next if (! defined $scaling_data{$key}{'nonkata'});
 	if (defined $scaling_data{$key}{'kata'} && defined $scaling_data{$key}{'kata'}{'memory'}) {
 	    printf("%4d %13s %13s %13.3f %13s\n",
 		   $key,
@@ -193,6 +194,7 @@ sub process_scaling() {
     print "\nScaling: pod starts\n";
     printf("%4s %8s %8s %8s %8s %13s %13s %13s %13s\n", 'Pods', 'Non-Kata', 'Kata', 'ratio', 'Non-Kata 1st', 'Non-Kata last', 'Kata 1st', 'Kata last');
     foreach my $key (@scaling_keys) {
+	next if (! defined $scaling_data{$key}{'nonkata'});
 	if (defined $scaling_data{$key}{'kata'} && defined $scaling_data{$key}{'kata'}{'start_rate'}) {
 	    printf("%4d %8.3f %8.3f %8.3f %13.3f %13.3f %13.3f %13.3f\n",
 		   $key,
@@ -217,6 +219,7 @@ sub process_scaling() {
     print "\nScaling: CPU load (work iterations)\n";
     printf("%4s %18s %18s %8s %18s %18s %8s\n", 'Pods', 'Non-Kata CPU', 'Kata CPU', 'Ratio', 'Non-Kata clock', 'Kata clock', 'Ratio');
     foreach my $key (@scaling_keys) {
+	next if (! defined $scaling_data{$key}{'nonkata'});
 	if (defined $scaling_data{$key}{'kata'} && defined $scaling_data{$key}{'kata'}{'start_rate'}) {
 	    printf("%4d %18s %18s %8.3f %18s %18s %8.3f\n",
 		   $key,

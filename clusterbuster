@@ -48,6 +48,7 @@ declare -i doit=1
 declare -i objs_item_count=0
 declare -i port=7777
 declare -i sync_port=7778
+declare -i drop_cache_port=7779
 declare log_host=
 declare -i log_port=0
 declare sync_host=
@@ -1954,7 +1955,7 @@ function create_spec() {
 	affinity_yaml=
 	ns_yaml="nodeSelector:${nl}  kubernetes.io/hostname: \"${pin_nodes[default]}\""
     fi
-    if [[ $node_class != sync ]] ; then
+    if [[ $node_class != sync && $node_class != drop-cache ]] ; then
 	if [[ -n "$node_class" && -n "${runtime_classes[$node_class]:-}" ]] ; then
 	    rc="runtimeClassName: \"${runtime_classes[$node_class]}\""
 	elif [[ -n "${runtime_classes[default]:-}" ]] ; then
@@ -2199,7 +2200,7 @@ metadata:
 $(indent 2 namespace_yaml "$namespace")
 $(indent 2 standard_labels_yaml)
 spec:
-  $headless
+$(indent 2 <<< "$headless")
   ports:
 $(indent 4 _create_service_ports "service-${deployment}" "$@")
   selector:
@@ -2271,6 +2272,62 @@ $(indent 2 standard_labels_yaml)
     k8s-app: ${namespace}
     ${basename}-sync: "$run_uuid"
 $(create_spec -P -c sync -r '' create_container_sync "$namespace" 0 0 "$sync_count" "$@")
+  restartPolicy: Never
+EOF
+}
+
+function create_container_drop_cache() {
+    local namespace=$1
+    cat <<EOF
+- name: ${namespace}
+  image_pull_policy: $image_pull_policy
+  image: "$container_image"
+  securityContext:
+    privileged: true
+  ports:
+  - containerPort: $drop_cache_port
+$(indent 2 bootstrap_command_yaml drop_cache.pl)
+  - "$drop_cache_port"
+$(indent 2 volume_mounts_yaml "$namespace" 0 0)
+  - mountPath: "/proc-sys-vm"
+    name: "proc-sys-vm"
+EOF
+}
+
+function create_drop_cache_deployment() {
+    local namespace=$1
+    local workload=$2
+    local instance=$3
+    create_object -t Pod -n "$namespace" "${namespace}-${workload}-${instance}-drop-cache" <<EOF
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ${namespace}-${workload}-${instance}-drop-cache
+$(indent 2 standard_all_metadata_yaml "$namespace" drop_cache)
+  selector:
+    matchLabels:
+      app: ${namespace}-${workload}-${instance}-drop-cache
+$(indent 2 standard_labels_yaml)
+    name: ${namespace}-${workload}-${instance}-drop-cache
+    app: ${namespace}-${workload}-${instance}-drop-cache
+    k8s-app: ${namespace}-${workload}-${instance}-drop-cache
+    ${basename}-drop-cache: "$run_uuid"
+  securityContext:
+    privileged: true
+$(create_spec -P -c drop-cache -r '' create_container_drop_cache "$namespace" "$instance" 0)
+  - name: "proc-sys-vm"
+    hostPath:
+      path: "/proc/sys/vm"
+  affinity:
+    podAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+      - labelSelector:
+          matchExpressions:
+          - key: app
+            operator: In
+            values:
+            - "${namespace}-${workload}-${instance}"
+        topologyKey: kubernetes.io/hostname
   restartPolicy: Never
 EOF
 }
@@ -2372,7 +2429,7 @@ function create_all_configmaps() {
 }
 
 function drop_host_caches() {
-    ((doit || !drop_node_cache || !drop_all_node_cache)) || return
+    ((doit && (drop_node_cache || drop_all_node_cache) )) || return
     local -a nodes_to_drop
     if [[ -n "${pin_nodes[*]}" && $drop_all_node_cache -eq 0 ]] ; then
 	local n
@@ -2386,7 +2443,7 @@ function drop_host_caches() {
     fi
     for n in "${nodes_to_drop[@]}" ; do
 	((report_object_creation)) && echo "Dropping buffer cache: $n"
-	oc debug --no-tty=true "node/$n" -- chroot /host sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches' 2>/dev/null &
+	_OC debug --no-tty=true "node/$n" -- chroot /host sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches' 2>/dev/null &
     done
     wait
 }

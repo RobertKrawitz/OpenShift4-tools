@@ -137,6 +137,8 @@ function create_deployment_fio() {
     local -i syncs_needed=$((2 + (${#___fio_patterns[@]} * ${#___fio_blocksizes[@]} * ${#___fio_iodepths[@]} * ${#___fio_directs[@]} * ${#___fio_fdatasyncs[@]} * ${#___fio_ioengines[@]}) ))
     create_sync_service_if_needed "$namespace" "$syncs_needed" "$((containers_per_pod * replicas * count))"
     for instance in $(seq "$first_deployment" $((count + first_deployment - 1))) ; do
+	create_service -H "$namespace" "${namespace}-fio-${instance}-drop-cache" "$drop_cache_port"
+	create_drop_cache_deployment "$namespace" fio "$instance"
 	_create_fio_deployment "$namespace" "${instance}" "$secret_count"  "$replicas" "$containers_per_pod" "$log_host" "$log_port"
     done
 }
@@ -152,6 +154,7 @@ function calculate_logs_required_fio() {
 function list_configmaps_fio() {
     cat <<EOF
 ${__podfile_dir__}/fio.pl
+${__podfile_dir__}/drop_cache.pl
 EOF
 }
 
