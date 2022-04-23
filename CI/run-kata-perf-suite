@@ -206,8 +206,8 @@ function process_option() {
 	runtimeclass*) readarray -t runtimeclasses <<< "$optvalue"		;;
 	reportobject*) report_object_creation=$(bool "$optvalue")		;;
 	cleanup*) cleanup=$(bool "$optvalue")					;;
-	virtiofsd_writeback) virtiofsd_flags+=('"-o"' '"writeback"')		;;
-	virtiofsd_threadpool)
+	virtiofsdwriteback) virtiofsd_flags+=('"-o"' '"writeback"')		;;
+	virtiofsdthreadpool)
 	    virtiofsd_flags+=("\"--thread-pool-size=$optvalue\"")		;;
 
 	scalingstarting*) scaling_starting_namespaces=$optvalue			;;
