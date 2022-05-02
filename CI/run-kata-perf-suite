@@ -21,6 +21,10 @@ declare OC=${OC:-${KUBECTL:-}}
 OC=${OC:-$(type -p oc)}
 OC=${OC:-$(type -p kubectl)}	# kubectl might not work, though...
 
+declare -A profiles=()
+profiles[auto]='--job_runtime=120 --fio_blocksize=4096,1048576 --fio-ioengine=sync,libaio --fio-direct=0,1 --fio-fdatasync0,1 --fio-iodepths=1,2 --job-timeout=5400 --fio-memsize=4096 --artifactdir= --virtiofsd-writeback --restart'
+
+
 declare client_pin_node=
 declare server_pin_node=
 declare sync_pin_node=
@@ -189,6 +193,16 @@ function get_node_memory() {
     parse_size "$mem"
 }
 
+function process_profile() {
+    local profile=$1
+    if [[ -n "${profiles[$profile]}" ]] ; then
+	local arg
+	for arg in ${profiles[$profile]} ; do
+	    process_option "$arg"
+	done
+    fi
+}
+
 function process_option() {
     local noptname
     local noptname1
@@ -201,12 +215,14 @@ function process_option() {
 	syncpin*) sync_pin_node=$optvalue					;;
 	jobruntime|runtime) job_runtime=$optvalue				;;
 	jobtimeout|timeout) job_timeout=$optvalue				;;
-	artifactdir) artifactdir=$optvalue					;;
+	artifactdir) artifactdir="${optvalue:-$(pwd)}"				;;
 	reportformat*) report_format=$optvalue					;;
 	runtimeclass*) readarray -t runtimeclasses <<< "$optvalue"		;;
 	reportobject*) report_object_creation=$(bool "$optvalue")		;;
 	cleanup*) cleanup=$(bool "$optvalue")					;;
 	restart) restart=$(bool "$optvalue")					;;
+	profile) process_profile "$optvalue"					;;
+
 	virtiofsdwriteback) virtiofsd_flags+=('"-o"' '"writeback"')		;;
 	virtiofsdthreadpool)
 	    virtiofsd_flags+=("\"--thread-pool-size=$optvalue\"")		;;
@@ -337,6 +353,7 @@ function run_clusterbuster() {
     tmp_jobdir="${jobdir:+${jobdir}.tmp}"
     local virtiofsd_annotation
     if [[ -n "${virtiofsd_flags[*]}" ]] ; then
+	# shellcheck disable=SC2089
 	virtiofsd_annotation="--pod-annotation=io.katacontainers.config.hypervisor.virtio_fs_extra_args: '[$(IFS=,; echo "${virtiofsd_flags[*]}")]'"
     fi
 	
@@ -347,6 +364,7 @@ function run_clusterbuster() {
     job_start=$(date +%s)
     echo
     echo "*** Running $jobname"
+    # shellcheck disable=SC2090
     doit "clusterbuster" ${dontdoit:+"$dontdoit"} \
 	 --precleanup --cleanup="$cleanup" --image-pull-policy=IfNotPresent \
 	 --metrics --report="$report_format" --workload="$workload" \
@@ -360,7 +378,7 @@ function run_clusterbuster() {
 	 ${runtimeclass:+"--runtimeclass=$runtimeclass"} \
 	 ${virtiofsd_annotation:+"$virtiofsd_annotation"} \
 	 --report_object_creation="$report_object_creation" \
-	 "$@" || status=1
+	 "$@" || status=$?
     job_end=$(date +%s)
     job_runtimes[$jobname]="$(to_hms "$job_start" "$job_end")"
     if ((status == 0)) ; then
