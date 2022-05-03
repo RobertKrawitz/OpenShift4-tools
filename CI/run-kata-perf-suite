@@ -15,7 +15,6 @@
 # limitations under the License.
 
 set -u
-set -e
 
 declare OC=${OC:-${KUBECTL:-}}
 OC=${OC:-$(type -p oc)}
