@@ -22,7 +22,7 @@ OC=${OC:-$(type -p kubectl)}	# kubectl might not work, though...
 CLUSTERBUSTER="$(dirname "$0")/../clusterbuster"
 
 declare -A profiles=()
-profiles[auto]='--job_runtime=120 --fio_blocksize=4096,1048576 --fio-ioengine=sync,libaio --fio-direct=0,1 --fio-fdatasync0,1 --fio-iodepths=1,2 --job-timeout=5400 --fio-memsize=4096 --artifactdir= --virtiofsd-writeback --restart'
+profiles[auto]='--job_runtime=120 --fio_blocksize=4096,1048576 --fio-ioengine=sync,libaio --fio-direct=0,1 --fio-fdatasync0,1 --fio-iodepths=1,2 --job-timeout=9000 --fio-max-relative-filesize=0.25 --fio-memsize=4096 --artifactdir= --virtiofsd-writeback --restart'
 
 
 declare client_pin_node=
@@ -60,7 +60,11 @@ declare -a fio_ioengines=(sync libaio)
 declare -a fio_ninst=(1 4)
 declare -i fio_job_runtime=0
 declare fio_workdir=/var/tmp
-declare -i fio_filesize=
+declare -i fio_absolute_filesize=0
+declare -i fio_max_absolute_filesize=0
+declare fio_relative_filesize=2
+declare fio_max_relative_filesize=$fio_relative_filesize
+declare -i fio_node_memory=0
 declare -i fio_ramptime=5
 declare -i fio_job_timeout=-3600
 declare -i fio_pod_memsize=
@@ -249,7 +253,10 @@ function process_option() {
 	fioworkdir) fio_workdir=$optvalue					;;
 	fio*runtime) fio_job_runtime=$optvalue					;;
 	fioramp*) fio_ramptime=$optvalue					;;
-	fiofilesize) fio_filesize=$(parse_size "$optvalue")			;;
+	fioabs*file*) fio_absolute_filesize=$(parse_size "$optvalue")		;;
+	fiomaxabs*file*) fio_max_absolute_filesize=$(parse_size "$optvalue")	;;
+	fiorel*file*) fio_relative_filesize="$optvalue"				;;
+	fiomaxrel*file*) fio_max_relative_filesize="$optvalue"			;;
 	fio*timeout) fio_job_timeout=$optvalue					;;
 	fio*memsize) fio_pod_memsize=$(parse_size "$optvalue")			;;
 
@@ -285,7 +292,19 @@ fi
 
 set_pin_nodes
 
-((fio_filesize <= 0)) && fio_filesize=$(($(get_node_memory "$client_pin_node") * 2))
+fio_node_memory=$(get_node_memory "$client_pin_node")
+
+function computeit() {
+    local expr="$1"
+    bc <<< "$1" | sed -e 's/\..*$//'
+}
+
+if ((fio_absolute_filesize <= 0)) ; then
+    fio_absolute_filesize=$(computeit "$fio_node_memory * $fio_relative_filesize")
+fi
+if ((fio_max_absolute_filesize <= 0)) ; then
+    fio_max_absolute_filesize=$(computeit "$fio_node_memory * $fio_max_relative_filesize")
+fi
 
 function to_hms() {
     local -i start=$1
@@ -434,6 +453,7 @@ function test_uperf() {
 		for test_type in "${uperf_test_types[@]}" ; do
 		    job_name="${msg_size}B-${nthr}i-${ninst}P-${test_type}"
 		    run_clusterbuster -j "$job_name" -w uperf -r "$runtimeclass" -t "$uperf_job_timeout" -- \
+				      --deployments="$ninst" \
 				      --uperf_msg_size="$msg_size" \
 				      --uperf_test_type="$test_type" \
 				      --uperf_proto=tcp \
@@ -454,10 +474,15 @@ function test_fio() {
 	memory_annotation=--pod-annotation="io.katacontainers.config.hypervisor.default_memory: \"$fio_pod_memsize\""
     fi
     for ninst in "${fio_ninst[@]}" ; do
-	local filesize=$((fio_filesize / ninst))
+	local filesize
+	filesize=$(computeit "$fio_absolute_filesize / $ninst")
+	if ((filesize > fio_max_absolute_filesize)) ; then
+	    filesize=$fio_max_absolute_filesize
+	fi
 	job_name="fio-${ninst}P"
 	# shellcheck disable=SC2090
 	run_clusterbuster -j "$job_name" -w fio -r "$runtimeclass" -t "$fio_job_timeout" -- \
+			  --deployments="$ninst" \
 			  --fio-blocksize="$(IFS=,; echo "${fio_blocksizes[*]}")" \
 			  --fio-patterns="$(IFS=,; echo "${fio_patterns[*]}")" \
 			  --fio-ioengines="$(IFS=,; echo "${fio_ioengines[*]}")" \
