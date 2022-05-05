@@ -1,0 +1,6 @@
+# Emacs autosave and backup files
+*~
+#*#
+**/__pycache__/
+*.py[cod]
+*$py.class
