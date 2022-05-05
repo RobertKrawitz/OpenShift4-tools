@@ -2483,7 +2483,6 @@ function create_all_objects() {
 
 # shellcheck disable=SC2120
 function do_cleanup() {
-    echo "do_cleanup" > /tmp/x.log
     local -a objects_to_clean
     local objtype
     (( doit )) || return
