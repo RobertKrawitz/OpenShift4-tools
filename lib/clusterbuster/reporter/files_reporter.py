@@ -20,10 +20,12 @@ from lib.clusterbuster.reporter.ClusterBusterReporter import ClusterBusterReport
 class files_reporter(ClusterBusterReporter):
     def __init__(self, jdata: dict, report_format: str):
         ClusterBusterReporter.__init__(self, jdata, report_format)
-        self._file_operations = ['create', 'remove']
-        self._add_timeline_vars(['create.operation', 'remove.operation'])
+        self._file_operations = ['create', 'read', 'remove']
+        self._add_timeline_vars(['create.operation', 'read.operation', 'remove.operation'])
         self._add_accumulators(['create.user_cpu_time', 'create.system_cpu_time', 'create.cpu_time', 'create.operations',
-                                'remove.user_cpu_time', 'remove.system_cpu_time', 'remove.cpu_time', 'remove.operations'])
+                                'read.user_cpu_time', 'read.system_cpu_time', 'read.cpu_time', 'read.operations', 'read.total_files', 'read.data_size', 'read.data_rate',
+                                'remove.user_cpu_time', 'remove.system_cpu_time', 'remove.cpu_time', 'remove.operations',
+                                'summary.total_dirs', 'summary.total_files', 'summary.data_size'])
         self._set_header_components(['namespace', 'pod', 'container', 'process_id'])
 
     def __update_report(self, dest: dict, source: dict):
@@ -36,12 +38,19 @@ class files_reporter(ClusterBusterReporter):
             dest[cop]['Operations'] = sop['operations']
             dest[cop]['Operations/sec'] = self._safe_div(sop['operations'], sop['operation_elapsed_time'], 0)
             dest[cop]['Operations/CPU sec'] = self._safe_div(sop['operations'], sop['cpu_time'], 0)
+            if op == 'read':
+                dest[cop]['Total Files'] = sop['total_files']
+                dest[cop]['Total Data'] = sop['data_size']
+                dest[cop]['IO Throughput'] = sop['data_rate']
 
     def _generate_summary(self, results: dict):
         # I'd like to do this, but if the nodes are out of sync time-wise, this will not
         # function correctly.
         ClusterBusterReporter._generate_summary(self, results)
         self.__update_report(results, self._summary)
+        results['Total Files'] = self._summary['summary']['total_files']
+        results['Total Dirs'] = self._summary['summary']['total_dirs']
+        results['Total Data'] = self._summary['summary']['data_size']
 
     def _generate_row(self, results: dict, row: dict):
         ClusterBusterReporter._generate_row(self, results, row)

@@ -7,6 +7,7 @@ use Time::Piece;
 use Time::HiRes qw(gettimeofday usleep);
 use Sys::Hostname;
 use File::Basename;
+use JSON;
 my ($dir) = $ENV{'BAK_CONFIGMAP'};
 require "$dir/clientlib.pl";
 
@@ -65,6 +66,36 @@ sub removethem($;$) {
     return $ops;
 }
 
+sub readthem($;$) {
+    my ($process, $oktofail) = @_;
+    my ($ops) = 0;
+    my ($buffer);
+    foreach my $bdir (@dirs) {
+	my ($pdir)="$bdir/p$process";
+	next if ($oktofail && ! -d $pdir);
+	my ($dir)="$pdir/$container";
+	next if ($oktofail && ! -d $dir);
+	foreach my $subdir (0..$dirs-1) {
+	    my ($dirname) = "$dir/d$subdir";
+	    next if ($oktofail && ! -d $dirname);
+	    foreach my $file (0..$files_per_dir-1) {
+		my ($filename) = "$dirname/f$file";
+		next if ($oktofail && ! -f $filename);
+		open(FILE, "<", "$filename" || die "Can't open $filename: $!\n");
+		$ops++;
+		foreach my $block (0..$block_count - 1) {
+		    if (sysread(FILE, $buffer, $blocksize) != $blocksize) {
+			die "Write to $filename failed: $!\n";
+		    }
+		    $ops++;
+		}
+		close(FILE);
+	    }
+	}
+    }
+    return $ops;
+}
+
 sub makethem($) {
     my ($process) = @_;
     my ($ops) = 0;
@@ -100,29 +131,18 @@ sub makethem($) {
 
 sub run_one_operation($$$$$$$$) {
     my ($op_name0, $op_name1, $op_name2, $op_func, $sync_host, $sync_port, $process, $data_start_time) = @_;
-    my ($op_format_string) = <<'EOF';
-"%s": {
-  "operation_elapsed_time": %f,
-  "user_cpu_time": %f,
-  "system_cpu_time": %f,
-  "cpu_time": %f,
-  "cpu_utilization": %f,
-  "operation_start": %f,
-  "operation_end": %f,
-  "operations": %d,
-  "operations_per_second": %f
-}
-EOF
-    $op_format_string =~ s/[ \n]+//g;
 
     do_sync($sync_host, $sync_port);
     timestamp("$op_name0 files...");
+    drop_cache("service-${pod}-drop-cache", 7779);
     my ($ucpu0, $scpu0) = cputime();
     my ($op_start_time) = xtime() - $data_start_time;
     my ($ops) = &$op_func($process);
-    system("sync");
+    my ($op_end_time_0) = xtime() - $data_start_time;
+    drop_cache("service-${pod}-drop-cache", 7779);
     my ($op_end_time) = xtime() - $data_start_time;
     my ($op_elapsed_time) = $op_end_time - $op_start_time;
+    my ($op_elapsed_time_0) = $op_end_time_0 - $op_start_time;
     my ($ucpu1, $scpu1) = cputime();
     $ucpu1 -= $ucpu0;
     $scpu1 -= $scpu0;
@@ -137,6 +157,13 @@ EOF
 	'operations' => $ops,
 	'operations_per_second' => $ops / $op_elapsed_time
 	);
+    if ($op_name2 eq 'read') {
+	$answer{'total_files'} = $files_per_dir * $dirs * scalar @dirs;
+	$answer{'block_count'} = int $block_count;
+	$answer{'block_size'} = int $blocksize;
+	$answer{'data_size'} = $blocksize * $block_count * $answer{'total_files'};
+	$answer{'data_rate'} = $answer{'data_size'} / $op_elapsed_time_0;
+    }
     timestamp("$op_name1 files...");
     do_sync($sync_host, $sync_port);
     return (\%answer, $op_start_time, $op_end_time, $ucpu1, $scpu1);
@@ -162,6 +189,14 @@ sub runit($) {
     timestamp("Sleeping for 60 seconds");
     sleep(60);
     timestamp("Back from sleep");
+    my ($answer_read, $read_start_time, $read_end_time, $read_ucpu, $read_scpu) =
+	run_one_operation('Reading', 'Read', 'read', \&readthem,
+			  $sync_host, $sync_port, $process, $data_start_time);
+    $extras{'read'} = $answer_read;
+
+    timestamp("Sleeping for 60 seconds");
+    sleep(60);
+    timestamp("Back from sleep");
     my ($answer_remove, $remove_start_time, $remove_end_time, $remove_ucpu, $remove_scpu) =
 	run_one_operation('Creating', 'Removed', 'remove', \&removethem,
 			  $sync_host, $sync_port, $process, $data_start_time);
@@ -172,6 +207,17 @@ sub runit($) {
     my ($data_elapsed_time) = $create_et + $remove_et;
     my ($user_cpu) = $create_ucpu + $remove_ucpu;
     my ($system_cpu) = $create_scpu + $remove_scpu;
+    my (%summary);
+    $summary{'volumes'} = scalar @dirs;
+    $summary{'dirs_per_volume'} = int $dirs;
+    $summary{'total_dirs'} = $dirs * $summary{'volumes'};
+    $summary{'files_per_dir'} = int $files_per_dir;
+    $summary{'total_files'} = $files_per_dir * $summary{'total_dirs'};
+    $summary{'blocksize'} = int $blocksize;
+    $summary{'blocks_per_file'} = int $block_count;
+    $summary{'filesize'} = $blocksize * $block_count;
+    $summary{'data_size'} = $summary{'filesize'} * $summary{'total_files'};
+    $extras{'summary'} = \%summary;
     my ($answer) = print_json_report($namespace, $pod, $container, $$,
 				     $data_start_time, $data_end_time,
 				     $data_elapsed_time,

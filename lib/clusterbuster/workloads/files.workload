@@ -88,7 +88,7 @@ $(indent 2 standard_all_metadata_yaml "$namespace" client)
   selector:
     matchLabels:
       app: ${namespace}-files-${instance}
-$(indent 2 standard_labels_yaml files "$namespace" "$instance" 1)
+$(indent 2 standard_labels_yaml files "$namespace" "${instance}-${replica}" 1)
 $(create_spec _create_containers_files_yaml "$@")
   restartPolicy: Never
 EOF
@@ -125,8 +125,18 @@ function create_deployment_files() {
     local log_host=${6:-}
     local -i log_port=${7:-0}
     local -i instance
-    create_sync_service_if_needed "$namespace" 6 "$((containers_per_pod * processes_per_pod * replicas * count))"
+    create_sync_service_if_needed "$namespace" 8 "$((containers_per_pod * processes_per_pod * replicas * count))"
     for instance in $(seq $first_deployment $((count + first_deployment - 1))) ; do
+	if [[ $deployment_type = pod ]] ; then
+	    local -i replica=0
+	    while (( replica++ < replicas )) ; do
+		create_service -H "$namespace" "${namespace}-files-${instance}-${replica}-drop-cache" "$drop_cache_port"
+		create_drop_cache_deployment "$namespace" files "${instance}-${replica}"
+	    done
+	else
+	    create_service -H "$namespace" "${namespace}-files-${instance}-drop-cache" "$drop_cache_port"
+	    create_drop_cache_deployment "$namespace" files "${instance}"
+	fi
 	_create_files_deployment "$namespace" "$instance" "$secret_count"  "$replicas" "$containers_per_pod" "$log_host" "$log_port"
     done
 }
@@ -142,6 +152,7 @@ function calculate_logs_required_files() {
 function list_configmaps_files() {
     cat <<EOF
 ${__podfile_dir__}/files.pl
+${__podfile_dir__}/drop_cache.pl
 EOF
 }
 

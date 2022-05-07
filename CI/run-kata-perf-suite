@@ -36,7 +36,7 @@ declare -i report_object_creation=0
 declare -i cleanup=0
 declare dontdoit=
 
-declare -a workloads=(scaling uperf fio)
+declare -a workloads=(scaling uperf fio files)
 declare -a runtimeclasses=('' 'kata')
 
 declare -i scaling_starting_namespaces=1
@@ -68,6 +68,13 @@ declare -i fio_node_memory=0
 declare -i fio_ramptime=5
 declare -i fio_job_timeout=-3600
 declare -i fio_pod_memsize=
+
+declare -a files_ninst=(1 4)
+declare -i files_dirs_per_volume=256
+declare -i files_per_dir=256
+declare -i files_block_size=1024
+declare -a files_size=(0 1024 $((512 * 1024)))
+declare -i files_job_timeout=2400
 
 declare -i fail=0
 declare -i counter=0
@@ -123,7 +130,9 @@ function bool() {
 
 function parse_size() {
     local size
-    for size in "$@" ; do
+    local sizes=$*
+    sizes=${sizes//,/ }
+    for size in $sizes ; do
 	if [[ $size =~ (-?[[:digit:]]+)([[:alpha:]]*) ]] ; then
 	    local size=${BASH_REMATCH[1]}
 	    local size_modifier=${BASH_REMATCH[2],,}
@@ -219,7 +228,7 @@ function process_option() {
 	syncpin*) sync_pin_node=$optvalue					;;
 	jobruntime|runtime) job_runtime=$optvalue				;;
 	jobtimeout|timeout) job_timeout=$optvalue				;;
-	artifactdir) artifactdir="${optvalue:-$(pwd)}"				;;
+	artifactdir) artifactdir="${optvalue:-${artifactdir:-$(pwd)}}"		;;
 	reportformat*) report_format=$optvalue					;;
 	runtimeclass*) readarray -t runtimeclasses <<< "$optvalue"		;;
 	reportobject*) report_object_creation=$(bool "$optvalue")		;;
@@ -260,6 +269,13 @@ function process_option() {
 	fio*timeout) fio_job_timeout=$optvalue					;;
 	fio*memsize) fio_pod_memsize=$(parse_size "$optvalue")			;;
 
+	filesninst*) readarray -t files_ninst <<< "$optvalue"			;;
+	filesdirs*) files_dirs_per_volume=$(parse_size "$optvalue")		;;
+	filesperdir*) files_per_dir=$(parse_size "$optvalue")			;;
+	filesblocksize*) files_block_size=$(parse_size "$optvalue")		;;
+	filessize*) readarray -t files_size <<< "$(parse_size "$optvalue")"	;;
+	files*timeout) files_job_timeout=$optvalue				;;
+
 	*) fatal "Unknown option --$1"						;;
     esac
 }
@@ -277,18 +293,23 @@ if [[ -n "$*" ]] ; then
     workloads=("$@")
 fi
 
+function compute_timeout() {
+    local -i timeout=$1
+    ((timeout <= 0)) && timeout=$job_timeout
+    ((timeout < 0)) && timeout=$((-timeout))
+    echo "$timeout"
+}
+
 ((scaling_job_runtime <= 0)) && scaling_job_runtime=$job_runtime
+scaling_job_timeout=$(compute_timeout $scaling_job_timeout)
+
 ((uperf_job_runtime <= 0)) && uperf_job_runtime=$job_runtime
+uperf_job_timeout=$(compute_timeout $uperf_job_timeout)
+
 ((fio_job_runtime <= 0)) && fio_job_runtime=$job_runtime
+fio_job_timeout=$(compute_timeout $fio_job_timeout)
 
-((scaling_job_timeout <= 0 && job_timeout != 0)) && scaling_job_timeout=$job_timeout
-((scaling_job_timeout < 0)) && scaling_job_timeout=$((-scaling_job_timeout))
-
-((uperf_job_timeout <= 0 && job_timeout != 0)) && uperf_job_timeout=$job_timeout
-((uperf_job_timeout < 0)) && uperf_job_timeout=$((-uperf_job_timeout))
-
-((fio_job_timeout <= 0 && job_timeout != 0)) && fio_job_timeout=$job_timeout
-((fio_job_timeout < 0)) && fio_job_timeout=$((-fio_job_timeout))
+files_job_timeout=$(compute_timeout $files_job_timeout)
 
 set_pin_nodes
 
@@ -496,6 +517,21 @@ function test_fio() {
     done
 }
 
+function test_files() {
+    local runtimeclass=$1
+    local -i ninst
+    for ninst in "${files_ninst[@]}" ; do
+	job_name="files-${ninst}P-${files_dirs_per_volume}D-${files_per_dir}F-${files_block_size}B-${files_size}S"
+	# shellcheck disable=SC2090
+	run_clusterbuster -j "$job_name" -w files -r "$runtimeclass" -t "$files_job_timeout" -- \
+			  --deployments="$ninst" \
+			  --dirs_per_volume=$files_dirs_per_volume \
+			  --files_per_dir=$files_per_dir \
+			  --file_block_size=$files_block_size \
+			  --filesize=$files_size
+    done
+}
+
 starting_timestamp=$(date +%s)
 job_datestamp=$(date -u '+%Y_%m_%dT%H_%M_%S%z' --date=@"$starting_timestamp")
 artifactdir=${artifactdir//%s/$job_datestamp}
@@ -509,6 +545,7 @@ for runtimeclass in "${runtimeclasses[@]}" ; do
 	    scal*) test_scaling "$runtimeclass" ;;
 	    uperf) test_uperf "$runtimeclass" ;;
 	    fio) test_fio "$runtimeclass" ;;
+	    files) test_files "$runtimeclass" ;;
 	    *) fatal "Unknown workload $workload" ;;
 	esac
     done

@@ -18,6 +18,7 @@ use strict;
 my (%scaling_data);
 my (%uperf_data);
 my (%fio_data);
+my (%files_data);
 
 sub read_summary($) {
     my ($fh) = @_;
@@ -103,6 +104,22 @@ sub read_summary($) {
 	    } elsif ($key =~ /io_data_rate$/) {
 		$fio_data{$pods}{$engine}{$iodepth}{$fdatasync}{$direct}{$workload}{$blocksize}{$runtime_env}{$op}{'throughput'} = $value;
 		$fio_data{$pods}{$engine}{$iodepth}{$fdatasync}{$direct}{$workload}{$blocksize}{$runtime_env}{'total'}{'throughput'} += $value;
+	    }
+	} elsif ($workload eq 'files') {
+	    my ($pods, $dirs, $files, $blocksize, $blocks);
+	    if ($jobname =~ /([[:digit:]]+)P-([[:digit:]]+)D-([[:digit:]]+)F-([[:digit:]]+)B-([[:digit:]]+)S/) {
+		$pods = $1;
+		$dirs = $2;
+		$files = $3;
+		$blocksize = $4;
+		$blocks = $5;
+	    } else {
+		next;
+	    }
+	    if ($key =~ /summary\.(read|create|remove)\.(.*)/) {
+		my ($op) = $1;
+		my ($subkey) = $2;
+		$files_data{$pods}{$dirs}{$files}{$blocksize}{$blocks}{$runtime_env}{$op}{$subkey} = $value;
 	    }
 	} else {
 	    warn("Unknown workload $workload ($_)\n");
@@ -337,6 +354,65 @@ sub process_fio() {
     }
 }
 
+sub process_files() {
+    my (@files_pods) = keys %files_data;
+    return if (! @files_pods);
+    foreach my $pods (sort { $a <=> $b } @files_pods) {
+	my ($f1) = $files_data{$pods};
+	foreach my $dirs (sort { $a <=> $b } keys %$f1) {
+	    my ($f2) = $$f1{$dirs};
+	    foreach my $files (sort { $a <=> $b } keys %$f2) {
+		my ($f3) = $$f2{$files};
+		foreach my $blocksize (sort { $a <=> $b } keys %$f3) {
+		    my ($f4) = $$f3{$blocksize};
+		    foreach my $blocks (sort { $a <=> $b } keys %$f4) {
+			my ($f5) = $$f4{$blocks};
+			printf("\nPod: %d, Dirs: %d, files per dir: %d, total files: %d, block size: %d, blocks: %d, total bytes %d\n",
+			    $pods, $dirs, $files, $dirs * $files * $pods, $blocksize, $blocks, $pods * $dirs * $files * $blocks * $blocksize);
+			printf("Runtime\tCreate\t\tRead\t\t\t\tRemove\n");
+			printf("\tElapsed Time\tCPU Time\tFiles/sec\t");
+			printf("Elapsed Time\tCPU Time\tFiles/sec\tBytes/sec\t");
+			printf("Elapsed Time\tCPU Time\tFiles/sec\n");
+			foreach my $runtime ('kata', 'nonkata') {
+			    print "$runtime\t";
+			    printf("%.3f\t%.3f\t%d\t",
+				   $$f5{$runtime}{'create'}{'elapsed_time'},
+				   $$f5{$runtime}{'create'}{'cpu_time'},
+				   safe_div($dirs * $files, $$f5{$runtime}{'create'}{'elapsed_time'}));
+			    printf("%.3f\t%.3f\t%d\t%d\t",
+				   $$f5{$runtime}{'read'}{'elapsed_time'},
+				   $$f5{$runtime}{'read'}{'cpu_time'},
+				   safe_div($dirs * $files, $$f5{$runtime}{'read'}{'elapsed_time'}),
+				   $$f5{$runtime}{'read'}{'io_throughput'});
+			    printf("%.3f\t%.3f\t%d\n",
+				   $$f5{$runtime}{'remove'}{'elapsed_time'},
+				   $$f5{$runtime}{'remove'}{'cpu_time'},
+				   safe_div($dirs * $files, $$f5{$runtime}{'remove'}{'elapsed_time'}));
+			}
+			print("relative\t");
+			printf("%.3f\t%.3f\t%.3f\t",
+			       safe_div($$f5{'kata'}{'create'}{'elapsed_time'}, $$f5{'nonkata'}{'create'}{'elapsed_time'}),
+			       safe_div($$f5{'kata'}{'create'}{'cpu_time'}, $$f5{'nonkata'}{'create'}{'cpu_time'}),
+			       safe_div(safe_div($dirs * $files, $$f5{'kata'}{'create'}{'elapsed_time'}),
+					safe_div($dirs * $files, $$f5{'nonkata'}{'create'}{'elapsed_time'}))),
+			printf("%.3f\t%.3f\t%.3f\t%.3f\t",
+			       safe_div($$f5{'kata'}{'read'}{'elapsed_time'}, $$f5{'nonkata'}{'read'}{'elapsed_time'}),
+			       safe_div($$f5{'kata'}{'read'}{'cpu_time'}, $$f5{'nonkata'}{'read'}{'cpu_time'}),
+			       safe_div(safe_div($dirs * $files, $$f5{'kata'}{'read'}{'elapsed_time'}),
+					safe_div($dirs * $files, $$f5{'nonkata'}{'read'}{'elapsed_time'})),
+			       safe_div($$f5{'kata'}{'read'}{'io_throughput'}, $$f5{'nonkata'}{'read'}{'io_throughput'})),
+			printf("%.3f\t%.3f\t%.3f\n",
+			       safe_div($$f5{'kata'}{'remove'}{'elapsed_time'}, $$f5{'nonkata'}{'remove'}{'elapsed_time'}),
+			       safe_div($$f5{'kata'}{'remove'}{'cpu_time'}, $$f5{'nonkata'}{'remove'}{'cpu_time'}),
+			       safe_div(safe_div($dirs * $files, $$f5{'kata'}{'remove'}{'elapsed_time'}),
+					safe_div($dirs * $files, $$f5{'nonkata'}{'remove'}{'elapsed_time'}))),
+		    }
+		}
+	    }
+	}
+    }
+}
+
 sub analyze_directory($) {
     my ($dir) = @_;
     my ($analyze_cmd) = $0;
@@ -358,7 +434,7 @@ if (! @ARGV) {
 		while (readdir($dh)) {
 		    my ($fn) = "$dir/$_";
 		    if (-d $fn &&
-			/^(cpusoaker|fio|uperf)-(kata|nonkata)-[[:digit:]]+/ &&
+			/^(cpusoaker|fio|uperf|files)-(kata|nonkata)-[[:digit:]]+/ &&
 			! /(\.FAIL|\.tmp)$/) {
 			analyze_directory($fn);
 		    }
@@ -372,3 +448,4 @@ if (! @ARGV) {
 process_scaling();
 process_uperf();
 process_fio();
+process_files();
