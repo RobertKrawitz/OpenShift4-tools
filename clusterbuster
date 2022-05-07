@@ -1239,6 +1239,14 @@ function monitor_pods() {
 		    running_pod_count=$((running_pod_count+1))
 		    ;;
 		completed|terminated)
+		    if supports_api supports_reporting ; then
+			if ! __OC exec --stdin=false -n "${basename}-sync" "${basename}-sync" -- test -f /tmp/clusterbuster-finished ; then
+			    echo "Pod -n $namespace $name exited prematurely!" 1>&2
+			    echo "Tail end of logs:" 1>&2
+			    oc logs -n "$namespace" "$name" |tail -20 1>&2
+			    killthemall
+			fi
+		    fi
 		    finished_pod_count=$((finished_pod_count+1))
 		    ;;
 		*)
@@ -1342,7 +1350,7 @@ function _get_logs_poll() {
 	# shellcheck disable=SC2086
 	local cleanup_command="; sleep 1; rm -f '$sync_flag_file'"
 	local mypid=$BASHPID
-	monitor_pods -- -l "${basename}-id=$run_uuid" &
+	monitor_pods -- -l "${basename}-worker=$run_uuid" &
 	# shellcheck disable=SC2086
 	if supports_api supports_reporting ; then
 	    # Ensure that if there's a lot of output that we don't remove the sync file before it has all been flushed out
@@ -1687,6 +1695,15 @@ function container_resources_json() {
 }
 
 function standard_labels_yaml() {
+    local objtype=worker
+    local OPTIND=0
+    while getopts 't:' opt "$@" ; do
+	case "$opt" in
+	    t) objtype="$OPTARG" ;;
+	    *)			 ;;
+	esac
+    done
+    shift $((OPTIND-1))
     local workload=${1:-}
     local namespace=${2:-}
     local instance=${3:-}
@@ -1699,6 +1716,7 @@ labels:
   ${basename}-id: "$run_uuid"
   ${basename}: "true"
   clusterbusterbase: "true"
+  ${objtype:+clusterbuster-${objtype}: "$run_uuid"}
 EOF
     if [[ -n "$workload" ]] ; then
 	cat <<EOF
@@ -2107,7 +2125,7 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: "${namespace}"
-$(indent 2 standard_labels_yaml)
+$(indent 2 standard_labels_yaml -t '')
 EOF
     fi
 }
@@ -2128,7 +2146,7 @@ kind: Secret
 metadata:
   name: "$secname"
 $(indent 2 namespace_yaml "$namespace")
-$(indent 2 standard_labels_yaml)
+$(indent 2 standard_labels_yaml -t '')
 data:
   key1: "$(base64 <<< "${namespace}X${i}Y${j}Z1")"
   key2: "$(base64 <<< "${namespace}X${i}Y${j}Z2")"
@@ -2198,7 +2216,7 @@ kind: Service
 metadata:
   name: "service-${deployment}"
 $(indent 2 namespace_yaml "$namespace")
-$(indent 2 standard_labels_yaml)
+$(indent 2 standard_labels_yaml -t '')
 spec:
 $(indent 2 <<< "$headless")
   ports:
@@ -2219,7 +2237,7 @@ kind: Service
 metadata:
   name: "service-${deployment}"
 $(indent 2 namespace_yaml "$namespace")
-$(indent 2 standard_labels_yaml)
+$(indent 2 standard_labels_yaml -t '')
 spec:
   ports:
   - port: $portnum
@@ -2266,7 +2284,7 @@ $(indent 2 standard_all_metadata_yaml "$namespace" sync)
   selector:
     matchLabels:
       app: ${namespace}
-$(indent 2 standard_labels_yaml)
+$(indent 2 standard_labels_yaml -t 'sync')
     name: ${namespace}
     app: ${namespace}
     k8s-app: ${namespace}
@@ -2307,7 +2325,7 @@ $(indent 2 standard_all_metadata_yaml "$namespace" drop_cache)
   selector:
     matchLabels:
       app: ${namespace}-${workload}-${instance}-drop-cache
-$(indent 2 standard_labels_yaml)
+$(indent 2 standard_labels_yaml -t 'drop-cache')
     name: ${namespace}-${workload}-${instance}-drop-cache
     app: ${namespace}-${workload}-${instance}-drop-cache
     k8s-app: ${namespace}-${workload}-${instance}-drop-cache

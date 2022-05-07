@@ -152,12 +152,18 @@ if ($sync_count == 0) {
 		$expected_clients--;
 	    }
 	    timestamp1("Done!");
-	    if ($first_pass && $predelay > 0) {
-		timestamp1("Waiting $predelay seconds before start");
-		sleep($predelay);
-	    } elsif ($sync_count == 0 && $postdelay > 0) {
-		timestamp1("Waiting $postdelay seconds before end");
-		sleep($postdelay);
+	    if ($first_pass) {
+		`touch /tmp/clusterbuster-started`;
+		if ($predelay > 0) {
+		    timestamp1("Waiting $predelay seconds before start");
+		    sleep($predelay);
+		}
+	    } elsif ($sync_count == 0) {
+		`touch /tmp/clusterbuster-finished`;
+		if ($postdelay > 0) {
+		    timestamp1("Waiting $postdelay seconds before end");
+		    sleep($postdelay);
+		}
 	    }
 	    my ($first_time, $last_time);
 	    my ($start) = ytime();
