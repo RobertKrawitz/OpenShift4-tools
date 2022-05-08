@@ -73,7 +73,7 @@ declare -a files_ninst=(1 4)
 declare -i files_dirs_per_volume=256
 declare -i files_per_dir=256
 declare -i files_block_size=1024
-declare -a files_sizes=(0 1024 $((512 * 1024)))
+declare -a files_sizes=(0 1024 $((256 * 1024)))
 declare -i files_job_timeout=9000
 
 declare -i fail=0
