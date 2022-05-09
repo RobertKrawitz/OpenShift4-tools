@@ -132,21 +132,22 @@ sub print_value_bin($$) {
     if (! defined $value) {
 	return '';
     } elsif ($value < 1024) {
-	return sprintf("%4d     $suffix", $value);
+	return sprintf("%d\t    $suffix", $value);
     } elsif ($value < 1024 * 1024) {
-	return sprintf("%8.3f Ki$suffix", $value / 1024);
+	return sprintf("%f\tKi$suffix", $value / 1024);
     } elsif ($value < 1024 * 1024 * 1024) {
-	return sprintf("%8.3f Mi$suffix", $value / 1024 / 1024);
+	return sprintf("%f\tMi$suffix", $value / 1024 / 1024);
     } elsif ($value < 1024 * 1024 * 1024 * 1024) {
-	return sprintf("%8.3f Gi$suffix", $value / 1024 / 1024 / 1024);
+	return sprintf("%f\tGi$suffix", $value / 1024 / 1024 / 1024);
     } else {
-	return sprintf("%8.3f Ti$suffix", $value / 1024 / 1024 / 1024 / 1024);
+	return sprintf("%f\tTi$suffix", $value / 1024 / 1024 / 1024 / 1024);
     }
 }
 
 sub print_value_pct($) {
     my ($value) = @_;
-    return sprintf("%8.2f%%", $value * 100);
+    return $value;
+#    return sprintf("%8.2f%%", $value * 100);
 }
 
 sub safe_div_pct($$) {
@@ -162,28 +163,29 @@ sub safe_div_pct($$) {
 
 sub print_value_dec($$) {
     my ($value, $suffix) = @_;
+    return $value;
     if (! defined $value) {
 	return '';
     } elsif ($value < .000001) {
-	return sprintf("%7.3f n$suffix", $value * 1000 * 1000 * 1000);
+	return sprintf("%f\tn$suffix", $value * 1000 * 1000 * 1000);
     } elsif ($value < .001) {
-	return sprintf("%7.3f u$suffix", $value * 1000 * 1000);
+	return sprintf("%f\tu$suffix", $value * 1000 * 1000);
     } elsif ($value < 1) {
-	return sprintf("%7.3f m$suffix", $value * 1000);
+	return sprintf("%f\tm$suffix", $value * 1000);
     } elsif ($value < 1000) {
 	if ($value == int($value)) {
-	    return sprintf("%4d     $suffix", $value);
+	    return sprintf("%d\t    $suffix", $value);
 	} else {
-	    return sprintf("%7.3f  $suffix", $value);
+	    return sprintf("%f\t $suffix", $value);
 	}
     } elsif ($value < 1000 * 1000) {
-	return sprintf("%7.3f K$suffix", $value / 1000);
+	return sprintf("%f\tK$suffix", $value / 1000);
     } elsif ($value < 1000 * 1000 * 1000) {
-	return sprintf("%7.3f M$suffix", $value / 1000 / 1000);
+	return sprintf("%f\tM$suffix", $value / 1000 / 1000);
     } elsif ($value < 1000 * 1000 * 1000 * 1000) {
-	return sprintf("%7.3f G$suffix", $value / 1000 / 1000 / 1000);
+	return sprintf("%f\tG$suffix", $value / 1000 / 1000 / 1000);
     } else {
-	return sprintf("%7.3f T$suffix", $value / 1000 / 1000 / 1000 / 1000);
+	return sprintf("%f\tT$suffix", $value / 1000 / 1000 / 1000 / 1000);
     }
 }
 
@@ -191,29 +193,29 @@ sub process_scaling() {
     my (@scaling_keys) = sort {$a <=> $b} keys %scaling_data;
     return if (!@scaling_keys);
     print "Scaling: memory\n";
-    printf("%4s %13s %13s %13s %13s\n", 'Pods', 'Non-Kata mem', 'Kata mem', 'ratio', 'Kata ovhd');
+    printf("%s\t%s\t%s\t%s\t%s\n", 'Pods', 'Non-Kata mem', 'Kata mem', 'ratio', 'Kata ovhd');
     foreach my $key (@scaling_keys) {
 	next if (! defined $scaling_data{$key}{'nonkata'});
 	if (defined $scaling_data{$key}{'kata'} && defined $scaling_data{$key}{'kata'}{'memory'}) {
-	    printf("%4d %13s %13s %13.3f %13s\n",
+	    printf("%d\t%s\t%s\t%f\t%s\n",
 		   $key,
 		   print_value_bin($scaling_data{$key}{'nonkata'}{'memory'} / $key, "B"),
 		   print_value_bin($scaling_data{$key}{'kata'}{'memory'} / $key, "B"),
 		   $scaling_data{$key}{'kata'}{'memory'} / $scaling_data{$key}{'nonkata'}{'memory'},
 		   print_value_bin(($scaling_data{$key}{'kata'}{'memory'} - $scaling_data{$key}{'nonkata'}{'memory'}) / $key, 'B'));
 	} elsif (defined $scaling_data{$key}{'nonkata'}{'memory'}) {
-	    printf("%4d %13s\n",
+	    printf("%d\t%s\n",
 		   $key,
 		   print_value_bin($scaling_data{$key}{'nonkata'}{'memory'} / $key, "B"));
 	}
     }
 
     print "\nScaling: pod starts\n";
-    printf("%4s %8s %8s %8s %8s %13s %13s %13s %13s\n", 'Pods', 'Non-Kata', 'Kata', 'ratio', 'Non-Kata 1st', 'Non-Kata last', 'Kata 1st', 'Kata last');
+    printf("%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", 'Pods', 'Non-Kata', 'Kata', 'ratio', 'Non-Kata 1st', 'Non-Kata last', 'Kata 1st', 'Kata last');
     foreach my $key (@scaling_keys) {
 	next if (! defined $scaling_data{$key}{'nonkata'});
 	if (defined $scaling_data{$key}{'kata'} && defined $scaling_data{$key}{'kata'}{'start_rate'}) {
-	    printf("%4d %8.3f %8.3f %8.3f %13.3f %13.3f %13.3f %13.3f\n",
+	    printf("%d\t%f\t%f\t%f\t%f\t%f\t%f\t%f\n",
 		   $key,
 		   $scaling_data{$key}{'nonkata'}{'start_rate'},
 		   $scaling_data{$key}{'kata'}{'start_rate'},
@@ -223,7 +225,7 @@ sub process_scaling() {
 		   $scaling_data{$key}{'kata'}{'first_pod_start'},
 		   $scaling_data{$key}{'kata'}{'last_pod_start'});
 	} elsif (defined $scaling_data{$key}{'nonkata'}{'memory'}) {
-	    printf("%4d %8.3f %8s %8s %13.3f %13.3f\n",
+	    printf("%d\t%f\t%s\t%s\t%f\t%f\n",
 		   $key,
 		   $scaling_data{$key}{'nonkata'}{'start_rate'},
 		   '',
@@ -234,11 +236,11 @@ sub process_scaling() {
     }
 
     print "\nScaling: CPU load (work iterations)\n";
-    printf("%4s %18s %18s %8s %18s %18s %8s\n", 'Pods', 'Non-Kata CPU', 'Kata CPU', 'Ratio', 'Non-Kata clock', 'Kata clock', 'Ratio');
+    printf("%s\t%s\t%s\t%s\t%s\t%s\t%s\n", 'Pods', 'Non-Kata CPU', 'Kata CPU', 'Ratio', 'Non-Kata clock', 'Kata clock', 'Ratio');
     foreach my $key (@scaling_keys) {
 	next if (! defined $scaling_data{$key}{'nonkata'});
 	if (defined $scaling_data{$key}{'kata'} && defined $scaling_data{$key}{'kata'}{'start_rate'}) {
-	    printf("%4d %18s %18s %8.3f %18s %18s %8.3f\n",
+	    printf("%d\t%s\t%s\t%f\t%s\t%s\t%f\n",
 		   $key,
 		   print_value_dec($scaling_data{$key}{'nonkata'}{'iterations_cpu_sec'}, ' it/sec'),
 		   print_value_dec($scaling_data{$key}{'kata'}{'iterations_cpu_sec'}, ' it/sec'),
@@ -247,7 +249,7 @@ sub process_scaling() {
 		   print_value_dec($scaling_data{$key}{'kata'}{'iterations_sec'}, ' it/sec'),
 		   $scaling_data{$key}{'kata'}{'iterations_sec'} / $scaling_data{$key}{'nonkata'}{'iterations_sec'});
 	} elsif (defined $scaling_data{$key}{'nonkata'}{'memory'}) {
-	    printf("%4d %18s %18s %8s %18s\n",
+	    printf("%d\t%s\t%s\t%s\t%s\n",
 		   $key,
 		   print_value_dec($scaling_data{$key}{'nonkata'}{'iterations_cpu_sec'}, ' it/sec'),
 		   '',
@@ -271,8 +273,8 @@ sub process_uperf() {
     my (@uperf_pods) = keys %uperf_data;
     return if (! @uperf_pods);
     foreach my $pod_count (sort { $a <=> $b } @uperf_pods) {
-	printf("\nNetworking: %d pod%s\n", $pod_count, ($pod_count == 1 ? '' : 's'));
-	printf("%8s %4s %14s %14s %14s %14s %14s %14s %14s %14s %9s %9s\n",
+	printf("\nNetworking: %d\tpod%s\n", $pod_count, ($pod_count == 1 ? '' : 's'));
+	printf("%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 	       'msgsize', 'nthr',
 	       'runc thruput', 'runc latency', 'runc thru cpu', 'runc lat cpu',
 	       'kata thruput', 'kata latency', 'kata thru cpu', 'kata lat cpu',
@@ -280,7 +282,7 @@ sub process_uperf() {
 	foreach my $msg_size (sort { $a <=> $b } keys %{$uperf_data{$pod_count}}) {
 	    foreach my $nthr (sort { $a <=> $b } keys %{$uperf_data{$pod_count}{$msg_size}}) {
 		my ($stuff) = $uperf_data{$pod_count}{$msg_size}{$nthr};
-		printf("%8d %4d %14s %14s %13.3f%% %13.3f%% %14s %14s %13.3f%% %13.3f%% %8.3f%% %8.3f%%\n",
+		printf("%d\t%d\t%s\t%s\t%f\t%f\t%s\t%s\t%f\t%f\t%f\t%f\n",
 		       $msg_size, $nthr,
 		       print_value_dec($$stuff{'nonkata'}{'rate'}, 'B/sec'),
 		       print_value_dec($$stuff{'nonkata'}{'avg_time_op'}, 'sec'),
@@ -309,9 +311,9 @@ sub process_fio() {
 		    my ($f3) = $$f2{$fdatasync};
 		    foreach my $direct (sort { $a <=> $b } keys %{$f3}) {
 			my ($stuff) = $$f3{$direct};
-			printf("\nI/O: engine %s, iodepth %d, fdatasync %d, direct %d, %d pod%s\n",
+			printf("\nI/O: engine %s, iodepth %d, fdatasync %d, direct %d, %d\tpod%s\n",
 			       $engine, $iodepth, $fdatasync, $direct, $pod_count, ($pod_count == 1 ? '' : 's'));
-			printf("%12s %12s %12s %12s %12s %12s %12s %12s %12s\n",
+			printf("%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			       "Runtime", "Workload", "Blocksize", "Read rate", "Read IOPS", "Write rate", "Write IOPS", "Total rate", "Total IOPS");
 			foreach my $workload (sort keys %$stuff) {
 			    my ($printed_workload) = 0;
@@ -319,7 +321,7 @@ sub process_fio() {
 				my ($printed_blocksize) = 0;
 				my ($stuff1) = $$stuff{$workload}{$blocksize};
 				foreach my $runtime ('kata', 'nonkata') {
-				    printf("%12s %12s %12s %12s %12s %12s %12s %12s %12s\n",
+				    printf("%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 					   $runtime,
 					   $printed_workload++ ? '' : $workload,
 					   $printed_blocksize++ ? '' : $blocksize,
@@ -330,7 +332,7 @@ sub process_fio() {
 					   print_value_dec($$stuff1{$runtime}{'total'}{'throughput'}, 'B/s'),
 					   print_value_dec($$stuff1{$runtime}{'total'}{'iops'}, 'IO/s'));
 				}
-				printf("%12s %12s %12s %12s %12s %12s %12s %12s %12s\n",
+				printf("%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 				       'relative', '', '',
 				       safe_div_pct($$stuff1{'kata'}{'read'}{'throughput'},
 						    $$stuff1{'nonkata'}{'read'}{'throughput'}),
@@ -375,33 +377,33 @@ sub process_files() {
 			printf("Elapsed Time\tCPU Time\tFiles/sec\n");
 			foreach my $runtime ('kata', 'nonkata') {
 			    print "$runtime\t";
-			    printf("%.3f\t%.3f\t%d\t",
+			    printf("%f\t%f\t%f\t",
 				   $$f5{$runtime}{'create'}{'elapsed_time'},
 				   $$f5{$runtime}{'create'}{'cpu_time'},
 				   safe_div($dirs * $files, $$f5{$runtime}{'create'}{'elapsed_time'}));
-			    printf("%.3f\t%.3f\t%d\t%d\t",
+			    printf("%f\t%f\t%f\t%d\t",
 				   $$f5{$runtime}{'read'}{'elapsed_time'},
 				   $$f5{$runtime}{'read'}{'cpu_time'},
 				   safe_div($dirs * $files, $$f5{$runtime}{'read'}{'elapsed_time'}),
 				   $$f5{$runtime}{'read'}{'io_throughput'});
-			    printf("%.3f\t%.3f\t%d\n",
+			    printf("%f\t%f\t%f\n",
 				   $$f5{$runtime}{'remove'}{'elapsed_time'},
 				   $$f5{$runtime}{'remove'}{'cpu_time'},
 				   safe_div($dirs * $files, $$f5{$runtime}{'remove'}{'elapsed_time'}));
 			}
 			print("relative\t");
-			printf("%.3f\t%.3f\t%.3f\t",
+			printf("%f\t%f\t%f\t",
 			       safe_div($$f5{'kata'}{'create'}{'elapsed_time'}, $$f5{'nonkata'}{'create'}{'elapsed_time'}),
 			       safe_div($$f5{'kata'}{'create'}{'cpu_time'}, $$f5{'nonkata'}{'create'}{'cpu_time'}),
 			       safe_div(safe_div($dirs * $files, $$f5{'kata'}{'create'}{'elapsed_time'}),
 					safe_div($dirs * $files, $$f5{'nonkata'}{'create'}{'elapsed_time'}))),
-			printf("%.3f\t%.3f\t%.3f\t%.3f\t",
+			printf("%f\t%f\t%f\t%f\t",
 			       safe_div($$f5{'kata'}{'read'}{'elapsed_time'}, $$f5{'nonkata'}{'read'}{'elapsed_time'}),
 			       safe_div($$f5{'kata'}{'read'}{'cpu_time'}, $$f5{'nonkata'}{'read'}{'cpu_time'}),
 			       safe_div(safe_div($dirs * $files, $$f5{'kata'}{'read'}{'elapsed_time'}),
 					safe_div($dirs * $files, $$f5{'nonkata'}{'read'}{'elapsed_time'})),
 			       safe_div($$f5{'kata'}{'read'}{'io_throughput'}, $$f5{'nonkata'}{'read'}{'io_throughput'})),
-			printf("%.3f\t%.3f\t%.3f\n",
+			printf("%f\t%f\t%f\n",
 			       safe_div($$f5{'kata'}{'remove'}{'elapsed_time'}, $$f5{'nonkata'}{'remove'}{'elapsed_time'}),
 			       safe_div($$f5{'kata'}{'remove'}{'cpu_time'}, $$f5{'nonkata'}{'remove'}{'cpu_time'}),
 			       safe_div(safe_div($dirs * $files, $$f5{'kata'}{'remove'}{'elapsed_time'}),
