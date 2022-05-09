@@ -70,11 +70,12 @@ declare -i fio_job_timeout=-3600
 declare -i fio_pod_memsize=
 
 declare -a files_ninst=(1 4)
-declare -i files_dirs_per_volume=256
-declare -i files_per_dir=256
-declare -i files_block_size=1024
+declare -a files_dirs_per_volume=(256)
+declare -a files_per_dir=(256)
+declare -a files_block_size=(1024)
 declare -a files_sizes=(0 1024 $((256 * 1024)))
 declare -i files_job_timeout=9000
+declare -a files_params=()
 
 declare -i fail=0
 declare -i counter=0
@@ -149,7 +150,7 @@ function parse_size() {
 		ti|tib|tebibytes) size_multiplier=1099511627776  ;;
 		*) fatal "Cannot parse size $optvalue"           ;;
 	    esac
-	    echo $((size*size_multiplier))
+	    echo -n "$((size*size_multiplier)) "
 	else
 	    fatal "Cannot parse filesize $optvalue"
 	fi
@@ -275,6 +276,7 @@ function process_option() {
 	filesblocksize*) files_block_size=$(parse_size "$optvalue")		;;
 	filessize*) readarray -t files_sizes <<< "$(parse_size "$optvalue")"	;;
 	files*timeout) files_job_timeout=$optvalue				;;
+	files*params) IFS=, files_params+=($optvalue)				;;
 
 	*) fatal "Unknown option --$1"						;;
     esac
@@ -314,6 +316,20 @@ files_job_timeout=$(compute_timeout "$files_job_timeout")
 set_pin_nodes
 
 fio_node_memory=$(get_node_memory "$client_pin_node")
+
+if [[ -z "${files_params[*]}" ]] ; then
+    for ninst in "${files_ninst[@]}" ; do
+	for dirs in "${files_dirs_per_volume[@]}" ; do
+	    for files in "${files_per_dir[@]}" ; do
+		for blocksize in "${files_block_size[@]}" ; do
+		    for size in "${files_sizes[@]}" ; do
+			files_params+=("${ninst}:${dirs}:${files}:${blocksize}:${size}")
+		    done
+		done
+	    done
+	done
+    done
+fi
 
 function computeit() {
     bc <<< "$1" | sed -e 's/\..*$//'
@@ -515,18 +531,21 @@ function test_fio() {
 function test_files() {
     local runtimeclass=$1
     local -i ninst
+    local files_dirs_per_volume
+    local files_per_dir
+    local files_block_size
     local file_size
-    for ninst in "${files_ninst[@]}" ; do
-	for file_size in "${files_sizes[@]}" ; do
-	    job_name="files-${ninst}P-${files_dirs_per_volume}D-${files_per_dir}F-${files_block_size}B-${file_size}S"
-	    # shellcheck disable=SC2090
-	    run_clusterbuster -j "$job_name" -w files -r "$runtimeclass" -t "$files_job_timeout" -- \
-			      --deployments="$ninst" \
-			      --dirs_per_volume="$files_dirs_per_volume" \
-			      --files_per_dir="$files_per_dir" \
-			      --file_block_size="$files_block_size" \
-			      --filesize="$file_size"
-	done
+    local options
+    for options in "${files_params[@]}" ; do
+	read -r ninst files_dirs_per_volume files_per_dir files_block_size file_size <<< "$(parse_size ${options//:/ })"
+	job_name="files-${ninst}P-${files_dirs_per_volume}D-${files_per_dir}F-${files_block_size}B-${file_size}S"
+	# shellcheck disable=SC2090
+	run_clusterbuster -j "$job_name" -w files -r "$runtimeclass" -t "$files_job_timeout" -- \
+			  --deployments="$ninst" \
+			  --dirs_per_volume="$files_dirs_per_volume" \
+			  --files_per_dir="$files_per_dir" \
+			  --file_block_size="$files_block_size" \
+			  --filesize="$file_size"
     done
 }
 
