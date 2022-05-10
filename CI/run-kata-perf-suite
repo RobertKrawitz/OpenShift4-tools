@@ -22,7 +22,7 @@ OC=${OC:-$(type -p kubectl)}	# kubectl might not work, though...
 CLUSTERBUSTER="$(dirname "$0")/../clusterbuster"
 
 declare -A profiles=()
-profiles[auto]='--job_runtime=120 --fio_blocksize=4096,1048576 --fio-ioengine=sync,libaio --fio-direct=0,1 --fio-fdatasync0,1 --fio-iodepths=1,2 --job-timeout=9000 --fio-max-relative-filesize=0.25 --fio-memsize=4096 --artifactdir= --virtiofsd-writeback --restart'
+profiles[auto]='--job_runtime=120 --fio_blocksize=4096,1048576 --fio-ioengine=sync,libaio --fio-direct=0,1 --fio-fdatasync=0 --fio-iodepths=1,2 --job-timeout=9000 --fio-max-relative-filesize=0.25 --fio-memsize=4096 --artifactdir= --virtiofsd-writeback --restart'
 
 
 declare client_pin_node=
