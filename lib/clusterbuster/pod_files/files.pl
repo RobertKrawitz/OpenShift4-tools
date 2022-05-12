@@ -7,17 +7,19 @@ use Time::Piece;
 use Time::HiRes qw(gettimeofday usleep);
 use Sys::Hostname;
 use File::Basename;
+use Fcntl qw(:DEFAULT O_DIRECT);
 use JSON;
 my ($dir) = $ENV{'BAK_CONFIGMAP'};
 require "$dir/clientlib.pl";
 
-our ($namespace, $container, $basetime, $baseoffset, $crtime, $exit_at_end, $sync_host, $sync_port, $log_host, $log_port, $dirs, $files_per_dir, $blocksize, $block_count, $processes, @dirs) = @ARGV;
+our ($namespace, $container, $basetime, $baseoffset, $crtime, $exit_at_end, $sync_host, $sync_port, $log_host, $log_port, $dirs, $files_per_dir, $blocksize, $block_count, $processes, $direct, @dirs) = @ARGV;
 my ($start_time, $elapsed_time, $end_time, $user, $sys, $cuser, $csys);
 $start_time = xtime();
 
 $SIG{TERM} = sub { POSIX::_exit(0); };
 $basetime += $baseoffset;
 $crtime += $baseoffset;
+my ($bufalign) = 8192;
 
 my ($pod) = hostname;
 initialize_timing($basetime, $crtime, $sync_host, $sync_port, "$namespace:$pod:$container", xtime());
@@ -36,6 +38,75 @@ sub remdir($$) {
 	    rmdir("$dirname") || die("Can't remove directory $dirname: $!\n");
 	}
     }
+}
+
+sub makethem($) {
+    my ($process) = @_;
+    my ($ops) = 0;
+    my ($buffer);
+    my ($buffer) = 'a' x ($blocksize + $bufalign);
+    my ($offset) = unpack('J', pack('p', $buffer)) % $bufalign;
+    $offset = $bufalign - $offset;
+    my ($fileargs) = O_WRONLY|O_CREAT | ($direct ? O_DIRECT : 0);
+    foreach my $bdir (@dirs) {
+	my ($pdir)="$bdir/p$process";
+	mkdir("$pdir") || die("Can't create directory $pdir: $!\n");
+	$ops++;
+	my ($dir)="$pdir/$container";
+	mkdir("$dir") || die("Can't create directory $dir: $!\n");
+	$ops++;
+	foreach my $subdir (0..$dirs-1) {
+	    my ($dirname) = "$dir/d$subdir";
+	    mkdir("$dirname") || die("Can't create directory $dirname: $!\n");
+	    $ops++;
+	    foreach my $file (0..$files_per_dir-1) {
+		my ($filename) = "$dirname/f$file";
+		sysopen(FILE, $filename, $fileargs, 0666) || die "Can't create file $filename: $!\n";
+		$ops++;
+		foreach my $block (0..$block_count - 1) {
+		    if ((my $answer = syswrite(FILE, $buffer, $blocksize, $offset)) != $blocksize) {
+			die "Write to $filename failed: $answer $!\n";
+		    }
+		    $ops++;
+		}
+		close FILE;
+	    }
+	}
+    }
+    return $ops;
+}
+
+sub readthem($;$) {
+    my ($process, $oktofail) = @_;
+    my ($ops) = 0;
+    my ($buffer) = 'a' x ($blocksize + $bufalign);
+    my ($offset) = unpack('J', pack('p', $buffer)) % $bufalign;
+    $offset = $bufalign - $offset;
+    my ($fileargs) = O_RDONLY | ($direct ? O_DIRECT : 0);
+    foreach my $bdir (@dirs) {
+	my ($pdir)="$bdir/p$process";
+	next if ($oktofail && ! -d $pdir);
+	my ($dir)="$pdir/$container";
+	next if ($oktofail && ! -d $dir);
+	foreach my $subdir (0..$dirs-1) {
+	    my ($dirname) = "$dir/d$subdir";
+	    next if ($oktofail && ! -d $dirname);
+	    foreach my $file (0..$files_per_dir-1) {
+		my ($filename) = "$dirname/f$file";
+		next if ($oktofail && ! -f $filename);
+		sysopen(FILE, $filename, $fileargs) || die "Can't open file $filename: $!\n";
+		$ops++;
+		foreach my $block (0..$block_count - 1) {
+		    if ((my $answer = sysread(FILE, $buffer, $blocksize, $offset)) != $blocksize) {
+			die "Read from $filename failed: $answer $!\n";
+		    }
+		    $ops++;
+		}
+		close(FILE);
+	    }
+	}
+    }
+    return $ops;
 }
 
 sub removethem($;$) {
@@ -62,69 +133,6 @@ sub removethem($;$) {
 	$ops++;
 	remdir("$pdir", $oktofail);
 	$ops++;
-    }
-    return $ops;
-}
-
-sub readthem($;$) {
-    my ($process, $oktofail) = @_;
-    my ($ops) = 0;
-    my ($buffer);
-    foreach my $bdir (@dirs) {
-	my ($pdir)="$bdir/p$process";
-	next if ($oktofail && ! -d $pdir);
-	my ($dir)="$pdir/$container";
-	next if ($oktofail && ! -d $dir);
-	foreach my $subdir (0..$dirs-1) {
-	    my ($dirname) = "$dir/d$subdir";
-	    next if ($oktofail && ! -d $dirname);
-	    foreach my $file (0..$files_per_dir-1) {
-		my ($filename) = "$dirname/f$file";
-		next if ($oktofail && ! -f $filename);
-		open(FILE, "<", "$filename" || die "Can't open $filename: $!\n");
-		$ops++;
-		foreach my $block (0..$block_count - 1) {
-		    if (sysread(FILE, $buffer, $blocksize) != $blocksize) {
-			die "Write to $filename failed: $!\n";
-		    }
-		    $ops++;
-		}
-		close(FILE);
-	    }
-	}
-    }
-    return $ops;
-}
-
-sub makethem($) {
-    my ($process) = @_;
-    my ($ops) = 0;
-    my ($buffer);
-    vec($buffer, $blocksize - 1, 8) = "A";
-    foreach my $bdir (@dirs) {
-	my ($pdir)="$bdir/p$process";
-	mkdir("$pdir") || die("Can't create directory $pdir: $!\n");
-	$ops++;
-	my ($dir)="$pdir/$container";
-	mkdir("$dir") || die("Can't create directory $dir: $!\n");
-	$ops++;
-	foreach my $subdir (0..$dirs-1) {
-	    my ($dirname) = "$dir/d$subdir";
-	    mkdir("$dirname") || die("Can't create directory $dirname: $!\n");
-	    $ops++;
-	    foreach my $file (0..$files_per_dir-1) {
-		my ($filename) = "$dirname/f$file";
-		open(FILE, ">", $filename) || die "Can't create file $filename: $!\n";
-		$ops++;
-		foreach my $block (0..$block_count - 1) {
-		    if (syswrite(FILE, $buffer, $blocksize) != $blocksize) {
-			die "Write to $filename failed: $!\n";
-		    }
-		    $ops++;
-		}
-		close FILE;
-	    }
-	}
     }
     return $ops;
 }

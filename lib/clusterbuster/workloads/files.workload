@@ -18,10 +18,11 @@
 # Files workload
 ################################################################
 
-declare -ig ___file_size=1024
+declare -ig ___file_size=4096
 declare -ig ___file_block_size=0
 declare -ig ___file_dirs_per_volume=1
 declare -ig ___files_per_dir=1
+declare -ig ___files_direct=0
 
 function _create_containers_files_yaml() {
     local namespace=$1
@@ -63,6 +64,7 @@ $(indent 2 bootstrap_command_yaml files.pl)
   - "$___file_block_size"
   - "$file_blocks"
   - "$processes_per_pod"
+  - "$___files_direct"
 $(tmp_volume_paths=("${volume_mount_paths[@]/%/\"}"); IFS=$'\n'; echo "${tmp_volume_paths[*]/#/  - \"}")
 $(emptydirs=("${emptydirs[@]/%/\"}"); IFS=$'\n'; echo "${emptydirs[*]/#/  - \"}")
 $(indent 2 volume_mounts_yaml "$namespace" "$instance" "$secret_count")
@@ -172,6 +174,7 @@ function help_options_files() {
                         If unspecified, it defaults to the file size.
                         This should be a divisor of the file size; if not,
                         the results are unspecified.
+       --files-direct   Use direct I/O (default no)
 EOF
 }
 
@@ -190,9 +193,10 @@ function process_options_files() {
 	case "$noptname1" in
 	    dirspervolume)	___file_dirs_per_volume=$optvalue		;;
 	    filesperdir)	___files_per_dir=$optvalue			;;
-	    fileblocksize)	___file_block_size=$(parse_size $optvalue)	;;
-	    filesize)		___file_size=$(parse_size $optvalue)		;;
-	    *) 			unknown_opts+=("$noptname ($noptname1)") ;;
+	    fileblocksize)	___file_block_size=$(parse_size "$optvalue")	;;
+	    filesize)		___file_size=$(parse_size "$optvalue")		;;
+	    filesdirect)	___files_direct=$(bool "$optvalue")		;;
+	    *) 			unknown_opts+=("$noptname ($noptname1)") 	;;
 	esac
     done
     if [[ -n "${unknown_opts[*]:-}" ]] ; then
@@ -212,7 +216,8 @@ function report_options_files() {
 "dirs_per_volume": $___file_dirs_per_volume,
 "files_per_dir": $___files_per_dir,
 "file_block_size": $___file_block_size,
-"file_size": $___file_size
+"file_size": $___file_size,
+"files_direct": $___files_direct
 EOF
 }
 

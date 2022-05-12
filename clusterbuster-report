@@ -24,7 +24,7 @@ from lib.clusterbuster.reporter.ClusterBusterReporter import ClusterBusterReport
 
 parser = argparse.ArgumentParser(description='Generate ClusterBuster report')
 
-report_formats={'summary', 'verbose', 'raw',
+report_formats={'none', 'summary', 'verbose', 'raw',
                 'json-summary', 'json', 'json-verbose',
                 'parseable-summary', 'parseable-verbose'}
 
@@ -52,6 +52,8 @@ def do_report(workload: str, jdata: dict):
 
 
 def process_report(jdata: dict):
+    if args.format == 'none':
+        return
     if args.workload:
         workload = args.workload
     elif 'workload_reporting_class' in jdata['metadata']:
