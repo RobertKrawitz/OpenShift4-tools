@@ -129,6 +129,10 @@ declare -r default_metrics_file=metrics-default.yaml
 declare -i drop_node_cache=0
 declare -i drop_all_node_cache=0
 declare -i headless_services=1
+declare -i virtiofsd_writeback=0
+declare -i virtiofsd_direct=1
+declare -i virtiofsd_threadpoolsize=0
+declare -a virtiofsd_args=()
 
 declare -r sync_flag_file="/tmp/syncfile";
 declare -r controller_timestamp_file="/tmp/timing.json";
@@ -797,6 +801,9 @@ function process_option() {
 	dropcache)                  drop_node_cache=$(bool "$optvalue")         ;;
 	dropallcache)		    drop_all_node_cache=$(bool "$optvalue")     ;;
 	headlessservices)	    headless_services=$(bool "$optvalue")	;;
+	virtiofsdwriteback)	    virtiofsd_writeback=$(bool "$optvalue")	;;
+	virtiofsddirect)	    virtiofsd_direct=$(bool "$optvalue")	;;
+	virtiofsdthread*)	    virtiofsd_threadpoolsize=$optvalue		;;
 	affinity)
 	    case "$optvalue" in
 		1|'') affinity=1      ;;
@@ -1567,9 +1574,6 @@ function print_report() {
 function get_logs() {
     trap '' TERM
     local extra_arg=
-    if [[ ${report_format,,} = none ]] ; then
-	return
-    fi
     local log_cmd
     if supports_api supports_reporting ; then
 	log_cmd=get_logs_poll
@@ -2801,6 +2805,13 @@ for i in $(seq 0 $((emptydir_volumes-1)) ) ; do
 done
 
 job_name=${job_name:-${requested_workload:-}}
+
+((virtiofsd_direct)) && virtiofsd_args+=('"-o"' '"allow_direct_io"')
+((virtiofsd_writeback)) && virtiofsd_args+=('"-o"' '"writeback"')
+((virtiofsd_threadpoolsize)) && virtiofsd_args+=("\"--thread-pool-size=$virtiofsd_threadpoolsize\"")
+if [[ -n "${virtiofsd_args[*]:-}" ]] ; then
+    pod_annotations+=("io.katacontainers.config.hypervisor.virtio_fs_extra_args: '[$(IFS=,; echo "${virtiofsd_args[*]}")]'")
+fi
 
 shift $((OPTIND - 1))
 if [[ -n ${1:-} ]] ; then
