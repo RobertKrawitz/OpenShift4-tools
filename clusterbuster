@@ -133,6 +133,7 @@ declare -i virtiofsd_writeback=0
 declare -i virtiofsd_direct=1
 declare -i virtiofsd_threadpoolsize=0
 declare -a virtiofsd_args=()
+declare -a liveness_probe_frequency=0
 
 declare -r sync_flag_file="/tmp/syncfile";
 declare -r controller_timestamp_file="/tmp/timing.json";
@@ -482,6 +483,9 @@ $(print_workloads_supporting_reporting '                        - ')
        --headless-services=[0,1]
                         Use headless services for service creation.
                         Default ${headless_services}
+       --liveness-probe=<interval>
+                        Execute a simple liveness probe every <interval>
+                        seconds.
 
     Tuning object creation (short equivalents):
        --scale-ns=[0,1] Scale up the number of namespaces vs.
@@ -804,6 +808,7 @@ function process_option() {
 	virtiofsdwriteback)	    virtiofsd_writeback=$(bool "$optvalue")	;;
 	virtiofsddirect)	    virtiofsd_direct=$(bool "$optvalue")	;;
 	virtiofsdthread*)	    virtiofsd_threadpoolsize=$optvalue		;;
+	livenessprobe*)		    liveness_probe_frequency=$optvalue		;;
 	affinity)
 	    case "$optvalue" in
 		1|'') affinity=1      ;;
@@ -1469,6 +1474,12 @@ function _workload_reporting_class() {
     fi
 }
 
+function _report_liveness_probe() {
+    if ((liveness_probe_frequency > 0)) ; then
+	echo "\"liveness_probe_frequency\": $liveness_probe_frequency,"
+    fi
+}
+
 function _report_objects() {
     local first_local_ts
     local remote_ts
@@ -1515,6 +1526,7 @@ function _report_objects() {
     "always_drop_cache": $drop_all_node_cache,
     "pin_nodes": {$(_report_pin_nodes)},
     $(indent 4 _report_volumes)
+    $(_report_liveness_probe)
     "secrets": $secrets,
     "replicas": $replicas,
     "container_image": "$container_image",
@@ -1943,6 +1955,19 @@ EOF
 - name: "systemconfigmap-${namespace}"
   configMap:
     name: "systemconfigmap-${namespace}"
+EOF
+    fi
+}
+
+function liveness_probe_yaml() {
+    if ((liveness_probe_frequency > 0)) ; then
+	cat <<EOF
+livenessProbe:
+  exec:
+    command:
+    - /bin/true
+  initialDelaySeconds: 10
+  periodSeconds: $liveness_probe_frequency
 EOF
     fi
 }

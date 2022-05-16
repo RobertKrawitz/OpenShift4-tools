@@ -56,6 +56,7 @@ function _create_containers_log_yaml() {
 - name: ${namespace}-${instance}-$container
   imagePullPolicy: $image_pull_policy
   image: "$container_image"
+$(indent 2 liveness_probe_yaml)
 $(indent 2 container_resources_yaml)
   env:
   - name: VERBOSE

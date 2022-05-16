@@ -35,6 +35,7 @@ function _create_containers_cpusoaker_yaml() {
 - name: "c$container"
   imagePullPolicy: $image_pull_policy
   image: "$container_image"
+$(indent 2 liveness_probe_yaml)
 $(indent 2 container_resources_yaml)
   env:
   - name: VERBOSE

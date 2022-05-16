@@ -36,6 +36,7 @@ function _create_uperf_server_container_yaml() {
 - name: server
   image: "$container_image"
   image_pull_policy: $image_pull_policy
+$(indent 2 liveness_probe_yaml)
 $(indent 2 container_resources_yaml)
   ports:
   - containerPort: $___uperf_port
@@ -94,6 +95,7 @@ function _create_uperf_client_container_yaml() {
 - name: c${container}
   image: "$container_image"
   image_pull_policy: $image_pull_policy
+$(indent 2 liveness_probe_yaml)
 $(indent 2 container_resources_yaml)
   env:
   - name: VERBOSE
