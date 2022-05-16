@@ -22,8 +22,8 @@ OC=${OC:-$(type -p kubectl)}	# kubectl might not work, though...
 CLUSTERBUSTER="$(dirname "$0")/../clusterbuster"
 
 declare -A profiles=()
-profiles[auto]='--job_runtime=120 --fio-fdatasync=0 --job-timeout=9000 --fio-max-relative-filesize=0.25 --fio-memsize=4096 --artifactdir= --virtiofsd-direct --restart'
-
+files_runs_auto=$(echo files-params={1,4}:256:256:{4096:{0,4096,262144},65536:262144}:{0,1})
+profiles[auto]="job_runtime=120 fio-fdatasync=0 job-timeout=9000 fio-max-relative-filesize=0.25 fio-memsize=4096 artifactdir= virtiofsd-direct restart $files_runs_auto"
 
 declare client_pin_node=
 declare server_pin_node=
@@ -72,8 +72,8 @@ declare -i fio_pod_memsize=
 declare -a files_ninst=(1 4)
 declare -a files_dirs_per_volume=(256)
 declare -a files_per_dir=(256)
-declare -a files_block_size=(1024)
-declare -a files_sizes=(0 1024 $((256 * 1024)))
+declare -a files_block_size=(4096 65536)
+declare -a files_sizes=(0 4096 $((256 * 1024)))
 declare -a files_directs=(0 1)
 declare -i files_job_timeout=9000
 declare -a files_params=()
@@ -240,63 +240,63 @@ function process_option() {
     read -r noptname1 noptname optvalue <<< "$(parse_option "$1")"
     optvalue=$(splitarg "$optvalue")
     case "$noptname1" in
-	clientpin*) client_pin_node=$optvalue					;;
-	serverpin*) server_pin_node=$optvalue					;;
-	syncpin*) sync_pin_node=$optvalue					;;
-	jobruntime|runtime) job_runtime=$optvalue				;;
-	jobtimeout|timeout) job_timeout=$optvalue				;;
-	artifactdir) artifactdir="${optvalue:-${artifactdir:-$(pwd)}}"		;;
-	reportformat*) report_format=$optvalue					;;
-	runtimeclass*) readarray -t runtimeclasses <<< "$optvalue"		;;
-	reportobject*) report_object_creation=$(bool "$optvalue")		;;
-	cleanup*) cleanup=$(bool "$optvalue")					;;
-	restart) restart=$(bool "$optvalue")					;;
-	profile) process_profile "$optvalue"					;;
+	clientpin*) client_pin_node=$optvalue						;;
+	serverpin*) server_pin_node=$optvalue						;;
+	syncpin*) sync_pin_node=$optvalue						;;
+	jobruntime|runtime) job_runtime=$optvalue					;;
+	jobtimeout|timeout) job_timeout=$optvalue					;;
+	artifactdir) artifactdir="${optvalue:-${artifactdir:-$(pwd)}}"			;;
+	reportformat*) report_format=$optvalue						;;
+	runtimeclass*) readarray -t runtimeclasses <<< "$optvalue"			;;
+	reportobject*) report_object_creation=$(bool "$optvalue")			;;
+	cleanup*) cleanup=$(bool "$optvalue")						;;
+	restart) restart=$(bool "$optvalue")						;;
+	profile) process_profile "$optvalue"						;;
 
-	virtiofsdwriteback) virtiofsd_writeback=$(bool "$optvalue")		;;
-	virtiofsddirect) virtiofsd_direct=$(bool "$optvalue")			;;
-	virtiofsdthreadpool) virtiofsd_threadpoolsize=$optvalue			;;
+	virtiofsdwriteback) virtiofsd_writeback=$(bool "$optvalue")			;;
+	virtiofsddirect) virtiofsd_direct=$(bool "$optvalue")				;;
+	virtiofsdthreadpool) virtiofsd_threadpoolsize=$optvalue				;;
 
-	scalingstarting*) scaling_starting_namespaces=$optvalue			;;
-	scalingdeps*) scaling_deps_per_namespace=$optvalue			;;
-	scaling*runtime) scaling_job_runtime=$optvalue				;;
-	scaling*timeout) scaling_job_timeout=$optvalue				;;
+	scalingstarting*) scaling_starting_namespaces=$optvalue				;;
+	scalingdeps*) scaling_deps_per_namespace=$optvalue				;;
+	scaling*runtime) scaling_job_runtime=$optvalue					;;
+	scaling*timeout) scaling_job_timeout=$optvalue					;;
 
-	uperfmsg*) readarray -t uperf_msg_sizes <<< "$optvalue"			;;
-	uperfnthr*) readarray -t uperf_nthrs <<< "$optvalue"			;;
-	uperfninst*) readarray -t uperf_ninst <<< "$optvalue"			;;
-	uperftest*) readarray -t uperf_test_types <<< "$optvalue"		;;
-	uperf*runtime) uperf_job_runtime=$optvalue				;;
-	uperf*timeout) uperf_job_timeout=$optvalue				;;
+	uperfmsg*) readarray -t uperf_msg_sizes <<< "$optvalue"				;;
+	uperfnthr*) readarray -t uperf_nthrs <<< "$optvalue"				;;
+	uperfninst*) readarray -t uperf_ninst <<< "$optvalue"				;;
+	uperftest*) readarray -t uperf_test_types <<< "$optvalue"			;;
+	uperf*runtime) uperf_job_runtime=$optvalue					;;
+	uperf*timeout) uperf_job_timeout=$optvalue					;;
 
-	fioblock*) readarray -t fio_blocksizes <<< "$optvalue"			;;
-	fiopat*) readarray -t fio_patterns <<< "$optvalue"			;;
-	fiodirect*) readarray -t fio_directs <<< "$(bool "$optvalue")"		;;
-	fiofdatasync*) readarray -t fio_fdatasyncs <<< "$(bool "$optvalue")"	;;
-	fioiodepth*) readarray -t fio_iodepths <<< "$optvalue"			;;
-	fioioeng*) readarray -t fio_ioengines <<< "$optvalue"			;;
-	fioninst*) readarray -t fio_ninst <<< "$optvalue"			;;
-	fioworkdir) fio_workdir=$optvalue					;;
-	fio*runtime) fio_job_runtime=$optvalue					;;
-	fioramp*) fio_ramptime=$optvalue					;;
-	fioabs*file*) fio_absolute_filesize=$(parse_size "$optvalue")		;;
-	fiomaxabs*file*) fio_max_absolute_filesize=$(parse_size "$optvalue")	;;
-	fiorel*file*) fio_relative_filesize="$optvalue"				;;
-	fiomaxrel*file*) fio_max_relative_filesize="$optvalue"			;;
-	fio*timeout) fio_job_timeout=$optvalue					;;
-	fio*memsize) fio_pod_memsize=$(parse_size "$optvalue")			;;
+	fioblock*) readarray -t fio_blocksizes <<< "$optvalue"				;;
+	fiopat*) readarray -t fio_patterns <<< "$optvalue"				;;
+	fiodirect*) readarray -t fio_directs <<< "$(bool "$optvalue")"			;;
+	fiofdatasync*) readarray -t fio_fdatasyncs <<< "$(bool "$optvalue")"		;;
+	fioiodepth*) readarray -t fio_iodepths <<< "$optvalue"				;;
+	fioioeng*) readarray -t fio_ioengines <<< "$optvalue"				;;
+	fioninst*) readarray -t fio_ninst <<< "$optvalue"				;;
+	fioworkdir) fio_workdir=$optvalue						;;
+	fio*runtime) fio_job_runtime=$optvalue						;;
+	fioramp*) fio_ramptime=$optvalue						;;
+	fioabs*file*) fio_absolute_filesize=$(parse_size "$optvalue")			;;
+	fiomaxabs*file*) fio_max_absolute_filesize=$(parse_size "$optvalue")		;;
+	fiorel*file*) fio_relative_filesize="$optvalue"					;;
+	fiomaxrel*file*) fio_max_relative_filesize="$optvalue"				;;
+	fio*timeout) fio_job_timeout=$optvalue						;;
+	fio*memsize) fio_pod_memsize=$(parse_size "$optvalue")				;;
 
-	filesninst*) readarray -t files_ninst <<< "$optvalue"			;;
+	filesninst*) readarray -t files_ninst <<< "$optvalue"				;;
 	filesdirs*) readarray -t files_dirs_per_volume <<< "$(parse_size "$optvalue")"	;;
 	filesperdir*) readarray -t files_per_dir <<< "$(parse_size "$optvalue")"	;;
 	filesblocksize*) readarray -t files_block_size <<< "$(parse_size "$optvalue")"	;;
-	filessize*) readarray -t files_sizes <<< "$(parse_size "$optvalue")"	;;
-	filesdirect*) readarray -t files_directs <<< "$optvalue"		;;
-	files*timeout) files_job_timeout=$optvalue				;;
-	files*params) IFS=, files_params+=($optvalue)				;;
-	filesmindir*) files_min_direct=$(parse_size "$optvalue")		;;
+	filessize*) readarray -t files_sizes <<< "$(parse_size "$optvalue")"		;;
+	filesdirect*) readarray -t files_directs <<< "$optvalue"			;;
+	files*timeout) files_job_timeout=$optvalue					;;
+	files*params) files_params+=(${optvalue//,/ })					;;
+	filesmindir*) files_min_direct=$(parse_size "$optvalue")			;;
 
-	*) fatal "Unknown option --$1"						;;
+	*) fatal "Unknown option --$1"							;;
     esac
 }
 
@@ -558,6 +558,13 @@ function test_files() {
     local options
     for options in "${files_params[@]}" ; do
 	read -r ninst files_dirs_per_volume files_per_dir files_block_size file_size files_direct <<< "$(parse_size ${options//:/ })"
+	if [[ -z "$files_direct" ]] ; then
+	    echo "Unparsable options $options" 1>&2
+	    continue
+	fi
+	if ((files_block_size > file_size && file_size > 0)) ; then
+	    files_block_size=$file_size
+	fi
 	job_name="files-${ninst}P-${files_dirs_per_volume}D-${files_per_dir}F-${files_block_size}B-${file_size}S-${files_direct}T"
 	# shellcheck disable=SC2090
 	run_clusterbuster -j "$job_name" -w files -r "$runtimeclass" -t "$files_job_timeout" -- \
