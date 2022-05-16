@@ -367,20 +367,23 @@ sub process_files() {
 		    my ($f4) = $$f3{$blocksize};
 		    foreach my $blocks (sort { $a <=> $b } keys %$f4) {
 			my ($f5) = $$f4{$blocks};
-			foreach my $runtime ('kata', 'nonkata') {
-			    foreach my $op ('create', 'read', 'remove') {
-				$$f5{$runtime}{$op}{'rate'} = $dirs * $files / $$f5{$runtime}{'create'}{'elapsed_time'};
+			foreach my $direct (sort { $a <=> $b } keys %$f5) {
+			    my ($f6) = $$f5{$direct};
+			    foreach my $runtime ('kata', 'nonkata') {
+				foreach my $op ('create', 'read', 'remove') {
+				    $$f6{$runtime}{$op}{'rate'} = safe_div($dirs * $files, $$f6{$runtime}{$op}{'elapsed_time'});
+				}
 			    }
-			}
-			printf("\nPods: %d, Dirs: %d, files per dir: %d, total files: %d, block size: %d, file size: %d, total bytes %s\n",
-			       $pods, $dirs, $files, $dirs * $files * $pods, $blocksize, $blocks, print_value_bin($pods * $dirs * $files * $blocks, "B"));
-			print_one_files_job($f5);
-			foreach my $runtime ('kata', 'nonkata') {
-			    foreach my $op ('create', 'read', 'remove') {
-				foreach my $var ('elapsed_time', 'cpu_time', 'rate', 'io_throughput') {
-				    if ($$f5{'kata'}{$op}{$var} > 0 && $$f5{'nonkata'}{$op}{$var} > 0) {
-					$geomean{$runtime}{$op}{$var}{'logvalue'} += log($$f5{$runtime}{$op}{$var});
-					$geomean{$runtime}{$op}{$var}{'count'}++;
+			    printf("\nPods: %d, Dirs: %d, files per dir: %d, total files: %d, block size: %d, file size: %d, total bytes %s, direct: $direct\n",
+				   $pods, $dirs, $files, $dirs * $files * $pods, $blocksize, $blocks, print_value_bin($pods * $dirs * $files * $blocks, "B"));
+			    print_one_files_job($f6);
+			    foreach my $runtime ('kata', 'nonkata') {
+				foreach my $op ('create', 'read', 'remove') {
+				    foreach my $var ('elapsed_time', 'cpu_time', 'rate', 'io_throughput') {
+					if ($$f6{'kata'}{$op}{$var} > 0 && $$f6{'nonkata'}{$op}{$var} > 0) {
+					    $geomean{$direct}{$runtime}{$op}{$var}{'logvalue'} += log($$f6{$runtime}{$op}{$var});
+					    $geomean{$direct}{$runtime}{$op}{$var}{'count'}++;
+					}
 				    }
 				}
 			    }
@@ -390,8 +393,10 @@ sub process_files() {
 	    }
 	}
     }
-    printf("\nGeomean:\n");
-    print_one_files_job(\%geomean);
+    foreach my $direct (sort keys %geomean) {
+	printf("\nGeomean: direct: $direct\n");
+	print_one_files_job($geomean{$direct});
+    }
 }
 
 sub analyze_directory($) {
