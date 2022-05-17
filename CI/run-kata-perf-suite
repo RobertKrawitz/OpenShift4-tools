@@ -23,7 +23,7 @@ CLUSTERBUSTER="$(dirname "$0")/../clusterbuster"
 
 declare -A profiles=()
 files_runs_auto=$(echo files-params={1,4}:256:256:{4096:{0,4096,262144},65536:262144}:{0,1})
-profiles[auto]="job_runtime=120 fio-fdatasync=0 job-timeout=9000 fio-max-relative-filesize=0.25 fio-memsize=4096 artifactdir= virtiofsd-direct restart $files_runs_auto"
+profiles[auto]="job_runtime=120 fio-fdatasync=0 job-timeout=9000 fio-max-relative-filesize=0.25 fio-memsize=4096 artifactdir= virtiofsd-direct restart use-python-venv $files_runs_auto"
 
 declare client_pin_node=
 declare server_pin_node=
@@ -39,6 +39,8 @@ declare -i run_timeout=0
 declare -i monitor_pid=0
 declare -i force_pull_image=0
 declare job_pid=
+declare -i use_python_venv=0
+declare python_venv=
 
 declare -a workloads=(scaling uperf fio files)
 declare -a runtimeclasses=('' 'kata')
@@ -118,6 +120,10 @@ function finis() {
 
 	echo "Run took $(to_hms "$starting_timestamp" "$ending_timestamp")"
 	starting_timestamp=
+    fi
+    if [[ -n "$python_venv" && -d "$python_venv" ]] ; then
+	deactivate
+	rm -rf "$python_venv"
     fi
     exit $fail
 }
@@ -375,6 +381,7 @@ function process_option() {
 	runtimeout) run_timeout=$(parse_time "$optvalue")				;;
 	profile) process_profile "$optvalue"						;;
 	forcepull*) force_pull_image="$(bool "$optvalue")"				;;
+	usepythonvenv*) use_python_venv="$(bool "$optvalue")"				;;
 
 	virtiofsdwriteback) virtiofsd_writeback=$(bool "$optvalue")			;;
 	virtiofsddirect) virtiofsd_direct=$(bool "$optvalue")				;;
@@ -482,6 +489,14 @@ function computeit() {
 
 ((fio_absolute_filesize <= 0)) && fio_absolute_filesize=$(computeit "$fio_node_memory * $fio_relative_filesize")
 ((fio_max_absolute_filesize <= 0)) && fio_max_absolute_filesize=$(computeit "$fio_node_memory * $fio_max_relative_filesize")
+
+function python_create_venv() {
+    local dir=$1
+    python3 -m venv "$1" || fatal "Can't create venv!"
+    . "$1/bin/activate" || fatal "Can't activate venv!"
+    python3 -m pip install --upgrade pip || fatal "Can't upgrade pip!"
+    pip3 install prometheus-api-client==0.5.0 openshift-client==1.0.14 || fatal "Can't install Python packages!"
+}
 
 function to_hms() {
     local -i start=$1
@@ -705,6 +720,10 @@ function test_files() {
     done
 }
 
+if ((use_python_venv)) ; then
+    python_venv=$(mktemp -d -t "cb-ci-venv.XXXXXXXX")
+    python_create_venv "$python_venv"
+fi
 monitor "$run_timeout"
 trap "if ((monitor_pid > 0)) ; then kill $monitor_pid; fi; echo Job timed out after $run_timeout seconds; fail=3; finis" USR1
 trap '((fail < 2)) && fail=2; if [[ -n "$job_pid" ]] ; then kill $job_pid; wait; fi; finis' TERM INT HUP EXIT
