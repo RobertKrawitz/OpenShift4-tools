@@ -37,7 +37,7 @@ declare -i cleanup=0
 declare dontdoit=
 declare -i run_timeout=0
 declare -i monitor_pid=0
-declare -i force_pull_base=0
+declare -i force_pull_image=0
 declare job_pid=
 
 declare -a workloads=(scaling uperf fio files)
@@ -374,7 +374,7 @@ function process_option() {
 	restart) restart=$(bool "$optvalue")						;;
 	runtimeout) run_timeout=$(parse_time "$optvalue")				;;
 	profile) process_profile "$optvalue"						;;
-	forcepull*) force_pull_image="$(bool "$optvalue")"			;;
+	forcepull*) force_pull_image="$(bool "$optvalue")"				;;
 
 	virtiofsdwriteback) virtiofsd_writeback=$(bool "$optvalue")			;;
 	virtiofsddirect) virtiofsd_direct=$(bool "$optvalue")				;;
