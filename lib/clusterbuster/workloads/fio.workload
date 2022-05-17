@@ -231,7 +231,7 @@ function process_options_fio() {
 	    fiojobfile)		___fio_job_file=$optvalue		 ;;
 	    fioioengine*)	fioioengine=$optvalue			 ;;
 	    fioiodepth*)	fioiodepth=$optvalue			 ;;
-	    fiodirect*)		fiodirect=$(bool "$optvalue")		 ;;
+	    fiodirect*)		fiodirect=$optvalue			 ;;
 	    fioramptime)	___fio_ramptime=$optvalue		 ;;
 	    fiofdatasync*)	fiofdatasync=$optvalue			 ;;
 	    fiofilesize)	___fio_filesize=$(parse_size "$optvalue");;
@@ -261,7 +261,7 @@ function process_options_fio() {
 	___fio_ioengines=(${fioioengine//,/ })
     fi
     if [[ -n "${fiodirect:-}" ]] ; then
-	readarray -t ___fio_directs <<< "$(parse_size ${fiodirect//,/ })"
+	readarray -t ___fio_directs <<< "$(bool ${fiodirect//,/ })"
     fi
     if [[ -n "${fiofdatasync:-}" ]] ; then
 	readarray -t ___fio_fdatasyncs <<< "$(parse_size ${fiofdatasync//,/ })"
