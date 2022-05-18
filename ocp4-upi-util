@@ -939,14 +939,14 @@ function _get_ns_version() {
 
 function _get_operator_channel() {
     local operator=$1
-    oc get packagemanifest -n openshift-marketplace sandboxed-containers-operator -ojsonpath='{.status.defaultChannel}'
+    oc get packagemanifest -n openshift-marketplace "$operator" -ojsonpath='{.status.defaultChannel}'
 }
 
 function _get_operator_field() {
     local operator=$1
     local channel=$2
     local field=$3
-    oc get packagemanifest -n openshift-marketplace sandboxed-containers-operator -ojson | jq -r '[foreach .status.channels[] as $channel ([[],[]];0; (if ($channel.name == "'"$channel"'") then $channel.'"$field"' else null end))] | flatten | map (select (. != null))[]'
+    oc get packagemanifest -n openshift-marketplace "$operator" -ojson | jq -r '[foreach .status.channels[] as $channel ([[],[]];0; (if ($channel.name == "'"$channel"'") then $channel.'"$field"' else null end))] | flatten | map (select (. != null))[]'
 }
 
 function _get_operator_csv() {
