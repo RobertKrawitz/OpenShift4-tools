@@ -133,7 +133,8 @@ declare -i virtiofsd_writeback=0
 declare -i virtiofsd_direct=1
 declare -i virtiofsd_threadpoolsize=0
 declare -a virtiofsd_args=()
-declare -a liveness_probe_frequency=0
+declare -i liveness_probe_frequency=0
+declare -i liveness_probe_sleep_time=0
 
 declare -r sync_flag_file="/tmp/syncfile";
 declare -r controller_timestamp_file="/tmp/timing.json";
@@ -486,6 +487,9 @@ $(print_workloads_supporting_reporting '                        - ')
        --liveness-probe=<interval>
                         Execute a simple liveness probe every <interval>
                         seconds.
+       --liveness-probe-sleep=<seconds>
+                        Arrange for the liveness probe to sleep for specified
+                        time.
 
     Tuning object creation (short equivalents):
        --scale-ns=[0,1] Scale up the number of namespaces vs.
@@ -808,7 +812,8 @@ function process_option() {
 	virtiofsdwriteback)	    virtiofsd_writeback=$(bool "$optvalue")	;;
 	virtiofsddirect)	    virtiofsd_direct=$(bool "$optvalue")	;;
 	virtiofsdthread*)	    virtiofsd_threadpoolsize=$optvalue		;;
-	livenessprobe*)		    liveness_probe_frequency=$optvalue		;;
+	livenessprobeint*)	    liveness_probe_frequency=$optvalue		;;
+	livenessprobesleep*)	    liveness_probe_sleep_time=$optvalue		;;
 	affinity)
 	    case "$optvalue" in
 		1|'') affinity=1      ;;
@@ -1379,7 +1384,7 @@ function _get_logs_poll() {
 function get_logs_poll() {
     local tfile
     tfile=$(mktemp ${cb_tempdir:+-p "$cb_tempdir"} -t '_clusterbusterlogs.XXXXXXXXXX') || fatal "Cannot create temporary file"
-    trap "rm -f '$tfile'; echo 'Status: Fail'; return 1" INT TERM HUP USR1
+    trap 'if [[ -n "$tfile" && -f "$tfile" ]] ; then rm -f "$tfile"; tfile=; fi; echo "Status: Fail"; return 1' INT TERM HUP USR1
     _get_logs_poll "$@" > "$tfile"
     local status=$?
     if ((status == 0)) ; then
@@ -1389,6 +1394,7 @@ function get_logs_poll() {
 	echo '"Status": "Fail"'
     fi
     rm -f "$tfile"
+    tfile=
     return $status
 }
 
@@ -1475,9 +1481,10 @@ function _workload_reporting_class() {
 }
 
 function _report_liveness_probe() {
-    if ((liveness_probe_frequency > 0)) ; then
-	echo "\"liveness_probe_frequency\": $liveness_probe_frequency,"
-    fi
+    cat <<EOF
+"liveness_probe_frequency": $liveness_probe_frequency,
+"liveness_probe_sleep_time": $liveness_probe_sleep_time,
+EOF
 }
 
 function _report_objects() {
@@ -1668,6 +1675,24 @@ function container_resources_yaml() {
 	    indent 4 resources "${resource_requests[@]}"
 	fi
     fi
+}
+
+function liveness_probe_yaml() {
+    if ((liveness_probe_frequency > 0)) ; then
+	cat <<EOF
+livenessProbe:
+  exec:
+    command:
+    - /bin/sleep "$liveness_probe_sleep_time"
+  initialDelaySeconds: 10
+  periodSeconds: $liveness_probe_frequency
+EOF
+    fi
+}
+
+function container_standard_auxiliary_yaml() {
+    container_resources_yaml
+    liveness_probe_yaml
 }
 
 function resources() {
@@ -1955,19 +1980,6 @@ EOF
 - name: "systemconfigmap-${namespace}"
   configMap:
     name: "systemconfigmap-${namespace}"
-EOF
-    fi
-}
-
-function liveness_probe_yaml() {
-    if ((liveness_probe_frequency > 0)) ; then
-	cat <<EOF
-livenessProbe:
-  exec:
-    command:
-    - /bin/true
-  initialDelaySeconds: 10
-  periodSeconds: $liveness_probe_frequency
 EOF
     fi
 }
