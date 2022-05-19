@@ -39,7 +39,7 @@ declare -i run_timeout=0
 declare -i monitor_pid=0
 declare -i force_pull_image=0
 declare job_pid=
-declare -i use_python_venv=0
+declare -i use_python_venv=1
 declare python_venv=
 
 declare -a workloads=(scaling uperf fio files)
@@ -59,9 +59,9 @@ declare -i uperf_job_timeout=0
 
 declare -a fio_blocksizes=(4096 1048576)
 declare -a fio_patterns=(read write randread randwrite readwrite randrw)
-declare -a fio_directs=(0 1)
+declare -a fio_directs=(1)
 declare -a fio_fdatasyncs=(0)
-declare -a fio_iodepths=(1 2)
+declare -a fio_iodepths=(1 4)
 declare -a fio_ioengines=(sync libaio)
 declare -a fio_ninst=(1 4)
 declare -i fio_job_runtime=0
@@ -494,8 +494,8 @@ function python_create_venv() {
     local dir=$1
     python3 -m venv "$1" || fatal "Can't create venv!"
     . "$1/bin/activate" || fatal "Can't activate venv!"
-    python3 -m pip install --upgrade pip || fatal "Can't upgrade pip!"
-    pip3 install prometheus-api-client==0.5.0 openshift-client==1.0.14 || fatal "Can't install Python packages!"
+    python3 -m pip -q install --upgrade pip || fatal "Can't upgrade pip!"
+    pip3 -q install prometheus-api-client==0.5.0 openshift-client==1.0.14 || fatal "Can't install Python packages!"
 }
 
 function to_hms() {
@@ -726,7 +726,7 @@ if ((use_python_venv)) ; then
 fi
 monitor "$run_timeout"
 trap "if ((monitor_pid > 0)) ; then kill $monitor_pid; fi; echo Job timed out after $run_timeout seconds; fail=3; finis" USR1
-trap '((fail < 2)) && fail=2; if [[ -n "$job_pid" ]] ; then kill $job_pid; wait; fi; finis' TERM INT HUP EXIT
+trap 'if ((fail < 2)) ; then fail=2; fi; if [[ -n "$job_pid" ]] ; then kill $job_pid; wait; fi; finis' TERM INT HUP EXIT
 if ((force_pull_image)) ; then
     force_pull_base_image
 fi
