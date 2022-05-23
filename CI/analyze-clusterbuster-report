@@ -14,6 +14,7 @@
 # limitations under the License.
 
 use strict;
+use Cwd ('realpath');
 
 my (%scaling_data);
 my (%uperf_data);
@@ -401,9 +402,9 @@ sub process_files() {
 
 sub analyze_directory($) {
     my ($dir) = @_;
-    my ($analyze_cmd) = $0;
+    my ($analyze_cmd) = realpath($0);
     $analyze_cmd =~ s,[^/]*$,../clusterbuster-report,;
-    open(my $summary, '-|', $analyze_cmd, '-o', 'parseable-summary', $dir) || die "Can't run $analyze_cmd: $!\n";
+    open(my $summary, '-|', realpath($analyze_cmd), '-o', 'parseable-summary', $dir) || die "Can't run $analyze_cmd: $!\n";
     read_summary($summary);
     close($summary);
 }
