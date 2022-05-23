@@ -19,7 +19,7 @@ set -u
 declare OC=${OC:-${KUBECTL:-}}
 OC=${OC:-$(type -p oc)}
 OC=${OC:-$(type -p kubectl)}	# kubectl might not work, though...
-CLUSTERBUSTER="$(dirname "$0")/../clusterbuster"
+CLUSTERBUSTER="$(realpath "$(dirname "$(realpath -e "$0")")/../clusterbuster")"
 
 declare -A profiles=()
 files_runs_auto=$(echo files-params={1,4}:256:256:{4096:{0,4096,262144},65536:262144}:{0,1})
@@ -41,12 +41,14 @@ declare -i force_pull_image=0
 declare job_pid=
 declare -i use_python_venv=1
 declare python_venv=
+declare basename=
 
 declare -a workloads=(scaling uperf fio files)
 declare -a runtimeclasses=('' 'kata')
 
 declare -i scaling_starting_namespaces=1
 declare -i scaling_deps_per_namespace=5
+declare -i scaling_max_namespaces=-1
 declare -i scaling_job_runtime=0
 declare -i scaling_job_timeout=0
 
@@ -101,6 +103,11 @@ declare starting_timestamp=
 declare job_datestamp
 
 function finis() {
+    if [[ -n "$job_pid" ]] ; then
+	kill $job_pid
+	wait "$job_pid"
+	job_pid=
+    fi
     if [[ -n "${starting_timestamp:-}" && $$ -eq "$BASHPID" ]] ; then
 	local ending_timestamp
 	ending_timestamp=$(date +%s)
@@ -167,7 +174,7 @@ function parse_size() {
 	    esac
 	    echo -n "$((size*size_multiplier)) "
 	else
-	    fatal "Cannot parse filesize $optvalue"
+	    fatal "Cannot parse size $optvalue"
 	fi
     done
 }
@@ -281,6 +288,10 @@ function monitor_1() {
     if ((timeout <= 0)) ; then
 	timeout=infinity
     fi
+    # Allow the main process to catch these signals and terminate us.
+    # However, allow SIGHUP through so that if we get hung up on we'll
+    # safely exit.
+    trap true TERM INT
     sleep "$timeout"
     kill -USR1 $$
 }
@@ -382,6 +393,7 @@ function process_option() {
 	profile) process_profile "$optvalue"						;;
 	forcepull*) force_pull_image="$(bool "$optvalue")"				;;
 	usepythonvenv*) use_python_venv="$(bool "$optvalue")"				;;
+	basename) basename=$optvalue							;;
 
 	virtiofsdwriteback) virtiofsd_writeback=$(bool "$optvalue")			;;
 	virtiofsddirect) virtiofsd_direct=$(bool "$optvalue")				;;
@@ -391,6 +403,7 @@ function process_option() {
 	scalingdeps*) scaling_deps_per_namespace=$optvalue				;;
 	scaling*runtime) scaling_job_runtime=$optvalue					;;
 	scaling*timeout) scaling_job_timeout=$optvalue					;;
+	scalingmax*) scaling_max_namespaces=$optvalue					;;
 
 	uperfmsg*) readarray -t uperf_msg_sizes <<< "$(parse_size "$optvalue")"		;;
 	uperfnthr*) readarray -t uperf_nthrs <<< $(parse_size "$optvalue")		;;
@@ -430,11 +443,12 @@ function process_option() {
     esac
 }
 
-while getopts 'hn-:' opt ; do
+while getopts 'hn-:B:' opt ; do
     case "$opt" in
 	-) process_option "$OPTARG"	;;
 	h) echo "help"; exit 1		;;
 	n) dontdoit=-n			;;
+	B) basename=$OPTARG		;;
 	*)				;;
     esac
 done
@@ -495,7 +509,7 @@ function python_create_venv() {
     python3 -m venv "$1" || fatal "Can't create venv!"
     . "$1/bin/activate" || fatal "Can't activate venv!"
     python3 -m pip -q install --upgrade pip || fatal "Can't upgrade pip!"
-    pip3 -q install prometheus-api-client==0.5.0 openshift-client==1.0.14 || fatal "Can't install Python packages!"
+    pip3 -q install prometheus-api-client==0.5.0 openshift-client==1.0.14 Jinja2==3.0.1 || fatal "Can't install Python packages!"
 }
 
 function to_hms() {
@@ -577,6 +591,7 @@ function run_clusterbuster() {
     echo "*** Running $jobname"
     # shellcheck disable=SC2090
     doit "$CLUSTERBUSTER" ${dontdoit:+"$dontdoit"} \
+	 ${basename:+"--basename=$basename"} \
 	 --precleanup --cleanup="$cleanup" --image-pull-policy=IfNotPresent \
 	 --metrics --report="$report_format" --workload="$workload" \
 	 ${job_runtime:+"--workload_runtime=$job_runtime"} \
@@ -620,7 +635,7 @@ function run_clusterbuster() {
 function test_scaling() {
     local runtimeclass=$1
     namespaces=$scaling_starting_namespaces
-    while :; do
+    while ((scaling_max_namespaces == -1 || namespaces <= scaling_max_namespaces)); do
 	job_name="$((namespaces*scaling_deps_per_namespace))"
 	echo "*** Running $((namespaces * scaling_deps_per_namespace)) pods"
 	if run_clusterbuster -y -j "$job_name" -w cpusoaker -r "$runtimeclass" -t "$scaling_job_timeout" -- \
@@ -725,8 +740,9 @@ if ((use_python_venv)) ; then
     python_create_venv "$python_venv"
 fi
 monitor "$run_timeout"
-trap "if ((monitor_pid > 0)) ; then kill $monitor_pid; fi; echo Job timed out after $run_timeout seconds; fail=3; finis" USR1
-trap 'if ((fail < 2)) ; then fail=2; fi; if [[ -n "$job_pid" ]] ; then kill $job_pid; wait; fi; finis' TERM INT HUP EXIT
+trap "if ((monitor_pid > 0)) ; then kill -9 $monitor_pid; fi; echo Job timed out after $run_timeout seconds; fail=3; finis" USR1
+trap 'if ((fail < 2)) ; then fail=2; fi; finis' TERM INT HUP
+trap 'finis' EXIT
 if ((force_pull_image)) ; then
     force_pull_base_image
 fi

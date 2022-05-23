@@ -1467,7 +1467,7 @@ function _extract_metrics() {
     if [[ -r "$metrics_file" ]] ; then
 	cat <<EOF
 ,
-"metrics": $("${__mydir__}/prom-extract" -m "$metrics_file" --metrics-only --start_time="$prometheus_starting_timestamp" --epoch="$metrics_epoch" --post-settling-time=0)
+"metrics": $("${__mydir__}/prom-extract" --define "namespace_re=${basename}-.*" -m "$metrics_file" --metrics-only --start_time="$prometheus_starting_timestamp" --epoch="$metrics_epoch" --post-settling-time=0)
 EOF
     fi
 }
@@ -1548,7 +1548,7 @@ function _report_objects() {
   }
 },
 "nodes": $(__OC get nodes -ojson),
-"api_objects": $( __OC get all -A -l "clusterbuster-id=$run_uuid" -ojson |jq -r .items?),
+"api_objects": $( __OC get all -A -l "${basename}-id=$run_uuid" -ojson |jq -r .items?),
 "csvs": $(__OC get csv -A -ojson | jq -r '[foreach .items[]? as $item ([[],[]];0; {name: $item.metadata.name, namespace: $item.metadata.namespace, version: $item.spec.version})]'),
 EOF
 }
@@ -1565,7 +1565,7 @@ function _retrieve_artifacts() {
 		    echo "Unable to retrieve logs for pod $namespace/$pod:$container" 1>&2
 		fi
 	    fi
-	done <<< "$(__OC get pod -A -l "clusterbuster-id=$run_uuid" -ojson | jq -r '[foreach .items[]? as $item ([[],[]];0; (if ($item.kind == "Pod") then ([foreach $item.spec.containers[]? as $container ([[],[]];0; $item.metadata.namespace + " " + $item.metadata.name + " " + $container.name)]) else null end))] | flatten | map (select (. != null))[]')"
+	done <<< "$(__OC get pod -A -l "${basename}-id=$run_uuid" -ojson | jq -r '[foreach .items[]? as $item ([[],[]];0; (if ($item.kind == "Pod") then ([foreach $item.spec.containers[]? as $container ([[],[]];0; $item.metadata.namespace + " " + $item.metadata.name + " " + $container.name)]) else null end))] | flatten | map (select (. != null))[]')"
 	if ((failcount > 5)) ; then
 	    echo "+ $((failcount - 5)) more" 1>&2
 	fi
@@ -1753,11 +1753,12 @@ function standard_labels_yaml() {
     local true='"true"'
     cat <<EOF
 labels:
-  clusterbuster-run_uuid: "$run_uuid"
+  ${basename}-run_uuid: "$run_uuid"
   ${basename}-id: "$run_uuid"
   ${basename}: "true"
   clusterbusterbase: "true"
-  ${objtype:+clusterbuster-${objtype}: "$run_uuid"}
+  ${basename}base: "true"
+  ${objtype:+${basename}-${objtype}: "$run_uuid"}
 EOF
     if [[ -n "$workload" ]] ; then
 	cat <<EOF
@@ -2127,7 +2128,7 @@ function create_object_from_file() {
     # shellcheck disable=SC2046
     (_OC create "$objtype" $(_ns) "$objname" "${@/#/--from-file=}" | echo_if_desired 1>&2) || killthemall
     # shellcheck disable=SC2046
-    (_OC label "$objtype" $(_ns) "$objname" 'clusterbusterbase=true' "clusterbuster-run_uuid=${run_uuid}" "${basename}-id=$run_uuid" "${basename}=true" | echo_if_desired 1>&2) || killthemall
+    (_OC label "$objtype" $(_ns) "$objname" "${basename}base=true" 'clusterbusterbase=true' "${basename}-run_uuid=${run_uuid}" "${basename}-id=$run_uuid" "${basename}=true" | echo_if_desired 1>&2) || killthemall
     if (( doit )) ; then
 	if [[ -n "$artifactdir" ]] ; then
 	    mkdir -p "$artifactdir/$objtype"

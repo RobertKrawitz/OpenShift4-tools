@@ -34,13 +34,13 @@ metrics:
   - query: avg(container_memory_rss{name!="",container!="POD",namespace=~"openshift-(sdn|ovn-kubernetes|ingress|monitoring|image-registry|logging)"} and on (node) kube_node_role{role="infra"}) by (container, namespace)
     metricName: containerMemory-AggregatedInfra
 
-  - query: (sum(container_memory_rss{pod!="",namespace=~"clusterbuster-[0-9]*",name!=""}) by (node)) > 0
+  - query: (sum(container_memory_rss{pod!="",namespace=~"{{ namespace_re }}",name!=""}) by (node)) > 0
     metricName: containerMemoryRSS-clusterbuster
 
-  - query: (sum(container_memory_working_set_bytes{pod!="",namespace=~"clusterbuster-[0-9]*",name!=""}) by (node)) > 0
+  - query: (sum(container_memory_working_set_bytes{pod!="",namespace=~"{{ namespace_re }}",name!=""}) by (node)) > 0
     metricName: containerMemoryWorkingSet-clusterbuster
 
-  - query: (sum(irate(container_cpu_usage_seconds_total{container!="",namespace=~"clusterbuster-[0-9]*"}[2m])) by (node)) > 0
+  - query: (sum(irate(container_cpu_usage_seconds_total{container!="",namespace=~"{{ namespace_re }}"}[2m])) by (node)) > 0
     metricName: containerCPU-clusterbuster
 
 # Node metrics

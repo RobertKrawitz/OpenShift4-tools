@@ -18,6 +18,7 @@ from __future__ import print_function
 from prometheus_api_client import PrometheusConnect
 import argparse
 from datetime import datetime, timezone, timedelta
+from jinja2 import Template
 import json
 import openshift
 import selectors
@@ -145,6 +146,8 @@ parser.add_argument('--uuid', type=str, metavar='UUID', default=generate_uuid(),
                     help='Index results by UUID (generate if not provided)')
 parser.add_argument('--job_type', '--job-type', help='Type of job (fio, uperf, etc)',
                     metavar='command', type=str)
+parser.add_argument('-D', '--define', help='Define template variable for metrics YAML; namespace_re to specify namespace regex',
+                    metavar='name=value', action='append')
 parser.add_argument('command', metavar='command', help='command [args...]',
                     type=str, nargs='*')
 args = parser.parse_args()
@@ -158,11 +161,29 @@ if args.token != '':
 prom = PrometheusConnect(url=args.url, disable_ssl=True, headers=authorization)
 
 try:
-    with open(args.metrics_profile, 'r') as metrics_yaml:
-        yaml = yaml.safe_load(metrics_yaml)
-except FileNotFoundError as err:
-    efail('Cannot open metrics profile: %s' % err)
-    sys.exit(1)
+    template_dict = dict()
+    # Default namespace.
+    template_dict['namespace_re'] = "clusterbuster-.*"
+    failed_args = False
+    if args.define:
+        for arg in args.define:
+            if '=' not in arg:
+                eprint(f'Definition {arg} invalid (must be name=value)')
+                failed_args = True
+            else:
+                key, value = arg.split('=', 1)
+                template_dict[key] = value
+        if failed_args:
+            sys.exit(1)
+    try:
+        with open(args.metrics_profile, 'r') as metrics_yaml:
+            baretext = metrics_yaml.read()
+            yamltxt = Template(baretext).render(template_dict)
+            yaml = yaml.safe_load(yamltxt)
+    except FileNotFoundError as err:
+        efail(f'Cannot open metrics profile: {err}')
+except Exception as err:
+    efail(f'Cannot load metrics definition: {err}')
 
 if args.start_time:
     startTime = datetime.fromtimestamp(args.start_time)
