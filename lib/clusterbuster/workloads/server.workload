@@ -29,8 +29,7 @@ function _create_server_container_yaml() {
 - name: server
   image: "$container_image"
   imagePullPolicy: $image_pull_policy
-$(indent 2 liveness_probe_yaml)
-$(indent 2 container_resources_yaml)
+$(indent 2 container_standard_auxiliary_yaml)
   ports:
   - containerPort: $port
 $(indent 2 bootstrap_command_yaml server.pl)
@@ -109,8 +108,7 @@ function _create_client_container_yaml() {
 - name: c${container}
   image: "$container_image"
   imagePullPolicy: $image_pull_policy
-$(indent 2 liveness_probe_yaml)
-$(indent 2 container_resources_yaml)
+$(indent 2 container_standard_auxiliary_yaml)
   env:
   - name: VERBOSE
     value: "$verbose"
