@@ -71,6 +71,12 @@ metrics:
   - query: avg(node_memory_MemAvailable_bytes) by (instance) and on (instance) label_replace(kube_node_role{role="worker"}, "instance", "$1", "node", "(.+)")
     metricName: nodeMemoryAvailable-Workers
 
+  - query: avg(node_memory_MemTotal_bytes - node_memory_MemFree_bytes - node_memory_Cached_bytes - node_memory_Buffers_bytes - node_memory_SReclaimable_bytes) by (instance) and on (instance) label_replace(kube_node_role{role="master"}, "instance", "$1", "node", "(.+)")
+    metricName: nodeMemoryInUse-Masters
+
+  - query: avg(node_memory_MemTotal_bytes - node_memory_MemFree_bytes - node_memory_Cached_bytes - node_memory_Buffers_bytes - node_memory_SReclaimable_bytes) by (instance) and on (instance) label_replace(kube_node_role{role="worker"}, "instance", "$1", "node", "(.+)")
+    metricName: nodeMemoryInUse-Workers
+
   - query: avg(node_memory_MemAvailable_bytes and on (instance) label_replace(kube_node_role{role="worker"}, "instance", "$1", "node", "(.+)"))
     metricName: nodeMemoryAvailable-AggregatedWorkers
 
