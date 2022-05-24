@@ -35,6 +35,34 @@ sub removeRundir() {
     }
 }
 
+sub prepare_data_file($) {
+    my ($jobfile) = @_;
+    my ($filename);
+    my ($filesize);
+    open (my $job, '<', $jobfile) || die "Can't open job file: $!\n";
+    while (<$job>) {
+	chomp;
+	if (/^\s*filename\s*=\s*(.+)/) {
+	    $filename = $1;
+	} elsif (/^\s*size\s*=\s*([[:digit:]]+)/) {
+	    $filesize = $1;
+	}
+    }
+    close $job;
+    timestamp("  Job file $filename will be size $filesize");
+    my ($blocksize) = 1048576;
+    my ($blocks) = int(($filesize + 1048575) / $blocksize);
+    my ($dirname) = $filename;
+    $dirname =~ s,/[^/]*$,,;
+    if (! -d $dirname) {
+	system('mkdir', '-p', $dirname) || die "Can't create work directory $dirname: $!\n";
+    }
+    timestamp("Starting file creation");
+    system('dd', 'if=/dev/zero', "of=$filename", 'bs=1048576', "count=$blocks");
+    system("sync");
+    timestamp("File created");
+}
+
 sub runit(;$) {
     my ($jobfile) = @_;
     my ($firsttime) = 1;
@@ -61,6 +89,9 @@ sub runit(;$) {
     timestamp("Fdatasync:   " . join(" ", @fdatasyncs));
     timestamp("Direct I/O:  " . join(" ", @directs));
     timestamp("I/O engines: " . join(" ", @ioengines));
+    timestamp("Creating workfile");
+    prepare_data_file($jobfile);
+    timestamp("Created workfile");
     foreach my $size (@sizes) {
 	foreach my $pattern (@patterns) {
 	    foreach my $iodepth (@iodepths) {
