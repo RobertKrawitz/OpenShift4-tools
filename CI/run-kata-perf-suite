@@ -19,11 +19,11 @@ set -u
 declare OC=${OC:-${KUBECTL:-}}
 OC=${OC:-$(type -p oc)}
 OC=${OC:-$(type -p kubectl)}	# kubectl might not work, though...
-CLUSTERBUSTER="$(realpath "$(dirname "$(realpath -e "$0")")/../clusterbuster")"
-
-declare -A profiles=()
-files_runs_auto=$(echo files-params={1,4}:256:256:{4096:{0,4096,262144},65536:262144}:{0,1})
-profiles[auto]="job_runtime=120 fio-fdatasync=0 job-timeout=9000 fio-max-relative-filesize=0.25 fio-memsize=4096 artifactdir= virtiofsd-direct restart use-python-venv $files_runs_auto"
+declare __topdir__
+__topdir__="$(realpath "$(dirname "$(realpath -e "$0")")/..")"
+declare __libdir__="${__topdir__}/lib"
+declare __clusterbuster__="${__topdir__}/clusterbuster"
+declare __profiledir__="${__libdir__}/clusterbuster/CI/profiles"
 
 declare client_pin_node=
 declare server_pin_node=
@@ -42,6 +42,7 @@ declare job_pid=
 declare -i use_python_venv=1
 declare python_venv=
 declare basename=
+declare -i debugonly=0
 
 declare -a workloads=(scaling uperf fio files)
 declare -a runtimeclasses=('' 'kata')
@@ -104,19 +105,23 @@ declare job_datestamp
 
 function finis() {
     if [[ -n "$job_pid" ]] ; then
-	kill $job_pid
+	exec 3>&2 2>/dev/null
+	kill "$job_pid"
 	wait "$job_pid"
+	exec 2>&3 3>&-
 	job_pid=
     fi
     if [[ -n "${starting_timestamp:-}" && $$ -eq "$BASHPID" ]] ; then
 	local ending_timestamp
 	ending_timestamp=$(date +%s)
 
-	echo "Run times:"
-	local job
-	for job in "${jobs[@]}" ; do
-	    printf "%10s %s\n" "${job_runtimes[$job]}" "$job"
-	done
+	if [[ -n "${jobs[*]}" ]] ; then
+	    echo "Run times:"
+	    local job
+	    for job in "${jobs[@]}" ; do
+		printf "%10s %s\n" "${job_runtimes[$job]}" "$job"
+	    done
+	fi
 	if [[ -n "${failures[*]}" ]] ; then
 	    echo "Failing jobs:"
 	    for job in "${failures[@]}" ; do
@@ -129,7 +134,9 @@ function finis() {
 	starting_timestamp=
     fi
     if [[ -n "$python_venv" && -d "$python_venv" ]] ; then
-	deactivate
+	if type -t deactivate >/dev/null ; then
+	    deactivate
+	fi
 	rm -rf "$python_venv"
     fi
     exit $fail
@@ -208,6 +215,7 @@ function parse_option() {
 
 function parse_time() {
     local time=$1
+    # shellcheck disable=SC2206
     local -a times=(${time//:/ })
     local -i d=0
     local -i h=0
@@ -262,25 +270,48 @@ function get_node_memory() {
     parse_size "$mem"
 }
 
+function list_profiles() {
+    local prefix=${1:-}
+    function list_profiles_1() {
+	shopt -s nullglob
+	for f in "${__profiledir__}"/*.profile ; do
+	    f=${f%%.profile}
+	    f=${f##*/}
+	    echo "$f"
+	done
+    }
+    while read -r profile ; do
+	echo "$prefix$profile"
+    done <<< "$(list_profiles_1)"
+}
+
 function process_profile() {
     local profile=$1
-    if [[ -n "${profiles[$profile]}" ]] ; then
-	local arg
-	for arg in ${profiles[$profile]} ; do
-	    process_option "$arg"
-	done
+    if [[ -f "${__profiledir__}/${profile}.profile" ]] ; then
+	local line=
+	while IFS= read -r line ; do
+	    line=${line%%#*}
+	    line=${line## }
+	    line=${line##	}
+	    if [[ -z "$line" ]] ; then continue; fi
+	    process_option "$line"
+	done < "${__profiledir__}/${profile}.profile"
+    else
+	fatal "Cannot find profile $profile in $__profiledir__"
     fi
 }
 
 function force_pull_base_image() {
     for n in $(oc get node --no-headers |awk '{print $1}') ; do
-	oc debug --no-stdin=true --no-tty=true node/"$n" -- chroot /host podman pull quay.io/rkrawitz/bench-army-base &
+	if ((debugonly)) ; then
+	    echo oc debug --no-stdin=true --no-tty=true node/"$n" -- chroot /host sh -c ' podman pull quay.io/rkrawitz/bench-army-base; podman pull quay.io/rkrawitz/bench-army-base'
+	else
+	    oc debug --no-stdin=true --no-tty=true node/"$n" -- chroot /host sh -c ' podman pull quay.io/rkrawitz/bench-army-base; podman pull quay.io/rkrawitz/bench-army-base' &
+	fi
     done
-    wait
-    for n in $(oc get node --no-headers |awk '{print $1}') ; do
-	oc debug --no-stdin=true --no-tty=true node/"$n" -- chroot /host podman pull quay.io/rkrawitz/bench-army-knife &
-    done
-    wait
+    if ((! debugonly)) ; then
+	wait
+    fi
 }
 
 function monitor_1() {
@@ -311,7 +342,7 @@ Usage: $0 [options] [tests]
 
         clientpin=<node>        Pin client pods to the specified node.
 				If not provided, the first worker node
-				(in the order returned by `oc get nodes')
+				(in the order returned by 'oc get nodes')
 				is used.
         serverpin=<node>	Pin server pods to the specified node.
 				By default, the second worker node is used.
@@ -337,8 +368,9 @@ Usage: $0 [options] [tests]
 	restart			Restart any failed or incomplete jobs from a
 				prior run.  Default is no.  Can only be used
 				with identical parameters to previous run.
-	profile=<profile>	Which profile to use.  Only current option
-				is auto.  Default is no profile.
+	profile=<profile>	Which profile to use.  Default is no profile.
+                                Known profiles:
+$(list_profiles '                                - ')
 
     Virtiofsd configuration options (for kata):
 	virtiofsd-direct	Allow direct I/O requests from guest to operate
@@ -364,11 +396,8 @@ Usage: $0 [options] [tests]
 	scaling-timeout=<seconds>
 				Time the job out after specified time.  Default
 				is the global timeout default.
-
-    Uperf options
-
-
 EOF
+exit
 }
 
 function process_option() {
@@ -377,7 +406,11 @@ function process_option() {
     local optvalue
     read -r noptname1 noptname optvalue <<< "$(parse_option "$1")"
     optvalue=$(splitarg "$optvalue")
+    # shellcheck disable=SC2206
     case "$noptname1" in
+	help*) help									;;
+	debug*) debugonly="$(bool "$optvalue")"						;;
+
 	clientpin*) client_pin_node=$optvalue						;;
 	serverpin*) server_pin_node=$optvalue						;;
 	syncpin*) sync_pin_node=$optvalue						;;
@@ -406,7 +439,7 @@ function process_option() {
 	scalingmax*) scaling_max_namespaces=$optvalue					;;
 
 	uperfmsg*) readarray -t uperf_msg_sizes <<< "$(parse_size "$optvalue")"		;;
-	uperfnthr*) readarray -t uperf_nthrs <<< $(parse_size "$optvalue")		;;
+	uperfnthr*) readarray -t uperf_nthrs <<< "$(parse_size "$optvalue")"		;;
 	uperfninst*) readarray -t uperf_ninst <<< "$(parse_size "$optvalue")"		;;
 	uperftest*) readarray -t uperf_test_types <<< "$(parse_size "$optvalue")"	;;
 	uperf*runtime) uperf_job_runtime=$optvalue					;;
@@ -446,7 +479,7 @@ function process_option() {
 while getopts 'hn-:B:' opt ; do
     case "$opt" in
 	-) process_option "$OPTARG"	;;
-	h) echo "help"; exit 1		;;
+	h) help				;;
 	n) dontdoit=-n			;;
 	B) basename=$OPTARG		;;
 	*)				;;
@@ -506,10 +539,15 @@ function computeit() {
 
 function python_create_venv() {
     local dir=$1
-    python3 -m venv "$1" || fatal "Can't create venv!"
-    . "$1/bin/activate" || fatal "Can't activate venv!"
-    python3 -m pip -q install --upgrade pip || fatal "Can't upgrade pip!"
-    pip3 -q install prometheus-api-client==0.5.0 openshift-client==1.0.14 Jinja2==3.0.1 || fatal "Can't install Python packages!"
+    if ((debugonly)) ; then
+	echo "Create venv"
+    else
+	python3 -m venv "$dir" || fatal "Can't create venv!"
+	# shellcheck disable=SC1091
+	. "$1/bin/activate" || fatal "Can't activate venv!"
+	python3 -m pip -q install --upgrade pip || fatal "Can't upgrade pip!"
+	pip3 -q install prometheus-api-client==0.5.0 openshift-client==1.0.14 Jinja2==3.0.1 || fatal "Can't install Python packages!"
+    fi
 }
 
 function to_hms() {
@@ -538,12 +576,14 @@ function xruntimeclass() {
 
 function doit() {
     echo "$*"
-    "$@" &
-    job_pid=$!
-    wait "$job_pid"
-    local status=$?
-    job_pid=
-    return $status
+    if ((! debugonly)) ; then
+	exec "$@" &
+	job_pid=$!
+	wait "$job_pid"
+	local status=$?
+	job_pid=
+	return $status
+    fi
 }
 
 function run_clusterbuster() {
@@ -572,7 +612,7 @@ function run_clusterbuster() {
     jobname=$(printf '%s-%s-%04d-%s' "$workload" "$(xruntimeclass "$runtimeclass")" "$counter" "$jobname")
     jobdir=${artifactdir:+$artifactdir/$jobname}
     counter=$((counter+1))
-    if [[ -n "$jobdir" && -d "$jobdir" ]] ; then
+    if [[ $debugonly -eq 0 && -n "$jobdir" && -d "$jobdir" ]] ; then
 	if ((restart)) ; then
 	    echo "$jobname is already present"
 	    return 0
@@ -586,11 +626,12 @@ function run_clusterbuster() {
     local -i status=0
     local -i job_start
     local -i job_end
+    local job_runtime
     job_start=$(date +%s)
     echo
     echo "*** Running $jobname"
     # shellcheck disable=SC2090
-    doit "$CLUSTERBUSTER" ${dontdoit:+"$dontdoit"} \
+    doit "$__clusterbuster__" ${dontdoit:+"$dontdoit"} \
 	 ${basename:+"--basename=$basename"} \
 	 --precleanup --cleanup="$cleanup" --image-pull-policy=IfNotPresent \
 	 --metrics --report="$report_format" --workload="$workload" \
@@ -607,27 +648,31 @@ function run_clusterbuster() {
 	 --virtiofsd_threadpoolsize="$virtiofsd_threadpoolsize" \
 	 --report_object_creation="$report_object_creation" \
 	 "$@" || status=$?
-    job_end=$(date +%s)
-    job_runtimes[$jobname]="$(to_hms "$job_start" "$job_end")"
-    if ((status == 0)) ; then
-	jobs+=("$jobname")
-	if [[ -n "$jobdir" ]] ; then
-	    [[ -d "$jobdir" ]] && fatal "$jobdir exists (shouldn't!)"
-	    mv "$tmp_jobdir" "$jobdir" || fatal "Can't rename $tmp_jobdir to $jobdir"
+    if ((! debugonly)) ; then
+	job_end=$(date +%s)
+	job_runtime="$(to_hms "$job_start" "$job_end")"
+	echo "Job took $job_runtime"
+	job_runtimes[$jobname]="$job_runtime"
+	if ((status == 0)) ; then
+	    jobs+=("$jobname")
+	    if [[ -n "$jobdir" ]] ; then
+		[[ -d "$jobdir" ]] && fatal "$jobdir exists (shouldn't!)"
+		mv "$tmp_jobdir" "$jobdir" || fatal "Can't rename $tmp_jobdir to $jobdir"
+	    fi
+	else
+	    ((error_is_failure)) && failures+=("$jobname")
+	    if [[ -n "$jobdir" ]] ; then
+		local fail_jobdir_base="${jobdir}.FAIL"
+		local fail_jobdir=$fail_jobdir_base
+		local -i jobdir_idx=1
+		while [[ -d "$fail_jobdir" ]] ; do
+		    fail_jobdir="${fail_jobdir_base}.$jobdir_idx"
+		    jobdir_idx=$((jobdir_idx+1))
+		done
+		mv "$tmp_jobdir" "$fail_jobdir" || fatal "Can't rename $tmp_jobdir to $fail_jobdir"
+	    fi
+	    ((hard_fail_on_error)) && finis
 	fi
-    else
-	((error_is_failure)) && failures+=("$jobname")
-	if [[ -n "$jobdir" ]] ; then
-	    local fail_jobdir_base="${jobdir}.FAIL"
-	    local fail_jobdir=$fail_jobdir_base
-	    local -i jobdir_idx=1
-	    while [[ -d "$fail_jobdir" ]] ; do
-		fail_jobdir="${fail_jobdir_base}.$jobdir_idx"
-		jobdir_idx=$((jobdir_idx+1))
-	    done
-	    mv "$tmp_jobdir" "$fail_jobdir" || fatal "Can't rename $tmp_jobdir to $fail_jobdir"
-	fi
-	((hard_fail_on_error)) && finis
     fi
     return $status
 }
@@ -637,7 +682,6 @@ function test_scaling() {
     namespaces=$scaling_starting_namespaces
     while ((scaling_max_namespaces == -1 || namespaces <= scaling_max_namespaces)); do
 	job_name="$((namespaces*scaling_deps_per_namespace))"
-	echo "*** Running $((namespaces * scaling_deps_per_namespace)) pods"
 	if run_clusterbuster -y -j "$job_name" -w cpusoaker -r "$runtimeclass" -t "$scaling_job_timeout" -- \
 			     --deployments="$scaling_deps_per_namespace" \
 			     --namespaces="$namespaces" --objs_per_call=6 --parallel=100 ; then
@@ -646,8 +690,10 @@ function test_scaling() {
 	    echo "Run failed: $?"
 	    break
 	fi
+	if ((debugonly)) ; then
+	    break
+	fi
     done
-    echo Done
 }
 
 function test_uperf() {
@@ -715,7 +761,7 @@ function test_files() {
     local files_direct
     local options
     for options in "${files_params[@]}" ; do
-	read -r ninst files_dirs_per_volume files_per_dir files_block_size file_size files_direct <<< "$(parse_size ${options//:/ })"
+	read -r ninst files_dirs_per_volume files_per_dir files_block_size file_size files_direct <<< "$(parse_size "${options//:/ }")"
 	if [[ -z "$files_direct" ]] ; then
 	    echo "Unparsable options $options" 1>&2
 	    continue
@@ -739,16 +785,18 @@ if ((use_python_venv)) ; then
     python_venv=$(mktemp -d -t "cb-ci-venv.XXXXXXXX")
     python_create_venv "$python_venv"
 fi
-monitor "$run_timeout"
-trap "if ((monitor_pid > 0)) ; then kill -9 $monitor_pid; fi; echo Run timed out after $run_timeout seconds; fail=3; finis" USR1
-trap 'if ((fail < 2)) ; then kill -9 $monitor_pid; fail=2; fi; finis' TERM INT HUP
-trap 'finis' EXIT
-if ((force_pull_image)) ; then
-    force_pull_base_image
+if ((! debugonly)) ; then
+    monitor "$run_timeout"
+    trap 'if ((monitor_pid > 0)) ; then kill -9 "$monitor_pid"; monitor_pid=0; fi; if ((job_pid > 0)) ; then kill -INT "$job_pid"; echo Cleaning up ; fi; echo Run timed out after '"$run_timeout"' seconds; fail=3; finis' USR1
+    trap 'if ((monitor_pid > 0)) ; then kill -9 "$monitor_pid"; monitor_pid=0; fi; if ((job_pid > 0)) ; then kill -INT "$job_pid"; echo Cleaning up; fi; if ((fail < 2)); then fail=2; fi; finis' TERM INT HUP
+    trap 'finis' EXIT
+    if ((force_pull_image)) ; then
+	force_pull_base_image
+    fi
+    starting_timestamp=$(date +%s)
+    job_datestamp=$(date -u '+%Y_%m_%dT%H_%M_%S%z' --date=@"$starting_timestamp")
+    artifactdir=${artifactdir//%s/$job_datestamp}
 fi
-starting_timestamp=$(date +%s)
-job_datestamp=$(date -u '+%Y_%m_%dT%H_%M_%S%z' --date=@"$starting_timestamp")
-artifactdir=${artifactdir//%s/$job_datestamp}
 
 for runtimeclass in "${runtimeclasses[@]}" ; do
     for workload in "${workloads[@]}" ; do
