@@ -596,12 +596,14 @@ function run_clusterbuster() {
     local runtimeclass=
     local workload=
     local timeout=
-    while getopts 'ynj:r:w:t:' opt "$@" ; do
+    local job_runtime
+    while getopts 'ynj:r:R:w:t:' opt "$@" ; do
 	case "$opt" in
 	    y) error_is_failure=0	;;
 	    n) error_is_failure=1	;;
 	    j) jobname="$OPTARG"	;;
 	    r) runtimeclass="$OPTARG"	;;
+	    R) job_runtime="$OPTARG"	;;
 	    w) workload="$OPTARG"	;;
 	    t) timeout="$OPTARG"	;;
 	    *)				;;
@@ -626,7 +628,6 @@ function run_clusterbuster() {
     local -i status=0
     local -i job_start
     local -i job_end
-    local job_runtime
     job_start=$(date +%s)
     echo
     echo "*** Running $jobname"
@@ -682,7 +683,7 @@ function test_scaling() {
     namespaces=$scaling_starting_namespaces
     while ((scaling_max_namespaces == -1 || namespaces <= scaling_max_namespaces)); do
 	job_name="$((namespaces*scaling_deps_per_namespace))"
-	if run_clusterbuster -y -j "$job_name" -w cpusoaker -r "$runtimeclass" -t "$scaling_job_timeout" -- \
+	if run_clusterbuster -y -j "$job_name" -w cpusoaker -r "$runtimeclass" -t "$scaling_job_timeout" -R "$fio_job_runtime" -- \
 			     --deployments="$scaling_deps_per_namespace" \
 			     --namespaces="$namespaces" --objs_per_call=6 --parallel=100 ; then
 	    namespaces=$((namespaces+1))
@@ -707,7 +708,7 @@ function test_uperf() {
 	    for ninst in "${uperf_ninst[@]}" ; do
 		for test_type in "${uperf_test_types[@]}" ; do
 		    job_name="${msg_size}B-${nthr}i-${ninst}P-${test_type}"
-		    run_clusterbuster -j "$job_name" -w uperf -r "$runtimeclass" -t "$uperf_job_timeout" -- \
+		    run_clusterbuster -j "$job_name" -w uperf -r "$runtimeclass" -t "$uperf_job_timeout" -R "$fio_job_runtime" -- \
 				      --deployments="$ninst" \
 				      --uperf_msg_size="$msg_size" \
 				      --uperf_test_type="$test_type" \
@@ -736,7 +737,7 @@ function test_fio() {
 	fi
 	job_name="fio-${ninst}P"
 	# shellcheck disable=SC2090
-	run_clusterbuster -j "$job_name" -w fio -r "$runtimeclass" -t "$fio_job_timeout" -- \
+	run_clusterbuster -j "$job_name" -w fio -r "$runtimeclass" -t "$fio_job_timeout" -R "$fio_job_runtime" -- \
 			  --deployments="$ninst" \
 			  --fio-blocksize="$(IFS=,; echo "${fio_blocksizes[*]}")" \
 			  --fio-patterns="$(IFS=,; echo "${fio_patterns[*]}")" \
