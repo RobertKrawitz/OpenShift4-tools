@@ -75,6 +75,11 @@ class fio_reporter(ClusterBusterReporter):
                     dest1['lat_mean'] = self._prettyprint(source1['lat_ns']['mean'] / rows / 1000000000.0,
                                                           base=1000, precision=3, suffix='sec')
 
+    def _add_summary(self):
+        ClusterBusterReporter._add_summary(self)
+        for k, v in self._summary['results'].items():
+            v['metadata'] = self._jdata['metadata']['workload_metadata']['jobs'][k]
+
     def _generate_summary(self, results: dict):
         # I'd like to do this, but if the nodes are out of sync time-wise, this will not
         # function correctly.
