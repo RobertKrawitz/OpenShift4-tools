@@ -18,15 +18,13 @@ import os
 import sys
 import json
 import argparse
-import importlib
-import inspect
-from lib.clusterbuster.reporter.ClusterBusterReporter import ClusterBusterReporter
+from lib.clusterbuster.reporter.ClusterBusterReporter import report
 
 parser = argparse.ArgumentParser(description='Generate ClusterBuster report')
 
-report_formats={'none', 'summary', 'verbose', 'raw',
-                'json-summary', 'json', 'json-verbose',
-                'parseable-summary', 'parseable-verbose'}
+report_formats = {'none', 'summary', 'verbose', 'raw',
+                  'json-summary', 'json', 'json-verbose',
+                  'parseable-summary', 'parseable-verbose'}
 
 parser.add_argument('-o', '--format', '--output_format', '--output', default='summary', type=str,
                     choices=report_formats)
@@ -36,69 +34,40 @@ parser.add_argument('--debug', action='store_true', help='Simplify debugging')
 parser.add_argument('--list_formats', action='store_true', help='List available report formats')
 parser.add_argument("files", metavar='file', type=str, nargs='*', help='Files to process')
 args = parser.parse_args()
-
-def do_report(workload: str, jdata: dict):
-#    try:
-        imported_lib = importlib.import_module(f'lib.clusterbuster.reporter.{workload}_reporter', 'reporter')
-        try:
-            for i in inspect.getmembers(imported_lib):
-                if i[0] == f'{workload}_reporter':
-                    i[1](jdata, args.format).create_report()
-        except Exception as exc:
-            raise(exc)
-#    except Exception as exc:
-#        print(f'Warning: no handler for workload {workload}, issuing generic summary report ({exc})')
-#        ClusterBusterReporter(jdata, args.format).create_report()
-
-
-def process_report(jdata: dict):
-    if args.format == 'none':
-        return
-    if args.workload:
-        workload = args.workload
-    elif 'workload_reporting_class' in jdata['metadata']:
-        workload = jdata["metadata"]["workload_reporting_class"]
-    else:
-        workload = jdata["metadata"]["workload"]
-    if True or args.debug:
-        do_report(workload, jdata)
-    else:
-        try:
-            do_report(workload, jdata)
-        except KeyboardInterrupt:
-            sys.exit(1)
-        except Exception as exc:
-            if args.force:
-                json.dump(jdata, sys.stdout, indent = 4)
-            else:
-                print(f"Cannot load handler for workload '{workload}': {exc}", file=sys.stderr)
-                sys.exit(1)
-
-def process_json(jdata: dict):
-    if args.format == 'raw':
-        json.dump(jdata, sys.stdout, indent = 4)
-    else:
-        process_report(jdata)
-
 if args.list_formats:
     print('\n'.join(sorted(report_formats)))
-elif args.files:
-    for filename in args.files:
-        if os.path.isdir(filename):
-            filename = os.path.join(filename, "clusterbuster-report.json")
+    sys.exit(1)
+
+
+def process_json(jdata: dict):
+    if args.format == 'none':
+        return
+    elif args.format == 'raw':
+        json.dump(jdata, sys.stdout, indent=4)
+    else:
         try:
-            with open(filename) as f:
-                process_json(json.load(f))
+            return report(jdata, args.format)
         except KeyboardInterrupt:
             sys.exit(1)
-        except Exception as err:
-            print(f"Cannot read {filename} as JSON: {err}")
+        except BrokenPipeError:
             sys.exit(1)
-else:
-    try:
+
+
+def main():
+    if args.files:
+        for filename in args.files:
+            if os.path.isdir(filename):
+                filename = os.path.join(filename, "clusterbuster-report.json")
+            with open(filename) as f:
+                process_json(json.load(f))
+    else:
         process_json(json.load(sys.stdin))
-    except KeyboardInterrupt:
-        sys.exit(1)
-    except Exception as err:
-        print(f"Cannot read JSON: {err}")
-        sys.exit(1)
+
+
+try:
+    main()
+except KeyboardInterrupt:
+    sys.exit(1)
+except Exception as err:
+    print(f"Cannot read JSON: {err}")
+    sys.exit(1)

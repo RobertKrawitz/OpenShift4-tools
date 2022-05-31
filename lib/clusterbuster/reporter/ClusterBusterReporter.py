@@ -19,8 +19,31 @@ import re
 import sys
 import textwrap
 from copy import deepcopy
+import io
 import base64
-from lib.clusterbuster.reporter.metrics.PrometheusMetrics import PrometheusMetrics
+import importlib
+import inspect
+from .metrics.PrometheusMetrics import PrometheusMetrics
+
+
+def report(jdata: dict, format: str, workload: str=None, **kwargs):
+    if workload:
+        pass
+    elif 'workload_reporting_class' in jdata['metadata']:
+        workload = jdata["metadata"]["workload_reporting_class"]
+    else:
+        workload = jdata["metadata"]["workload"]
+    try:
+        imported_lib = importlib.import_module(f'..{workload}_reporter', __name__)
+    except Exception as exc:
+        print(f'Warning: no handler for workload {workload}, issuing generic summary report ({exc})', outfile=sys.stderr)
+        return ClusterBusterReporter(jdata, format).create_report()
+    try:
+        for i in inspect.getmembers(imported_lib):
+            if i[0] == f'{workload}_reporter':
+                return i[1](jdata, format).create_report(**kwargs)
+    except Exception as exc:
+        raise(exc)
 
 
 class ClusterBusterReporter:
@@ -69,28 +92,31 @@ class ClusterBusterReporter:
         if len(rows) > 0:
             self._add_summary()
 
-        if self._format == 'json-summary':
-            answer = {
-                'summary': self._summary,
-                'metadata': self._jdata['metadata'],
-                }
-            json.dump(answer, sys.stdout, sort_keys=True, indent=4)
-        elif self._format == 'json':
-            answer = {
-                'summary': self._summary,
-                'metadata': self._jdata['metadata'],
-                'rows': self._rows
-                }
-            json.dump(answer, sys.stdout, sort_keys=True, indent=4)
-        elif self._format == 'json-verbose':
-            answer = deepcopy(self._jdata)
-            answer['processed_results'] = {
-                'summary': self._summary,
-                'rows': self._rows
-                }
-            json.dump(answer, sys.stdout, sort_keys=True, indent=4)
+        if self._format.startswith('json'):
+            if self._format == 'json-summary':
+                answer = {
+                    'summary': self._summary,
+                    'metadata': self._jdata['metadata'],
+                    }
+            elif self._format == 'json':
+                answer = {
+                    'summary': self._summary,
+                    'metadata': self._jdata['metadata'],
+                    'rows': self._rows
+                    }
+            elif self._format == 'json-verbose':
+                answer = deepcopy(self._jdata)
+                answer['processed_results'] = {
+                    'summary': self._summary,
+                    'rows': self._rows
+                    }
+            if outfile is None:
+                return answer
+            else:
+                json.dump(answer, outfile, sort_keys=True, indent=4)
+
         else:
-            self.__create_text_report(outfile=outfile)
+            return self.__create_text_report(outfile=outfile)
 
     def _generate_summary(self, results: dict):
         """
@@ -883,4 +909,7 @@ class ClusterBusterReporter:
         else:
             cmdline = self._wrap_text(' '.join(self._jdata['metadata']['expanded_command_line']))
         results['Overview']['Command line'] = cmdline
+        if outfile is None:
+            outfile = io.StringIO()
         self.__print_report(results, value_column=key_width, integer_width=integer_width, outfile=outfile)
+        return outfile
