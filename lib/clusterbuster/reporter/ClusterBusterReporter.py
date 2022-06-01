@@ -20,36 +20,103 @@ import sys
 import textwrap
 from copy import deepcopy
 import io
+import os
 import base64
 import importlib
 import inspect
 from .metrics.PrometheusMetrics import PrometheusMetrics
 
 
-def report(jdata: dict, format: str, workload: str=None, **kwargs):
-    if workload:
-        pass
-    elif 'workload_reporting_class' in jdata['metadata']:
-        workload = jdata["metadata"]["workload_reporting_class"]
-    else:
-        workload = jdata["metadata"]["workload"]
-    try:
-        imported_lib = importlib.import_module(f'..{workload}_reporter', __name__)
-    except Exception as exc:
-        print(f'Warning: no handler for workload {workload}, issuing generic summary report ({exc})', outfile=sys.stderr)
-        return ClusterBusterReporter(jdata, format).create_report()
-    try:
-        for i in inspect.getmembers(imported_lib):
-            if i[0] == f'{workload}_reporter':
-                return i[1](jdata, format).create_report(**kwargs)
-    except Exception as exc:
-        raise(exc)
-
-
 class ClusterBusterReporter:
     """
     Report generator for ClusterBuster
     """
+
+    @staticmethod
+    def report_one(jdata: dict, format: str, **kwargs):
+        if format == 'none' or format is None:
+            return
+        if format == 'raw':
+            json.dump(jdata, sys.stdout, indent=4)
+            return
+        if 'workload_reporting_class' in jdata['metadata']:
+            workload = jdata["metadata"]["workload_reporting_class"]
+        else:
+            workload = jdata["metadata"]["workload"]
+        try:
+            imported_lib = importlib.import_module(f'..{workload}_reporter', __name__)
+        except Exception as exc:
+            print(f'Warning: no handler for workload {workload}, issuing generic summary report ({exc})', outfile=sys.stderr)
+            return ClusterBusterReporter(jdata, format).create_report()
+        try:
+            for i in inspect.getmembers(imported_lib):
+                if i[0] == f'{workload}_reporter':
+                    return i[1](jdata, format).create_report(**kwargs)
+        except Exception as exc:
+            raise(exc)
+
+    @staticmethod
+    def validate_dir(dirname: str):
+        if dirname.find('.FAIL') >= 0 or dirname.find('.tmp') >= 0:
+            return False
+        if not re.search('(^|/)(cpusoaker|fio|uperf|files)-(kata|nonkata)-[0-9]+[^/]*$', dirname):
+            return False
+        return os.path.isfile(os.path.join(dirname, "clusterbuster-report.json"))
+
+    @staticmethod
+    def enumerate_dirs(items: list):
+        answers = list()
+        for item in items:
+            if isinstance(item, str):
+                if os.path.isfile(item):
+                    answers.append(item)
+                elif os.path.isdir(item):
+                    if os.path.isfile(os.path.join(item, "clusterbuster-report.json")):
+                        answers.append(os.path.join(item, "clusterbuster-report.json"))
+                    else:
+                        subitems = sorted(os.listdir(item))
+                        for subitem in subitems:
+                            subitem = os.path.join(item, subitem)
+                            if ClusterBusterReporter.validate_dir(subitem):
+                                answers.append(os.path.join(subitem, "clusterbuster-report.json"))
+        return answers
+
+    @staticmethod
+    def report(items, format: str, **kwargs):
+        answers = list()
+        if not isinstance(items, list):
+            items = [items]
+        for item in ClusterBusterReporter.enumerate_dirs(items):
+            with open(item) as f:
+                answers.append(ClusterBusterReporter.report_one(json.load(f), format, **kwargs))
+        for item in items:
+            jdata = dict()
+            if isinstance(item, str):
+                continue
+            if isinstance(item, io.TextIOBase):
+                jdata = json.load(item)
+            elif item is None:
+                jdata = json.load(sys.stdin)
+            elif isinstance(item, dict):
+                jdata = item
+            else:
+                raise Exception(f"Unrecognized item {item}")
+            answers.append(ClusterBusterReporter.report_one(jdata, format, **kwargs))
+        return answers
+
+    @staticmethod
+    def print_report(items, format: str, outfile=sys.stdout, **kwargs):
+        answers = ClusterBusterReporter.report(items, format, **kwargs)
+        if format.startswith('json'):
+            json.dump(answers, outfile, indent=2)
+        else:
+            print("\n\n".join(answers))
+
+    @staticmethod
+    def list_report_formats():
+        return ['none', 'summary', 'verbose', 'raw',
+                'json-summary', 'json', 'json-verbose',
+                'parseable-summary', 'parseable-verbose']
 
     def __init__(self, jdata: dict, report_format: str, indent: int = 2, report_width=78):
         """
@@ -78,7 +145,7 @@ class ClusterBusterReporter:
         self._add_accumulators(['user_cpu_time', 'system_cpu_time', 'cpu_time', 'data_elapsed_time',
                                 'timing_parameters.sync_rtt_delta'])
 
-    def create_report(self, outfile=sys.stdout):
+    def create_report(self):
         """
         Create a report
         """
@@ -110,13 +177,9 @@ class ClusterBusterReporter:
                     'summary': self._summary,
                     'rows': self._rows
                     }
-            if outfile is None:
-                return answer
-            else:
-                json.dump(answer, outfile, sort_keys=True, indent=4)
-
+            return answer
         else:
-            return self.__create_text_report(outfile=outfile)
+            return self.__create_text_report()
 
     def _generate_summary(self, results: dict):
         """
@@ -849,7 +912,7 @@ class ClusterBusterReporter:
             if 'parseable' not in self._format and key.endswith('\n'):
                 print('', file=outfile)
 
-    def __print_report(self, results: dict, value_column=0, integer_width=0, outfile=sys.stdout):
+    def __print_report(self, results: dict, outfile, value_column=0, integer_width=0):
         """
         Print report.  Headers are used by key.
         Key names that start with a newline have a newline printed before each instance.
@@ -875,7 +938,7 @@ class ClusterBusterReporter:
                                        depth_indentation=self._summary_indent,
                                        integer_width=integer_width, outfile=outfile)
 
-    def __create_text_report(self, outfile=sys.stdout):
+    def __create_text_report(self):
         """
         Create textual report.
         """
@@ -909,7 +972,6 @@ class ClusterBusterReporter:
         else:
             cmdline = self._wrap_text(' '.join(self._jdata['metadata']['expanded_command_line']))
         results['Overview']['Command line'] = cmdline
-        if outfile is None:
-            outfile = io.StringIO()
-        self.__print_report(results, value_column=key_width, integer_width=integer_width, outfile=outfile)
-        return outfile
+        outfile = io.StringIO()
+        self.__print_report(results, outfile=outfile, value_column=key_width, integer_width=integer_width)
+        return outfile.getvalue()

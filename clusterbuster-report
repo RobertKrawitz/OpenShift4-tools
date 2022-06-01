@@ -18,56 +18,24 @@ import os
 import sys
 import json
 import argparse
-from lib.clusterbuster.reporter.ClusterBusterReporter import report
+from lib.clusterbuster.reporter.ClusterBusterReporter import ClusterBusterReporter
 
 parser = argparse.ArgumentParser(description='Generate ClusterBuster report')
-
-report_formats = {'none', 'summary', 'verbose', 'raw',
-                  'json-summary', 'json', 'json-verbose',
-                  'parseable-summary', 'parseable-verbose'}
+report_formats = ClusterBusterReporter.list_report_formats()
 
 parser.add_argument('-o', '--format', '--output_format', '--output', default='summary', type=str,
                     choices=report_formats)
-parser.add_argument('-w', '--workload', default=None, type=str, help='Override workload determined from input')
-parser.add_argument('-f', '--force', '--fallback', action='store_true', help='Force raw dump if workload is unhandled')
-parser.add_argument('--debug', action='store_true', help='Simplify debugging')
 parser.add_argument('--list_formats', action='store_true', help='List available report formats')
 parser.add_argument("files", metavar='file', type=str, nargs='*', help='Files to process')
+
 args = parser.parse_args()
 if args.list_formats:
     print('\n'.join(sorted(report_formats)))
     sys.exit(1)
 
-
-def process_json(jdata: dict):
-    if args.format == 'none':
-        return
-    elif args.format == 'raw':
-        json.dump(jdata, sys.stdout, indent=4)
-    else:
-        try:
-            return report(jdata, args.format)
-        except KeyboardInterrupt:
-            sys.exit(1)
-        except BrokenPipeError:
-            sys.exit(1)
-
-
-def main():
-    if args.files:
-        for filename in args.files:
-            if os.path.isdir(filename):
-                filename = os.path.join(filename, "clusterbuster-report.json")
-            with open(filename) as f:
-                process_json(json.load(f))
-    else:
-        process_json(json.load(sys.stdin))
-
-
 try:
-    main()
+    ClusterBusterReporter.print_report(args.files, format=args.format)
 except KeyboardInterrupt:
     sys.exit(1)
-except Exception as err:
-    print(f"Cannot read JSON: {err}")
+except BrokenPipeError:
     sys.exit(1)
