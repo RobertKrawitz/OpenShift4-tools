@@ -31,12 +31,12 @@ class server_reporter(ClusterBusterReporter):
                                                            integer=1, precision=3, base=1000, suffix='msgs')
         results['Total Data Sent'] = self._prettyprint(self._summary['data_sent_bytes'],
                                                        integer=1, precision=3, base=1000, suffix='B')
+        self._summary['avg_data_rate'] = self._safe_div(self._summary['data_sent_bytes'],
+                                                        self._summary['elapsed_time_average'], number_only=True)
         results['Average Data Rate'] = self._prettyprint(self._safe_div(self._summary['data_sent_bytes'],
                                                                         self._summary['elapsed_time_average']),
                                                          precision=3, base=1000, suffix='B/sec')
-        results['Average Data Rate'] = self._prettyprint(self._safe_div(self._summary['data_sent_bytes'],
-                                                                        self._summary['elapsed_time_average']),
-                                                         precision=3, base=1000, suffix='B/sec')
+        self._summary['avg_latency'] = self._summary['mean_latency_sec'] / self._summary['total_instances']
         results['Average RTT'] = self._prettyprint(self._summary['mean_latency_sec'] / self._summary['total_instances'],
                                                    precision=3, base=1000, suffix='sec')
         results['Max RTT'] = self._prettyprint(self._summary['max_max_latency_sec'],
@@ -50,6 +50,7 @@ class server_reporter(ClusterBusterReporter):
                                                     precision=3, integer=1, base=1000, suffix='msgs')
         result['Data Sent'] = self._prettyprint(row['data_sent_bytes'],
                                                 precision=3, integer=1, base=1000, suffix='B')
+        row['data_rate'] = self._safe_div(row['data_sent_bytes'], row['data_elapsed_time'], number_only=True)
         result['Data Rate'] = self._prettyprint(self._safe_div(row['data_sent_bytes'], row['data_elapsed_time']),
                                                 precision=3, base=1000, suffix='B/sec')
         result['Average RTT'] = self._prettyprint(row['mean_latency_sec'],

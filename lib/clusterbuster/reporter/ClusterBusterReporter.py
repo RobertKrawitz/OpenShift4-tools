@@ -43,6 +43,10 @@ class ClusterBusterReporter:
             workload = jdata["metadata"]["workload_reporting_class"]
         else:
             workload = jdata["metadata"]["workload"]
+        if 'runtime_class' not in jdata['metadata']:
+            runtime_class = jdata['metadata']['options']['runtime_classes'].get('default')
+            if runtime_class:
+                jdata['metadata']['runtime_class'] = runtime_class
         try:
             imported_lib = importlib.import_module(f'..{workload}_reporter', __name__)
         except Exception as exc:
@@ -160,24 +164,7 @@ class ClusterBusterReporter:
             self._add_summary()
 
         if self._format.startswith('json'):
-            if self._format == 'json-summary':
-                answer = {
-                    'summary': self._summary,
-                    'metadata': self._jdata['metadata'],
-                    }
-            elif self._format == 'json':
-                answer = {
-                    'summary': self._summary,
-                    'metadata': self._jdata['metadata'],
-                    'rows': self._rows
-                    }
-            elif self._format == 'json-verbose':
-                answer = deepcopy(self._jdata)
-                answer['processed_results'] = {
-                    'summary': self._summary,
-                    'rows': self._rows
-                    }
-            return answer
+            return self.__create_json_report()
         else:
             return self.__create_text_report()
 
@@ -194,6 +181,9 @@ class ClusterBusterReporter:
                                                                 precision=3, suffix='sec')
             results['Pod creation interval'] = self._prettyprint(self._summary['pod_create_interval'],
                                                                  precision=3, suffix='sec')
+            self._summary['pod_creation_rate'] = self._safe_div(self._summary['total_instances'],
+                                                                (self._summary['last_pod_create_time'] -
+                                                                 self._summary['first_pod_create_time']), number_only=True)
             results['Pod creation rate'] = self._prettyprint(self._safe_div(self._summary['total_instances'],
                                                                             (self._summary['last_pod_create_time'] -
                                                                              self._summary['first_pod_create_time'])),
@@ -216,6 +206,9 @@ class ClusterBusterReporter:
                                                           precision=3, suffix='sec')
             results['Pod start interval'] = self._prettyprint(self._summary['pod_start_interval'],
                                                               precision=3, suffix='sec')
+            self._summary['pod_start_rate'] = self._safe_div(self._summary['total_instances'],
+                                                             (self._summary['last_pod_start_time'] -
+                                                              self._summary['first_pod_start_time']), number_only=True)
             results['Pod start rate'] = self._prettyprint(self._safe_div(self._summary['total_instances'],
                                                                          (self._summary['last_pod_start_time'] -
                                                                           self._summary['first_pod_start_time'])),
@@ -226,9 +219,12 @@ class ClusterBusterReporter:
                                                           precision=3, suffix='sec')
             results['Run start interval'] = self._prettyprint(self._summary['data_start_interval'],
                                                               precision=3, suffix='sec')
+            self._summary['absolute_sync_error'] = (self._summary['data_start_interval'] +
+                                                    self._summary['data_end_interval']) / 2
             results['Absolute sync error'] = self._prettyprint((self._summary['data_start_interval'] +
                                                                 self._summary['data_end_interval']) / 2,
                                                                precision=3, suffix='sec')
+            self._summary['relative_sync_error'] = self._summary['overlap_error']
             results['Relative sync error'] = self._prettyprint(self._summary['overlap_error'],
                                                                precision=4, base=100, suffix='%')
             results['Sync max RTT delta'] = self._prettyprint(self._summary['timing_parameters']['max_sync_rtt_delta'],
@@ -514,13 +510,15 @@ class ClusterBusterReporter:
         else:
             return f'{self._fformat(num * (1000 ** 4), precision=precision)} p{suffix}'
 
-    def _safe_div(self, num: float, denom: float, precision: int = None, as_string: bool = False):
+    def _safe_div(self, num: float, denom: float, precision: int = None, as_string: bool = False,
+                  number_only: bool = False):
         """
         Safely divide two numbers.  Return 'N/A' if denominator is zero.
         :param num: Numerator
         :param denom: Denominator
         :param precision: Precision to round the result
         :param as_string: If true, return value as string
+        :param number_only: If true, only return a number (0 for N/A)
         """
         try:
             result = float(num) / float(denom)
@@ -533,7 +531,10 @@ class ClusterBusterReporter:
             else:
                 return round(result, precision)
         except Exception:
-            return 'N/A'
+            if number_only:
+                return 0
+            else:
+                return 'N/A'
 
     def _wrap_text(self, text: str):
         """
@@ -937,6 +938,39 @@ class ClusterBusterReporter:
                                        key_column=self._summary_indent, value_column=value_column,
                                        depth_indentation=self._summary_indent,
                                        integer_width=integer_width, outfile=outfile)
+
+    def __create_json_report(self):
+        """
+        Create JSON format report
+        """
+        results = {}
+        if 'verbose' in self._format and len(self._rows):
+            results['Detail'] = {}
+            self._rows.sort(key=self.__row_name)
+            for row in self._rows:
+                self._generate_row(results['Detail'], row)
+        if len(self._rows) > 0 or not self._expect_row_data:
+            results['Summary'] = {}
+            self._generate_summary(results['Summary'])
+        if self._format == 'json-summary':
+            answer = {
+                'summary': self._summary,
+                'metadata': self._jdata['metadata'],
+                }
+        elif self._format == 'json':
+            answer = {
+                'summary': self._summary,
+                'metadata': self._jdata['metadata'],
+                'rows': self._rows
+                }
+        elif self._format == 'json-verbose':
+            answer = deepcopy(self._jdata)
+            answer['processed_results'] = {
+                'summary': self._summary,
+                'rows': self._rows
+                }
+        return answer
+
 
     def __create_text_report(self):
         """

@@ -36,7 +36,9 @@ class files_reporter(ClusterBusterReporter):
             dest[cop]['Elapsed Time'] = self._fformat(sop['operation_elapsed_time'], 3)
             dest[cop]['CPU Time'] = self._fformat(sop['cpu_time'], 3)
             dest[cop]['Operations'] = sop['operations']
+            sop['operations_sec'] = self._safe_div(sop['operations'], sop['operation_elapsed_time'])
             dest[cop]['Operations/sec'] = self._safe_div(sop['operations'], sop['operation_elapsed_time'], 0)
+            sop['operations_cpu_sec'] = self._safe_div(sop['operations'], sop['cpu_time'])
             dest[cop]['Operations/CPU sec'] = self._safe_div(sop['operations'], sop['cpu_time'], 0)
             if op == 'read':
                 dest[cop]['Total Files'] = sop['total_files']

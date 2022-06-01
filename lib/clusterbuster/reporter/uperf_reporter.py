@@ -53,10 +53,12 @@ class uperf_reporter(ClusterBusterReporter):
                     dest[pjob]['Job Runtime'] = self._prettyprint(et, precision=3, suffix='sec')
                 dest[pjob]['Total bytes'] = self._prettyprint(source1['nbytes'],
                                                               integer=1, precision=3, base=1000, suffix='B')
+                source1['data_rate'] = self._safe_div(source1['nbytes'], et, number_only=True)
                 dest[pjob]['Bytes/sec'] = self._prettyprint(self._safe_div(source1['nbytes'], et),
                                                             precision=3, base=1000, suffix='B/sec')
                 dest[pjob]['Total ops'] = self._prettyprint(source1['nops'],
                                                             integer=1, precision=3, base=1000, suffix=' ops')
+                source1['ops_rate'] = self._safe_div(source1['nops'], et, number_only=True)
                 dest[pjob]['Ops/sec'] = self._prettyprint(self._safe_div(source1['nops'], et),
                                                           precision=3, base=1000, suffix=' ops/sec')
                 dest[pjob]['Operations'] = {}
