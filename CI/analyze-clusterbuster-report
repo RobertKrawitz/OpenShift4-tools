@@ -236,6 +236,7 @@ sub process_uperf(\%) {
     my ($all_data) = @_;
     my ($uperf_data) = $$all_data{'uperf'};
     my (@uperf_pods) = keys %$uperf_data;
+    my (%summary_data) = ();
     return if (! @uperf_pods);
     print "\n";
     foreach my $pod_count (sort { $a <=> $b } @uperf_pods) {
@@ -248,6 +249,12 @@ sub process_uperf(\%) {
 	foreach my $msg_size (sort { $a <=> $b } keys %{$$uperf_data{$pod_count}}) {
 	    foreach my $nthr (sort { $a <=> $b } keys %{$$uperf_data{$pod_count}{$msg_size}}) {
 		my ($stuff) = $$uperf_data{$pod_count}{$msg_size}{$nthr};
+		foreach my $runtime ('nonkata', 'kata') {
+		    foreach my $field ('rate', 'avg_time_op', 'cpu_util_stream', 'cpu_util_rr') {
+			$summary_data{$runtime}{$field}{'logvalue'} += log($$stuff{$runtime}{$field});
+			$summary_data{$runtime}{$field}{'count'}++;
+		    }
+		}
 		printf("%d\t%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 		       $msg_size, $nthr,
 		       print_value($$stuff{'nonkata'}{'rate'}, 0),
@@ -263,6 +270,22 @@ sub process_uperf(\%) {
 	    }
 	}
     }
+    print "\nNetworking: Geomean\n";
+    printf("\t\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+	   'runc thruput', 'runc latency', 'runc thru cpu', 'runc lat cpu',
+	   'kata thruput', 'kata latency', 'kata thru cpu', 'kata lat cpu',
+	   'rel thruput', 'rel latency');
+    printf("\t\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+	   print_value($summary_data{'nonkata'}{'rate'}, 0),
+	   print_value($summary_data{'nonkata'}{'avg_time_op'}, 6),
+	   print_value($summary_data{'nonkata'}{'cpu_util_stream'}, 3),
+	   print_value($summary_data{'nonkata'}{'cpu_util_rr'}, 3),
+	   print_value($summary_data{'kata'}{'rate'}, 0),
+	   print_value($summary_data{'kata'}{'avg_time_op'}, 6),
+	   print_value($summary_data{'kata'}{'cpu_util_stream'}, 3),
+	   print_value($summary_data{'kata'}{'cpu_util_rr'}, 3),
+	   safe_div($summary_data{'kata'}{'rate'}, $summary_data{'nonkata'}{'rate'}, 3),
+	   safe_div($summary_data{'kata'}{'avg_time_op'}, $summary_data{'nonkata'}{'avg_time_op'}, 3));
 }
 
 sub process_fio(\%) {
@@ -271,7 +294,7 @@ sub process_fio(\%) {
     my (@fio_pods) = keys %$fio_data;
     my (%summary_data) = ();
     return if (! @fio_pods);
-    print "\n";
+    print "\n\nfio:\n";
     foreach my $pod_count (sort { $a <=> $b } @fio_pods) {
 	foreach my $engine (sort keys %{$$fio_data{$pod_count}}) {
 	    my ($f1) = $$fio_data{$pod_count}{$engine};
@@ -404,7 +427,7 @@ sub process_files(\%) {
     my ($files_data) = $$all_data{'files'};
     my (@files_pods) = keys %$files_data;
     return if (! @files_pods);
-    print "\n";
+    print "\n\nFiles:";
     my (%geomean);
     foreach my $pods (sort { $a <=> $b } @files_pods) {
 	my ($f1) = $$files_data{$pods};
@@ -448,16 +471,17 @@ sub process_files(\%) {
     }
 }
 
-sub analyze_directory($\%) {
-    my ($dir, $data) = @_;
+sub analyze_directories(\@\%) {
+    my ($dirs, $data) = @_;
     my ($analyze_cmd) = realpath($0);
     $analyze_cmd =~ s,[^/]*$,../clusterbuster-report,;
-    open(my $summary, '-|', realpath($analyze_cmd), '-o', 'parseable-summary', $dir) || die "Can't run $analyze_cmd: $!\n";
+    open(my $summary, '-|', realpath($analyze_cmd), '-o', 'parseable-summary', @$dirs) || die "Can't run $analyze_cmd: $!\n";
     read_summary($summary, $data);
     close($summary);
 }
 
 my (%all_data);
+my (@dirs);
 
 if (! @ARGV) {
     warn("Reading summary from stdin\n");
@@ -466,20 +490,21 @@ if (! @ARGV) {
     foreach my $dir (@ARGV) {
 	if (-d $dir) {
 	    if (-f "$dir/clusterbuster-report.json") {
-		analyze_directory($dir, %all_data);
+		push @dirs, $dir;
 	    } elsif (opendir (my $dh, $dir)) {
 		while (readdir($dh)) {
 		    my ($fn) = "$dir/$_";
 		    if (-d $fn &&
 			/^(cpusoaker|fio|uperf|files)-(kata|nonkata)-[[:digit:]]+/ &&
 			! /(\.FAIL|\.tmp)$/) {
-			analyze_directory($fn, %all_data);
+			push @dirs, $fn;
 		    }
 		}
 		closedir($dh);
 	    }
 	}
     }
+    analyze_directories(@dirs, %all_data);
 }
 
 process_scaling(%all_data);
