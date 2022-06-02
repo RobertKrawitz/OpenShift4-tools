@@ -211,6 +211,10 @@ function supports_reporting_files() {
     :
 }
 
+function generate_metadata_files() {
+    report_options_files
+}
+
 function report_options_files() {
     cat <<EOF
 "dirs_per_volume": $___file_dirs_per_volume,

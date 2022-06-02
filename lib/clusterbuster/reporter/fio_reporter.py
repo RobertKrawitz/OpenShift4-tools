@@ -58,6 +58,8 @@ class fio_reporter(ClusterBusterReporter):
                     dest1['io_bytes'] = self._prettyprint(nbytes, precision=3, suffix='B', integer=1)
                     dest1['total_ios'] = self._prettyprint(ios, base=1000, precision=3, integer=1)
                     dest1['runtime'] = self._prettyprint(runtime, base=1000, precision=3, suffix='sec')
+                    source1['data_rate'] = self._safe_div(nbytes, runtime, number_only=True)
+                    source1['io_rate'] = self._safe_div(ios, runtime, number_only=True)
                     dest1['io_data_rate'] = self._prettyprint(self._safe_div(nbytes, runtime),
                                                               precision=3, suffix='B/sec')
                     dest1['io_rate'] = self._prettyprint(self._safe_div(ios, runtime),

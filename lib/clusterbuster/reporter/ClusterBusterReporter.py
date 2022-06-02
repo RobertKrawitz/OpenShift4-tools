@@ -88,7 +88,9 @@ class ClusterBusterReporter:
     @staticmethod
     def report(items, format: str, **kwargs):
         answers = list()
-        if not isinstance(items, list):
+        if not items:
+            items = [None]
+        elif not isinstance(items, list):
             items = [items]
         for item in ClusterBusterReporter.enumerate_dirs(items):
             with open(item) as f:
@@ -194,8 +196,8 @@ class ClusterBusterReporter:
                                                               precision=3, suffix='sec')
             results['CPU seconds'] = self._prettyprint(self._summary['cpu_time'],
                                                        precision=3, suffix='sec')
-            cpu_utilization = self._safe_div(self._summary['cpu_time'], self._summary['data_run_interval'])
-            results['CPU utilization'] = self._prettyprint(cpu_utilization, precision=3, base=100, suffix='%')
+            self._summary['cpu_utilization'] = self._safe_div(self._summary['cpu_time'], self._summary['data_run_interval'])
+            results['CPU utilization'] = self._prettyprint(self._summary['cpu_utilization'], precision=3, base=100, suffix='%')
             if 'metrics' in self._summary:
                 results['Metrics'] = {}
                 for key, value in self._summary['metrics'].items():
@@ -459,7 +461,9 @@ class ClusterBusterReporter:
             num = float(num)
         except Exception:
             return str(num)
-        if 'parseable' in self._format:
+        if self._format.startswith('json'):
+            return num
+        elif 'parseable' in self._format:
             if integer != 0 or num == 0:
                 return str(int(num))
             else:
@@ -970,7 +974,6 @@ class ClusterBusterReporter:
                 'rows': self._rows
                 }
         return answer
-
 
     def __create_text_report(self):
         """

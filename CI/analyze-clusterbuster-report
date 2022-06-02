@@ -15,6 +15,7 @@
 
 use strict;
 use Cwd ('realpath');
+use JSON;
 
 my (%scaling_data);
 my (%uperf_data);
@@ -23,101 +24,81 @@ my (%files_data);
 
 sub read_summary($$) {
     my ($fh, $hash) = @_;
-    while (<$fh>) {
-	chomp;
-	my ($jobname, $data) = split(/\./, $_, 2);
-	my ($key, $value) = split(/: */, $data, 2);
-	next if $value <= 0;
-	my ($workload, $runtime_env, $idx, @rest) = split(/-/, $jobname);
-	if ($runtime_env ne 'kata' && $runtime_env ne 'nonkata') {
-	    warn("Unknown runtime_env $runtime_env ($_)\n");
+    $/ = undef;
+    my ($data) = <$fh>;
+    my ($json) = from_json($data);
+    foreach my $report (@$json) {
+	my ($metadata) = $$report{'metadata'} || next;
+	my ($summary) = $$report{'summary'} || next;
+	my ($metrics) = $$summary{'metrics'} || next;
+	if ($$report{'metadata'}{'kind'} ne 'clusterbusterResults') {
+	    warn("Invalid data!\n");
 	    next;
 	}
-	if ($workload eq 'podscale' || $workload eq 'cpusoaker') {
-	    my ($count) = int($rest[0]);
-	    if ($key eq 'summary.pod_start_rate') {
-		$$hash{'scaling'}{$count}{$runtime_env}{'start_rate'} = $value;
-	    } elsif ($key eq 'summary.first_pod_start') {
-		$$hash{'scaling'}{$count}{$runtime_env}{'first_pod_start'} = $value;
-	    } elsif ($key eq 'summary.last_pod_start') {
-		$$hash{'scaling'}{$count}{$runtime_env}{'last_pod_start'} = $value;
-	    } elsif ($key eq 'summary.iterations_cpu_sec' ||
-		     $key eq 'summary.interations_cpu_sec') {
-		$$hash{'scaling'}{$count}{$runtime_env}{'iterations_cpu_sec'} = $value;
-	    } elsif ($key eq 'summary.iterations_sec' ||
-		     $key eq 'summary.interations_sec') {
-		$$hash{'scaling'}{$count}{$runtime_env}{'iterations_sec'} = $value;
-	    } elsif ($key =~ 'summary.metrics.maximum_memory_working_set') {
-		if (! defined $$hash{'scaling'}{$count}{$runtime_env}{'memory'} ||
-		    ($$hash{'scaling'}{$count}{$runtime_env}{'memory'} < $value)) {
-		    $$hash{'scaling'}{$count}{$runtime_env}{'memory'} = $value;
-		}
-	    }
+	my ($runtime_env) = ($$metadata{'runtime_class'} eq 'kata') ? 'kata' : 'nonkata';
+	my ($client_pin_node) = $$metadata{'options'}{'pin_nodes'}{'client'};
+	my ($count) = $$summary{'total_instances'};
+	my ($workload) = $$metadata{'workload'};
+	if ($workload eq 'cpusoaker') {
+	    $$hash{'scaling'}{$count}{$runtime_env}{'start_rate'} = $$summary{'pod_start_rate'};
+	    $$hash{'scaling'}{$count}{$runtime_env}{'first_pod_start'} = $$summary{'first_pod_start_time'};
+	    $$hash{'scaling'}{$count}{$runtime_env}{'last_pod_start'} = $$summary{'last_pod_start_time'};
+	    $$hash{'scaling'}{$count}{$runtime_env}{'iterations_cpu_sec'} = $$summary{'work_iterations_cpu_sec'};
+	    $$hash{'scaling'}{$count}{$runtime_env}{'iterations_sec'} = $$summary{'work_iterations_sec'};
+	    $$hash{'scaling'}{$count}{$runtime_env}{'memory'} = $$metrics{'Maximum memory working set'}{"node: $client_pin_node"};
 	} elsif ($workload eq 'uperf') {
-	    if ($jobname =~ /([[:digit:]]+)B-([[:digit:]])i-([[:digit:]])P-(stream|rr)/) {
-		my ($msgsize) = $1;
-		my ($threads) = $2;
-		my ($pods) = $3;
-		my ($op) = $4;
-		if ($op eq 'stream') {
-		    if ($key =~ /summary\.job_detail.*\.bytes_sec/) {
-			$$hash{'uperf'}{$pods}{$msgsize}{$threads}{$runtime_env}{'rate'} = $value;
-		    }
-		} elsif ($op eq 'rr') {
-		    if ($key =~ /summary\.job_detail.*\.ops_sec/) {
-			$$hash{'uperf'}{$pods}{$msgsize}{$threads}{$runtime_env}{'ops_sec'} = $value;
-		    } elsif ($key =~ /summary\.job_detail.*\.total.avg_time_op/) {
-			$$hash{'uperf'}{$pods}{$msgsize}{$threads}{$runtime_env}{'avg_time_op'} = $value;
-		    } elsif ($key =~ /summary\.job_detail.*\.total.max_time_op/) {
-			$$hash{'uperf'}{$pods}{$msgsize}{$threads}{$runtime_env}{'max_time_op'} = $value;
-		    }
+	    # For now only look at the first job
+	    my (@jobs) = sort keys %{$$metadata{'workload_metadata'}{'jobs'}};
+	    my ($job) = $jobs[0];
+	    my ($msgsize) = $$metadata{'workload_metadata'}{'jobs'}{$job}{'msgsize'};
+	    my ($threads) = $$metadata{'workload_metadata'}{'jobs'}{$job}{'nthr'};
+	    my ($op) = $$metadata{'workload_metadata'}{'jobs'}{$job}{'test_type'};
+	    if ($op eq 'stream') {
+		$$hash{'uperf'}{$count}{$msgsize}{$threads}{$runtime_env}{'rate'} =
+		    $$summary{'results'}{$job}{'summary'}{'data_rate'};
+	    } elsif ($op eq 'rr') {
+		$$hash{'uperf'}{$count}{$msgsize}{$threads}{$runtime_env}{'ops_sec'} =
+		    $$summary{'results'}{$job}{'summary'}{'ops_rate'};
+		$$hash{'uperf'}{$count}{$msgsize}{$threads}{$runtime_env}{'avg_time_op'} =
+		    $$summary{'results'}{$job}{'summary'}{'total'}{'avg_time_avg'};
+		$$hash{'uperf'}{$count}{$msgsize}{$threads}{$runtime_env}{'max_time_op'} =
+		    $$summary{'results'}{$job}{'summary'}{'total'}{'max_time_max'};
+	    }
+	    $$hash{'uperf'}{$count}{$msgsize}{$threads}{$runtime_env}{"cpu_util_$op"} =
+		$$metrics{'CPU utilization'}{'Total'}{"instance: $client_pin_node"};
+
+	} elsif ($$metadata{'workload'} eq 'fio') {
+	    my (@jobs) = sort keys %{$$metadata{'workload_metadata'}{'jobs'}};
+	    foreach my $job (@jobs) {
+		my ($mdata) = $$metadata{'workload_metadata'}{'jobs'}{$job};
+		my ($workload) = $$mdata{'pattern'};
+		my ($blocksize) = $$mdata{'blocksize'};
+		my ($iodepth) = $$mdata{'iodepth'};
+		my ($fdatasync) = $$mdata{'fdatasync'};
+		my ($direct) = $$mdata{'direct'};
+		my ($engine) = $$mdata{'ioengine'};
+		my ($result) = $$summary{'results'}{$job}{'job_results'};
+		foreach my $op (keys %$result) {
+		    my ($iops) = $$result{$op}{'io_rate'};
+		    $$hash{'fio'}{$count}{$engine}{$iodepth}{$fdatasync}{$direct}{$workload}{$blocksize}{$runtime_env}{$op}{'iops'} = $iops;
+		    $$hash{'fio'}{$count}{$engine}{$iodepth}{$fdatasync}{$direct}{$workload}{$blocksize}{$runtime_env}{'total'}{'iops'} += $iops;
+		    my ($throughput) = $$result{$op}{'data_rate'};
+		    $$hash{'fio'}{$count}{$engine}{$iodepth}{$fdatasync}{$direct}{$workload}{$blocksize}{$runtime_env}{$op}{'throughput'} = $throughput;
+		    $$hash{'fio'}{$count}{$engine}{$iodepth}{$fdatasync}{$direct}{$workload}{$blocksize}{$runtime_env}{'total'}{'throughput'} += $throughput;
 		}
-		if ($key =~ /summary\.cpu_utilization/) {
-		    $$hash{'uperf'}{$pods}{$msgsize}{$threads}{$runtime_env}{"cpu_util_$op"} = $value;
-		}
 	    }
-	} elsif ($workload eq 'fio') {
-	    my ($pods, $engine, $workload, $blocksize, $iodepth, $fdatasync, $direct, $op);
-	    if ($jobname =~ /([[:digit:]]*)P/) {
-		$pods = $1;
-	    } else {
-		next;
+	} elsif ($$metadata{'workload'} eq 'files') {
+	    my ($mdata) = defined $$metadata{'workload_metadata'}{'dirs_per_volume'} ? $$metadata{'workload_metadata'} : $$metadata{'options'}{'workloadOptions'};
+	    my ($dirs) = $$mdata{'dirs_per_volume'};
+	    my ($files) = $$mdata{'files_per_dir'};
+	    my ($blocksize) = $$mdata{'file_block_size'};
+	    my ($blocks) = $$mdata{'file_size'};
+	    my ($direct) = $$mdata{'files_direct'};
+	    foreach my $op ('create', 'read', 'remove') {
+		$$hash{'files'}{$count}{$dirs}{$files}{$blocksize}{$blocks}{$direct}{$runtime_env}{$op}{'elapsed_time'} = $$summary{$op}{'operation_elapsed_time'};
+		$$hash{'files'}{$count}{$dirs}{$files}{$blocksize}{$blocks}{$direct}{$runtime_env}{$op}{'cpu_time'} = $$summary{$op}{'cpu_time'};
 	    }
-	    if ($key =~ /\.job_[[:digit:]]+-([[:alpha:]]+)-([[:digit:]]+)-([[:digit:]]+)-([[:digit:]]+)-([[:digit:]]+)-([[:alpha:]]+)\.operation_([[:alpha:]]+)/) {
-		$workload = $1;
-		$blocksize = $2;
-		$iodepth = $3;
-		$fdatasync = $4;
-		$direct = $5;
-		$engine = $6;
-		$op = $7;
-	    } else {
-		next;
-	    }
-	    if ($key =~ /io_rate$/) {
-		$$hash{'fio'}{$pods}{$engine}{$iodepth}{$fdatasync}{$direct}{$workload}{$blocksize}{$runtime_env}{$op}{'iops'} = $value;
-		$$hash{'fio'}{$pods}{$engine}{$iodepth}{$fdatasync}{$direct}{$workload}{$blocksize}{$runtime_env}{'total'}{'iops'} += $value;
-	    } elsif ($key =~ /io_data_rate$/) {
-		$$hash{'fio'}{$pods}{$engine}{$iodepth}{$fdatasync}{$direct}{$workload}{$blocksize}{$runtime_env}{$op}{'throughput'} = $value;
-		$$hash{'fio'}{$pods}{$engine}{$iodepth}{$fdatasync}{$direct}{$workload}{$blocksize}{$runtime_env}{'total'}{'throughput'} += $value;
-	    }
-	} elsif ($workload eq 'files') {
-	    my ($pods, $dirs, $files, $blocksize, $blocks, $direct);
-	    if ($jobname =~ /([[:digit:]]+)P-([[:digit:]]+)D-([[:digit:]]+)F-([[:digit:]]+)B-([[:digit:]]+)S-([[:digit:]]+)T/) {
-		$pods = $1;
-		$dirs = $2;
-		$files = $3;
-		$blocksize = $4;
-		$blocks = $5;
-		$direct = $6;
-	    } else {
-		next;
-	    }
-	    if ($key =~ /summary\.(read|create|remove)\.(.*)/) {
-		my ($op) = $1;
-		my ($subkey) = $2;
-		$$hash{'files'}{$pods}{$dirs}{$files}{$blocksize}{$blocks}{$direct}{$runtime_env}{$op}{$subkey} = $value;
-	    }
+	    $$hash{'files'}{$count}{$dirs}{$files}{$blocksize}{$blocks}{$direct}{$runtime_env}{'read'}{'io_throughput'} = $$summary{'read'}{'data_rate'};
 	} else {
 	    warn("Unknown workload $workload ($_)\n");
 	}
@@ -475,7 +456,7 @@ sub analyze_directories(\@\%) {
     my ($dirs, $data) = @_;
     my ($analyze_cmd) = realpath($0);
     $analyze_cmd =~ s,[^/]*$,../clusterbuster-report,;
-    open(my $summary, '-|', realpath($analyze_cmd), '-o', 'parseable-summary', @$dirs) || die "Can't run $analyze_cmd: $!\n";
+    open(my $summary, '-|', realpath($analyze_cmd), '-o', 'json-summary', @$dirs) || die "Can't run $analyze_cmd: $!\n";
     read_summary($summary, $data);
     close($summary);
 }
