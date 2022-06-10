@@ -1,0 +1,279 @@
+#!/usr/bin/env python3
+# Copyright 2022 Robert Krawitz/Red Hat
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import sys
+import argparse
+import json
+from lib.clusterbuster.reporter.ClusterBusterReporter import ClusterBusterReporter
+
+parser = argparse.ArgumentParser(description='Analyze ClusterBuster report')
+
+parser.add_argument("files", metavar='file', type=str, nargs='*', help='Files to process')
+args = parser.parse_args()
+
+
+class LoadOneReport:
+    def __init__(self, report: dict, answer: dict):
+        self._report = report
+        self._answer = answer
+        self._metadata = self._report['metadata']
+        self._summary = self._report['summary']
+        self._metrics = self._summary['metrics']
+        if 'metadata' not in answer or 'run_uuid' not in answer['metadata']:
+            answer['metadata'] = dict()
+            answer['metadata']['start_time'] = self._metadata['cluster_start_time']
+            answer['metadata']['run_uuid'] = self._metadata['run_uuid']
+            answer['metadata']['server_version'] = self._metadata['kubernetes_version']['serverVersion']
+            answer['metadata']['openshift_version'] = self._metadata['kubernetes_version']['openshiftVersion']
+            answer['metadata']['run_host'] = self._metadata['runHost']
+        else:
+            if self._metadata['cluster_start_time'] < answer['metadata']['start_time']:
+                answer['metadata']['start_time'] = self._metadata['cluster_start_time']
+                if self._metadata['run_uuid'] != answer['metadata']['run_uuid']:
+                    raise Exception(f"Mismatched run_uuid: {self._metadata['run_uuid']}, {answer['metadata']['run_uuid']}")
+                if self._metadata['runHost'] != answer['metadata']['run_host']:
+                    raise Exception(f"Mismatched run_host: {self._metadata['runHost']}, {answer['metadata']['run_host']}")
+                if self._metadata['kubernetes_version']['openshiftVersion'] != answer['metadata']['openshift_version']:
+                    raise Exception(f"Mismatched openshift_version: {self._metadata['kubernetes_version']['openshiftVersion']}, {answer['metadata']['openshift_version']}")
+                if self._metadata['kubernetes_version']['serverVersion'] != answer['metadata']['server_version']:
+                    raise Exception(f"Mismatched server_version: {self._metadata['kubernetes_version']['serverVersion']}, {answer['metadata']['server_version']}")
+        if self._metadata['kind'] != 'clusterbusterResults':
+            raise Exception("Invalid results file")
+        if 'runtime_class' in self._metadata and self._metadata['runtime_class'] == 'kata':
+            self._runtime_env = 'kata'
+        else:
+            self._runtime_env = 'nonkata'
+        try:
+            self._client_pin_node = self._metadata['options']['pin_nodes']['client']
+        except Exception:
+            self._client_pin_node = None
+        self._count = self._summary['total_instances']
+        self._workload = self._metadata['workload']
+        if self._workload == 'cpusoaker':
+            self.LoadCPUSoaker()
+        elif self._workload == 'uperf':
+            self.LoadUperf()
+        elif self._workload == 'fio':
+            self.LoadFio()
+        elif self._workload == 'files':
+            self.LoadFiles()
+        else:
+            raise Exception(f'Unknown workload {self._workload}')
+
+    def __MakeHierarchy(self, hierarchy: dict, keys: list):
+        key = keys.pop(0)
+        if key not in hierarchy:
+            hierarchy[key] = dict()
+        if keys:
+            self.__MakeHierarchy(hierarchy[key], keys)
+
+    def LoadCPUSoaker(self):
+        self.__MakeHierarchy(self._answer, ['scaling', self._count, self._runtime_env])
+        root = self._answer['scaling'][self._count][self._runtime_env]
+        root['start_rate'] = self._summary['pod_start_rate']
+        root['first_pod_start'] = self._summary['first_pod_start_time']
+        root['last_pod_start'] = self._summary['last_pod_start_time']
+        root['iterations_cpu_sec'] = self._summary['work_iterations_cpu_sec']
+        root['iterations_sec'] = self._summary['work_iterations_sec']
+        root['memory'] = self._metrics['Maximum memory working set'][f'node: {self._client_pin_node}']
+        root['memory_per_pod'] = root['memory'] / self._count
+        root['pod_starts_per_second'] = self._count / root['last_pod_start']
+
+    def LoadUperf(self):
+        job_name = sorted(self._metadata['workload_metadata']['jobs'].keys())[0]
+        job_metadata = self._metadata['workload_metadata']['jobs'][job_name]
+        msgsize = job_metadata['msgsize']
+        threads = job_metadata['nthr']
+        op = job_metadata['test_type']
+        job = self._summary['results'][job_name]['summary']
+
+        self.__MakeHierarchy(self._answer, ['uperf', self._count, msgsize, threads, self._runtime_env])
+        root = self._answer['uperf'][self._count][msgsize][threads][self._runtime_env]
+        root[f'cpu_util_{op}'] = self._metrics['CPU utilization']['Total'][f'instance: {self._client_pin_node}']
+        if op == 'stream':
+            root['rate'] = job['data_rate']
+        elif op == 'rr':
+            root['ops_sec'] = job['ops_rate']
+            root['avg_time_op'] = job['total']['avg_time_avg']
+            root['max_time_op'] = job['total']['max_time_max']
+
+    def LoadFio(self):
+        jobs = sorted(self._metadata['workload_metadata']['jobs'])
+        for job in jobs:
+            job_metadata = self._metadata['workload_metadata']['jobs'][job]
+            pattern = job_metadata['pattern']
+            blocksize = job_metadata['blocksize']
+            iodepth = job_metadata['iodepth']
+            fdatasync = job_metadata['fdatasync']
+            direct = job_metadata['direct']
+            ioengine = job_metadata['ioengine']
+            result = self._summary['results'][job]['job_results']
+            self.__MakeHierarchy(self._answer, ['fio', self._count, ioengine, iodepth, fdatasync,
+                                                direct, pattern, blocksize, self._runtime_env, 'total'])
+            root = self._answer['fio'][self._count][ioengine][iodepth][fdatasync][direct][pattern][blocksize][self._runtime_env]
+            for op, data in result.items():
+                if 'data_rate' in result[op]:
+                    self.__MakeHierarchy(root, [op])
+                    root[op]['throughput'] = result[op]['data_rate']
+                    if 'throughput' not in root['total']:
+                        root['total']['throughput'] = 0
+                    root['total']['throughput'] += result[op]['data_rate']
+                if 'io_rate' in result[op]:
+                    self.__MakeHierarchy(root, [op])
+                    if 'iops' not in root['total']:
+                        root['total']['iops'] = 0
+                    root[op]['iops'] = result[op]['io_rate']
+                    root['total']['iops'] += result[op]['io_rate']
+
+    def LoadFiles(self):
+        if 'workload_metadata' in self._metadata and 'dirs_per_volume' in self._metadata['workload_metadata']:
+            job_metadata = self._metadata['workload_metadata']
+        else:
+            job_metadata = self._metadata['options']['workloadOptions']
+        dirs = job_metadata['dirs_per_volume']
+        files = job_metadata['files_per_dir']
+        blocksize = job_metadata['file_block_size']
+        blocks = job_metadata['file_size']
+        direct = job_metadata['files_direct']
+        self.__MakeHierarchy(self._answer, ['files', self._count, dirs, files, blocksize, blocks, direct, self._runtime_env])
+        root = self._answer['files'][self._count][dirs][files][blocksize][blocks][direct][self._runtime_env]
+        for op in ['create', 'read', 'remove']:
+            self.__MakeHierarchy(root, [op])
+            root[op]['elapsed_time'] = self._summary[op]['operation_elapsed_time']
+            root[op]['cpu_time'] = self._summary[op]['cpu_time']
+            root[op]['cpu_utilization'] = root[op]['cpu_time'] / root[op]['elapsed_time']
+        root['read']['io_throughput'] = self._summary['read']['data_rate']
+
+
+class AnalyzeReports:
+    def __init__(self, files):
+        self.__answer = dict()
+        self.__report = dict()
+        reports = ClusterBusterReporter.report(args.files, format="json-summary")
+        for report in reports:
+            LoadOneReport(report, self.__answer)
+
+    def AnalyzeScaling(self):
+        if 'scaling' not in self.__answer:
+            return
+        answers = list()
+        for key, data in self.__answer['scaling'].items():
+            data['pods'] = key
+            if 'kata' in data and 'nonkata' in data:
+                data['ratio'] = dict()
+                data['ratio']['memory_difference'] = data['kata']['memory'] - data['nonkata']['memory']
+                for var in data['kata'].keys():
+                    data['ratio'][var] = data['kata'][var] / data['nonkata'][var]
+            answers.append(data)
+        return answers
+
+    def AnalyzeUperf(self):
+        if 'uperf' not in self.__answer:
+            return
+        data = self.__answer['uperf']
+        answers = list()
+        for pods, data1 in data.items():
+            for msgsize, data2 in data1.items():
+                for threads, data3 in data2.items():
+                    answer = dict()
+                    answer['pods'] = pods
+                    answer['msgsize'] = msgsize
+                    answer['threads'] = threads
+                    for runtime, data4 in data3.items():
+                        answer[runtime] = data4
+                    if 'kata' in data4 and 'nonkata' in data4:
+                        answer['ratio'] = dict()
+                        for key in answer['kata'].keys():
+                            answer['ratio'][key] = data3['kata'][key] / data3['nonkata'][key]
+                    answers.append(answer)
+        return answers
+
+    def AnalyzeFio(self):
+        if 'fio' not in self.__answer:
+            return
+        data = self.__answer['fio']
+        answers = list()
+        for pods, data1 in data.items():
+            for ioengine, data2 in data1.items():
+                for iodepth, data3 in data2.items():
+                    for fdatasync, data4 in data3.items():
+                        for direct, data5 in data4.items():
+                            for pattern, data6 in data5.items():
+                                for blocksize, data7 in data6.items():
+                                    answer = dict()
+                                    answer['pods'] = pods
+                                    answer['ioengine'] = ioengine
+                                    answer['iodepth'] = iodepth
+                                    answer['fdatasync'] = fdatasync
+                                    answer['direct'] = direct
+                                    answer['pattern'] = pattern
+                                    for runtime, data8 in data7.items():
+                                        answer[runtime] = data8
+                                    if 'kata' in data7 and 'nonkata' in data7:
+                                        answer['ratio'] = dict()
+                                        for key, subdata in answer['kata'].items():
+                                            answer['ratio'][key] = dict()
+                                            for subkey in subdata.keys():
+                                                answer['ratio'][key][subkey] = (data7['kata'][key][subkey] /
+                                                                                data7['nonkata'][key][subkey])
+                                answers.append(answer)
+        return answers
+
+    def AnalyzeFiles(self):
+        if 'files' not in self.__answer:
+            return
+        data = self.__answer['files']
+        answers = list()
+        for pods, data1 in data.items():
+            for dirs, data2 in data1.items():
+                for files, data3 in data2.items():
+                    for blocksize, data4 in data3.items():
+                        for blocks, data5 in data4.items():
+                            for direct, data6 in data5.items():
+                                answer = dict()
+                                answer['pods'] = pods
+                                answer['files'] = files
+                                answer['blocks'] = blocks
+                                answer['blocksize'] = blocksize
+                                answer['direct'] = direct
+                                for runtime, data7 in data6.items():
+                                    answer[runtime] = data7
+                                if 'kata' in data6 and 'nonkata' in data6:
+                                    answer['ratio'] = dict()
+                                    for key, subdata in answer['kata'].items():
+                                        answer['ratio'][key] = dict()
+                                        for subkey in subdata.keys():
+                                            if data6['nonkata'][key][subkey] > 0:
+                                                answer['ratio'][key][subkey] = (data6['kata'][key][subkey] /
+                                                                                data6['nonkata'][key][subkey])
+                                            else:
+                                                answer['ratio'][key][subkey] = 0
+                                answers.append(answer)
+        return answers
+
+    def Analyze(self):
+        self.__report['metadata'] = self.__answer['metadata']
+        self.__report['files'] = self.AnalyzeScaling()
+        self.__report['uperf'] = self.AnalyzeUperf()
+        self.__report['fio'] = self.AnalyzeFio()
+        self.__report['files'] = self.AnalyzeFiles()
+        json.dump(self.__report, sys.stdout, indent=2)
+
+try:
+    AnalyzeReports(args.files).Analyze()
+except KeyboardInterrupt:
+    sys.exit(1)
+except BrokenPipeError:
+    sys.exit(1)
