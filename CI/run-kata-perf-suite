@@ -95,6 +95,8 @@ declare -i fail=0
 declare -i counter=0
 declare -i hard_fail_on_error=0
 declare -i restart=0
+# shellcheck disable=2155
+declare uuid=$(uuidgen -r)
 
 declare -a failures=()
 declare -a jobs=()
@@ -614,7 +616,7 @@ function run_clusterbuster() {
     jobname=$(printf '%s-%s-%04d-%s' "$workload" "$(xruntimeclass "$runtimeclass")" "$counter" "$jobname")
     jobdir=${artifactdir:+$artifactdir/$jobname}
     counter=$((counter+1))
-    if [[ $debugonly -eq 0 && -n "$jobdir" && -d "$jobdir" ]] ; then
+    if [[ $debugonly -eq 0 && -n "$jobdir" && -d "$jobdir" && -f "$jobdir/clusterbuster-report.json" ]] ; then
 	if ((restart)) ; then
 	    echo "$jobname is already present"
 	    return 0
@@ -633,7 +635,7 @@ function run_clusterbuster() {
     echo "*** Running $jobname"
     # shellcheck disable=SC2090
     doit "$__clusterbuster__" ${dontdoit:+"$dontdoit"} \
-	 ${basename:+"--basename=$basename"} \
+	 ${basename:+"--basename=$basename"} --uuid="$uuid" \
 	 --precleanup --cleanup="$cleanup" --image-pull-policy=IfNotPresent \
 	 --metrics --report="$report_format" --workload="$workload" \
 	 ${job_runtime:+"--workload_runtime=$job_runtime"} \
@@ -787,6 +789,20 @@ if ((use_python_venv)) ; then
     python_create_venv "$python_venv"
 fi
 if ((! debugonly)) ; then
+    starting_timestamp=$(date +%s)
+    job_datestamp=$(date -u '+%Y_%m_%dT%H_%M_%S%z' --date=@"$starting_timestamp")
+    artifactdir=${artifactdir//%s/$job_datestamp}
+    if ((restart)) ; then
+	if [[ -d "$artifactdir" && -n "$artifactdir"/* ]] ; then
+	    for d in "$artifactdir"/* ; do
+		if [[ -d "$d" && -f "$d/clusterbuster-report.json" ]] ; then
+		    uuid=$(jq -r .metadata.run_uuid "$d/clusterbuster-report.json")
+		    break
+		fi
+	    done
+	fi
+    fi
+
     monitor "$run_timeout"
     trap 'if ((monitor_pid > 0)) ; then kill -9 "$monitor_pid"; monitor_pid=0; fi; if ((job_pid > 0)) ; then kill -INT "$job_pid"; echo Cleaning up ; fi; echo Run timed out after '"$run_timeout"' seconds; fail=3; finis' USR1
     trap 'if ((monitor_pid > 0)) ; then kill -9 "$monitor_pid"; monitor_pid=0; fi; if ((job_pid > 0)) ; then kill -INT "$job_pid"; echo Cleaning up; fi; if ((fail < 2)); then fail=2; fi; finis' TERM INT HUP
@@ -794,9 +810,6 @@ if ((! debugonly)) ; then
     if ((force_pull_image)) ; then
 	force_pull_base_image
     fi
-    starting_timestamp=$(date +%s)
-    job_datestamp=$(date -u '+%Y_%m_%dT%H_%M_%S%z' --date=@"$starting_timestamp")
-    artifactdir=${artifactdir//%s/$job_datestamp}
 fi
 
 for runtimeclass in "${runtimeclasses[@]}" ; do

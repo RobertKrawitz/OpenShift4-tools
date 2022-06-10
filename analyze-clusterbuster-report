@@ -38,6 +38,7 @@ class LoadOneReport:
             answer['metadata']['server_version'] = self._metadata['kubernetes_version']['serverVersion']
             answer['metadata']['openshift_version'] = self._metadata['kubernetes_version']['openshiftVersion']
             answer['metadata']['run_host'] = self._metadata['runHost']
+            answer['metadata']['kata_version'] = self._metadata.get('kata_version')
         else:
             if self._metadata['cluster_start_time'] < answer['metadata']['start_time']:
                 answer['metadata']['start_time'] = self._metadata['cluster_start_time']
@@ -49,6 +50,8 @@ class LoadOneReport:
                     raise Exception(f"Mismatched openshift_version: {self._metadata['kubernetes_version']['openshiftVersion']}, {answer['metadata']['openshift_version']}")
                 if self._metadata['kubernetes_version']['serverVersion'] != answer['metadata']['server_version']:
                     raise Exception(f"Mismatched server_version: {self._metadata['kubernetes_version']['serverVersion']}, {answer['metadata']['server_version']}")
+                if self._metadata.get('kata_version') != answer['metadata']['kata_version']:
+                    raise Exception(f"Mismatched kata_version: {self._metadata.get('kata_version')}, {answer['metadata']['kata_version']}")
         if self._metadata['kind'] != 'clusterbusterResults':
             raise Exception("Invalid results file")
         if 'runtime_class' in self._metadata and self._metadata['runtime_class'] == 'kata':

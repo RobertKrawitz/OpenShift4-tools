@@ -1487,6 +1487,16 @@ function _report_liveness_probe() {
 EOF
 }
 
+function _get_kata_version() {
+    local kata_version
+    kata_version=$(oc get csv  -n openshift-sandboxed-containers-operator -o jsonpath="{.items[0].spec.version}" 2>/dev/null)
+    if [[ -n "$kata_version" ]] ; then
+	cat <<EOF
+"kata_version": "${kata_version:-}",
+EOF
+    fi
+}
+
 function _report_objects() {
     local first_local_ts
     local remote_ts
@@ -1519,6 +1529,7 @@ function _report_objects() {
   "sync_timestamp": $remote_ts,
   "controller_postsync_timestamp": $second_local_ts,
   "artifact_directory": "$artifactdir",
+  $(_get_kata_version)
   "options": {
     "basename": "$basename",
     "containers_per_pod": $containers_per_pod,

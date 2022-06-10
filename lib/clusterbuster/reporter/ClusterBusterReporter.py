@@ -115,7 +115,7 @@ class ClusterBusterReporter:
         answers = ClusterBusterReporter.report(items, format, **kwargs)
         if format.startswith('json'):
             json.dump(answers, outfile, indent=2)
-        else:
+        elif format != "none":
             print("\n\n".join(answers))
 
     @staticmethod
