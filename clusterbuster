@@ -139,7 +139,7 @@ declare -i liveness_probe_sleep_time=0
 declare -r sync_flag_file="/tmp/syncfile";
 declare -r controller_timestamp_file="/tmp/timing.json";
 # shellcheck disable=2155
-declare -r run_uuid=$(uuidgen -r)
+declare run_uuid=$(uuidgen -r)
 
 declare kata_runtime_class=kata
 declare image_pull_policy=
