@@ -26,12 +26,15 @@ class cpusoaker_analysis(ClusterBusterAnalyzeOne):
 
     def Analyze(self):
         answers = list()
-        for key, data in self._data.items():
-            data['pods'] = key
-            if 'kata' in data and 'nonkata' in data:
-                data['ratio'] = dict()
-                data['ratio']['memory_difference'] = data['kata']['memory'] - data['nonkata']['memory']
-                for var in data['kata'].keys():
-                    data['ratio'][var] = data['kata'][var] / data['nonkata'][var]
-            answers.append(data)
+        for pods, data1 in self._data.items():
+            for runtime, data2 in data1.items():
+                answer = dict()
+                answer['test_description'] = dict()
+                answer['test_description']['workload'] = 'cpusoaker'
+                answer['test_description']['pods'] = pods
+                answer['test_description']['runtime'] = runtime
+                answer['test_description']['name'] = f'cpusoaker_xb{runtime}_pods_{pods}'
+                for key, item in data2.items():
+                    answer[key] = item
+                answers.append(answer)
         return answers

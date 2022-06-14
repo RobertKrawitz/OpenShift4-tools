@@ -33,21 +33,18 @@ class fio_analysis(ClusterBusterAnalyzeOne):
                         for direct, data5 in data4.items():
                             for pattern, data6 in data5.items():
                                 for blocksize, data7 in data6.items():
-                                    answer = dict()
-                                    answer['pods'] = pods
-                                    answer['ioengine'] = ioengine
-                                    answer['iodepth'] = iodepth
-                                    answer['fdatasync'] = fdatasync
-                                    answer['direct'] = direct
-                                    answer['pattern'] = pattern
                                     for runtime, data8 in data7.items():
-                                        answer[runtime] = data8
-                                    if 'kata' in data7 and 'nonkata' in data7:
-                                        answer['ratio'] = dict()
-                                        for key, subdata in answer['kata'].items():
-                                            answer['ratio'][key] = dict()
-                                            for subkey in subdata.keys():
-                                                answer['ratio'][key][subkey] = (data7['kata'][key][subkey] /
-                                                                                data7['nonkata'][key][subkey])
-                                answers.append(answer)
+                                        answer = dict()
+                                        answer['test_description'] = dict()
+                                        answer['test_description']['pods'] = pods
+                                        answer['test_description']['workload'] = 'fio'
+                                        answer['test_description']['ioengine'] = ioengine
+                                        answer['test_description']['iodepth'] = iodepth
+                                        answer['test_description']['fdatasync'] = fdatasync
+                                        answer['test_description']['direct'] = direct
+                                        answer['test_description']['pattern'] = pattern
+                                        answer['test_description']['name'] = f'fio_{runtime}_pods_{pods}_ioengine_{ioengine}_fdatasync_{fdatasync}_direct_{direct}_pattern_{pattern}'
+                                        for key, item in data8.items():
+                                            answer[key] = item
+                                        answers.append(answer)
         return answers

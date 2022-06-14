@@ -84,7 +84,7 @@ class ClusterBusterLoader:
             workload = report['metadata']['workload']
             try:
                 imported_lib = importlib.import_module(f'..{workload}_loader', __name__)
-            except Exception as exc:
+            except Exception:
                 continue
             for i in inspect.getmembers(imported_lib):
                 if i[0] == f'{workload}_loader':

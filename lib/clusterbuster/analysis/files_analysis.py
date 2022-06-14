@@ -30,25 +30,21 @@ class files_analysis(ClusterBusterAnalyzeOne):
             for dirs, data2 in data1.items():
                 for files, data3 in data2.items():
                     for blocksize, data4 in data3.items():
-                        for blocks, data5 in data4.items():
+                        for filesize, data5 in data4.items():
                             for direct, data6 in data5.items():
-                                answer = dict()
-                                answer['pods'] = pods
-                                answer['files'] = files
-                                answer['blocks'] = blocks
-                                answer['blocksize'] = blocksize
-                                answer['direct'] = direct
                                 for runtime, data7 in data6.items():
-                                    answer[runtime] = data7
-                                if 'kata' in data6 and 'nonkata' in data6:
-                                    answer['ratio'] = dict()
-                                    for key, subdata in answer['kata'].items():
-                                        answer['ratio'][key] = dict()
-                                        for subkey in subdata.keys():
-                                            if data6['nonkata'][key][subkey] > 0:
-                                                answer['ratio'][key][subkey] = (data6['kata'][key][subkey] /
-                                                                                data6['nonkata'][key][subkey])
-                                            else:
-                                                answer['ratio'][key][subkey] = 0
-                                answers.append(answer)
+                                    answer = dict()
+                                    answer['test_description'] = dict()
+                                    answer['test_description']['pods'] = pods
+                                    answer['test_description']['dirs'] = dirs
+                                    answer['test_description']['workload'] = 'files'
+                                    answer['test_description']['files'] = files
+                                    answer['test_description']['filesize'] = filesize
+                                    answer['test_description']['blocksize'] = blocksize
+                                    answer['test_description']['direct'] = direct
+                                    answer['test_description']['runtime'] = runtime
+                                    answer['test_description']['name'] = f'files_{runtime}_pods_{pods}_dirs_{dirs}_files_{files}_blocksize_{blocksize}_direct_{direct}'
+                                    for key, item in data7.items():
+                                        answer[key] = item
+                                    answers.append(answer)
         return answers
