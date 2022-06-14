@@ -34,7 +34,7 @@ class ClusterBusterAnalysis:
     def __init__(self, data: dict):
         self._data = data
 
-    def Analyze(self):
+    def Analyze(self, status: str=None):
         report = dict()
         metadata = dict()
         if 'metadata' in self._data:
@@ -54,4 +54,6 @@ class ClusterBusterAnalysis:
             except Exception as exc:
                 raise(exc)
         report['metadata'] = metadata
+        if status:
+            report['Status'] = status
         return report

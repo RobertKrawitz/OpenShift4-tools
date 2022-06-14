@@ -37,7 +37,7 @@ class ClusterBusterReporter:
         if format == 'none' or format is None:
             return
         if format == 'raw':
-            json.dump(jdata, sys.stdout, indent=4)
+            json.dump(jdata, sys.stdout, indent=2)
             return
         if 'workload_reporting_class' in jdata['metadata']:
             workload = jdata["metadata"]["workload_reporting_class"]

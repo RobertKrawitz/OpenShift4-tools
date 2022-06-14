@@ -23,6 +23,7 @@ declare __topdir__
 __topdir__="$(realpath "$(dirname "$(realpath -e "$0")")/..")"
 declare __libdir__="${__topdir__}/lib"
 declare __clusterbuster__="${__topdir__}/clusterbuster"
+declare __analyze__="${__topdir__}/analyze-clusterbuster-report"
 declare __profiledir__="${__libdir__}/clusterbuster/CI/profiles"
 
 declare client_pin_node=
@@ -42,6 +43,7 @@ declare job_pid=
 declare -i use_python_venv=1
 declare python_venv=
 declare basename=
+declare analyze_results=
 declare -i debugonly=0
 
 declare -a workloads=(scaling uperf fio files)
@@ -116,6 +118,7 @@ function finis() {
     if [[ -n "${starting_timestamp:-}" && $$ -eq "$BASHPID" ]] ; then
 	local ending_timestamp
 	ending_timestamp=$(date +%s)
+	local statusmsg=Passed
 
 	if [[ -n "${jobs[*]}" ]] ; then
 	    echo "Run times:"
@@ -130,10 +133,25 @@ function finis() {
 		printf "%10s %s\n" "${job_runtimes[$job]}" "$job"
 	    done
 	    fail=1
+	    statusmsg=Failed
 	fi
 
-	echo "Run took $(to_hms "$starting_timestamp" "$ending_timestamp")"
+	echo "Run took $(to_hms "$starting_timestamp" "$ending_timestamp") ($statusmsg)"
 	starting_timestamp=
+    fi
+
+    if [[ -n "$analyze_results" ]] ; then
+	local status
+	if ((fail)) ; then
+	    status=FAIL
+	else
+	    status=PASS
+	fi
+	if [[ $analyze_results == '-' ]] ; then
+	    "$__analyze__" "--status=$status" "$artifactdir"
+	else
+	    "$__analyze__" "--status=$status" "$artifactdir" > "$analyze_results"
+	fi
     fi
     if [[ -n "$python_venv" && -d "$python_venv" ]] ; then
 	if type -t deactivate >/dev/null ; then
@@ -162,6 +180,11 @@ function bool() {
 
 function parse_size() {
     local size
+    echoarg=
+    if [[ $1 = '-n' ]] ; then
+	echoarg=-n
+	shift
+    fi
     local sizes=$*
     sizes=${sizes//,/ }
     for size in $sizes ; do
@@ -181,7 +204,7 @@ function parse_size() {
 		ti|tib|tebibytes) size_multiplier=1099511627776  ;;
 		*) fatal "Cannot parse size $optvalue"           ;;
 	    esac
-	    echo -n "$((size*size_multiplier)) "
+	    echo $echoarg "$((size*size_multiplier)) "
 	else
 	    fatal "Cannot parse size $optvalue"
 	fi
@@ -419,6 +442,7 @@ function process_option() {
 	jobruntime|runtime) job_runtime=$optvalue					;;
 	jobtimeout|timeout) job_timeout=$optvalue					;;
 	artifactdir) artifactdir="${optvalue:-${artifactdir:-$(pwd)}}"			;;
+	analyze*) analyze_results="$optvalue"						;;
 	reportformat*) report_format=$optvalue						;;
 	runtimeclass*) readarray -t runtimeclasses <<< "$optvalue"			;;
 	reportobject*) report_object_creation=$(bool "$optvalue")			;;
@@ -448,7 +472,7 @@ function process_option() {
 	uperf*timeout) uperf_job_timeout=$optvalue					;;
 
 	fioblock*) readarray -t fio_blocksizes <<< "$(parse_size "$optvalue")"		;;
-	fiopat*) readarray -t fio_patterns <<< "$(parse_size "$optvalue")"		;;
+	fiopat*) readarray -t fio_patterns <<< "${optvalue//,/ }"			;;
 	fiodirect*) readarray -t fio_directs <<< "$(bool "$optvalue")"			;;
 	fiofdatasync*) readarray -t fio_fdatasyncs <<< "$(bool "$optvalue")"		;;
 	fioiodepth*) readarray -t fio_iodepths <<< "$(parse_size "$optvalue")"		;;
@@ -478,6 +502,7 @@ function process_option() {
     esac
 }
 
+
 while getopts 'hn-:B:' opt ; do
     case "$opt" in
 	-) process_option "$OPTARG"	;;
@@ -498,6 +523,10 @@ function compute_timeout() {
     ((timeout < 0)) && timeout=$((-timeout))
     echo "$timeout"
 }
+
+if [[ -z "$artifactdir" && $analyze_results -ne 0 ]] ; then
+    fatal "--analyze-results may only used with --artifactdir set"
+fi
 
 ((scaling_job_runtime <= 0)) && scaling_job_runtime=$job_runtime
 scaling_job_timeout=$(compute_timeout "$scaling_job_timeout")
@@ -690,7 +719,6 @@ function test_scaling() {
 			     --namespaces="$namespaces" --objs_per_call=6 --parallel=100 ; then
 	    namespaces=$((namespaces+1))
 	else
-	    echo "Run failed: $?"
 	    break
 	fi
 	if ((debugonly)) ; then
@@ -764,7 +792,7 @@ function test_files() {
     local files_direct
     local options
     for options in "${files_params[@]}" ; do
-	read -r ninst files_dirs_per_volume files_per_dir files_block_size file_size files_direct <<< "$(parse_size "${options//:/ }")"
+	read -r ninst files_dirs_per_volume files_per_dir files_block_size file_size files_direct <<< "$(parse_size -n "${options//:/ }")"
 	if [[ -z "$files_direct" ]] ; then
 	    echo "Unparsable options $options" 1>&2
 	    continue
