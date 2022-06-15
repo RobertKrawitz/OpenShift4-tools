@@ -502,6 +502,9 @@ function process_option() {
     esac
 }
 
+if [[ -z "$OC" ]] ; then
+    fatal "Cannot find oc or kubectl"
+fi
 
 while getopts 'hn-:B:' opt ; do
     case "$opt" in
