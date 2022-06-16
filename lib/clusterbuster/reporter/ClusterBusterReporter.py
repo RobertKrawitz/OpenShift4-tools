@@ -63,7 +63,7 @@ class ClusterBusterReporter:
     def validate_dir(dirname: str):
         if dirname.find('.FAIL') >= 0 or dirname.find('.tmp') >= 0:
             return False
-        if not re.search('(^|/)(cpusoaker|fio|uperf|files)-(kata|nonkata)-[0-9]+[^/]*$', dirname):
+        if not re.search('(^|/)(cpusoaker|fio|uperf|files)-(kata|runc)-[0-9]+[^/]*$', dirname):
             return False
         return os.path.isfile(os.path.join(dirname, "clusterbuster-report.json"))
 

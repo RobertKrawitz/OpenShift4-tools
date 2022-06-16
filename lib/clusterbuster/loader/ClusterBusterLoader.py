@@ -51,7 +51,7 @@ class LoadOneReport:
         if 'runtime_class' in self._metadata and self._metadata['runtime_class'] == 'kata':
             self._runtime_env = 'kata'
         else:
-            self._runtime_env = 'nonkata'
+            self._runtime_env = 'runc'
         try:
             self._client_pin_node = self._metadata['options']['pin_nodes']['client']
         except Exception:
