@@ -255,7 +255,7 @@ if args.post_settling_time > 0:
     time.sleep(args.post_settling_time)
 
 if args.end_time:
-    metrics.endTime = datetime.utcfromtimestamp(args.end_time)
+    metricsEndTime = datetime.utcfromtimestamp(args.end_time)
 else:
     metricsEndTime = get_prometheus_timestamp()
 
