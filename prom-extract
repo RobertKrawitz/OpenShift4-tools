@@ -99,7 +99,7 @@ def get_prometheus_timestamp():
     try:
         with openshift.project('openshift-monitoring'):
             result = openshift.selector('pod/prometheus-k8s-0').object().execute(['date', '+%s.%N'],
-                                                                                container_name='prometheus')
+                                                                                 container_name='prometheus')
             return(datetime.utcfromtimestamp(float(result.out())))
     except Exception as err:
         efail("Unable to retrieve date: %s" % err)
@@ -118,6 +118,7 @@ def generate_uuid():
 
 def get_object(kind, name):
     return openshift.selector('%s/%s' % (kind, name)).objects()[0].as_dict()
+
 
 parser = argparse.ArgumentParser(description='Scrape data from Prometheus')
 parser.add_argument('-u', '--url', '--prometheus-url', type=str,
@@ -267,7 +268,8 @@ for metric in yaml['metrics']:
     metric_data = []
     try:
         if 'instant' not in metric or metric['instant'] is not True:
-            metric_data = prom.custom_query_range(metric['query'], start_time=metricsStartTime, end_time=metricsEndTime, step=args.step)
+            metric_data = prom.custom_query_range(metric['query'], start_time=metricsStartTime,
+                                                  end_time=metricsEndTime, step=args.step)
         else:
             metric_data = prom.custom_query(metric['query'])
     except Exception as err:
@@ -298,7 +300,6 @@ else:
             'stderr': stderr_data
         }
     }
-
 
     if json is not None:
         if json_results:
