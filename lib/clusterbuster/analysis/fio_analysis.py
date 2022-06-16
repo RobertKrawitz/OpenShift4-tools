@@ -43,7 +43,9 @@ class fio_analysis(ClusterBusterAnalyzeOne):
                                         answer['test_description']['fdatasync'] = fdatasync
                                         answer['test_description']['direct'] = direct
                                         answer['test_description']['pattern'] = pattern
-                                        answer['test_description']['name'] = f'fio_{runtime}_pods_{pods}_ioengine_{ioengine}_fdatasync_{fdatasync}_direct_{direct}_pattern_{pattern}'
+                                        answer['test_description']['blocksize'] = blocksize
+                                        answer['test_description']['runtime'] = runtime
+                                        answer['test_description']['name'] = f'fio_{runtime}_pods_{pods}_ioengine_{ioengine}_iodepth_{iodepth}_fdatasync_{fdatasync}_direct_{direct}_pattern_{pattern}_blocksize_{blocksize}'
                                         for key, item in data8.items():
                                             answer[key] = item
                                         answers.append(answer)
