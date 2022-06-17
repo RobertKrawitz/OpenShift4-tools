@@ -1063,7 +1063,10 @@ function generate_workload_metadata() {
 function __OC() {
     if ((! doit)) ; then
 	echo "$OC" "$@" 1>&2
-    elif [[ $1 = describe || $1 = get || $1 = status || $1 = exec || $1 = logs ]] ; then
+    elif [[ $1 = exec || $1 = rsh ]] ; then
+	# Capture error output 
+	(set -o pipefail; "$OC" "$@" 2>&1 1>&3 |sed -e "s/^/${*//\//\\/}: /" |timestamp 1>&2) 3>&1
+    elif [[ $1 = describe || $1 = get || $1 = status || $1 = logs ]] ; then
 	"$OC" "$@"
     elif ((report_object_creation)) ; then
 	if [[ -n "$debug" ]] ; then
@@ -1238,12 +1241,20 @@ function monitor_pods() {
     local -i pods_pending_retry=12
     local -i pods_unchanged_countdown=$pods_pending_retry
     while : ; do
+	# Stop work as soon as we know we're done.
+	if [[ -n "$cb_tempdir" && -f "$cb_tempdir/___run_complete" ]] ; then
+	    return 0
+	fi
 	# shellcheck disable=2034
 	local -a pending_pods=()
 	local -i running_pod_count=0
 	local -i finished_pod_count=0
 	local -i other_pod_count=0
 	while read -r namespace name rdy status rest ; do
+	    if [[ -n "$cb_tempdir" && -f "$cb_tempdir/___run_complete" ]] ; then
+		# Don't exit out of this, which will leave the oc get pods process around
+		continue
+	    fi
 	    case "${status,,}" in
 		error|failed)
 		    echo "Pod -n $namespace $name $status!" 1>&2
@@ -1261,9 +1272,9 @@ function monitor_pods() {
 		completed|terminated)
 		    if supports_api supports_reporting ; then
 			if ! __OC exec --stdin=false -n "${basename}-sync" "${basename}-sync" -- test -f /tmp/clusterbuster-finished ; then
-			    echo "Pod -n $namespace $name exited prematurely!" 1>&2
+			    echo "Sync pod exited prematurely!" 1>&2
 			    echo "Tail end of logs:" 1>&2
-			    oc logs -n "$namespace" "$name" |tail -20 1>&2
+			    oc logs -n "${basename}-sync" "${basename}-sync" |tail -20 1>&2
 			    killthemall
 			fi
 		    fi
@@ -1274,6 +1285,9 @@ function monitor_pods() {
 		    ;;
 	    esac
 	done <<< "$(__OC get pods -A --no-headers "$@" 2>/dev/null)"
+	if [[ -n "$cb_tempdir" && -f "$cb_tempdir/___run_complete" ]] ; then
+	    return 0
+	fi
 	if ! supports_api supports_reporting ; then
 	    if (( running_pod_count + finished_pod_count > 0 && other_pod_count == 0 )) ; then
 		sleep "$workload_run_time"
@@ -1299,7 +1313,13 @@ function monitor_pods() {
 	if ((timeout > 0 && $(date +%s) > timeout)) ; then
 	    killthemall "Monitor pods timeout!"
 	fi
-	sleep 5
+	local -i i
+	for i in {1..5} ; do
+	    if [[ -n "$cb_tempdir" && -f "$cb_tempdir/___run_complete" ]] ; then
+		return 0
+	    fi
+	    sleep 1
+	done
     done
 }
 
@@ -1324,9 +1344,13 @@ function run_logger() {
 
 function _log_helper() {
     until [[ $("$OC" get pod -ojsonpath='{.status.phase}' "$@" 2>/dev/null) != 'Running' ]] ; do
-	"$OC" exec --stdin=false "$@" -- sh -c "while [[ ! -f '$sync_flag_file' ]] ; do sleep 5; echo . 1>&2; done; jq -rS . '$sync_flag_file'" 2>/dev/null && break
-	sleep 5
+	"$OC" exec --stdin=false "$@" -- sh -c "while [[ ! -f '$sync_flag_file' ]] ; do sleep 1; done; jq -rS . '$sync_flag_file'" 2>/dev/null && break
+	sleep 1
     done
+    # Tell the pod monitor to stop.
+    if [[ -n "$cb_tempdir" ]] ; then
+	touch "$cb_tempdir/___run_complete"
+    fi
     "$OC" exec --stdin=false "$@" -- sh -c "rm -f '$sync_flag_file'" || fatal "Can't terminate sync"
 }
 
