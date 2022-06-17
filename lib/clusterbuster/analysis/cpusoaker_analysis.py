@@ -33,7 +33,7 @@ class cpusoaker_analysis(ClusterBusterAnalyzeOne):
                 answer['test_description']['workload'] = 'cpusoaker'
                 answer['test_description']['pods'] = pods
                 answer['test_description']['runtime'] = runtime
-                answer['test_description']['name'] = f'cpusoaker_xb{runtime}_pods_{pods}'
+                answer['test_description']['name'] = f'cpusoaker_{runtime}_pods_{pods}'
                 for key, item in data2.items():
                     answer[key] = item
                 answers.append(answer)
