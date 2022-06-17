@@ -768,7 +768,7 @@ function test_fio() {
 	if ((filesize > fio_max_absolute_filesize)) ; then
 	    filesize=$fio_max_absolute_filesize
 	fi
-	job_name="fio-${ninst}P"
+	job_name="${ninst}P"
 	# shellcheck disable=SC2090
 	run_clusterbuster -j "$job_name" -w fio -r "$runtimeclass" -t "$fio_job_timeout" -R "$fio_job_runtime" -- \
 			  --deployments="$ninst" \
@@ -803,7 +803,7 @@ function test_files() {
 	if ((files_block_size > file_size && file_size > 0)) ; then
 	    files_block_size=$file_size
 	fi
-	job_name="files-${ninst}P-${files_dirs_per_volume}D-${files_per_dir}F-${files_block_size}B-${file_size}S-${files_direct}T"
+	job_name="${ninst}P-${files_dirs_per_volume}D-${files_per_dir}F-${files_block_size}B-${file_size}S-${files_direct}T"
 	# shellcheck disable=SC2090
 	run_clusterbuster -j "$job_name" -w files -r "$runtimeclass" -t "$files_job_timeout" -- \
 			  --deployments="$ninst" \
