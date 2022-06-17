@@ -93,6 +93,7 @@ if ($controller_timestamp_file) {
 	$controller_json_data .= $_;
     }
     close TIMESTAMP;
+    timestamp1("Timestamp data: $controller_json_data");
     $controller_timestamp_data = from_json($controller_json_data);
     timestamp1("About to adjust timestamp");
     $offset_from_controller = $$controller_timestamp_data{'second_controller_ts'} - $$controller_timestamp_data{'sync_ts'};
