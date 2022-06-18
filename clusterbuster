@@ -1344,8 +1344,9 @@ function run_logger() {
 
 function _log_helper() {
     until [[ $("$OC" get pod -ojsonpath='{.status.phase}' "$@" 2>/dev/null) != 'Running' ]] ; do
-	"$OC" exec --stdin=false "$@" -- sh -c "while [[ ! -f '$sync_flag_file' ]] ; do sleep 1; done; jq -rS . '$sync_flag_file'" 2>/dev/null && break
-	sleep 1
+	# Need to produce periodic output to stderr to prevent oc exec connection from prematurely terminating
+	"$OC" exec --stdin=false "$@" -- sh -c "while [[ ! -f '$sync_flag_file' ]] ; do sleep 5; echo KEEPALIVE 1>&2; done; jq -rS . '$sync_flag_file'" 2>/dev/null && break
+	sleep 5
     done
     # Tell the pod monitor to stop.
     if [[ -n "$cb_tempdir" ]] ; then
