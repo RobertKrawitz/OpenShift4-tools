@@ -116,7 +116,7 @@ if ($sync_count == 0) {
 	if ($child == 0) {
 	    timestamp1("Listening on port $listen_port");
 	    listen(SOCK, 5) || die "listen: $!";
-	    print STDERR "Expect $expected_clients clients\n";
+	    printf STDERR "Expect $expected_clients client%s\n", $expected_clients == 1 ? '' : 's';
 	    my (@clients);
 	    # Ensure that the client file descriptors do not get gc'ed,
 	    # closing it prematurely.  This is used when we don't
