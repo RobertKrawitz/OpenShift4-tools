@@ -996,7 +996,7 @@ class ClusterBusterReporter:
             results['Overview']['Status'] = 'FAILED, no data generated'
 
         results['Overview']['Workload'] = self._jdata['metadata']['workload']
-        results['Overview']['Job UUID'] = self._jdata['metadata']['run_uuid']
+        results['Overview']['Job UUID'] = self._jdata['metadata']['uuid']
         results['Overview']['Run host'] = self._jdata['metadata']['runHost']
         results['Overview']['Artifact Directory'] = self._jdata['metadata'].get('artifact_directory', '')
         results['Overview']['Kubernetes version'] = self._jdata['metadata']['kubernetes_version']['serverVersion']['gitVersion']

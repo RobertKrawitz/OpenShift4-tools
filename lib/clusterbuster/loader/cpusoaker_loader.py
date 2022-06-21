@@ -28,6 +28,9 @@ class cpusoaker_loader(LoadOneReport):
         root['last_pod_start'] = self._summary['last_pod_start_time']
         root['iterations_cpu_sec'] = self._summary['work_iterations_cpu_sec']
         root['iterations_sec'] = self._summary['work_iterations_sec']
-        root['memory'] = self._metrics['Maximum memory working set'][f'node: {self._client_pin_node}']
-        root['memory_per_pod'] = root['memory'] / self._count
+        try:
+            root['memory'] = self._metrics['Maximum memory working set'][f'node: {self._client_pin_node}']
+            root['memory_per_pod'] = root['memory'] / self._count
+        except Exception:
+            pass
         root['pod_starts_per_second'] = self._count / root['last_pod_start']

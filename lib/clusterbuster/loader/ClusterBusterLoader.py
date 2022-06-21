@@ -15,6 +15,8 @@
 
 import importlib
 import inspect
+import os
+import json
 from lib.clusterbuster.reporter.ClusterBusterReporter import ClusterBusterReporter
 
 
@@ -25,10 +27,10 @@ class LoadOneReport:
         self._metadata = self._report['metadata']
         self._summary = self._report['summary']
         self._metrics = self._summary['metrics']
-        if 'metadata' not in answer or 'run_uuid' not in answer['metadata']:
+        if 'metadata' not in answer or 'uuid' not in answer['metadata']:
             answer['metadata'] = dict()
             answer['metadata']['start_time'] = self._metadata['cluster_start_time']
-            answer['metadata']['run_uuid'] = self._metadata['run_uuid']
+            answer['metadata']['uuid'] = self._metadata['uuid']
             answer['metadata']['server_version'] = self._metadata['kubernetes_version']['serverVersion']
             answer['metadata']['openshift_version'] = self._metadata['kubernetes_version']['openshiftVersion']
             answer['metadata']['run_host'] = self._metadata['runHost']
@@ -36,8 +38,8 @@ class LoadOneReport:
         else:
             if self._metadata['cluster_start_time'] < answer['metadata']['start_time']:
                 answer['metadata']['start_time'] = self._metadata['cluster_start_time']
-                if self._metadata['run_uuid'] != answer['metadata']['run_uuid']:
-                    raise Exception(f"Mismatched run_uuid: {self._metadata['run_uuid']}, {answer['metadata']['run_uuid']}")
+                if self._metadata['uuid'] != answer['metadata']['uuid']:
+                    raise Exception(f"Mismatched uuid: {self._metadata['uuid']}, {answer['metadata']['uuid']}")
                 if self._metadata['runHost'] != answer['metadata']['run_host']:
                     raise Exception(f"Mismatched run_host: {self._metadata['runHost']}, {answer['metadata']['run_host']}")
                 if self._metadata['kubernetes_version']['openshiftVersion'] != answer['metadata']['openshift_version']:
@@ -77,6 +79,9 @@ class ClusterBusterLoader:
 
     def __init__(self, dirs_and_files: list):
         self.reports = ClusterBusterReporter.report(dirs_and_files, format="json-summary")
+        if len(dirs_and_files) == 1 and os.path.isfile(os.path.join(dirs_and_files[0], "clusterbuster-ci-results.json")):
+            with open(os.path.join(dirs_and_files[0], "clusterbuster-ci-results.json")) as f:
+                self.status = json.load(f)
 
     def Load(self):
         answer = dict()
@@ -89,4 +94,5 @@ class ClusterBusterLoader:
             for i in inspect.getmembers(imported_lib):
                 if i[0] == f'{workload}_loader':
                     i[1](report, answer).Load()
+        answer['status'] = self.status
         return answer

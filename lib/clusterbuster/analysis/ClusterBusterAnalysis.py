@@ -34,13 +34,16 @@ class ClusterBusterAnalysis:
     def __init__(self, data: dict):
         self._data = data
 
-    def Analyze(self, status: str=None):
+    def Analyze(self):
         report = dict()
         metadata = dict()
+        status = dict()
         if 'metadata' in self._data:
             metadata = self._data['metadata']
+        if 'status' in self._data:
+            status = self._data['status']
         for workload, workload_data in self._data.items():
-            if workload == 'metadata':
+            if workload == 'metadata' or workload == 'status':
                 continue
             try:
                 imported_lib = importlib.import_module(f'..{workload}_analysis', __name__)
@@ -54,6 +57,5 @@ class ClusterBusterAnalysis:
             except Exception as exc:
                 raise(exc)
         report['metadata'] = metadata
-        if status:
-            report['Status'] = status
+        report['Status'] = status
         return report

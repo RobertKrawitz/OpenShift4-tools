@@ -139,7 +139,7 @@ declare -i liveness_probe_sleep_time=0
 declare -r sync_flag_file="/tmp/syncfile";
 declare -r controller_timestamp_file="/tmp/timing.json";
 # shellcheck disable=2155
-declare run_uuid=$(uuidgen -r)
+declare uuid=$(uuidgen -r)
 
 declare kata_runtime_class=kata
 declare image_pull_policy=
@@ -800,7 +800,7 @@ function process_option() {
 	kata)			    process_runtimeclass "kata"			;;
 	podannotation)		    pod_annotations+=("$optvalue")		;;
 	runtimeclass)		    process_runtimeclass "$optvalue"		;;
-	uuid)			    run_uuid=$optvalue				;;
+	uuid)			    uuid=$optvalue				;;
 	secrets)		    secrets=$optvalue				;;
 	workloadruntime)	    set_runtime "$optvalue"			;;
 	workload_size)		    set_workload_bytes "$optvalue"		;;
@@ -1395,7 +1395,7 @@ function _get_logs_poll() {
 	# shellcheck disable=SC2086
 	local cleanup_command="; sleep 1; rm -f '$sync_flag_file'"
 	local mypid=$BASHPID
-	monitor_pods -- -l "${basename}-worker=$run_uuid" &
+	monitor_pods -- -l "${basename}-worker=$uuid" &
 	# shellcheck disable=SC2086
 	if supports_api supports_reporting ; then
 	    # Ensure that if there's a lot of output that we don't remove the sync file before it has all been flushed out
@@ -1545,7 +1545,7 @@ function _report_objects() {
   "controller_second_start_timestamp": $second_start_timestamp,
   "cluster_start_time": "$(readable_timestamp "${prometheus_starting_timestamp}")",
   "job_name": "$job_name",
-  "run_uuid": "$run_uuid",
+  "uuid": "$uuid",
   "workload": "$requested_workload",
   "workload_reporting_class": "$(_workload_reporting_class)",
   "kubernetes_version": $(__OC version -ojson),
@@ -1587,7 +1587,7 @@ function _report_objects() {
   }
 },
 "nodes": $(__OC get nodes -ojson),
-"api_objects": $( __OC get all -A -l "${basename}-id=$run_uuid" -ojson |jq -r .items?),
+"api_objects": $( __OC get all -A -l "${basename}-id=$uuid" -ojson |jq -r .items?),
 "csvs": $(__OC get csv -A -ojson | jq -r '[foreach .items[]? as $item ([[],[]];0; {name: $item.metadata.name, namespace: $item.metadata.namespace, version: $item.spec.version})]'),
 EOF
 }
@@ -1604,7 +1604,7 @@ function _retrieve_artifacts() {
 		    echo "Unable to retrieve logs for pod $namespace/$pod:$container" 1>&2
 		fi
 	    fi
-	done <<< "$(__OC get pod -A -l "${basename}-id=$run_uuid" -ojson | jq -r '[foreach .items[]? as $item ([[],[]];0; (if ($item.kind == "Pod") then ([foreach $item.spec.containers[]? as $container ([[],[]];0; $item.metadata.namespace + " " + $item.metadata.name + " " + $container.name)]) else null end))] | flatten | map (select (. != null))[]')"
+	done <<< "$(__OC get pod -A -l "${basename}-id=$uuid" -ojson | jq -r '[foreach .items[]? as $item ([[],[]];0; (if ($item.kind == "Pod") then ([foreach $item.spec.containers[]? as $container ([[],[]];0; $item.metadata.namespace + " " + $item.metadata.name + " " + $container.name)]) else null end))] | flatten | map (select (. != null))[]')"
 	if ((failcount > 5)) ; then
 	    echo "+ $((failcount - 5)) more" 1>&2
 	fi
@@ -1792,12 +1792,12 @@ function standard_labels_yaml() {
     local true='"true"'
     cat <<EOF
 labels:
-  ${basename}-run_uuid: "$run_uuid"
-  ${basename}-id: "$run_uuid"
+  ${basename}-uuid: "$uuid"
+  ${basename}-id: "$uuid"
   ${basename}: "true"
   clusterbusterbase: "true"
   ${basename}base: "true"
-  ${objtype:+${basename}-${objtype}: "$run_uuid"}
+  ${objtype:+${basename}-${objtype}: "$uuid"}
 EOF
     if [[ -n "$workload" ]] ; then
 	cat <<EOF
@@ -2167,7 +2167,7 @@ function create_object_from_file() {
     # shellcheck disable=SC2046
     (_OC create "$objtype" $(_ns) "$objname" "${@/#/--from-file=}" | echo_if_desired 1>&2) || killthemall
     # shellcheck disable=SC2046
-    (_OC label "$objtype" $(_ns) "$objname" "${basename}base=true" 'clusterbusterbase=true' "${basename}-run_uuid=${run_uuid}" "${basename}-id=$run_uuid" "${basename}=true" | echo_if_desired 1>&2) || killthemall
+    (_OC label "$objtype" $(_ns) "$objname" "${basename}base=true" 'clusterbusterbase=true' "${basename}-uuid=${uuid}" "${basename}-id=$uuid" "${basename}=true" | echo_if_desired 1>&2) || killthemall
     if (( doit )) ; then
 	if [[ -n "$artifactdir" ]] ; then
 	    mkdir -p "$artifactdir/$objtype"
@@ -2369,7 +2369,7 @@ $(indent 2 standard_labels_yaml -t 'sync')
     name: ${namespace}
     app: ${namespace}
     k8s-app: ${namespace}
-    ${basename}-sync: "$run_uuid"
+    ${basename}-sync: "$uuid"
 $(create_spec -P -c sync -r '' create_container_sync "$namespace" 0 0 "$sync_count" "$@")
   restartPolicy: Never
 EOF
@@ -2410,7 +2410,7 @@ $(indent 2 standard_labels_yaml -t 'drop-cache')
     name: ${namespace}-${workload}-${instance}-drop-cache
     app: ${namespace}-${workload}-${instance}-drop-cache
     k8s-app: ${namespace}-${workload}-${instance}-drop-cache
-    ${basename}-drop-cache: "$run_uuid"
+    ${basename}-drop-cache: "$uuid"
   securityContext:
     privileged: true
 $(create_spec -P -c drop-cache -r '' create_container_drop_cache "$namespace" "$instance" 0)
@@ -2663,7 +2663,7 @@ function do_logging() {
 	    if [[ -n "$namespace" && -n "$pod" ]] ; then
 		sync_pods+=("-n $namespace $pod")
 	    fi
-	done <<< "$(oc get pod -A --no-headers -l "${basename}-sync=${run_uuid}")"
+	done <<< "$(oc get pod -A --no-headers -l "${basename}-sync=${uuid}")"
 	get_logs "${sync_pods[@]}" &
     else
 	log_host=$(hostname -f)

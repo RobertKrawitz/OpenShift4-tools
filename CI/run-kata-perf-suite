@@ -107,6 +107,16 @@ declare -A job_runtimes=()
 declare starting_timestamp=
 declare job_datestamp
 
+function report_results() {
+    if [[ -n "$*" ]] ; then
+	local -a results=("${@/#/    \"}")
+	results=("${results[@]/%/\"}")
+	local result
+	result="$(IFS=","; echo "${results[*]}")"
+	echo "${result//,/,$'\n'}"
+    fi
+}
+
 function finis() {
     if [[ -n "$job_pid" ]] ; then
 	exec 3>&2 2>/dev/null
@@ -115,6 +125,9 @@ function finis() {
 	exec 2>&3 3>&-
 	job_pid=
     fi
+    local saved_starting_timestamp=$starting_timestamp
+    local ending_timestamp
+    local status
     if [[ -n "${starting_timestamp:-}" && $$ -eq "$BASHPID" ]] ; then
 	local ending_timestamp
 	ending_timestamp=$(date +%s)
@@ -138,26 +151,41 @@ function finis() {
 
 	echo "Run took $(to_hms "$starting_timestamp" "$ending_timestamp") ($statusmsg)"
 	starting_timestamp=
-    fi
-
-    if [[ -n "$analyze_results" ]] ; then
-	local status
 	if ((fail)) ; then
 	    status=FAIL
 	else
 	    status=PASS
 	fi
-	if [[ $analyze_results == '-' ]] ; then
-	    "$__analyze__" "--status=$status" "$artifactdir"
-	else
-	    "$__analyze__" "--status=$status" "$artifactdir" > "$analyze_results"
+	if [[ -n "$artifactdir" && -d "$artifactdir" ]] ; then
+	    cat > "$artifactdir/clusterbuster-ci-results.json" <<EOF
+{
+  "result": "$status",
+  "job_start": "$(date -Is -u --date="@$saved_starting_timestamp")",
+  "job_end": "$(date -Is -u --date="@$ending_timestamp")",
+  "job_runtime": $((ending_timestamp - saved_starting_timestamp)),
+  "ran": [
+$(report_results "${jobs[@]}")
+  ],
+  "failed": [
+$(report_results "${failures[@]}")
+  ]
+}
+EOF
 	fi
-    fi
-    if [[ -n "$python_venv" && -d "$python_venv" ]] ; then
-	if type -t deactivate >/dev/null ; then
-	    deactivate
+
+	if [[ -n "$analyze_results" ]] ; then
+	    if [[ $analyze_results == '-' ]] ; then
+		"$__analyze__" "$artifactdir"
+	    else
+		"$__analyze__" "$artifactdir" > "$analyze_results"
+	    fi
 	fi
-	rm -rf "$python_venv"
+	if [[ -n "$python_venv" && -d "$python_venv" ]] ; then
+	    if type -t deactivate >/dev/null ; then
+		deactivate
+	    fi
+	    rm -rf "$python_venv"
+	fi
     fi
     exit $fail
 }
@@ -449,7 +477,7 @@ function process_option() {
 	cleanup*) cleanup=$(bool "$optvalue")						;;
 	restart) restart=$(bool "$optvalue")						;;
 	runtimeout) run_timeout=$(parse_time "$optvalue")				;;
-	profile) process_profile "$optvalue"						;;
+	profile|runtype) process_profile "$optvalue"					;;
 	forcepull*) force_pull_image="$(bool "$optvalue")"				;;
 	usepythonvenv*) use_python_venv="$(bool "$optvalue")"				;;
 	basename) basename=$optvalue							;;
@@ -824,10 +852,10 @@ if ((! debugonly)) ; then
     job_datestamp=$(date -u '+%Y_%m_%dT%H_%M_%S%z' --date=@"$starting_timestamp")
     artifactdir=${artifactdir//%s/$job_datestamp}
     if ((restart)) ; then
-	if [[ -d "$artifactdir" && -n "$artifactdir"/* ]] ; then
+	if [[ -d "$artifactdir" ]] ; then
 	    for d in "$artifactdir"/* ; do
 		if [[ -d "$d" && -f "$d/clusterbuster-report.json" ]] ; then
-		    uuid=$(jq -r .metadata.run_uuid "$d/clusterbuster-report.json")
+		    uuid=$(jq -r .metadata.uuid "$d/clusterbuster-report.json")
 		    break
 		fi
 	    done
