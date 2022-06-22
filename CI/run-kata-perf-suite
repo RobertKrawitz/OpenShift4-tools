@@ -182,7 +182,11 @@ EOF
 	fi
 	if [[ -n "$python_venv" && -d "$python_venv" ]] ; then
 	    if type -t deactivate >/dev/null ; then
+		# Some versions of python venv assume that $1 works correctly;
+		# ensure that those don't break.
+		set +u
 		deactivate
+		set -u
 	    fi
 	    rm -rf "$python_venv"
 	fi
