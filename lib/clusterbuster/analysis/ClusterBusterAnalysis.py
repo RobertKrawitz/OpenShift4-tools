@@ -57,5 +57,5 @@ class ClusterBusterAnalysis:
             except Exception as exc:
                 raise(exc)
         report['metadata'] = metadata
-        report['Status'] = status
+        report['metadata']['status'] = status
         return report
