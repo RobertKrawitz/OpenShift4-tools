@@ -96,13 +96,19 @@ def get_prometheus_token():
 
 
 def get_prometheus_timestamp():
-    try:
-        with openshift.project('openshift-monitoring'):
-            result = openshift.selector('pod/prometheus-k8s-0').object().execute(['date', '+%s.%N'],
-                                                                                 container_name='prometheus')
-            return(datetime.utcfromtimestamp(float(result.out())))
-    except Exception as err:
-        efail("Unable to retrieve date: %s" % err)
+    retries = 5
+    while retries > 0:
+        retries = retries - 1
+        try:
+            with openshift.project('openshift-monitoring'):
+                result = openshift.selector('pod/prometheus-k8s-0').object().execute(['date', '+%s.%N'],
+                                                                                     container_name='prometheus')
+                return(datetime.utcfromtimestamp(float(result.out())))
+        except Exception as err:
+            if retries <= 0:
+                efail("Unable to retrieve date: %s" % err)
+            else:
+                time.sleep(5)
 
 
 def get_nodes():

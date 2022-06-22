@@ -1131,10 +1131,22 @@ function readable_timestamp() {
 }
 
 function set_start_timestamps() {
-    first_start_timestamp=$(date +%s.%N)
-    prometheus_exact_starting_timestamp=$(get_prometheus_pod_timestamp '%s.%N')
-    prometheus_starting_timestamp=${prometheus_exact_starting_timestamp%%.*}
-    second_start_timestamp=$(date +%s.%N)
+    local -i retries=5
+    while ((retries-- > 0)) ; do
+	first_start_timestamp=$(date +%s.%N)
+	if prometheus_exact_starting_timestamp=$(get_prometheus_pod_timestamp '%s.%N') ; then
+	    prometheus_starting_timestamp=${prometheus_exact_starting_timestamp%%.*}
+	    second_start_timestamp=$(date +%s.%N)
+	    return 0
+	fi
+	if ((retries > 0)) ; then
+	    warn "Fetch timestamp failed! $retries left"
+	    sleep 5
+	else
+	    warn "Unable to retrieve Prometheus timestamp (hard error)"
+	fi
+    done
+    return 1
 }
 
 function get_pod_and_local_timestamps() {
