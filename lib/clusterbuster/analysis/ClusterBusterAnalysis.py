@@ -56,6 +56,11 @@ class ClusterBusterAnalysis:
                         report[workload] = i[1](workload_data, metadata).Analyze()
             except Exception as exc:
                 raise(exc)
-        report['metadata'] = metadata
-        report['metadata']['status'] = status
+        report['metadata'] = dict()
+        for v in ['uuid', 'run_host', 'openshift_version', 'kata_version']:
+            report['metadata'][v] = metadata[v]
+        for v in ['result', 'job_start', 'job_end', 'job_runtime']:
+            report['metadata'][v] = status[v]
+        if 'failed' in status and len(status['failed']) > 0:
+            report['metadata']['failed'] = status['failed']
         return report
