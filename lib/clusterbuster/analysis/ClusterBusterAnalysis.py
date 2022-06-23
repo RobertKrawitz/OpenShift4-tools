@@ -58,9 +58,11 @@ class ClusterBusterAnalysis:
                 raise(exc)
         report['metadata'] = dict()
         for v in ['uuid', 'run_host', 'openshift_version', 'kata_version']:
-            report['metadata'][v] = metadata[v]
+            if v in metadata:
+                report['metadata'][v] = metadata[v]
         for v in ['result', 'job_start', 'job_end', 'job_runtime']:
-            report['metadata'][v] = status[v]
+            if v in status:
+                report['metadata'][v] = status[v]
         if 'failed' in status and len(status['failed']) > 0:
             report['metadata']['failed'] = status['failed']
         return report

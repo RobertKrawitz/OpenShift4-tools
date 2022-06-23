@@ -83,7 +83,7 @@ declare -i fio_pod_memsize=
 declare -a files_ninst=(1 4)
 declare -a files_dirs_per_volume=(256)
 declare -a files_per_dir=(256)
-declare -a files_block_size=(4096 65536)
+declare -a files_block_sizes=(4096 65536)
 declare -a files_sizes=(0 4096 $((256 * 1024)))
 declare -a files_directs=(0 1)
 declare -i files_job_timeout=9000
@@ -94,6 +94,8 @@ declare -i virtiofsd_writeback=0
 declare -i virtiofsd_threadpoolsize=0
 
 declare -i fail=0
+declare -i interrupted=0
+declare -i timedout=0
 declare -i counter=0
 declare -i hard_fail_on_error=0
 declare -i restart=0
@@ -118,9 +120,16 @@ function report_results() {
 }
 
 function finis() {
+    if [[ "$monitor_pid" -ne 0 ]] ; then
+	exec 3>&2 2>/dev/null
+	kill -INT "$monitor_pid"
+	wait "$monitor_pid"
+	exec 2>&3 3>&-
+	monitor_pid=
+    fi
     if [[ -n "$job_pid" ]] ; then
 	exec 3>&2 2>/dev/null
-	kill "$job_pid"
+	kill -INT "$job_pid"
 	wait "$job_pid"
 	exec 2>&3 3>&-
 	job_pid=
@@ -146,16 +155,22 @@ function finis() {
 		printf "%10s %s\n" "${job_runtimes[$job]}" "$job"
 	    done
 	    fail=1
-	    statusmsg=Failed
 	fi
 
-	echo "Run took $(to_hms "$starting_timestamp" "$ending_timestamp") ($statusmsg)"
-	starting_timestamp=
-	if ((fail)) ; then
+	if ((interrupted)) ; then
+	    status=INCOMPLETE
+	    statusmsg=Interrupted
+	elif ((timedout)) ; then
+	    status=TIMEDOUT
+	    statusmsg='Timed out'
+	elif ((fail)) ; then
 	    status=FAIL
+	    statusmsg=Failed
 	else
 	    status=PASS
 	fi
+	echo "Run took $(to_hms "$starting_timestamp" "$ending_timestamp") ($statusmsg)"
+	starting_timestamp=
 	if [[ -n "$artifactdir" && -d "$artifactdir" ]] ; then
 	    cat > "$artifactdir/clusterbuster-ci-results.json" <<EOF
 {
@@ -379,8 +394,10 @@ function monitor_1() {
     # Allow the main process to catch these signals and terminate us.
     # However, allow SIGHUP through so that if we get hung up on we'll
     # safely exit.
-    trap true TERM INT
-    sleep "$timeout"
+    sleep "$timeout" &
+    local sleep_pid=$!
+    trap "if [[ -n "$sleep_pid" ]] ; then kill "$sleep_pid"; fi; exit" TERM INT
+    wait "$sleep_pid"
     kill -USR1 $$
 }
 
@@ -394,65 +411,166 @@ function help() {
 Usage: $0 [options] [tests]
     Tests may be one or more of scaling, uperf, fio, and files.  If not
         provided, all tests are run.
+    Size options may be specified by bytes, or K, Ki, M, Mi, G, Gi, T, or Ti.
+    Boolean options may be specified as 1, yes, or true, with anything else
+        equivalent to false.
 
     General options:
 
-        clientpin=<node>        Pin client pods to the specified node.
-				If not provided, the first worker node
-				(in the order returned by 'oc get nodes')
-				is used.
-        serverpin=<node>	Pin server pods to the specified node.
-				By default, the second worker node is used.
-        syncpin=<node>		Pin the sync pod to the specified node.
-				By default, the third worker node is used.
-	runtime=<seconds>	Run the job for the given number of seconds,
-				if applicable (this does not apply to the
-				files test).  May be overridden by
-				workload-specific values.
-	timeout=<seconds>	Time the job out after the given number of
-				seconds.  May be overridden by
-				workload-specific values.
-	artifactdir=<dir>	Store all run artifacts in the specified
-				directory.  Individual runs are in
-				subdirectories.
-	reportformat=<format>	Format of report printed during run.
-				Default none.  Options are as in clusterbuster.
-	runtimeclasses=<classes>
-				Comma-separated list of runtime classes to test.
-				Default is <empty> (i. e. default) and kata.
-        reportobjectcreation	Whether to report object creation.
-	cleanup			Clean up all pods after last run.
-	restart			Restart any failed or incomplete jobs from a
-				prior run.  Default is no.  Can only be used
-				with identical parameters to previous run.
-	profile=<profile>	Which profile to use.  Default is no profile.
+        clientpin=node          Pin client pods to the specified node.
+                                If not provided, the first worker node
+                                (in the order returned by 'oc get nodes')
+                                is used.
+        serverpin=node          Pin server pods to the specified node.
+                                By default, the second worker node is used.
+        syncpin=node            Pin the sync pod to the specified node.
+                                By default, the third worker node is used.
+        runtime=seconds         Run the job for the given number of seconds,
+                                if applicable (this does not apply to the
+                                files test).  May be overridden by
+                                workload-specific values.
+        timeout=seconds         Time the job out after the given number of
+                                seconds.  May be overridden by
+                                workload-specific values.
+        artifactdir=dir         Store all run artifacts in the specified
+                                directory.  Individual runs are in
+                                subdirectories.
+        reportformat=format     Format of report printed during run.
+                                Default none.  Options are as in clusterbuster.
+        runtimeclasses=classes
+                                Comma-separated list of runtime classes to test.
+                                Default is <empty> (i. e. default) and kata.
+        reportobjectcreation    Whether to report object creation.
+        cleanup                 Clean up all pods after last run.
+        restart                 Restart any failed or incomplete jobs from a
+                                prior run.  Default is no.  Can only be used
+                                with identical parameters to previous run.
+        profile=profile         Which profile to use.  Default is no profile.
                                 Known profiles:
 $(list_profiles '                                - ')
 
     Virtiofsd configuration options (for kata):
-	virtiofsd-direct	Allow direct I/O requests from guest to operate
-				as such.  Default is yes (NOT the kata default)
-	virtiofsd-writeback	Use write back caching for virtiofsd.  Default
-				is no.
-	virtiofsd-threadpoolsize=n
-				Use the specified thread pool size for
-				virtiofsd.  Default is unset (equivalent to 1).
+        virtiofsd-direct        Allow direct I/O requests from guest to operate
+                                as such.  Default is yes (NOT the kata default)
+        virtiofsd-writeback     Use write back caching for virtiofsd.  Default
+                                is no.
+        virtiofsd-threadpoolsize=n
+                                Use the specified thread pool size for
+                                virtiofsd.  Default is unset (equivalent to 1).
 
     Scaling test options:
-	scaling-starting-namespaces=n
-				Start the test with the specified number of
-				namespaces, incrementing until failure.
-				Default 1.
-	scaling-deps-per-namespace=n
-				Deploy the specified number of pods per
-				namespace.  Default is 5.
-	scaling-runtime=<seconds>
-				Allow the pods to run for the specified time.
-				Default is 0.  Typically set to 60 to collect
-				reliable metrics data.
-	scaling-timeout=<seconds>
-				Time the job out after specified time.  Default
-				is the global timeout default.
+        scaling-starting-namespaces=n
+                                Start the test with the specified number of
+                                namespaces, incrementing until failure.
+                                Default 1.
+        scaling-deps-per-namespace=n
+                                Deploy the specified number of pods per
+                                namespace.  Default is 5.
+        scaling-runtime=seconds
+                                Allow the pods to run for the specified time.
+                                Default is 0.  Typically set to 60 to collect
+                                reliable metrics data.
+        scaling-timeout=seconds
+                                Time the job out after specified time.  Default
+                                is the global timeout default.
+        scaling-max-namespaces=n
+                                Maximum number of namespaces to scale to.
+                                Default is -1, equivalent to no upper limit.
+
+    Uperf test options:
+        uperf-msg-sizes=n[,n...]
+                                Space or comma separate list of message sizes
+                                to test.  Default is $(IFS=,; echo "${uperf_msg_sizes[*]}")
+        uperf-nthr=n[,n...]     Space or comma separated list of thread counts
+                                to test.  Default is $(IFS=,; echo "${uperf_nthrs[*]}")
+        uperf-ninst=n[,n...]    Space or comma separated list of number of
+                                pairs of pods to test.  Default is $(IFS=,; echo "${uperf_ninst[*]}")
+        uperf-test-types=test[,test...]
+                                Space or comma separated list of test types
+                                to run.  Default is $(IFS=,; echo "${uperf_test_types[*]}")
+        uperf-runtime=seconds
+                                Allow the pods to run for the specified time.
+                                Default is $job_runtime seconds.
+        uperf-timeout=seconds
+                                Time the job out after specified time.  Default
+                                is the global timeout default.
+
+   Fio test options:
+        fio-block-sizes=n[,n...]
+                                Space or comma separated list of block
+                                sizes to test.  Default is $(IFS=,; echo "${fio_blocksizes[*]}").
+        fio-patterns=pattern[,pattern...]
+                                Space or comma separated list of block sizes
+                                to test.  Default is
+                                $(IFS=,; echo "${fio_patterns[*]}").
+        fio-direct=bool[,bool]
+                                Space or comma separated list of whether to use
+                                direct I/O.  Default is $(IFS=,; echo "${fio_directs[*]}").
+        fio-fdatasync=bool[,bool]
+                                Space or comma separated list of whether to use
+                                the fdatasync option.  Default is $(IFS=,; echo "${fio_fdatasyncs[*]}").
+        fio-iodepths=n[,n...]
+                                Space or comma separated list of I/O depths
+                                to test.  Default is $(IFS=,; echo "${fio_iodepths[*]}").
+        fio-ioengines=engine[,engine...]
+                                Space or comma separated list of I/O engines
+                                to use.  Default is $(IFS=,; echo "${fio_ioengines[*]}").
+        fio-ninst=n[,n...]      Space or comma separated list of pod counts
+                                to test.  Default is $(IFS=,; echo "${fio_ninst[*]}").
+        fio-workdir=dir         Directory to run test on inside the pod.
+                                Default is $fio_workdir.
+        fio-ramptime=n          Ramp time in seconds before measurements are
+                                taken.  Default is $fio_ramptime
+        fio-absolute-filesize=size
+                                File size in bytes per pod to test with.  If 0,
+                                use fio-relative-filesize to specify the
+                                filesize.  Default is $fio_absolute_filesize.
+        fio-max-absolute-filesize=size
+                                Limit for total filesize across all pods.
+                                If zero, there is no absolute filesize limit.
+                                Default is $fio_max_absolute_filesize.
+        fio-relative-filesize=fraction
+                                File size as a fraction of node memory to use.
+                                May be a decimal fraction.  If zero, use
+                                fio-absolute-filesize (one or the other should
+                                be non-zero).  Default is $fio_relative_filesize.
+        fio-max-relative-filesize=fraction
+                                Limit for total filesize across all pods as
+                                a fraction of node memory.  If zero, no
+                                pre-defined limit.  Default is $fio_max_relative_filesize.
+        fio-timeout=seconds     Time the job out after specified time.  Default
+                                is the global timeout default.
+        fio-pod-memsize=size    Memory size to allocate to sandboxed pods.
+                                Default is the system default (normally 2GiB).
+
+    Files test options:
+        fio-timeout=seconds     Time the job out after specified time.  Default
+                                is the global timeout default.
+        files-min-direct=size   If direct I/O is in use, specifies the minimum
+                                block size that will be tested.  Default is $files_min_direct.
+        files-params=ninst:dirs:files:blocksize:filesize:direct[,...]
+                                Space or comma separated list of test
+                                specifications.  If this is provided, the
+                                options below are not used.
+        files-ninst=n[,...]     Space or comma separated list of pod counts
+                                to test.  Default is $(IFS=,; echo "${files_ninst[*]}").
+        files-dirs-per-pod=n[,...]
+                                Space or comma separated list of directories
+                                per pod to test.  Default is $(IFS=,; echo "${files_dirs_per_volume[*]}").
+        files-per-dir=n[,...]   Space or comma separated list of files per
+                                directory.  Default is $(IFS=,; echo "${files_per_dir[*]}").
+        files-block_sizes=size[,...]
+                                Space or comma separated list of block sizes
+                                to test.  Default is $(IFS=,; echo "${files_block_sizes[*]}").
+        files_sizes=size[,...]
+                                Space or comma separated list of file sizes
+                                to test.  Must be a multiple of block size.
+                                Zero is a valid file size; it indicates that
+                                files should be created but no data written.
+                                Default is $(IFS=,; echo "${files_sizes[*]}").
+        files-direct=bool[,bool]
+                                Space or comma separated list of whether to use
+                                direct I/O.  Default is $(IFS=,; echo "${files_directs[*]}").
 EOF
 exit
 }
@@ -523,7 +641,7 @@ function process_option() {
 	filesninst*) readarray -t files_ninst <<< "$(parse_size "$optvalue")"		;;
 	filesdirs*) readarray -t files_dirs_per_volume <<< "$(parse_size "$optvalue")"	;;
 	filesperdir*) readarray -t files_per_dir <<< "$(parse_size "$optvalue")"	;;
-	filesblocksize*) readarray -t files_block_size <<< "$(parse_size "$optvalue")"	;;
+	filesblocksize*) readarray -t files_block_sizes <<< "$(parse_size "$optvalue")"	;;
 	filessize*) readarray -t files_sizes <<< "$(parse_size "$optvalue")"		;;
 	filesdirect*) readarray -t files_directs <<< "$(bool "$optvalue")"		;;
 	files*timeout) files_job_timeout=$optvalue					;;
@@ -582,7 +700,7 @@ if [[ -z "${files_params[*]}" ]] ; then
     for ninst in "${files_ninst[@]}" ; do
 	for dirs in "${files_dirs_per_volume[@]}" ; do
 	    for files in "${files_per_dir[@]}" ; do
-		for blocksize in "${files_block_size[@]}" ; do
+		for blocksize in "${files_block_sizes[@]}" ; do
 		    for size in "${files_sizes[@]}" ; do
 			for direct in "${files_directs[@]}" ; do
 			    if ((! direct || blocksize >= files_min_direct)) ; then
@@ -868,11 +986,15 @@ if ((! debugonly)) ; then
 		fi
 	    done
 	fi
+    else
+	if [[ -n "$artifactdir" && -f "$artifactdir/clusterbuster-report.json" ]] ; then
+	    rm -rf "$artifactdir"
+	fi
     fi
 
     monitor "$run_timeout"
-    trap 'if ((monitor_pid > 0)) ; then kill -9 "$monitor_pid"; monitor_pid=0; fi; if ((job_pid > 0)) ; then kill -INT "$job_pid"; echo Cleaning up ; fi; echo Run timed out after '"$run_timeout"' seconds; fail=3; finis' USR1
-    trap 'if ((monitor_pid > 0)) ; then kill -9 "$monitor_pid"; monitor_pid=0; fi; if ((job_pid > 0)) ; then kill -INT "$job_pid"; echo Cleaning up; fi; if ((fail < 2)); then fail=2; fi; finis' TERM INT HUP
+    trap 'if ((monitor_pid > 0)) ; then kill -9 "$monitor_pid"; monitor_pid=0; fi; timedout=1; if ((job_pid > 0)) ; then kill -INT "$job_pid"; echo Cleaning up ; fi; echo Run timed out after '"$run_timeout"' seconds; fail=3; finis' USR1
+    trap 'if ((monitor_pid > 0)) ; then kill -9 "$monitor_pid"; monitor_pid=0; fi; interrupted=1; if ((job_pid > 0)) ; then kill -INT "$job_pid"; echo Cleaning up; fi; if ((fail < 2)); then fail=2; fi; finis' TERM INT HUP
     trap 'finis' EXIT
     if ((force_pull_image)) ; then
 	force_pull_base_image

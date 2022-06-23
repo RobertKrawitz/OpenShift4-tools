@@ -1642,7 +1642,7 @@ function print_report() {
 }
 
 function get_logs() {
-    trap '' TERM
+    trap - TERM
     local extra_arg=
     local log_cmd
     if supports_api supports_reporting ; then
@@ -2736,9 +2736,9 @@ function run_clusterbuster_1() {
     local -i status=0
     (( precleanup && doit )) && do_cleanup 1>&2
     if ((cleanup)) ; then
-	trap 'wait; remove_tmpdir; trap "remove_tmpdir; echo aborting 1>&2; exit 1" INT; doit=1; do_cleanup force; exit 1' TERM INT HUP
+	trap 'killthemall; wait; remove_tmpdir; doit=1; do_cleanup force; exit 1' TERM INT HUP
     else
-	trap 'wait; remove_tmpdir; exit 1' TERM HUP INT
+	trap 'killthemall; wait; remove_tmpdir; exit 1' TERM HUP INT
     fi
     if [[ $take_prometheus_snapshot -gt 0 && -n "$artifactdir" ]] ; then
 	start_prometheus_snapshot
@@ -2803,7 +2803,8 @@ function remove_tmpdir() {
     [[ -n "${cb_tempdir:-}" && -d "$cb_tempdir" && $cb_tempdir = "/tmp/cbtmp_"* ]] && rm -rf "$cb_tempdir" && unset cb_tempdir
 }
 
-trap "remove_tmpdir" EXIT TERM INT HUP
+trap "remove_tmpdir; exit" EXIT
+trap "remove_tmpdir; exit 1" TERM INT HUP
 cb_tempdir=$(umask 77; mktemp -d -p /tmp -t cbtmp_XXXXXXXX) || fatal "Can't create temporary directory"
 
 load_workloads
