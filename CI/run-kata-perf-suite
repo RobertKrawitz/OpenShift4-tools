@@ -14,17 +14,32 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-set -u
+declare -i set_u_works=1
+if (( BASH_VERSINFO[0] >= 5 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] >= 4) )) ; then
+    set -u
+else
+    set_u_works=0
+    cat 1>&2 <<EOF
+Warning: bash version at least 4.4 is recommended for using ${0##*/}.
+Actual version is ${BASH_VERSION}
+EOF
+fi
 
 declare OC=${OC:-${KUBECTL:-}}
 OC=${OC:-$(type -p oc)}
 OC=${OC:-$(type -p kubectl)}	# kubectl might not work, though...
 declare __topdir__
 __topdir__="$(realpath "$(dirname "$(realpath -e "$0")")/..")"
-declare __libdir__="${__topdir__}/lib"
+declare __libdir__="${__topdir__}/lib/clusterbuster"
 declare __clusterbuster__="${__topdir__}/clusterbuster"
 declare __analyze__="${__topdir__}/analyze-clusterbuster-report"
-declare __profiledir__="${__libdir__}/clusterbuster/CI/profiles"
+declare __profiledir__="${__libdir__}/CI/profiles"
+declare __workloaddir__="${__libdir__}/CI/workloads"
+
+[[ -d "$__libdir__" ]] || fatal "Can't find my library dir!"
+
+. "${__libdir__}"/libclusterbuster.sh
+load_workloads "$__workloaddir__"
 
 declare client_pin_node=
 declare server_pin_node=
@@ -46,49 +61,8 @@ declare basename=
 declare analyze_results=
 declare -i debugonly=0
 
-declare -a workloads=(scaling uperf fio files)
 declare -a runtimeclasses=('' 'kata')
 
-declare -i scaling_starting_namespaces=1
-declare -i scaling_deps_per_namespace=5
-declare -i scaling_max_namespaces=-1
-declare -i scaling_job_runtime=0
-declare -i scaling_job_timeout=0
-
-declare -a uperf_msg_sizes=(64 1024 8192)
-declare -a uperf_nthrs=(1 4)
-declare -a uperf_ninst=(1 4)
-declare -a uperf_test_types=(stream rr)
-declare -i uperf_job_runtime=0
-declare -i uperf_job_timeout=0
-
-declare -a fio_blocksizes=(1048576 4096)
-declare -a fio_patterns=(read write randread randwrite readwrite randrw)
-declare -a fio_directs=(1)
-declare -a fio_fdatasyncs=(0)
-declare -a fio_iodepths=(1 4)
-declare -a fio_ioengines=(sync libaio)
-declare -a fio_ninst=(1 4)
-declare -i fio_job_runtime=0
-declare fio_workdir=/var/tmp
-declare -i fio_absolute_filesize=0
-declare -i fio_max_absolute_filesize=0
-declare fio_relative_filesize=2
-declare fio_max_relative_filesize=$fio_relative_filesize
-declare -i fio_node_memory=0
-declare -i fio_ramptime=5
-declare -i fio_job_timeout=9000
-declare -i fio_pod_memsize=
-
-declare -a files_ninst=(1 4)
-declare -a files_dirs_per_volume=(256)
-declare -a files_per_dir=(256)
-declare -a files_block_sizes=(4096 65536)
-declare -a files_sizes=(0 4096 $((256 * 1024)))
-declare -a files_directs=(0 1)
-declare -i files_job_timeout=9000
-declare -a files_params=()
-declare -i files_min_direct=1024
 declare -i virtiofsd_direct=1
 declare -i virtiofsd_writeback=0
 declare -i virtiofsd_threadpoolsize=0
@@ -199,9 +173,9 @@ EOF
 	    if type -t deactivate >/dev/null ; then
 		# Some versions of python venv assume that $1 works correctly;
 		# ensure that those don't break.
-		set +u
+		if ((set_u_works)) ; then set +u; fi
 		deactivate
-		set -u
+		if ((set_u_works)) ; then set -u; fi
 	    fi
 	    rm -rf "$python_venv"
 	fi
@@ -209,80 +183,14 @@ EOF
     exit $fail
 }
 
-function fatal() {
+function warn() {
     echo "$*" 1>&2
+}
+
+function fatal() {
+    warn "$*"
     fail=1
     finis
-}
-
-function bool() {
-    local value
-    for value in "$@" ; do
-	case "${value,,}" in
-	    ''|1|y|yes|tru*) echo 1 ;;
-	    *)               echo 0 ;;
-	esac
-    done
-}
-
-function parse_size() {
-    local size
-    echoarg=
-    if [[ $1 = '-n' ]] ; then
-	echoarg=-n
-	shift
-    fi
-    local sizes=$*
-    sizes=${sizes//,/ }
-    for size in $sizes ; do
-	if [[ $size =~ (-?[[:digit:]]+)([[:alpha:]]*) ]] ; then
-	    local size=${BASH_REMATCH[1]}
-	    local size_modifier=${BASH_REMATCH[2],,}
-	    local -i size_multiplier=1
-	    case "$size_modifier" in
-		''|b)             size_multiplier=1              ;;
-		k|kb|kilobytes)   size_multiplier=1000           ;;
-		ki|kib|kibibytes) size_multiplier=1024           ;;
-		m|mb|megabytes)   size_multiplier=1000000        ;;
-		mi|mib|mebibytes) size_multiplier=1048576        ;;
-		g|gb|gigabytes)   size_multiplier=1000000000     ;;
-		gi|gib|gibibytes) size_multiplier=1073741824     ;;
-		t|tb|terabytes)   size_multiplier=1000000000000  ;;
-		ti|tib|tebibytes) size_multiplier=1099511627776  ;;
-		*) fatal "Cannot parse size $optvalue"           ;;
-	    esac
-	    echo $echoarg "$((size*size_multiplier)) "
-	else
-	    fatal "Cannot parse size $optvalue"
-	fi
-    done
-}
-
-function parse_option() {
-    local option=$1
-    option=${option## }
-    option=${option%% }
-    if [[ $option =~ ^([^=]+)\ *=\ *([^\ ].*)? ]] ; then
-	option="${BASH_REMATCH[1]}=${BASH_REMATCH[2]}"
-    fi
-    [[ -n "$option" ]] || return
-    local optname
-    local optvalue
-    optname=${option%%=*}
-    optname=${optname,,}
-    optvalue=${option#*=}
-    noptname=${optname//-/_}
-    if [[ $option != *'='* ]] ; then
-	if [[ $noptname = "no_"* || $optname = "dont_"* ]] ; then
-	    noptname=${noptname#dont_}
-	    noptname=${noptname#no_}
-	    optvalue=0
-	else
-	    optvalue=1
-	fi
-    fi
-    local noptname1=${noptname//_/}
-    echo "$noptname1 $noptname $optvalue"
 }
 
 function parse_time() {
@@ -329,9 +237,15 @@ function set_pin_nodes() {
 	# shellcheck disable=SC2207
 	nodes=($(${OC} get node -l node-role.kubernetes.io/worker= -o jsonpath='{.items[*].metadata.name}'))
 	local -i node_count=${#nodes[@]}
-	[[ -z "$client_pin_node" ]] && client_pin_node=${nodes[$((0 % node_count))]}
-	[[ -z "$server_pin_node" ]] && server_pin_node=${nodes[$((1 % node_count))]}
-	[[ -z "$sync_pin_node" ]] && sync_pin_node=${nodes[$((2 % node_count))]}
+	if [[ -z "$client_pin_node" ]] ; then
+	    client_pin_node=${nodes[$((0 % node_count))]}
+	fi
+	if [[ -z "$server_pin_node" ]] ; then
+	    server_pin_node=${nodes[$((1 % node_count))]}
+	fi
+	if [[ -z "$sync_pin_node" ]] ; then
+	    sync_pin_node=${nodes[$((2 % node_count))]}
+	fi
     fi
 }
 
@@ -344,7 +258,7 @@ function get_node_memory() {
 
 function list_profiles() {
     local prefix=${1:-}
-    function list_profiles_1() {
+    function list_pro___files_1() {
 	shopt -s nullglob
 	for f in "${__profiledir__}"/*.profile ; do
 	    f=${f%%.profile}
@@ -354,7 +268,7 @@ function list_profiles() {
     }
     while read -r profile ; do
 	echo "$prefix$profile"
-    done <<< "$(list_profiles_1)"
+    done <<< "$(list_pro___files_1)"
 }
 
 function process_profile() {
@@ -396,7 +310,7 @@ function monitor_1() {
     # safely exit.
     sleep "$timeout" &
     local sleep_pid=$!
-    trap "if [[ -n "$sleep_pid" ]] ; then kill "$sleep_pid"; fi; exit" TERM INT
+    trap "if [[ -n '$sleep_pid' ]] ; then kill '$sleep_pid'; fi; exit" TERM INT
     wait "$sleep_pid"
     kill -USR1 $$
 }
@@ -408,178 +322,93 @@ function monitor() {
 
 function help() {
     ${PAGER:-less} <<EOF
-Usage: $0 [options] [tests]
-    Tests may be one or more of scaling, uperf, fio, and files.  If not
-        provided, all tests are run.
+Usage: $0 [options] [workloads]
+    Here is a brief description of all available workloads.  If not provided, 
+        all workloads are run:
+$(_document_workloads)
+
     Size options may be specified by bytes, or K, Ki, M, Mi, G, Gi, T, or Ti.
     Boolean options may be specified as 1, yes, or true, with anything else
         equivalent to false.
 
     General options:
 
-        clientpin=node          Pin client pods to the specified node.
+        --client-pin-node=node  Pin client pods to the specified node.
                                 If not provided, the first worker node
                                 (in the order returned by 'oc get nodes')
                                 is used.
-        serverpin=node          Pin server pods to the specified node.
+        --server-pin-node=node  Pin server pods to the specified node.
                                 By default, the second worker node is used.
-        syncpin=node            Pin the sync pod to the specified node.
+        --sync-pin-node=node    Pin the sync pod to the specified node.
                                 By default, the third worker node is used.
-        runtime=seconds         Run the job for the given number of seconds,
+        --pin-node[=class]=node
+                                Pin pods of the specified class to the 
+                                specified node.  Class is optional; if
+                                specified, it should be either client,
+                                server, or pin.
+        --runtime=seconds       Run the job for the given number of seconds,
                                 if applicable (this does not apply to the
                                 files test).  May be overridden by
                                 workload-specific values.
-        timeout=seconds         Time the job out after the given number of
+        --timeout=seconds       Time the job out after the given number of
                                 seconds.  May be overridden by
                                 workload-specific values.
-        artifactdir=dir         Store all run artifacts in the specified
+        --artifactdir=dir       Store all run artifacts in the specified
                                 directory.  Individual runs are in
                                 subdirectories.
-        reportformat=format     Format of report printed during run.
+        --reportformat=format   Format of report printed during run.
                                 Default none.  Options are as in clusterbuster.
-        runtimeclasses=classes
+        --runtimeclasses=classes
                                 Comma-separated list of runtime classes to test.
                                 Default is <empty> (i. e. default) and kata.
-        reportobjectcreation    Whether to report object creation.
-        cleanup                 Clean up all pods after last run.
-        restart                 Restart any failed or incomplete jobs from a
+        --reportobjectcreation  Whether to report object creation.
+        --cleanup               Clean up all pods after last run.
+        --restart               Restart any failed or incomplete jobs from a
                                 prior run.  Default is no.  Can only be used
                                 with identical parameters to previous run.
-        profile=profile         Which profile to use.  Default is no profile.
+        --profile=profile       Which profile to use.  Default is no profile.
                                 Known profiles:
 $(list_profiles '                                - ')
 
     Virtiofsd configuration options (for kata):
-        virtiofsd-direct        Allow direct I/O requests from guest to operate
+        --virtiofsd-direct      Allow direct I/O requests from guest to operate
                                 as such.  Default is yes (NOT the kata default)
-        virtiofsd-writeback     Use write back caching for virtiofsd.  Default
+        --virtiofsd-writeback   Use write back caching for virtiofsd.  Default
                                 is no.
-        virtiofsd-threadpoolsize=n
+        --virtiofsd-threadpoolsize=n
                                 Use the specified thread pool size for
                                 virtiofsd.  Default is unset (equivalent to 1).
 
-    Scaling test options:
-        scaling-starting-namespaces=n
-                                Start the test with the specified number of
-                                namespaces, incrementing until failure.
-                                Default 1.
-        scaling-deps-per-namespace=n
-                                Deploy the specified number of pods per
-                                namespace.  Default is 5.
-        scaling-runtime=seconds
-                                Allow the pods to run for the specified time.
-                                Default is 0.  Typically set to 60 to collect
-                                reliable metrics data.
-        scaling-timeout=seconds
-                                Time the job out after specified time.  Default
-                                is the global timeout default.
-        scaling-max-namespaces=n
-                                Maximum number of namespaces to scale to.
-                                Default is -1, equivalent to no upper limit.
+    Workload-specific options:
+$(_help_options_workloads)
 
-    Uperf test options:
-        uperf-msg-sizes=n[,n...]
-                                Space or comma separate list of message sizes
-                                to test.  Default is $(IFS=,; echo "${uperf_msg_sizes[*]}")
-        uperf-nthr=n[,n...]     Space or comma separated list of thread counts
-                                to test.  Default is $(IFS=,; echo "${uperf_nthrs[*]}")
-        uperf-ninst=n[,n...]    Space or comma separated list of number of
-                                pairs of pods to test.  Default is $(IFS=,; echo "${uperf_ninst[*]}")
-        uperf-test-types=test[,test...]
-                                Space or comma separated list of test types
-                                to run.  Default is $(IFS=,; echo "${uperf_test_types[*]}")
-        uperf-runtime=seconds
-                                Allow the pods to run for the specified time.
-                                Default is $job_runtime seconds.
-        uperf-timeout=seconds
-                                Time the job out after specified time.  Default
-                                is the global timeout default.
-
-   Fio test options:
-        fio-block-sizes=n[,n...]
-                                Space or comma separated list of block
-                                sizes to test.  Default is $(IFS=,; echo "${fio_blocksizes[*]}").
-        fio-patterns=pattern[,pattern...]
-                                Space or comma separated list of block sizes
-                                to test.  Default is
-                                $(IFS=,; echo "${fio_patterns[*]}").
-        fio-direct=bool[,bool]
-                                Space or comma separated list of whether to use
-                                direct I/O.  Default is $(IFS=,; echo "${fio_directs[*]}").
-        fio-fdatasync=bool[,bool]
-                                Space or comma separated list of whether to use
-                                the fdatasync option.  Default is $(IFS=,; echo "${fio_fdatasyncs[*]}").
-        fio-iodepths=n[,n...]
-                                Space or comma separated list of I/O depths
-                                to test.  Default is $(IFS=,; echo "${fio_iodepths[*]}").
-        fio-ioengines=engine[,engine...]
-                                Space or comma separated list of I/O engines
-                                to use.  Default is $(IFS=,; echo "${fio_ioengines[*]}").
-        fio-ninst=n[,n...]      Space or comma separated list of pod counts
-                                to test.  Default is $(IFS=,; echo "${fio_ninst[*]}").
-        fio-workdir=dir         Directory to run test on inside the pod.
-                                Default is $fio_workdir.
-        fio-ramptime=n          Ramp time in seconds before measurements are
-                                taken.  Default is $fio_ramptime
-        fio-absolute-filesize=size
-                                File size in bytes per pod to test with.  If 0,
-                                use fio-relative-filesize to specify the
-                                filesize.  Default is $fio_absolute_filesize.
-        fio-max-absolute-filesize=size
-                                Limit for total filesize across all pods.
-                                If zero, there is no absolute filesize limit.
-                                Default is $fio_max_absolute_filesize.
-        fio-relative-filesize=fraction
-                                File size as a fraction of node memory to use.
-                                May be a decimal fraction.  If zero, use
-                                fio-absolute-filesize (one or the other should
-                                be non-zero).  Default is $fio_relative_filesize.
-        fio-max-relative-filesize=fraction
-                                Limit for total filesize across all pods as
-                                a fraction of node memory.  If zero, no
-                                pre-defined limit.  Default is $fio_max_relative_filesize.
-        fio-timeout=seconds     Time the job out after specified time.  Default
-                                is the global timeout default.
-        fio-pod-memsize=size    Memory size to allocate to sandboxed pods.
-                                Default is the system default (normally 2GiB).
-
-    Files test options:
-        fio-timeout=seconds     Time the job out after specified time.  Default
-                                is the global timeout default.
-        files-min-direct=size   If direct I/O is in use, specifies the minimum
-                                block size that will be tested.  Default is $files_min_direct.
-        files-params=ninst:dirs:files:blocksize:filesize:direct[,...]
-                                Space or comma separated list of test
-                                specifications.  If this is provided, the
-                                options below are not used.
-        files-ninst=n[,...]     Space or comma separated list of pod counts
-                                to test.  Default is $(IFS=,; echo "${files_ninst[*]}").
-        files-dirs-per-pod=n[,...]
-                                Space or comma separated list of directories
-                                per pod to test.  Default is $(IFS=,; echo "${files_dirs_per_volume[*]}").
-        files-per-dir=n[,...]   Space or comma separated list of files per
-                                directory.  Default is $(IFS=,; echo "${files_per_dir[*]}").
-        files-block_sizes=size[,...]
-                                Space or comma separated list of block sizes
-                                to test.  Default is $(IFS=,; echo "${files_block_sizes[*]}").
-        files_sizes=size[,...]
-                                Space or comma separated list of file sizes
-                                to test.  Must be a multiple of block size.
-                                Zero is a valid file size; it indicates that
-                                files should be created but no data written.
-                                Default is $(IFS=,; echo "${files_sizes[*]}").
-        files-direct=bool[,bool]
-                                Space or comma separated list of whether to use
-                                direct I/O.  Default is $(IFS=,; echo "${files_directs[*]}").
 EOF
-exit
+    exit
+}
+
+function set_pin_node() {
+    local setting="${1:-}"
+    if [[ $setting = *'='* ]] ; then
+	local -a vals=(${setting/=/ })
+	case "${vals[0]}" in
+	    server) server_pin_node="${vals[1]}" ;;
+	    client) client_pin_node="${vals[1]}" ;;
+	    sync  ) sync_pin_node="${vals[1]}"   ;;
+	    *)					 ;;
+	esac
+    elif [[ -n "$setting" ]] ; then
+	server_pin_node=$setting
+	client_pin_node=$setting
+	sync_pin_node=$setting
+    fi
 }
 
 function process_option() {
+    local option=$1
     local noptname
     local noptname1
     local optvalue
-    read -r noptname1 noptname optvalue <<< "$(parse_option "$1")"
+    read -r noptname1 noptname optvalue <<< "$(parse_option "$option")"
     optvalue=$(splitarg "$optvalue")
     # shellcheck disable=SC2206
     case "$noptname1" in
@@ -589,6 +418,7 @@ function process_option() {
 	clientpin*) client_pin_node=$optvalue						;;
 	serverpin*) server_pin_node=$optvalue						;;
 	syncpin*) sync_pin_node=$optvalue						;;
+	pin*) set_pin_node "$optvalue"							;;
 	jobruntime|runtime) job_runtime=$optvalue					;;
 	jobtimeout|timeout) job_timeout=$optvalue					;;
 	artifactdir) artifactdir="${optvalue:-${artifactdir:-$(pwd)}}"			;;
@@ -608,47 +438,13 @@ function process_option() {
 	virtiofsddirect) virtiofsd_direct=$(bool "$optvalue")				;;
 	virtiofsdthreadpool) virtiofsd_threadpoolsize=$optvalue				;;
 
-	scalingstarting*) scaling_starting_namespaces=$optvalue				;;
-	scalingdeps*) scaling_deps_per_namespace=$optvalue				;;
-	scaling*runtime) scaling_job_runtime=$optvalue					;;
-	scaling*timeout) scaling_job_timeout=$optvalue					;;
-	scalingmax*) scaling_max_namespaces=$optvalue					;;
-
-	uperfmsg*) readarray -t uperf_msg_sizes <<< "$(parse_size "$optvalue")"		;;
-	uperfnthr*) readarray -t uperf_nthrs <<< "$(parse_size "$optvalue")"		;;
-	uperfninst*) readarray -t uperf_ninst <<< "$(parse_size "$optvalue")"		;;
-	uperftest*) readarray -t uperf_test_types <<< "$(parse_size "$optvalue")"	;;
-	uperf*runtime) uperf_job_runtime=$optvalue					;;
-	uperf*timeout) uperf_job_timeout=$optvalue					;;
-
-	fioblock*) readarray -t fio_blocksizes <<< "$(parse_size "$optvalue")"		;;
-	fiopat*) readarray -t fio_patterns <<< "${optvalue//,/ }"			;;
-	fiodirect*) readarray -t fio_directs <<< "$(bool "$optvalue")"			;;
-	fiofdatasync*) readarray -t fio_fdatasyncs <<< "$(bool "$optvalue")"		;;
-	fioiodepth*) readarray -t fio_iodepths <<< "$(parse_size "$optvalue")"		;;
-	fioioeng*) readarray -t fio_ioengines <<< "$optvalue"				;;
-	fioninst*) readarray -t fio_ninst <<< "$(parse_size "$optvalue")"		;;
-	fioworkdir) fio_workdir=$optvalue						;;
-	fio*runtime) fio_job_runtime=$optvalue						;;
-	fioramp*) fio_ramptime=$optvalue						;;
-	fioabs*file*) fio_absolute_filesize=$(parse_size "$optvalue")			;;
-	fiomaxabs*file*) fio_max_absolute_filesize=$(parse_size "$optvalue")		;;
-	fiorel*file*) fio_relative_filesize="$optvalue"					;;
-	fiomaxrel*file*) fio_max_relative_filesize="$optvalue"				;;
-	fio*timeout) fio_job_timeout=$optvalue						;;
-	fio*memsize) fio_pod_memsize=$(parse_size "$optvalue")				;;
-
-	filesninst*) readarray -t files_ninst <<< "$(parse_size "$optvalue")"		;;
-	filesdirs*) readarray -t files_dirs_per_volume <<< "$(parse_size "$optvalue")"	;;
-	filesperdir*) readarray -t files_per_dir <<< "$(parse_size "$optvalue")"	;;
-	filesblocksize*) readarray -t files_block_sizes <<< "$(parse_size "$optvalue")"	;;
-	filessize*) readarray -t files_sizes <<< "$(parse_size "$optvalue")"		;;
-	filesdirect*) readarray -t files_directs <<< "$(bool "$optvalue")"		;;
-	files*timeout) files_job_timeout=$optvalue					;;
-	files*params) files_params+=(${optvalue//,/ })					;;
-	filesmindir*) files_min_direct=$(parse_size "$optvalue")			;;
-
-	*) fatal "Unknown option --$1"							;;
+	# Unknown option -- can we delegate?
+	*)
+	    if ! call_api -A -a process_option "$option" ; then
+		unknown_opts+=("$option")
+		unknown_opt_names+=("$noptname ($noptname1)")
+	    fi
+	    ;;
     esac
 }
 
@@ -665,6 +461,11 @@ while getopts 'hn-:B:' opt ; do
 	*)				;;
     esac
 done
+
+if [[ -n "${unknown_opt_names[*]}" ]] ; then
+    help "${unknown_opt_names[@]}"
+fi
+
 shift $((OPTIND - 1))
 if [[ -n "$*" ]] ; then
     workloads=("$@")
@@ -681,45 +482,11 @@ if [[ -z "$artifactdir" && $analyze_results -ne 0 ]] ; then
     fatal "--analyze-results may only used with --artifactdir set"
 fi
 
-((scaling_job_runtime <= 0)) && scaling_job_runtime=$job_runtime
-scaling_job_timeout=$(compute_timeout "$scaling_job_timeout")
-
-((uperf_job_runtime <= 0)) && uperf_job_runtime=$job_runtime
-uperf_job_timeout=$(compute_timeout "$uperf_job_timeout")
-
-((fio_job_runtime <= 0)) && fio_job_runtime=$job_runtime
-fio_job_timeout=$(compute_timeout "$fio_job_timeout")
-
-files_job_timeout=$(compute_timeout "$files_job_timeout")
-
 set_pin_nodes
-
-fio_node_memory=$(get_node_memory "$client_pin_node")
-
-if [[ -z "${files_params[*]}" ]] ; then
-    for ninst in "${files_ninst[@]}" ; do
-	for dirs in "${files_dirs_per_volume[@]}" ; do
-	    for files in "${files_per_dir[@]}" ; do
-		for blocksize in "${files_block_sizes[@]}" ; do
-		    for size in "${files_sizes[@]}" ; do
-			for direct in "${files_directs[@]}" ; do
-			    if ((! direct || blocksize >= files_min_direct)) ; then
-				files_params+=("${ninst}:${dirs}:${files}:${blocksize}:${size}:${direct}")
-			    fi
-			done
-		    done
-		done
-	    done
-	done
-    done
-fi
 
 function computeit() {
     bc <<< "$1" | sed -e 's/\..*$//'
 }
-
-((fio_absolute_filesize <= 0)) && fio_absolute_filesize=$(computeit "$fio_node_memory * $fio_relative_filesize")
-((fio_max_absolute_filesize <= 0)) && fio_max_absolute_filesize=$(computeit "$fio_node_memory * $fio_max_relative_filesize")
 
 function python_create_venv() {
     local dir=$1
@@ -729,10 +496,10 @@ function python_create_venv() {
 	python3 -m venv "$dir" || fatal "Can't create venv!"
 	# Some versions of venv generate activate/deactivate scripts
 	# that do not protect access to potentially unbound variables.
-	set +u
+	if ((set_u_works)) ; then set +u; fi
 	# shellcheck disable=SC1091
 	. "$1/bin/activate" || fatal "Can't activate venv!"
-	set -u
+	if ((set_u_works)) ; then set -u; fi
 	python3 -m pip -q install --upgrade pip || fatal "Can't upgrade pip!"
 	pip3 -q install prometheus-api-client==0.5.0 openshift-client==1.0.14 Jinja2==3.0.1 || fatal "Can't install Python packages!"
     fi
@@ -866,114 +633,12 @@ function run_clusterbuster() {
     return $status
 }
 
-function test_scaling() {
-    local runtimeclass=$1
-    namespaces=$scaling_starting_namespaces
-    while ((scaling_max_namespaces == -1 || namespaces <= scaling_max_namespaces)); do
-	job_name="$((namespaces*scaling_deps_per_namespace))"
-	if run_clusterbuster -y -j "$job_name" -w cpusoaker -r "$runtimeclass" -t "$scaling_job_timeout" -R "$fio_job_runtime" -- \
-			     --deployments="$scaling_deps_per_namespace" \
-			     --namespaces="$namespaces" --objs_per_call=6 --parallel=100 ; then
-	    namespaces=$((namespaces+1))
-	else
-	    break
-	fi
-	if ((debugonly)) ; then
-	    break
-	fi
-    done
-}
-
-function test_uperf() {
-    local runtimeclass=$1
-    local -i msg_size
-    local -i nthr
-    local -i ninst
-    local test_type
-    for msg_size in "${uperf_msg_sizes[@]}" ; do
-	for nthr in "${uperf_nthrs[@]}" ; do
-	    for ninst in "${uperf_ninst[@]}" ; do
-		for test_type in "${uperf_test_types[@]}" ; do
-		    job_name="${msg_size}B-${nthr}i-${ninst}P-${test_type}"
-		    run_clusterbuster -j "$job_name" -w uperf -r "$runtimeclass" -t "$uperf_job_timeout" -R "$fio_job_runtime" -- \
-				      --deployments="$ninst" \
-				      --uperf_msg_size="$msg_size" \
-				      --uperf_test_type="$test_type" \
-				      --uperf_proto=tcp \
-				      --uperf_nthr="$nthr" \
-				      --pod-annotation="io.katacontainers.config.hypervisor.default_vcpus: \"$nthr\""
-		done
-	    done
-	done
-    done
-}
-
-function test_fio() {
-    local runtimeclass=$1
-    local -i ninst
-    local memory_annotation=
-    if ((fio_pod_memsize > 0)) ; then
-	# shellcheck disable=SC2089
-	memory_annotation=--pod-annotation="io.katacontainers.config.hypervisor.default_memory: \"$fio_pod_memsize\""
-    fi
-    for ninst in "${fio_ninst[@]}" ; do
-	local filesize
-	filesize=$(computeit "$fio_absolute_filesize / $ninst")
-	if ((filesize > fio_max_absolute_filesize)) ; then
-	    filesize=$fio_max_absolute_filesize
-	fi
-	job_name="${ninst}P"
-	# shellcheck disable=SC2090
-	run_clusterbuster -j "$job_name" -w fio -r "$runtimeclass" -t "$fio_job_timeout" -R "$fio_job_runtime" -- \
-			  --deployments="$ninst" \
-			  --fio-blocksize="$(IFS=,; echo "${fio_blocksizes[*]}")" \
-			  --fio-patterns="$(IFS=,; echo "${fio_patterns[*]}")" \
-			  --fio-ioengines="$(IFS=,; echo "${fio_ioengines[*]}")" \
-			  --fio-iodepths="$(IFS=,; echo "${fio_iodepths[*]}")" \
-			  --fio-fdatasyncs="$(IFS=,; echo "${fio_fdatasyncs[*]}")" \
-			  --fio-directs="$(IFS=,; echo "${fio_directs[*]}")" \
-			  --fio_filesize="$filesize" \
-			  --fio_ramp_time="$fio_ramptime" \
-			  --fio_workdir="$fio_workdir" \
-			  ${memory_annotation:+"$memory_annotation"}
-    done
-}
-
-function test_files() {
-    local runtimeclass=$1
-    local -i ninst
-    local files_dirs_per_volume
-    local files_per_dir
-    local files_block_size
-    local file_size
-    local files_direct
-    local options
-    for options in "${files_params[@]}" ; do
-	read -r ninst files_dirs_per_volume files_per_dir files_block_size file_size files_direct <<< "$(parse_size -n "${options//:/ }")"
-	if [[ -z "$files_direct" ]] ; then
-	    echo "Unparsable options $options" 1>&2
-	    continue
-	fi
-	if ((files_block_size > file_size && file_size > 0)) ; then
-	    files_block_size=$file_size
-	fi
-	job_name="${ninst}P-${files_dirs_per_volume}D-${files_per_dir}F-${files_block_size}B-${file_size}S-${files_direct}T"
-	# shellcheck disable=SC2090
-	run_clusterbuster -j "$job_name" -w files -r "$runtimeclass" -t "$files_job_timeout" -- \
-			  --deployments="$ninst" \
-			  --dirs_per_volume="$files_dirs_per_volume" \
-			  --files_per_dir="$files_per_dir" \
-			  --file_block_size="$files_block_size" \
-			  --files_direct="$files_direct" \
-			  --filesize="$file_size"
-    done
-}
-
 if ((use_python_venv)) ; then
     python_venv=$(mktemp -d -t "cb-ci-venv.XXXXXXXX")
     python_create_venv "$python_venv"
 fi
 if ((! debugonly)) ; then
+    set_pin_nodes
     starting_timestamp=$(date +%s)
     job_datestamp=$(date -u '+%Y_%m_%dT%H_%M_%S%z' --date=@"$starting_timestamp")
     artifactdir=${artifactdir//%s/$job_datestamp}
@@ -1001,16 +666,14 @@ if ((! debugonly)) ; then
     fi
 fi
 
+if [[ -z "${workloads[@]}" ]] ; then
+    workloads=($(print_workloads))
+fi
+
 for runtimeclass in "${runtimeclasses[@]}" ; do
     for workload in "${workloads[@]}" ; do
 	# Use a separate counter for each workload/runtime
 	counter=0
-	case "$workload" in
-	    scal*) test_scaling "$runtimeclass" ;;
-	    uperf) test_uperf "$runtimeclass" ;;
-	    fio) test_fio "$runtimeclass" ;;
-	    files) test_files "$runtimeclass" ;;
-	    *) fatal "Unknown workload $workload" ;;
-	esac
+	call_api -w "$workload" test "$runtimeclass" "$job_runtime"
     done
 done

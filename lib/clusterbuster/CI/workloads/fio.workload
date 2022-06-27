@@ -1,0 +1,164 @@
+#!/bin/bash
+
+# Copyright 2022 Robert Krawitz/Red Hat
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+declare -ga ___fio_blocksizes=(1048576 4096)
+declare -ga ___fio_patterns=(read write randread randwrite readwrite randrw)
+declare -ga ___fio_directs=(1)
+declare -ga ___fio_fdatasyncs=(0)
+declare -ga ___fio_iodepths=(1 4)
+declare -ga ___fio_ioengines=(sync libaio)
+declare -ga ___fio_ninst=(1 4)
+declare -gi ___fio_job_runtime=0
+declare -g  ___fio_workdir=/var/tmp
+declare -gi ___fio_absolute_filesize=0
+declare -gi ___fio_max_absolute_filesize=0
+declare -g  ___fio_relative_filesize=2
+declare -g  ___fio_max_relative_filesize=$___fio_relative_filesize
+declare -gi ___fio_ramptime=5
+declare -gi ___fio_job_timeout=9000
+declare -gi ___fio_pod_memsize=
+
+register_workload fio dispatch_generic
+
+function test_fio() {
+    local runtimeclass=$1
+    local default_job_runtime=$2
+    if ((___fio_job_runtime <= 0)) ; then
+	___fio_job_runtime=$default_job_runtime
+    fi
+    ___fio_job_timeout=$(compute_timeout "$___fio_job_timeout")
+    if ((___fio_absolute_filesize <= 0 || ___fio_max_absolute_filesize <= 0)) ; then
+	local ___fio_node_memory=
+	fio_node_memory=$(get_node_memory "$client_pin_node") || fatal "Cannot retrieve node memory."
+	if ((___fio_absolute_filesize <= 0)) ; then
+	    ___fio_absolute_filesize=$(computeit "$___fio_node_memory * $___fio_relative_filesize")
+	fi
+	if ((___fio_max_absolute_filesize <= 0)) ; then
+	    ___fio_max_absolute_filesize=$(computeit "$___fio_node_memory * $___fio_max_relative_filesize")
+	fi
+    fi
+    local -i ninst
+    local memory_annotation=
+    if ((___fio_pod_memsize > 0)) ; then
+	# shellcheck disable=SC2089
+	memory_annotation=--pod-annotation="io.katacontainers.config.hypervisor.default_memory: \"$___fio_pod_memsize\""
+    fi
+    for ninst in "${___fio_ninst[@]}" ; do
+	local filesize
+	filesize=$(computeit "$___fio_absolute_filesize / $ninst")
+	if ((filesize > ___fio_max_absolute_filesize)) ; then
+	    filesize=$___fio_max_absolute_filesize
+	fi
+	job_name="${ninst}P"
+	# shellcheck disable=SC2090
+	run_clusterbuster -j "$job_name" -w fio -r "$runtimeclass" -t "$___fio_job_timeout" -R "$___fio_job_runtime" -- \
+			  --deployments="$ninst" \
+			  --fio-blocksize="$(IFS=,; echo "${___fio_blocksizes[*]}")" \
+			  --fio-patterns="$(IFS=,; echo "${___fio_patterns[*]}")" \
+			  --fio-ioengines="$(IFS=,; echo "${___fio_ioengines[*]}")" \
+			  --fio-iodepths="$(IFS=,; echo "${___fio_iodepths[*]}")" \
+			  --fio-fdatasyncs="$(IFS=,; echo "${___fio_fdatasyncs[*]}")" \
+			  --fio-directs="$(IFS=,; echo "${___fio_directs[*]}")" \
+			  --fio_filesize="$filesize" \
+			  --fio_ramp_time="$___fio_ramptime" \
+			  --fio_workdir="$___fio_workdir" \
+			  ${memory_annotation:+"$memory_annotation"}
+    done
+}
+
+function process_option_fio() {
+    local opt=$1
+    read -r noptname1 noptname optvalue <<< "$(parse_option "$opt")"
+    case "$noptname1" in
+	fioblock*)       readarray -t ___fio_blocksizes <<< "$(parse_size "$optvalue")"	;;
+	fiopat*)         readarray -t ___fio_patterns <<< "${optvalue//,/ }"		;;
+	fiodirect*)      readarray -t ___fio_directs <<< "$(bool "$optvalue")"		;;
+	fiofdatasync*)   readarray -t ___fio_fdatasyncs <<< "$(bool "$optvalue")"	;;
+	fioiodepth*)     readarray -t ___fio_iodepths <<< "$(parse_size "$optvalue")"	;;
+	fioioeng*)       readarray -t ___fio_ioengines <<< "$optvalue"			;;
+	fioninst*)       readarray -t ___fio_ninst <<< "$(parse_size "$optvalue")"	;;
+	fioworkdir)      ___fio_workdir=$optvalue					;;
+	fio*runtime)     ___fio_job_runtime=$optvalue					;;
+	fioramp*)        ___fio_ramptime=$optvalue					;;
+	fioabs*file*)    ___fio_absolute_filesize=$(parse_size "$optvalue")		;;
+	fiomaxabs*file*) ___fio_max_absolute_filesize=$(parse_size "$optvalue")		;;
+	fiorel*file*)    ___fio_relative_filesize="$optvalue"				;;
+	fiomaxrel*file*) ___fio_max_relative_filesize="$optvalue"			;;
+	fio*timeout)     ___fio_job_timeout=$optvalue					;;
+	fio*memsize)     ___fio_pod_memsize=$(parse_size "$optvalue")			;;
+	*) 		 return 1							;;
+    esac
+}
+
+function help_options_fio() {
+    cat <<'EOF'
+   Fio test options:
+        --fio-block-sizes=n[,n...]
+                                Space or comma separated list of block
+                                sizes to test.  Default is $(IFS=,; echo "${___fio_blocksizes[*]}").
+        --fio-patterns=pattern[,pattern...]
+                                Space or comma separated list of block sizes
+                                to test.  Default is
+                                $(IFS=,; echo "${___fio_patterns[*]}").
+        --fio-direct=bool[,bool]
+                                Space or comma separated list of whether to use
+                                direct I/O.  Default is $(IFS=,; echo "${___fio_directs[*]}").
+        --fio-fdatasync=bool[,bool]
+                                Space or comma separated list of whether to use
+                                the fdatasync option.  Default is $(IFS=,; echo "${___fio_fdatasyncs[*]}").
+        --fio-iodepths=n[,n...]
+                                Space or comma separated list of I/O depths
+                                to test.  Default is $(IFS=,; echo "${___fio_iodepths[*]}").
+        --fio-ioengines=engine[,engine...]
+                                Space or comma separated list of I/O engines
+                                to use.  Default is $(IFS=,; echo "${___fio_ioengines[*]}").
+        --fio-ninst=n[,n...]    Space or comma separated list of pod counts
+                                to test.  Default is $(IFS=,; echo "${___fio_ninst[*]}").
+        --fio-workdir=dir       Directory to run test on inside the pod.
+                                Default is $___fio_workdir.
+        --fio-ramptime=n        Ramp time in seconds before measurements are
+                                taken.  Default is $___fio_ramptime
+        --fio-absolute-filesize=size
+                                File size in bytes per pod to test with.  If 0,
+                                use fio-relative-filesize to specify the
+                                filesize.  Default is $___fio_absolute_filesize.
+        --fio-max-absolute-filesize=size
+                                Limit for total filesize across all pods.
+                                If zero, there is no absolute filesize limit.
+                                Default is $___fio_max_absolute_filesize.
+        --fio-relative-filesize=fraction
+                                File size as a fraction of node memory to use.
+                                May be a decimal fraction.  If zero, use
+                                fio-absolute-filesize (one or the other should
+                                be non-zero).  Default is $___fio_relative_filesize.
+        --fio-max-relative-filesize=fraction
+                                Limit for total filesize across all pods as
+                                a fraction of node memory.  If zero, no
+                                pre-defined limit.  Default is $___fio_max_relative_filesize.
+        --fio-timeout=seconds   Time the job out after specified time.  Default
+                                is the global timeout default.
+        --fio-pod-memsize=size  Memory size to allocate to sandboxed pods.
+                                Default is the system default (normally 2GiB).
+EOF
+}
+
+function document_fio() {
+cat <<'EOF'
+* fio: a front end for the Flexible I/O tester.
+  See https://fio.readthedocs.io/en/latest/fio_doc.html for more
+  details.
+EOF
+}

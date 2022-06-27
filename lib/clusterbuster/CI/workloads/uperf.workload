@@ -1,0 +1,93 @@
+#!/bin/bash
+
+# Copyright 2022 Robert Krawitz/Red Hat
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+declare -ga ___uperf_msg_sizes=(64 1024 8192)
+declare -ga ___uperf_nthrs=(1 4)
+declare -ga ___uperf_ninst=(1 4)
+declare -ga ___uperf_test_types=(stream rr)
+declare -gi ___uperf_job_runtime=0
+declare -gi ___uperf_job_timeout=0
+
+register_workload uperf dispatch_generic
+
+function test_uperf() {
+    local runtimeclass=$1
+    ___uperf_job_timeout=$(compute_timeout "$___uperf_job_timeout")
+
+    local -i msg_size
+    local -i nthr
+    local -i ninst
+    local test_type
+    for msg_size in "${___uperf_msg_sizes[@]}" ; do
+	for nthr in "${___uperf_nthrs[@]}" ; do
+	    for ninst in "${___uperf_ninst[@]}" ; do
+		for test_type in "${___uperf_test_types[@]}" ; do
+		    job_name="${msg_size}B-${nthr}i-${ninst}P-${test_type}"
+		    run_clusterbuster -j "$job_name" -w uperf -r "$runtimeclass" -t "$___uperf_job_timeout" -R "$___uperf_job_runtime" -- \
+				      --deployments="$ninst" \
+				      --uperf_msg_size="$msg_size" \
+				      --uperf_test_type="$test_type" \
+				      --uperf_proto=tcp \
+				      --uperf_nthr="$nthr" \
+				      --pod-annotation="io.katacontainers.config.hypervisor.default_vcpus: \"$nthr\""
+		done
+	    done
+	done
+    done
+}
+
+function process_option_uperf() {
+    local opt=$1
+    read -r noptname1 noptname optvalue <<< "$(parse_option "$opt")"
+    case "$noptname1" in
+	uperfmsg*)     readarray -t ___uperf_msg_sizes <<< "$(parse_size "$optvalue")"	;;
+	uperfnthr*)    readarray -t ___uperf_nthrs <<< "$(parse_size "$optvalue")"	;;
+	uperfninst*)   readarray -t ___uperf_ninst <<< "$(parse_size "$optvalue")"	;;
+	uperftest*)    readarray -t ___uperf_test_types <<< "$(parse_size "$optvalue")"	;;
+	uperf*runtime) ___uperf_job_runtime=$optvalue					;;
+	uperf*timeout) ___uperf_job_timeout=$optvalue					;;
+	*)	       return 1								;;
+    esac
+}
+
+
+function help_options_uperf() {
+    cat <<'EOF'
+    Uperf test options:
+        --uperf-msg-sizes=n[,n...]
+                                Space or comma separate list of message sizes
+                                to test.  Default is $(IFS=,; echo "${___uperf_msg_sizes[*]}")
+        --uperf-nthr=n[,n...]   Space or comma separated list of thread counts
+                                to test.  Default is $(IFS=,; echo "${___uperf_nthrs[*]}")
+        --uperf-ninst=n[,n...]  Space or comma separated list of number of
+                                pairs of pods to test.  Default is $(IFS=,; echo "${___uperf_ninst[*]}")
+        --uperf-test-types=test[,test...]
+                                Space or comma separated list of test types
+                                to run.  Default is $(IFS=,; echo "${___uperf_test_types[*]}")
+        --uperf-runtime=seconds
+                                Allow the pods to run for the specified time.
+                                Default is $job_runtime seconds.
+        --uperf-timeout=seconds
+                                Time the job out after specified time.  Default
+                                is the global timeout default.
+EOF
+}
+
+function document_uperf() {
+cat <<'EOF'
+* uperf: a partial front end to uperf (https://www.uperf.org)
+EOF
+}

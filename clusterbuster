@@ -21,7 +21,7 @@
 # See the bash change log, differences between 4.4-beta2 and 4.4-rc2:
 # a.  Using ${a[@]} or ${a[*]} with an array without any assigned elements when
 #     the nounset option is enabled no longer throws an unbound variable error.
-if (( ${BASH_VERSINFO[0]} >= 5 || (${BASH_VERSINFO[0]} == 4 && ${BASH_VERSINFO[1]} >= 4) )) ; then
+if (( BASH_VERSINFO[0] >= 5 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] >= 4) )) ; then
     set -u
 else
     cat 1>&2 <<EOF
@@ -30,8 +30,6 @@ Actual version is ${BASH_VERSION}
 EOF
 fi
 
-declare -A registered_workloads=()
-declare -A workload_aliases=()
 declare -i namespaces=1
 declare -i use_namespaces=1
 declare -i deps_per_namespace=1
@@ -78,7 +76,7 @@ declare -i report_object_creation=1
 declare -A objects_created=()
 declare baseoffset=0
 declare -i metrics_epoch=0
-declare requested_workload=ClusterBuster
+declare requested_workload=
 declare basename=clusterbuster
 declare deployment_type=pod
 declare basetime
@@ -172,69 +170,6 @@ function fatal() {
     exit 1
 }
 
-function childrenof() {
-    function is_descendent() {
-	local pid=$1
-	local ancestor=$2
-	if ((pid == ancestor)) ; then
-	    true
-	else
-	    parent=${ps_parents[$pid]:-1}
-	    case "$parent" in
-		1)           false ;;
-		"$ancestor") true  ;;
-		*)           is_descendent "$parent" "$ancestor" ;;
-	    esac
-	fi
-    }
-    local -A exclude=()
-    local OPTIND=0
-    while getopts 'e:' opt "$@" ; do
-	case "$opt" in
-	    e) exclude[$OPTARG]=1 ;;
-	    *)                    ;;
-	esac
-    done
-    shift $((OPTIND-1))
-    local target=$1
-    local -A ps_parents=()
-    local -A ps_commands=()
-    local -i ppid
-    local -i pid
-    local ignore
-    while read -r pid ppid command ; do
-	ps_parents["$pid"]=$ppid
-	ps_commands["$pid"]=$command
-    done <<< "$(ps -axo pid,ppid,command | tail -n +2)"
-    for pid in "${!ps_parents[@]}" ; do
-	# Don't kill loggers and the report generator; we still want
-	# output even if there's a failure.
-	if [[ -z "${!exclude[$pid]:-}" && "${ps_commands[$pid]}" != 'tee'* && "${ps_commands[$pid]}" != *'clusterbuster-report'* ]] ; then
-	    if is_descendent "$pid" "$target" ; then
-		echo "$pid"
-	    fi
-	fi
-    done
-}
-
-function killthemall() {
-    echo "${*:-Exiting!}" 1>&2
-    # Selectively kill all processes.  We don't want to kill
-    # processes between us and the root, or processes that
-    # aren't actually clusterbuster (e. g. reporting)
-    # Also, RHEL 8 doesn't support kill -<pgrp> syntax
-    local -a pids_to_kill=()
-    readarray -t pids_to_kill <<< "$(childrenof -e "$BASHPID" $$)"
-    # killthemall can livelock under the wrong circumstances.
-    # Make sure that that doesn't happen; we want to control
-    # our own exit.
-    trap : TERM
-    if [[ -n "${pids_to_kill[*]}" ]] ; then
-	/bin/kill -TERM "${pids_to_kill[@]}" >/dev/null 2>&1
-    fi
-    exit 1
-}
-
 function warn() {
     echo "$*" 1>&2
 }
@@ -251,58 +186,15 @@ if [[ -z "$__me__" ]] ; then
     exit 1
 fi
 
-declare __mydir__=${__me__%/*}
-declare __libdir__=${__mydir__}/lib/clusterbuster
+declare __topdir__=${__me__%/*}
+declare __libdir__=${__topdir__}/lib/clusterbuster
 declare __podfile_dir__=${__libdir__}/pod_files
 declare __workloaddir__=${__libdir__}/workloads
 
 [[ -d "$__libdir__" ]] || fatal "Can't find my library dir!"
 [[ -d "$__workloaddir__" ]] || fatal "Can't find my workload directory $__workloaddir__!"
 
-function print_workloads() {
-    local prefix="${1:-}"
-    local workloads
-    while read -r workload ; do
-	echo "$prefix$workload"
-    done <<< "$(IFS=$'\n'; echo "${!registered_workloads[*]}" |sort)"
-}
-
-function print_workloads_supporting_reporting() {
-    local prefix="${1:-}"
-    local workloads
-    while read -r workload ; do
-	echo "$prefix$workload"
-    done <<< "$(workloads_supporting_api supports_reporting)"
-}
-
-function _help_options_workloads() {
-    local workload
-    while read -r workload ; do
-	if [[ -z "$workload" ]] ; then
-	    continue
-	fi
-	echo
-	call_api -w "$workload" help_options
-    done <<< "$(workloads_supporting_api help_options)"
-}
-
-function _document_workloads() {
-    local workload
-    while read -r workload ; do
-	if [[ -z "$workload" ]] ; then
-	    continue
-	fi
-	echo
-	call_api -w "$workload" document
-    done <<< "$(workloads_supporting_api document)"
-}
-
-function list_report_formats() {
-    local prefix=${1:-}
-    while read -r format ; do
-	echo "$prefix$format"
-    done <<< "$("${pathdir:-.}/clusterbuster-report" --list_formats)"
-}
+. "${__libdir__}"/libclusterbuster.sh
 
 function _helpmsg() {
     local opt
@@ -337,7 +229,7 @@ $(print_workloads '                       - ')
                        report them)
        -v              Print verbose log messages.
        --opt[=val]     Set the specified option.
-                       Use $0 -H to list the available options.
+                       Use ${0##*/} -H to list the available options.
 EOF
 }
 
@@ -595,32 +487,6 @@ function help_extended() {
 # Option processing
 ################################################################
 
-function parse_size() {
-    local size
-    for size in "$@" ; do
-	if [[ $size =~ (-?[[:digit:]]+)([[:alpha:]]*) ]] ; then
-	    local size=${BASH_REMATCH[1]}
-	    local size_modifier=${BASH_REMATCH[2],,}
-	    local -i size_multiplier=1
-	    case "$size_modifier" in
-		''|b)          size_multiplier=1                ;;
-		k|kb|kilobytes)  size_multiplier=1000           ;;
-		ki|kib|kibibytes) size_multiplier=1024          ;;
-		m|mb|megabytes)  size_multiplier=1000000        ;;
-		mi|mib|mebibytes) size_multiplier=1048576       ;;
-		g|gb|gigabytes)  size_multiplier=1000000000     ;;
-		gi|gib|gibibytes) size_multiplier=1073741824    ;;
-		t|tb|terabytes)  size_multiplier=1000000000000  ;;
-		ti|tib|tebibytes) size_multiplier=1099511627776 ;;
-		*) fatal "Cannot parse size $optvalue"          ;;
-	    esac
-	    echo $((size*size_multiplier))
-	else
-	    fatal "Cannot parse filesize $optvalue"
-	fi
-    done
-}
-
 function set_workload_bytes() {
     local sizespec=$1
     local -i scale=${2:-1}
@@ -670,43 +536,6 @@ function parse_volume_spec() {
     volume_types["$vname"]=$vtype
     volume_type_keys["$vname"]=$vtype_key
     volume_scoped_names["$vname"]=$vscoped_name
-}
-
-function bool() {
-    local value
-    for value in "$@" ; do
-	case "${value,,}" in
-	    ''|1|y|yes|tru*) echo 1 ;;
-	    *)               echo 0 ;;
-	esac
-    done
-}
-
-function parse_option() {
-    local option=$1
-    option=${option## }
-    option=${option%% }
-    if [[ $option =~ ^([^=]+)\ *=\ *([^\ ].*)? ]] ; then
-	option="${BASH_REMATCH[1]}=${BASH_REMATCH[2]}"
-    fi
-    [[ -n "$option" ]] || return
-    local optname
-    local optvalue
-    optname=${option%%=*}
-    optname=${optname,,}
-    optvalue=${option#*=}
-    noptname=${optname//-/_}
-    if [[ $option != *'='* ]] ; then
-	if [[ $noptname = "no_"* || $optname = "dont_"* ]] ; then
-	    noptname=${noptname#dont_}
-	    noptname=${noptname#no_}
-	    optvalue=0
-	else
-	    optvalue=1
-	fi
-    fi
-    local noptname1=${noptname//_/}
-    echo "$noptname1 $noptname $optvalue"
 }
 
 function process_pin_node() {
@@ -915,140 +744,36 @@ function validate_resource() {
     return $status
 }
 
-function expand_string() {
-    local string=$1
-    shift
-    local -A _____dict_____=()
-    local -a arg
-    for arg in "$@" ; do
-	local noptname1 optname optvalue
-	read -r noptname optname optvalue <<< "$(parse_option "$arg")"
-	_____dict_____["$optname"]="$optvalue"
-    done
-    while [[ $string =~ (.*)(%\{([[:alnum:]_]+(\[[[:alnum:]]+\])?)(:-([^\}]*))?\})(.*) ]] ; do
-	local prefix=${BASH_REMATCH[1]:-}
-	local var=${BASH_REMATCH[3]:-}
-	local replacement=${BASH_REMATCH[6]:-UNKNOWN$var}
-	local suffix=${BASH_REMATCH[7]:-}
-	if [[ -n "${_____dict_____[$var]+isset}" ]] ; then
-	    string="${prefix}${_____dict_____[$var]}${suffix}"
-	else
-	    string="${prefix}${!var:-$replacement}${suffix}"
-	fi
-    done
-    echo "$string"
-}
-
 ################################################################
-# Workload management
+# Workload API management
 ################################################################
 
-function load_workloads() {
-    local workload
-    for workload in "${__workloaddir__}"/*.workload ; do
-	. "$workload" || fatal "Can't load workload $workload"
-    done
-}
-
-function dispatch_generic() {
-    local -i probe_only=0
-    if [[ $1 = '-p' ]] ; then
-	probe_only=1
-	shift
-    fi
-    local workload=$1
-    local API=$2
-    shift 2
-    if type -t "${API}_${workload}" >/dev/null ; then
-	((probe_only)) && return 0
-	"${API}_${workload}" "$@"
-    else
-	return 1
-    fi
-}
-
-function register_workload() {
-    local workload_name=$1
-    local workload_dispatch_function=$2
-    if [[ ! $workload =~ [[:alpha:]][[:alnum:]_]+ ]] ; then
-	fatal "Illegal workload name $workload"
-    elif [[ -n "${workload_aliases[${workload_name,,}]:-}" ]] ; then
-	fatal "Attempting to re-register workload $workload_name"
-    elif ! type -t "$workload_dispatch_function" >/dev/null ; then
-	fatal "Workload dispatch function $workload_dispatch_function not defined"
-    fi
-    registered_workloads[$workload_name]=$workload_dispatch_function
-    workload_aliases[${workload_name,,}]=$workload_name
-    shift 2
-    local walias
-    for walias in "$@" ; do
-	if [[ -n "${registered_workloads[$walias]:-}" || -n "${workload_aliases[${walias,,}]:-}" ]] ; then
-	    fatal "Attempting to register workload alias that already exists"
-	fi
-	workload_aliases[${walias,,}]=${workload_name}
-    done
-}
-
-function supports_api() {
-    local workload
-    local OPTIND=0
-    workload="$requested_workload"
-    while getopts 'w:' opt "$@" ; do
-	case "$opt" in
-	    w) workload=$OPTARG ;;
-	    *)			;;
-	esac
-    done
-    shift $((OPTIND - 1))
-    local api=$1
-    [[ -z "$workload" ]] && return 1
-    [[ -z "${registered_workloads[$workload]:-}" ]] && fatal "supports_api $workload $api: workload not known"
-    "${registered_workloads[$workload]}" -p "$workload" "$api"
-}
-
-function workloads_supporting_api() {
-    local api=$1
-    local workload
+function print_workloads_supporting_reporting() {
+    local prefix="${1:-}"
+    local workloads
     while read -r workload ; do
-	supports_api -w "$workload" "$api" && echo "$workload"
-    done <<< "$(print_workloads)"
+	echo "$prefix$workload"
+    done <<< "$(workloads_supporting_api supports_reporting)"
 }
 
-function call_api() {
-    (( $# < 1 )) && fatal "call_api [-w workload] API args..."
-    local workload
-    local -i safe=0
-    local OPTIND=0
-    workload="$requested_workload"
-    while getopts 'w:s' opt "$@" ; do
-	case "$opt" in
-	    w) workload=$OPTARG ;;
-	    s) safe=1		;;
-	    *)			;;
-	esac
-    done
-    shift $((OPTIND - 1))
-    local api=$1
-    if supports_api -w "$workload" "$api" ; then
-	"${registered_workloads[$workload]}" "$workload" "$@"
-    elif ((safe)) ; then
-	return 0
-    else
-	return 1
-    fi
+function list_report_formats() {
+    local prefix=${1:-}
+    while read -r format ; do
+	echo "$prefix$format"
+    done <<< "$("${pathdir:-.}/clusterbuster-report" --list_formats)"
 }
 
 function json_encode_settings() {
-    call_api json_encode_settings
+    call_api -w "$requested_workload" json_encode_settings
 }
 
 function create_deployment() {
-    call_api create_deployment "$@"
+    call_api -w "$requested_workload" create_deployment "$@"
 }
 
 function calculate_logs_required() {
-    if supports_api supports_reporting ; then
-	call_api calculate_logs_required "$@"
+    if supports_api -w "$requested_workload" supports_reporting ; then
+	call_api -w "$requested_workload" calculate_logs_required "$@"
     else
 	echo 1
     fi
@@ -1059,15 +784,15 @@ function list_configmaps() {
 ${__podfile_dir__}/clientlib.pl
 ${__podfile_dir__}/sync.pl
 EOF
-    call_api list_configmaps
+    call_api -w "$requested_workload" list_configmaps
 }
 
 function list_user_configmaps() {
-    call_api list_user_configmaps
+    call_api -w "$requested_workload" list_user_configmaps
 }
 
 function generate_workload_metadata() {
-    call_api -s generate_metadata
+    call_api -w "$requested_workload" -s generate_metadata
 }
 
 ################################################################
@@ -1098,6 +823,75 @@ function _OC() {
 	fatal "__KUBEFAIL__ $OC $* failed!"
     fi
 }
+
+# The big red button if something goes wrong.
+
+function childrenof() {
+    function is_descendent() {
+	local pid=$1
+	local ancestor=$2
+	if ((pid == ancestor)) ; then
+	    true
+	else
+	    parent=${ps_parents[$pid]:-1}
+	    case "$parent" in
+		1)           false ;;
+		"$ancestor") true  ;;
+		*)           is_descendent "$parent" "$ancestor" ;;
+	    esac
+	fi
+    }
+    local -A exclude=()
+    local OPTIND=0
+    while getopts 'e:' opt "$@" ; do
+	case "$opt" in
+	    e) exclude[$OPTARG]=1 ;;
+	    *)                    ;;
+	esac
+    done
+    shift $((OPTIND-1))
+    local target=$1
+    local -A ps_parents=()
+    local -A ps_commands=()
+    local -i ppid
+    local -i pid
+    local ignore
+    while read -r pid ppid command ; do
+	ps_parents["$pid"]=$ppid
+	ps_commands["$pid"]=$command
+    done <<< "$(ps -axo pid,ppid,command | tail -n +2)"
+    for pid in "${!ps_parents[@]}" ; do
+	# Don't kill loggers and the report generator; we still want
+	# output even if there's a failure.
+	if [[ -z "${!exclude[$pid]:-}" && "${ps_commands[$pid]}" != 'tee'* && "${ps_commands[$pid]}" != *'clusterbuster-report'* ]] ; then
+	    if is_descendent "$pid" "$target" ; then
+		echo "$pid"
+	    fi
+	fi
+    done
+}
+
+function killthemall() {
+    echo "${*:-Exiting!}" 1>&2
+    # Selectively kill all processes.  We don't want to kill
+    # processes between us and the root, or processes that
+    # aren't actually clusterbuster (e. g. reporting)
+    # Also, RHEL 8 doesn't support kill -<pgrp> syntax
+    local -a pids_to_kill=()
+    readarray -t pids_to_kill <<< "$(childrenof -e "$BASHPID" $$)"
+    # killthemall can livelock under the wrong circumstances.
+    # Make sure that that doesn't happen; we want to control
+    # our own exit.
+    trap : TERM
+    if [[ -n "${pids_to_kill[*]}" ]] ; then
+	/bin/kill -TERM "${pids_to_kill[@]}" >/dev/null 2>&1
+    fi
+    exit 1
+}
+
+################################################################
+# Synchronization between worker pods
+################################################################
 
 function get_sync() {
     if (( sync_start )) ; then
@@ -1296,7 +1090,7 @@ function monitor_pods() {
 		    running_pod_count=$((running_pod_count+1))
 		    ;;
 		completed|terminated)
-		    if supports_api supports_reporting ; then
+		    if supports_api -w "$requested_workload" supports_reporting ; then
 			if ! __OC exec --stdin=false -n "${basename}-sync" "${basename}-sync" -- test -f /tmp/clusterbuster-finished ; then
 			    echo "Sync pod exited prematurely!" 1>&2
 			    echo "Tail end of logs:" 1>&2
@@ -1314,7 +1108,7 @@ function monitor_pods() {
 	if [[ -n "$cb_tempdir" && -f "$cb_tempdir/___run_complete" ]] ; then
 	    return 0
 	fi
-	if ! supports_api supports_reporting ; then
+	if ! supports_api -w "$requested_workload" supports_reporting ; then
 	    if (( running_pod_count + finished_pod_count > 0 && other_pod_count == 0 )) ; then
 		sleep "$workload_run_time"
 		return
@@ -1423,7 +1217,7 @@ function _get_logs_poll() {
 	local mypid=$BASHPID
 	monitor_pods -- -l "${basename}-worker=$uuid" &
 	# shellcheck disable=SC2086
-	if supports_api supports_reporting ; then
+	if supports_api -w "$requested_workload" supports_reporting ; then
 	    # Ensure that if there's a lot of output that we don't remove the sync file before it has all been flushed out
 	    run_logger -p "$mypid" -- _log_helper $pod &
 	fi
@@ -1521,14 +1315,14 @@ function _extract_metrics() {
     if [[ -r "$metrics_file" ]] ; then
 	cat <<EOF
 ,
-"metrics": $("${__mydir__}/prom-extract" --define "namespace_re=${basename}-.*" -m "$metrics_file" --metrics-only --start_time="$prometheus_starting_timestamp" --epoch="$metrics_epoch" --post-settling-time=0)
+"metrics": $("${__topdir__}/prom-extract" --define "namespace_re=${basename}-.*" -m "$metrics_file" --metrics-only --start_time="$prometheus_starting_timestamp" --epoch="$metrics_epoch" --post-settling-time=0)
 EOF
     fi
 }
 
 function _workload_reporting_class() {
-    if supports_api workload_reporting_class ; then
-	call_api workload_reporting_class
+    if supports_api -w "$requested_workload" workload_reporting_class ; then
+	call_api -w "$requested_workload" workload_reporting_class
     else
 	echo "$requested_workload"
     fi
@@ -1608,7 +1402,7 @@ function _report_objects() {
     $(indent 4 _report_emptydirs)
     "target_data_rate": $target_data_rate,
     "workloadOptions": {
-    $(indent 4 call_api "report_options")
+    $(indent 4 call_api -w "$requested_workload" "report_options")
     }
   }
 },
@@ -1659,7 +1453,7 @@ function get_logs() {
     trap - TERM
     local extra_arg=
     local log_cmd
-    if supports_api supports_reporting ; then
+    if supports_api -w "$requested_workload" supports_reporting ; then
 	log_cmd=get_logs_poll
 	if [[ ${log_strategy,,} = 'listen'* ]] ; then
 	    log_cmd=get_logs_listen
@@ -1668,7 +1462,7 @@ function get_logs() {
 	log_cmd=true
     fi
     local report_cmd=cat
-    if supports_api supports_reporting ; then
+    if supports_api -w "$requested_workload" supports_reporting ; then
 	if [[ -z "$*" ]] ; then
 	    echo "Workload $requested_workload does not support reporting" 1>&2
 	elif [[ -n "$artifactdir" ]] ; then
@@ -2530,7 +2324,7 @@ function create_all_secrets() {
 }
 
 function create_system_configmap() {
-    if supports_api list_configmaps ; then
+    if supports_api -w "$requested_workload" list_configmaps ; then
 	local -a systemfiles
 	readarray -t systemfiles < <(list_configmaps)
 	if [[ -n "$sync_namespace" ]] ; then
@@ -2745,6 +2539,30 @@ function report_object_creation() {
     printf "Created %d object%s total\n" "$total_objects_created" "${plurals[$((total_objects_created == 1))]}" 1>&2
 }
 
+function expand_string() {
+    local string=$1
+    shift
+    local -A _____dict_____=()
+    local -a arg
+    for arg in "$@" ; do
+	local noptname1 optname optvalue
+	read -r noptname optname optvalue <<< "$(parse_option "$arg")"
+	_____dict_____["$optname"]="$optvalue"
+    done
+    while [[ $string =~ (.*)(%\{([[:alnum:]_]+(\[[[:alnum:]]+\])?)(:-([^\}]*))?\})(.*) ]] ; do
+	local prefix=${BASH_REMATCH[1]:-}
+	local var=${BASH_REMATCH[3]:-}
+	local replacement=${BASH_REMATCH[6]:-UNKNOWN$var}
+	local suffix=${BASH_REMATCH[7]:-}
+	if [[ -n "${_____dict_____[$var]+isset}" ]] ; then
+	    string="${prefix}${_____dict_____[$var]}${suffix}"
+	else
+	    string="${prefix}${!var:-$replacement}${suffix}"
+	fi
+    done
+    echo "$string"
+}
+
 function run_clusterbuster_1() {
     local -A expected_secrets=()
     local -i status=0
@@ -2784,7 +2602,7 @@ function run_clusterbuster_1() {
 
     (( ${#configmap_files[@]} )) && check_configmaps "${configmap_files[@]}"
     create_all_objects configmaps
-    supports_api list_configmaps && has_system_configmap=1
+    supports_api -w "$requested_workload" list_configmaps && has_system_configmap=1
 
     create_secrets_top_level
 
@@ -2821,7 +2639,7 @@ trap "remove_tmpdir; exit" EXIT
 trap "remove_tmpdir; exit 1" TERM INT HUP
 cb_tempdir=$(umask 77; mktemp -d -p /tmp -t cbtmp_XXXXXXXX) || fatal "Can't create temporary directory"
 
-load_workloads
+load_workloads "$__workloaddir__"
 
 while getopts ":B:Eef:Hhno:P:Qqv-:" opt ; do
     case "$opt" in
@@ -2842,15 +2660,16 @@ while getopts ":B:Eef:Hhno:P:Qqv-:" opt ; do
     esac
 done
 
-if [[ -n "${workload_aliases[${requested_workload,,}]:-}" ]] ; then
-    requested_workload="${workload_aliases[${requested_workload,,}]:-}"
-else
-    help_extended "(Unknown workload '$requested_workload')"
+if [[ -z "$requested_workload" ]] ; then
+    help "Workload must be specified with -P"
 fi
 
-call_api -s "process_options" "${unknown_opts[@]}" || help "${unknown_opt_names[@]}"
+iworkload=$requested_workload
+requested_workload=$(get_workload "$requested_workload") || help_extended "(Unknown workload '$iworkload')"
 
-if supports_api list_user_configmaps ; then
+call_api -w "$requested_workload" -s "process_options" "${unknown_opts[@]}" || help "${unknown_opt_names[@]}"
+
+if supports_api -w "$requested_workload" list_user_configmaps ; then
     readarray -t userfiles < <(list_user_configmaps)
     configmap_files+=("${userfiles[@]}")
 fi
