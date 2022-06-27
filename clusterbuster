@@ -18,7 +18,17 @@
 # specific files.
 # shellcheck disable=SC2034
 
-set -u
+# See the bash change log, differences between 4.4-beta2 and 4.4-rc2:
+# a.  Using ${a[@]} or ${a[*]} with an array without any assigned elements when
+#     the nounset option is enabled no longer throws an unbound variable error.
+if (( ${BASH_VERSINFO[0]} >= 5 || (${BASH_VERSINFO[0]} == 4 && ${BASH_VERSINFO[1]} >= 4) )) ; then
+    set -u
+else
+    cat 1>&2 <<EOF
+Warning: bash version at least 4.4 is recommended for using ${0##*/}.
+Actual version is ${BASH_VERSION}
+EOF
+fi
 
 declare -A registered_workloads=()
 declare -A workload_aliases=()
@@ -215,6 +225,10 @@ function killthemall() {
     # Also, RHEL 8 doesn't support kill -<pgrp> syntax
     local -a pids_to_kill=()
     readarray -t pids_to_kill <<< "$(childrenof -e "$BASHPID" $$)"
+    # killthemall can livelock under the wrong circumstances.
+    # Make sure that that doesn't happen; we want to control
+    # our own exit.
+    trap : TERM
     if [[ -n "${pids_to_kill[*]}" ]] ; then
 	/bin/kill -TERM "${pids_to_kill[@]}" >/dev/null 2>&1
     fi
@@ -1287,7 +1301,7 @@ function monitor_pods() {
 			    echo "Sync pod exited prematurely!" 1>&2
 			    echo "Tail end of logs:" 1>&2
 			    oc logs -n "${basename}-sync" "${basename}-sync" |tail -20 1>&2
-			    killthemall
+			    killthemall "Unexpected termination of sync pod"
 			fi
 		    fi
 		    finished_pod_count=$((finished_pod_count+1))
@@ -2104,7 +2118,7 @@ function really_create_objects() {
 	(__OC --validate=false apply -f - <<< "$accumulateddata" | timestamp 1>&2) || {
 	    echo "Create objects failed:" 1>&2
 	    echo "$accumulateddata" 1>&2
-	    killthemall
+	    killthemall "Failed to create objects"
 	}
 	accumulateddata=
 	objs_item_count=0
@@ -2177,9 +2191,9 @@ function create_object_from_file() {
 	[[ -r "$file" ]] || fatal "Can't read file $file!"
     done
     # shellcheck disable=SC2046
-    (_OC create "$objtype" $(_ns) "$objname" "${@/#/--from-file=}" | echo_if_desired 1>&2) || killthemall
+    (_OC create "$objtype" $(_ns) "$objname" "${@/#/--from-file=}" | echo_if_desired 1>&2) || killthemall "Unable to create object $objtype/$namespace:$objname"
     # shellcheck disable=SC2046
-    (_OC label "$objtype" $(_ns) "$objname" "${basename}base=true" 'clusterbusterbase=true' "${basename}-uuid=${uuid}" "${basename}-id=$uuid" "${basename}=true" | echo_if_desired 1>&2) || killthemall
+    (_OC label "$objtype" $(_ns) "$objname" "${basename}base=true" 'clusterbusterbase=true' "${basename}-uuid=${uuid}" "${basename}-id=$uuid" "${basename}=true" | echo_if_desired 1>&2) || killthemall || killthemall "Unable to label $objtype/$namespace:$objname"
     if (( doit )) ; then
 	if [[ -n "$artifactdir" ]] ; then
 	    mkdir -p "$artifactdir/$objtype"
@@ -2504,7 +2518,7 @@ function create_all_namespaces() {
     for i in $(seq 0 "$((parallel_namespaces - 1))") ; do
 	create_objects_n namespace "$parallel_namespaces" "$objs_per_call_namespaces" "$i" "$sleep_between_namespaces" &
     done
-    wait || killthemall
+    wait || killthemall "Unable to create namespaces"
 }
 
 function create_all_secrets() {
@@ -2512,7 +2526,7 @@ function create_all_secrets() {
     for i in $(seq 0 "$((parallel_secrets - 1))") ; do
 	create_objects_n secrets "$parallel_secrets" "$objs_per_call_secrets" "$i" "$sleep_between_secrets" "$deps_per_namespace" "$secrets" &
     done
-    wait || killthemall
+    wait || killthemall "Unable to create secrets"
 }
 
 function create_system_configmap() {
@@ -2525,7 +2539,7 @@ function create_system_configmap() {
 	for i in $(seq 0 "$((parallel_configmaps - 1))") ; do
 	    create_objects_n configmaps "$parallel_configmaps" "$objs_per_call_configmaps" "$i" "$sleep_between_configmaps" "systemconfigmap" "${systemfiles[@]}"&
 	done
-	wait || killthemall
+	wait || killthemall "Unable to create system configmap"
     fi
 }
 
@@ -2536,7 +2550,7 @@ function create_all_configmaps() {
     for i in $(seq 0 "$((parallel_configmaps - 1))") ; do
 	create_objects_n configmaps "$parallel_configmaps" "$objs_per_call_configmaps" "$i" "$sleep_between_configmaps" "configmap" "${configmap_files[@]}"&
     done
-    wait || killthemall
+    wait || killthemall "Unable to create configmaps"
 }
 
 function drop_host_caches() {
@@ -2564,7 +2578,7 @@ function create_all_deployments() {
     for i in $(seq 0 "$((parallel_deployments - 1))") ; do
 	create_objects_n deployment "$parallel_deployments" "$objs_per_call_deployments" "$i" "$sleep_between_deployments" "$deps_per_namespace" "$secrets" "$replicas" "$containers_per_pod" "$log_host" "$log_port" &
     done
-    wait || killthemall
+    wait || killthemall "Unable to create deployments"
 }
 
 function create_all_objects() {
@@ -2736,9 +2750,9 @@ function run_clusterbuster_1() {
     local -i status=0
     (( precleanup && doit )) && do_cleanup 1>&2
     if ((cleanup)) ; then
-	trap 'killthemall; wait; remove_tmpdir; doit=1; do_cleanup force; exit 1' TERM INT HUP
+	trap 'killthemall "Cleaning up"; wait; remove_tmpdir; doit=1; do_cleanup force; exit 1' TERM INT HUP
     else
-	trap 'killthemall; wait; remove_tmpdir; exit 1' TERM HUP INT
+	trap 'killthemall "Not cleaning up"; wait; remove_tmpdir; exit 1; ' TERM HUP INT
     fi
     if [[ $take_prometheus_snapshot -gt 0 && -n "$artifactdir" ]] ; then
 	start_prometheus_snapshot
