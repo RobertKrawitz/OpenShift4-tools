@@ -2650,7 +2650,7 @@ function create_secrets_top_level() {
 		[[ -n "${secname:-}" ]] && unset "expected_secrets[$secname]"
 	    done < <(__OC get secret -oname --no-headers -l "$basename" -A)
 	    if (( ${#expected_secrets[@]} )) ; then
-		echo "Still waiting for ${#expected_secrets[@]} to be created."
+		echo "Still waiting for ${#expected_secrets[@]} secrets to be created."
 		sleep 10
 	    else
 		break
