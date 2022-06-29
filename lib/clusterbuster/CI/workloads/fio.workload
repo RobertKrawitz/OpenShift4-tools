@@ -42,7 +42,7 @@ function test_fio() {
     ___fio_job_timeout=$(compute_timeout "$___fio_job_timeout")
     if ((___fio_absolute_filesize <= 0 || ___fio_max_absolute_filesize <= 0)) ; then
 	local ___fio_node_memory=
-	fio_node_memory=$(get_node_memory "$client_pin_node") || fatal "Cannot retrieve node memory."
+	___fio_node_memory=$(get_node_memory "$client_pin_node") || fatal "Cannot retrieve node memory."
 	if ((___fio_absolute_filesize <= 0)) ; then
 	    ___fio_absolute_filesize=$(computeit "$___fio_node_memory * $___fio_relative_filesize")
 	fi
