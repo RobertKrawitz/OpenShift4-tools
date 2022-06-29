@@ -1221,7 +1221,7 @@ function _get_logs_poll() {
 	    # Ensure that if there's a lot of output that we don't remove the sync file before it has all been flushed out
 	    run_logger -p "$mypid" -- _log_helper $pod &
 	fi
-	trap 'kill $(jobs -p) && wait' USR2
+	trap 'kill $(jobs -p) 2>/dev/null 1>&2 && wait' USR2
 	wait
 	if ((--counter > 0)) ; then
 	    echo ','
@@ -1987,7 +1987,7 @@ function create_object_from_file() {
     # shellcheck disable=SC2046
     (_OC create "$objtype" $(_ns) "$objname" "${@/#/--from-file=}" | echo_if_desired 1>&2) || killthemall "Unable to create object $objtype/$namespace:$objname"
     # shellcheck disable=SC2046
-    (_OC label "$objtype" $(_ns) "$objname" "${basename}base=true" 'clusterbusterbase=true' "${basename}-uuid=${uuid}" "${basename}-id=$uuid" "${basename}=true" | echo_if_desired 1>&2) || killthemall || killthemall "Unable to label $objtype/$namespace:$objname"
+    (_OC label "$objtype" $(_ns) "$objname" "${basename}base=true" 'clusterbusterbase=true' "${basename}-uuid=${uuid}" "${basename}-id=$uuid" "${basename}=true" | echo_if_desired 1>&2) || killthemall "Unable to label $objtype/$namespace:$objname"
     if (( doit )) ; then
 	if [[ -n "$artifactdir" ]] ; then
 	    mkdir -p "$artifactdir/$objtype"
