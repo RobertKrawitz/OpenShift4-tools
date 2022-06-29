@@ -666,7 +666,7 @@ if ((! debugonly)) ; then
     fi
 fi
 
-if [[ -z "${workloads[@]}" ]] ; then
+if [[ -z "${workloads[*]}" ]] ; then
     workloads=($(print_workloads))
 fi
 
