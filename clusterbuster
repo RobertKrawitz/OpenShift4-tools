@@ -2499,7 +2499,18 @@ function do_logging() {
 	    # CreateContainerError is not necessarily fatal
 	    if __OC get pods -A -l "$basename" |grep -q -E -e '([^r]Error|Evicted|Crash)' ; then
 		echo "Run failed:" 1>&2
-		__OC get pods -A -l "$basename" |grep -E -e '([^r]Error|Evicted|Crash)'
+		__OC get pods -A -l "$basename" |grep -E -e '([^r]Error|Evicted|Crash)' | {
+		    local line
+		    local ns
+		    local pod
+		    local rest
+		    while read -r line ; do
+			read -r ns pod rest <<< "$line"
+			echo "$line" 1>&2
+			oc logs -n "$ns" "$pod" 1>&2
+			echo 1>&2
+		    done
+		}
 		finis=-1
 		break
 	    fi
