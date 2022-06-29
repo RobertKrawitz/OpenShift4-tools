@@ -29,3 +29,5 @@ cpusoaker-max-namespaces=1
 artifactdir=
 virtiofsd-direct=1
 use-python-venv=1
+cleanup=1
+restart=0
