@@ -8,6 +8,7 @@ use Sys::Hostname;
 use strict;
 use JSON;
 use POSIX;
+use Scalar::Util qw(looks_like_number);
 
 my %timing_parameters = ();
 my ($last_sync_time) = -10;
@@ -148,6 +149,31 @@ sub connect_to($$) {
     return ($sock);
 }
 
+sub clean_numbers($) {
+    # Perl to_json encodes innfinity as inf and NaN as nan.
+    # This results in invalid JSON.  It's our responsibility to sanitize
+    # this up front.
+    my ($ref) = @_;
+    if (ref $ref eq 'HASH') {
+	my (%answer);
+	map { $answer{$_} = clean_numbers($$ref{$_})} keys %$ref;
+	return \%answer;
+    } elsif (ref $ref eq 'ARRAY') {
+	my (@answer) = map {clean_numbers($_)} @$ref;;
+	return \@answer;
+    } elsif (ref $ref eq '' && looks_like_number($ref) && $ref != 0 &&
+	     (! defined ($ref <=> 0) || ((1 / $ref) == 0))) {
+	return undef;
+    } else {
+	return $ref
+    }
+}
+
+sub to_json_safe($) {
+    my ($ref) = @_;
+    return to_json(clean_numbers($ref));
+}
+
 sub print_json_report($$$$$$$;$) {
     my ($namespace, $pod, $container, $process_id, $data_start_time, $data_end_time,
 	$data_elapsed_time, $user_cpu, $sys_cpu, $extra) = @_;
@@ -169,7 +195,7 @@ sub print_json_report($$$$$$$;$) {
 	);
     
     map { $hash{$_} = $$extra{$_} } keys %$extra;
-    return to_json(\%hash);
+    return to_json_safe(\%hash);
 }
 
 sub do_sync_internal($$$) {
