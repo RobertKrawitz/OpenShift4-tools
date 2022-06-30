@@ -633,6 +633,21 @@ function run_clusterbuster() {
     return $status
 }
 
+if [[ -z "${workloads[*]}" ]] ; then
+    workloads=($(print_workloads))
+fi
+
+bad_workload=0
+for workload in "${workloads[@]}" ; do
+    if ! get_workload "$workload" ; then
+	bad_workload=1
+	echo "Unsupported workload $workload"
+    fi
+done
+if ((bad_workload)) ; then
+    exit 1
+fi
+
 if ((use_python_venv)) ; then
     python_venv=$(mktemp -d -t "cb-ci-venv.XXXXXXXX")
     python_create_venv "$python_venv"
@@ -664,10 +679,6 @@ if ((! debugonly)) ; then
     if ((force_pull_image)) ; then
 	force_pull_base_image
     fi
-fi
-
-if [[ -z "${workloads[*]}" ]] ; then
-    workloads=($(print_workloads))
 fi
 
 for runtimeclass in "${runtimeclasses[@]}" ; do
