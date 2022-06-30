@@ -369,6 +369,8 @@ $(_document_workloads)
         --profile=profile       Which profile to use.  Default is no profile.
                                 Known profiles:
 $(list_profiles '                                - ')
+        --uuid=uuid             Specify a uuid for the job run.  Default is to
+				generate one.
 
     Virtiofsd configuration options (for kata):
         --virtiofsd-direct      Allow direct I/O requests from guest to operate
@@ -433,6 +435,7 @@ function process_option() {
 	forcepull*) force_pull_image="$(bool "$optvalue")"				;;
 	usepythonvenv*) use_python_venv="$(bool "$optvalue")"				;;
 	basename) basename=$optvalue							;;
+	uuid) uuid=$optvalue								;;
 
 	virtiofsdwriteback) virtiofsd_writeback=$(bool "$optvalue")			;;
 	virtiofsddirect) virtiofsd_direct=$(bool "$optvalue")				;;
