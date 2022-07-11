@@ -94,6 +94,9 @@ function report_results() {
 }
 
 function finis() {
+    if [[ -n "$*" ]] ; then
+	echo "$*" 1>&2
+    fi
     if [[ "$monitor_pid" -ne 0 ]] ; then
 	exec 3>&2 2>/dev/null
 	kill -INT "$monitor_pid"
@@ -184,9 +187,8 @@ function warn() {
 }
 
 function fatal() {
-    warn "$*"
     fail=1
-    finis
+    finis "$*"
 }
 
 function parse_time() {
@@ -233,6 +235,9 @@ function set_pin_nodes() {
 	# shellcheck disable=SC2207
 	nodes=($(${OC} get node -l node-role.kubernetes.io/worker= -o jsonpath='{.items[*].metadata.name}'))
 	local -i node_count=${#nodes[@]}
+	if ((node_count < 1)) ; then
+	    finis "No nodes found!"
+	fi
 	if [[ -z "$client_pin_node" ]] ; then
 	    client_pin_node=${nodes[$((0 % node_count))]}
 	fi
@@ -584,7 +589,7 @@ function run_clusterbuster() {
     local -i job_end
     job_start=$(date +%s)
     echo
-    echo "*** Running $jobname"
+    echo "*** Running $jobname at $(date -Is -u)"
     # shellcheck disable=SC2090
     doit "$__clusterbuster__" ${dontdoit:+"$dontdoit"} \
 	 ${basename:+"--basename=$basename"} --uuid="$uuid" \
@@ -602,11 +607,11 @@ function run_clusterbuster() {
 	 --virtiofsd_writeback="$virtiofsd_writeback" \
 	 --virtiofsd_threadpoolsize="$virtiofsd_threadpoolsize" \
 	 --report_object_creation="$report_object_creation" \
-	 "$@" || status=$?
+	 "$@" 2>&1 || status=$?
     if ((! debugonly)) ; then
 	job_end=$(date +%s)
 	job_runtime="$(to_hms "$job_start" "$job_end")"
-	echo "Job took $job_runtime"
+	echo "Job took $job_runtime, done at $(date -Is -u)"
 	job_runtimes[$jobname]="$job_runtime"
 	if ((status == 0)) ; then
 	    jobs+=("$jobname")
@@ -626,7 +631,7 @@ function run_clusterbuster() {
 		done
 		mv "$tmp_jobdir" "$fail_jobdir" || fatal "Can't rename $tmp_jobdir to $fail_jobdir"
 	    fi
-	    ((hard_fail_on_error)) && finis
+	    ((hard_fail_on_error)) && finis "Job $jobname failed, exiting!"
 	fi
     fi
     return $status
@@ -638,19 +643,15 @@ fi
 
 bad_workload=0
 for workload in "${workloads[@]}" ; do
-    if ! get_workload "$workload" ; then
+    if ! get_workload "$workload" >/dev/null 2>&1; then
 	bad_workload=1
-	echo "Unsupported workload $workload"
+	echo "Unsupported workload $workload" 1>&2
     fi
 done
 if ((bad_workload)) ; then
     exit 1
 fi
 
-if ((use_python_venv)) ; then
-    python_venv=$(mktemp -d -t "cb-ci-venv.XXXXXXXX")
-    python_create_venv "$python_venv"
-fi
 if ((! debugonly)) ; then
     set_pin_nodes
     starting_timestamp=$(date +%s)
@@ -669,11 +670,21 @@ if ((! debugonly)) ; then
 	if [[ -n "$artifactdir" && -f "$artifactdir/clusterbuster-report.json" ]] ; then
 	    rm -rf "$artifactdir"
 	fi
+	if [[ ! -d "$artifactdir" ]] ; then
+	    mkdir -p "$artifactdir" || fatal "Cannot create artifact directory!"
+	fi
+    fi
+    exec > >(tee -a "$artifactdir/stdout.kata-perf-suite.log")
+    exec 2> >(tee -a "$artifactdir/stderr.kata-perf-suite.log" >&2)
+
+    if ((use_python_venv)) ; then
+	python_venv=$(mktemp -d -t "cb-ci-venv.XXXXXXXX")
+	python_create_venv "$python_venv"
     fi
 
     monitor "$run_timeout"
-    trap 'if ((monitor_pid > 0)) ; then kill -9 "$monitor_pid"; monitor_pid=0; fi; timedout=1; if ((job_pid > 0)) ; then kill -INT "$job_pid"; echo Cleaning up ; fi; echo Run timed out after '"$run_timeout"' seconds; fail=3; finis' USR1
-    trap 'if ((monitor_pid > 0)) ; then kill -9 "$monitor_pid"; monitor_pid=0; fi; interrupted=1; if ((job_pid > 0)) ; then kill -INT "$job_pid"; echo Cleaning up; fi; if ((fail < 2)); then fail=2; fi; finis' TERM INT HUP
+    trap 'if ((monitor_pid > 0)) ; then kill -9 "$monitor_pid"; monitor_pid=0; fi; timedout=1; if ((job_pid > 0)) ; then kill -INT "$job_pid"; echo Cleaning up 1>&2 ; fi; fail=3; finis "Run timed out after $run_timeout seconds"' USR1
+    trap 'if ((monitor_pid > 0)) ; then kill -9 "$monitor_pid"; monitor_pid=0; fi; interrupted=1; if ((job_pid > 0)) ; then kill -INT "$job_pid"; echo Cleaning up 1>&2; fi; if ((fail < 2)); then fail=2; fi; finis "Run interrupted"' TERM INT HUP
     trap 'finis' EXIT
     if ((force_pull_image)) ; then
 	force_pull_base_image

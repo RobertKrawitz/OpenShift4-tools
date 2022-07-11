@@ -824,6 +824,12 @@ function _OC() {
     fi
 }
 
+function ___OC() {
+    if ! __OC "$@" ; then
+	fatal "$OC $* failed!"
+    fi
+}
+
 # The big red button if something goes wrong.
 
 function childrenof() {
@@ -925,7 +931,7 @@ function create_sync_service_if_needed() {
 function get_pod_timestamp() {
     local format=${1:-%s.%N}
     shift
-    _OC exec "$@" -- /bin/sh -c "date '+$format'" || killthemall "Unable to retrieve timestamp from pod $*"
+    ___OC exec "$@" -- /bin/sh -c "date '+$format'" || killthemall "Unable to retrieve timestamp from pod $*"
 }
 
 function get_prometheus_pod_timestamp() {
@@ -948,7 +954,7 @@ function set_start_timestamps() {
 	    return 0
 	fi
 	if ((retries > 0)) ; then
-	    warn "Fetch timestamp failed! $retries left"
+	    warn "Fetch timestamp failed! $retries attempt(s) left"
 	    sleep 5
 	else
 	    warn "Unable to retrieve Prometheus timestamp (hard error)"
@@ -1004,8 +1010,8 @@ function start_prometheus_snapshot() {
 	retry=$((retry-1))
 	sleep 5
     done
-    __OC wait --for=condition=Ready -n openshift-monitoring pod/prometheus-k8s-0 || killthemall "Prometheus pod did not go ready"
-    set_start_timestamps
+    __OC wait --for=condition=Ready -n openshift-monitoring pod/prometheus-k8s-0 || killthemall "Prometheus pod did not become ready"
+    set_start_timestamps || return 1
     # Wait for prometheus pod to fully initialize
     sleep 60
     echo "Prometheus snapshot started" | echo_if_desired 1>&2
@@ -1172,7 +1178,7 @@ function _log_helper() {
     if [[ -n "$cb_tempdir" ]] ; then
 	touch "$cb_tempdir/___run_complete"
     fi
-    "$OC" exec --stdin=false "$@" -- sh -c "rm -f '$sync_flag_file'" || fatal "Can't terminate sync"
+    "$OC" exec --stdin=false "$@" -- sh -c "rm -f '$sync_flag_file'" || killthemall "Can't terminate sync"
 }
 
 function _get_logs_poll() {
@@ -2381,7 +2387,7 @@ function create_all_objects() {
     shift
     while IFS= read -r 'line' ; do
 	if [[ $line = *'__KUBEFAIL__ '* ]] ; then
-	    echo "${line/__KUBEFAIL__ /}" 1>&2
+	    echo "${line#__KUBEFAIL__ }" 1>&2
 	    return 1
 	elif [[ $line =~ ^[[:digit:]]{4}(-[[:digit:]]{2}){2}T([[:digit:]]{2}:){2}[[:digit:]]{2}\.[[:digit:]]{6}\ +([-a-z0-9]+)/([-a-z0-9]+)\ +created$ ]] ; then
 	    if (( report_object_creation )) ; then
@@ -2542,7 +2548,7 @@ function do_logging() {
 }
 
 function report_object_creation() {
-    (( report_object_creation )) || return
+    (( report_object_creation )) || return 0
     local objtype
     while read -r objtype ; do
 	[[ -n "${objtype:-}" ]] && printf "Created %${#total_objects_created}d %s%s\n" "${objects_created[$objtype]}" "$objtype" "${plurals[$((${objects_created[$objtype]} == 1))]}" 1>&2
@@ -2574,19 +2580,21 @@ function expand_string() {
     echo "$string"
 }
 
-function run_clusterbuster_1() {
+function run_clusterbuster_2() {
     local -A expected_secrets=()
     local -i status=0
-    (( precleanup && doit )) && do_cleanup 1>&2
+    if (( precleanup && doit )) ; then
+	do_cleanup 1>&2 || return 1
+    fi
     if ((cleanup)) ; then
 	trap 'killthemall "Cleaning up"; wait; remove_tmpdir; doit=1; do_cleanup force; exit 1' TERM INT HUP
     else
 	trap 'killthemall "Not cleaning up"; wait; remove_tmpdir; exit 1; ' TERM HUP INT
     fi
     if [[ $take_prometheus_snapshot -gt 0 && -n "$artifactdir" ]] ; then
-	start_prometheus_snapshot
+	start_prometheus_snapshot || return 1
     else
-	set_start_timestamps
+	set_start_timestamps || return 1
     fi
     if [[ $doit -gt 0 && -n "${artifactdir:-}" ]] ; then
 	artifactdir=${artifactdir//%s/$(readable_timestamp "$prometheus_starting_timestamp")}
@@ -2597,12 +2605,12 @@ function run_clusterbuster_1() {
 	echo "${saved_argv[@]@Q}" > "$artifactdir/commandline"
 	exec 2> >(tee "$artifactdir/stderr.log" >&2)
     fi
-    allocate_namespaces
-    find_first_deployment
+    allocate_namespaces || return 1
+    find_first_deployment || return 1
     if [[ -n "$sync_namespace" ]] ; then
-	create_namespace -f "$sync_namespace"
+	create_namespace -f "$sync_namespace" || return 1
     fi
-    create_all_objects namespaces
+    create_all_objects namespaces || return 1
     if get_sync -q ; then
 	if [[ $use_namespaces ]] ; then
 	    global_sync_service="service-${sync_namespace}.${sync_namespace}.svc.cluster.local"
@@ -2612,21 +2620,34 @@ function run_clusterbuster_1() {
     fi
 
     (( ${#configmap_files[@]} )) && check_configmaps "${configmap_files[@]}"
-    create_all_objects configmaps
+    create_all_objects configmaps || return 1
     supports_api -w "$requested_workload" list_configmaps && has_system_configmap=1
 
-    create_secrets_top_level
+    create_secrets_top_level || return 1
 
     basetime=$(date +%s.%N)
     (drop_host_caches)
-    create_all_objects deployments || exit 1
+    create_all_objects deployments || return 1
     (( doit )) || return
 
-    do_logging || status=1
+    do_logging || return 1
     if ((! status)) ; then
 	report_object_creation
     fi
-    ((cleanup)) && do_cleanup
+    return 0
+}
+
+function run_clusterbuster_1() {
+    local -i status=0
+    run_clusterbuster_2
+    status=$?
+    if ((cleanup)) ; then
+	do_cleanup || {
+	    if ((status == 0)) ; then
+		status=1
+	    fi
+	}
+    fi
 
     if ((status)) ; then
 	fatal "Clusterbuster failed!"
