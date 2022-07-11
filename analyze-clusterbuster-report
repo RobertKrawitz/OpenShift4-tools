@@ -21,12 +21,17 @@ from lib.clusterbuster.loader.ClusterBusterLoader import ClusterBusterLoader
 
 parser = argparse.ArgumentParser(description='Analyze ClusterBuster report')
 
+parser.add_argument("-o", "--outfile", default=None, type=str, metavar='file', help='Output filename')
 parser.add_argument("files", metavar='file', type=str, nargs='*', help='Files to process')
 args = parser.parse_args()
 
 try:
     data = ClusterBusterLoader(args.files).Load()
-    json.dump(ClusterBusterAnalysis(data).Analyze(), fp=sys.stdout, indent=2)
+    if args.outfile and args.outfile != '-':
+        with open(args.outfile, 'w') as f:
+            json.dump(ClusterBusterAnalysis(data).Analyze(), fp=f, indent=2)
+    else:
+        json.dump(ClusterBusterAnalysis(data).Analyze(), fp=sys.stdout, indent=2)
 except KeyboardInterrupt:
     sys.exit(1)
 except BrokenPipeError:
