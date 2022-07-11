@@ -259,7 +259,7 @@ function get_node_memory() {
 
 function list_profiles() {
     local prefix=${1:-}
-    function list_pro___files_1() {
+    function list_profiles_1() {
 	shopt -s nullglob
 	for f in "${__profiledir__}"/*.profile ; do
 	    f=${f%%.profile}
@@ -269,7 +269,7 @@ function list_profiles() {
     }
     while read -r profile ; do
 	echo "$prefix$profile"
-    done <<< "$(list_pro___files_1)"
+    done <<< "$(list_profiles_1)"
 }
 
 function process_profile() {
