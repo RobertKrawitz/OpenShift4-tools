@@ -189,11 +189,7 @@ EOF
 	fi
 
 	if [[ -n "$analyze_results" ]] ; then
-	    if [[ $analyze_results == '-' ]] ; then
-		"$__analyze__" "$artifactdir"
-	    else
-		"$__analyze__" "$artifactdir" > "$analyze_results"
-	    fi
+	    "$__analyze__" -o "$analyze_results" "$artifactdir"
 	fi
 	if [[ -n "$python_venv" && -d "$python_venv" ]] ; then
 	    if type -t deactivate >/dev/null ; then
