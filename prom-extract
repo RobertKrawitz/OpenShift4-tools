@@ -87,10 +87,18 @@ def get_prometheus_default_url():
         efail("Unable to retrieve prometheus-k8s route: %s" % err)
 
 
+def get_prometheus_token_by_version():
+    with openshift.project('openshift-monitoring'):
+        openshift_version = openshift.get_server_version().split('-')[0].split('.')
+        if int(openshift_version[0]) > 4 or (int(openshift_version[0]) == 4 and int(openshift_version[1]) > 10):
+            return openshift.invoke('sa', ['new-token', '-n', 'openshift-monitoring', 'prometheus-k8s']).out().strip()
+        else:
+            return openshift.get_serviceaccount_auth_token('prometheus-k8s')
+
+
 def get_prometheus_token():
     try:
-        with openshift.project('openshift-monitoring'):
-            return 'Bearer %s' % openshift.get_serviceaccount_auth_token('prometheus-k8s')
+        return 'Bearer %s' % get_prometheus_token_by_version()
     except Exception as err:
         efail("Unable to retrieve prometheus-k8s token: %s" % err)
 
