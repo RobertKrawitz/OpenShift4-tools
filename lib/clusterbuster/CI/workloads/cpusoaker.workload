@@ -1,0 +1,91 @@
+#!/bin/bash
+
+# Copyright 2022 Robert Krawitz/Red Hat
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+declare -gi ___cpusoaker_starting_namespaces=1
+declare -gi ___cpusoaker_deps_per_namespace=5
+declare -gi ___cpusoaker_max_namespaces=-1
+declare -gi ___cpusoaker_job_runtime=0
+declare -gi ___cpusoaker_job_timeout=0
+
+register_workload cpusoaker dispatch_generic cpu cpusoak scaling
+
+function test_cpusoaker() {
+    local runtimeclass=$1
+    local default_job_runtime=$2
+    if ((___cpusoaker_job_runtime <= 0)) ; then
+	___cpusoaker_job_runtime=$default_job_runtime
+    fi
+    ___cpusoaker_job_timeout=$(compute_timeout "$___cpusoaker_job_timeout")
+    namespaces=$___cpusoaker_starting_namespaces
+    while ((___cpusoaker_max_namespaces == -1 || namespaces <= ___cpusoaker_max_namespaces)); do
+	job_name="$((namespaces*___cpusoaker_deps_per_namespace))"
+	if run_clusterbuster -y -j "$job_name" -w cpusoaker -r "$runtimeclass" \
+			     -t "$___cpusoaker_job_timeout" -R "$___cpusoaker_job_runtime" -- \
+			     --deployments="$___cpusoaker_deps_per_namespace" \
+			     --namespaces="$namespaces" --objs_per_call=6 --parallel=100 ; then
+	    namespaces=$((namespaces+1))
+	else
+	    break
+	fi
+	if ((debugonly)) ; then
+	    break
+	fi
+    done
+}
+
+function process_option_cpusoaker() {
+    local opt=$1
+    read -r noptname1 noptname optvalue <<< "$(parse_option "$opt")"
+    case "$noptname1" in
+	cpusoakerstarting*) ___cpusoaker_starting_namespaces=$optvalue	;;
+	cpusoakerdeps*)     ___cpusoaker_deps_per_namespace=$optvalue	;;
+	cpusoaker*runtime)  ___cpusoaker_job_runtime=$optvalue		;;
+	cpusoaker*timeout)  ___cpusoaker_job_timeout=$optvalue		;;
+	cpusoakermax*)      ___cpusoaker_max_namespaces=$optvalue	;;
+	*) 		    return 1					;;
+    esac
+    return 0
+}
+
+
+function help_options_cpusoaker() {
+    cat <<'EOF'
+    CPUsoaker options:
+        --cpusoaker-starting-namespaces=n
+                                Start the test with the specified number of
+                                namespaces, incrementing until failure.
+                                Default 1.
+        --cpusoaker-deps-per-namespace=n
+                                Deploy the specified number of pods per
+                                namespace.  Default is 5.
+        --cpusoaker-runtime=seconds
+                                Allow the pods to run for the specified time.
+                                Default is 0.  Typically set to 60 to collect
+                                reliable metrics data.
+        --cpusoaker-timeout=seconds
+                                Time the job out after specified time.  Default
+                                is the global timeout default.
+        --cpusoaker-max-namespaces=n
+                                Maximum number of namespaces to scale to.
+                                Default is -1, equivalent to no upper limit.
+EOF
+}
+
+function document_cpusoaker() {
+cat <<'EOF'
+* cpusoaker: a simple CPU soaker running a continuous tight loop.
+EOF
+}

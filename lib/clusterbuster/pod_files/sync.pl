@@ -223,7 +223,7 @@ if (@tmp_sync_files) {
 $result{'worker_results'} = \@data;
 
 open (TMP, ">", $tmp_sync_file_base) || die "Can't open sync file $tmp_sync_file_base: $!\n";
-print TMP to_json(\%result);
+print TMP to_json_safe(\%result);
 close TMP || die "Can't close temporary sync file: $!\n";
 rename($tmp_sync_file_base, $sync_file) || die "Can't rename $tmp_sync_file_base to $sync_file: $!\n";
 timestamp1("Waiting for sync file $sync_file to be removed");

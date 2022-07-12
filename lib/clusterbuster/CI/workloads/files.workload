@@ -1,0 +1,136 @@
+#!/bin/bash
+
+# Copyright 2022 Robert Krawitz/Red Hat
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+declare -ga ___files_ninst=(1 4)
+declare -ga ___files_dirs_per_volume=(256)
+declare -ga ___files_per_dir=(256)
+declare -ga ___files_block_sizes=(4096 65536)
+declare -ga ___files_sizes=(0 4096 $((256 * 1024)))
+declare -ga ___files_directs=(0 1)
+declare -gi ___files_job_timeout=9000
+declare -ga ___files_params=()
+declare -gi ___files_min_direct=1024
+
+register_workload files dispatch_generic
+
+function test_files() {
+    local runtimeclass=$1
+    ___files_job_timeout=$(compute_timeout "$___files_job_timeout")
+    if [[ -z "${___files_params[*]}" ]] ; then
+	for ninst in "${___files_ninst[@]}" ; do
+	    for dirs in "${___files_dirs_per_volume[@]}" ; do
+		for files in "${___files_per_dir[@]}" ; do
+		    for blocksize in "${___files_block_sizes[@]}" ; do
+			for size in "${___files_sizes[@]}" ; do
+			    for direct in "${___files_directs[@]}" ; do
+				if ((! direct || blocksize >= ___files_min_direct)) ; then
+				    ___files_params+=("${ninst}:${dirs}:${files}:${blocksize}:${size}:${direct}")
+				fi
+			    done
+			done
+		    done
+		done
+	    done
+	done
+    fi
+    local -i ninst
+    local ___files_dirs_per_volume
+    local ___files_per_dir
+    local ___files_block_size
+    local file_size
+    local ___files_direct
+    local options
+    for options in "${___files_params[@]}" ; do
+	read -r ninst ___files_dirs_per_volume ___files_per_dir ___files_block_size file_size ___files_direct <<< "$(parse_size -n "${options//:/ }")"
+	if [[ -z "$___files_direct" ]] ; then
+	    echo "Unparsable options $options" 1>&2
+	    continue
+	fi
+	if ((___files_block_size > file_size && file_size > 0)) ; then
+	    ___files_block_size=$file_size
+	fi
+	job_name="${ninst}P-${___files_dirs_per_volume}D-${___files_per_dir}F-${___files_block_size}B-${file_size}S-${___files_direct}T"
+	# shellcheck disable=SC2090
+	run_clusterbuster -j "$job_name" -w files -r "$runtimeclass" -t "$___files_job_timeout" -- \
+			  --deployments="$ninst" \
+			  --dirs_per_volume="$___files_dirs_per_volume" \
+			  --files_per_dir="$___files_per_dir" \
+			  --file_block_size="$___files_block_size" \
+			  --files_direct="$___files_direct" \
+			  --filesize="$file_size"
+    done
+}
+
+function process_option_files() {
+    local opt=$1
+    read -r noptname1 noptname optvalue <<< "$(parse_option "$opt")"
+    case "$noptname1" in
+	filesninst*)     readarray -t ___files_ninst <<< "$(parse_size "$optvalue")"		;;
+	filesdirs*)	 readarray -t ___files_dirs_per_volume <<< "$(parse_size "$optvalue")"	;;
+	filesperdir*)    readarray -t ___files_per_dir <<< "$(parse_size "$optvalue")"		;;
+	filesblocksize*) readarray -t ___files_block_sizes <<< "$(parse_size "$optvalue")"	;;
+	filessize*)      readarray -t ___files_sizes <<< "$(parse_size "$optvalue")"		;;
+	filesdirect*)    readarray -t ___files_directs <<< "$(bool "$optvalue")"		;;
+	files*timeout)   ___files_job_timeout=$optvalue						;;
+	files*params)    ___files_params+=(${optvalue//,/ })					;;
+	filesmindir*)    ___files_min_direct=$(parse_size "$optvalue")				;;
+	*) 		 return 1								;;
+    esac
+}
+
+function help_options_files() {
+    cat <<'EOF'
+    Files test options:
+        --files-timeout=seconds
+                                Time the job out after specified time.  Default
+                                is the global timeout default.
+        --files-min-direct=size
+                                If direct I/O is in use, specifies the minimum
+                                block size that will be tested.
+                                Default is $___files_min_direct.
+        --files-params=ninst:dirs:files:blocksize:filesize:direct[,...]
+                                Space or comma separated list of test
+                                specifications.  If this is provided, the
+                                options below are not used.
+        --files-ninst=n[,...]   Space or comma separated list of pod counts
+                                to test.  Default is $(IFS=,; echo "${___files_ninst[*]}").
+        --files-dirs-per-pod=n[,...]
+                                Space or comma separated list of directories
+                                per pod to test.  Default is $(IFS=,; echo "${___files_dirs_per_volume[*]}").
+        --files-per-dir=n[,...]
+                                Space or comma separated list of files per
+                                directory.  Default is $(IFS=,; echo "${___files_per_dir[*]}").
+        --files-block_sizes=size[,...]
+                                Space or comma separated list of block sizes
+                                to test.  Default is $(IFS=,; echo "${___files_block_sizes[*]}").
+        --files_sizes=size[,...]
+                                Space or comma separated list of file sizes
+                                to test.  Must be a multiple of block size.
+                                Zero is a valid file size; it indicates that
+                                files should be created but no data written.
+                                Default is $(IFS=,; echo "${___files_sizes[*]}").
+        --files-direct=bool[,bool]
+                                Space or comma separated list of whether to use
+                                direct I/O.  Default is $(IFS=,; echo "${___files_directs[*]}").
+EOF
+}
+
+function document_files() {
+cat <<'EOF'
+* files: a simple filesystem stressor that creates and removes a large
+  number of files.
+EOF
+}

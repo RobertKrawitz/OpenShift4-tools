@@ -50,7 +50,7 @@ class ClusterBusterReporter:
         try:
             imported_lib = importlib.import_module(f'..{workload}_reporter', __name__)
         except Exception as exc:
-            print(f'Warning: no handler for workload {workload}, issuing generic summary report ({exc})', outfile=sys.stderr)
+            print(f'Warning: no handler for workload {workload}, issuing generic summary report ({exc})', file=sys.stderr)
             return ClusterBusterReporter(jdata, format).create_report()
         try:
             for i in inspect.getmembers(imported_lib):

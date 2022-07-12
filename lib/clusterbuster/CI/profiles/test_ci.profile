@@ -22,10 +22,12 @@ uperf-nthr=1
 uperf-ninst=1
 uperf-timeout=300
 
-scaling-timeout=300
-scaling-deps-per-namespace=10
-scaling-max-namespaces=1
+cpusoaker-timeout=300
+cpusoaker-deps-per-namespace=10
+cpusoaker-max-namespaces=1
 
 artifactdir=
 virtiofsd-direct=1
 use-python-venv=1
+cleanup=1
+restart=0
