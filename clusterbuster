@@ -77,7 +77,7 @@ declare -A objects_created=()
 declare baseoffset=0
 declare -i metrics_epoch=0
 declare requested_workload=
-declare basename=clusterbuster
+declare basename=${CLUSTERBUSTER_DEFAULT_BASENAME:-clusterbuster}
 declare deployment_type=pod
 declare basetime
 declare opt
@@ -213,7 +213,9 @@ Usage: $0 [options] [name]
        -H              Print extended help.
 
     Options:
-       -B basename     Base name of pods (default clusterbuster).
+       -B basename     Base name of pods.  Default is
+       	  	       \$CLUSTERBUSTER_DEFAULT_BASENAME if defined or
+		       otherwise 'clusterbuster'.
                        All objects are labeled with this name.
        -E              Don't exit after all operations are complete.
        -e              Exit after all operations are complete (default).
