@@ -61,15 +61,15 @@ $(indent 2 container_standard_auxiliary_yaml)
   - name: VERBOSE
     value: "$verbose"
 $(indent 2 bootstrap_command_yaml logger.pl)
-  - "$namespace"
-  - "c${container}"
-  - "$___log_bytes_per_line"
-  - "$___log_bytes_per_io"
-  - "$___log_xfer_count"
-  - "$___log_processes"
-  - "$___log_delay_usec"
-  - "$___log_xfertime"
-  - "$exit_at_end"
+$(indent 2 c_arg "-n" "$namespace")
+$(indent 2 c_arg "-c" "c${container}")
+$(indent 2 c_arg "--bytes_per_line" "$___log_bytes_per_line")
+$(indent 2 c_arg "--bytes_per_io" "$___log_bytes_per_io")
+$(indent 2 c_arg "--xfer_count" "$___log_xfer_count")
+$(indent 2 c_arg "--processes" "$___log_processes")
+$(indent 2 c_arg "--delay_usecs" "$___log_delay_usec")
+$(indent 2 c_arg "--xfer_time" "$___log_xfertime")
+$(indent 2 c_num_arg "--exit_at_end" "$exit_at_end")
 $(indent 2 volume_mounts_yaml "$namespace" "${instance}" "$secret_count")
 EOF
     done

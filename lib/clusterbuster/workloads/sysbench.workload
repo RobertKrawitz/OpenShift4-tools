@@ -48,23 +48,23 @@ $(indent 2 container_standard_auxiliary_yaml)
   - name: VERBOSE
     value: "$verbose"
 $(indent 2 bootstrap_command_yaml sysbench.pl)
-  - "$namespace"
-  - "c${container}"
-  - "$basetime"
-  - "$baseoffset"
-  - "$(ts)"
-  - "$processes"
-  - "$workdir"
-  - "$workload_run_time"
-  - "$exit_at_end"
-  - "$sync_service"
-  - "$sync_port_num"
-  - "$log_host"
-  - "$log_port"
-  - "${___sysbench_generic_options[*]:-}"
-  - "fileio"
-  - "${___sysbench_fileio_options[*]:-}"
-  - "${!___sysbench_fileio_tests[*]}"
+$(indent 2 c_arg "-n" "$namespace")
+$(indent 2 c_arg "-c" "c$container")
+$(indent 2 c_arg "--basetime" "$basetime")
+$(indent 2 c_arg "--baseoffset" "$baseoffset")
+$(indent 2 c_arg "--crtime" "$(ts)")
+$(indent 2 c_arg "--exit_at_end" "$exit_at_end")
+$(indent 2 c_arg "--sync_host" "$sync_service")
+$(indent 2 c_arg "--sync_port" "$sync_port_num")
+$(indent 2 c_arg "--log_host" "$log_host")
+$(indent 2 c_arg "--log_port" "$log_port")
+$(indent 2 c_arg "--runtime" "$workload_run_time")
+$(indent 2 c_arg "--processes" "$processes")
+$(indent 2 c_arg "--workdir" "$workdir")
+$(indent 2 c_arg "--generic_options" "${___sysbench_generic_options[*]:-}")
+$(indent 2 c_arg "--operation" "fileio")
+$(indent 2 c_arg "--fileio_options" "${___sysbench_fileio_options[*]:-}")
+$(indent 2 c_arg "--subtests" "${!___sysbench_fileio_tests[*]}")
 $(indent 2 volume_mounts_yaml "$namespace" "$instance" "$secret_count")
 EOF
     done

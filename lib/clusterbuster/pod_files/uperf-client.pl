@@ -7,12 +7,39 @@ use Time::HiRes qw(gettimeofday usleep);
 use Time::Piece;
 use Sys::Hostname;
 use File::Basename;
+use Getopt::Long;
+Getopt::Long::Configure('bundling', 'no_ignore_case', 'pass_through');
 my ($dir) = $ENV{'BAK_CONFIGMAP'};
 require "$dir/clientlib.pl";
 
 my ($namespace, $container, $basetime, $baseoffset, $crtime,
     $exit_at_end, $synchost, $syncport, $loghost, $logport, $runtime, $ramp_time,
-    $srvhost, $connect_port, @tests) = @ARGV;
+    $srvhost, $connect_port);
+GetOptions('n=s' => \$namespace,
+	   'namespace=s' => \$namespace,
+	   'c=s' => \$container,
+	   'container=s' => \$container,
+	   'basetime=f' => \$basetime,
+	   'baseoffset=f' => \$baseoffset,
+	   'crtime=f' => \$crtime,
+	   'exit_at_end!' => \$exit_at_end,
+	   'synchost=s' => \$synchost,
+	   'sync_host=s' => \$synchost,
+	   'syncport=i' => \$syncport,
+	   'sync_port=i' => \$syncport,
+	   'loghost=s' => \$loghost,
+	   'log_host=s' => \$loghost,
+	   'logport=i' => \$logport,
+	   'log_port=i' => \$logport,
+	   'run_time=f' => \$runtime,
+	   'runtime=f' => \$runtime,
+	   'ramp_time=f' => \$ramp_time,
+	   'server=s' => \$srvhost,
+	   'server_port=i' => \$connect_port
+    );
+
+my (@tests) = @ARGV;
+
 my ($start_time, $data_start_time, $data_end_time, $elapsed_time, $end_time, $user, $sys, $cuser, $csys);
 $start_time = xtime();
 

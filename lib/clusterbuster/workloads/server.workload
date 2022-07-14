@@ -33,13 +33,13 @@ $(indent 2 container_standard_auxiliary_yaml)
   ports:
   - containerPort: $port
 $(indent 2 bootstrap_command_yaml server.pl)
-  - "$basetime"
-  - "$baseoffset"
-  - "$port"
-  - "${namespace}-${instance}-server"
-  - "$___msg_size"
-  - "$(ts)"
-  - "$expected_clients"
+$(indent 2 c_arg "--basetime" "$basetime")
+$(indent 2 c_arg "--baseoffset" "$baseoffset")
+$(indent 2 c_arg "--port" "$port")
+$(indent 2 c_arg "--container" "${namespace}-${instance}-server")
+$(indent 2 c_arg "--msgsize" "$___msg_size")
+$(indent 2 c_arg "--crtime" "$(ts)")
+$(indent 2 c_arg "--expected_clients" "$expected_clients")
 $(indent 2 volume_mounts_yaml "$namespace" "$instance" "$secret_count")
 EOF
 }
@@ -113,24 +113,24 @@ $(indent 2 container_standard_auxiliary_yaml)
   - name: VERBOSE
     value: "$verbose"
 $(indent 2 bootstrap_command_yaml client.pl)
-  - "$namespace"
-  - "c$container"
-  - "$basetime"
-  - "$baseoffset"
-  - "$(ts)"
-  - "$exit_at_end"
-  - "$sync_service"
-  - "$sync_port_num"
-  - "$log_host"
-  - "$log_port"
-  - "service-${namespace}-server-$instance"
-  - "$port"
-  - "$target_data_rate"
-  - "$bytes_transfer"
-  - "$bytes_transfer_max"
-  - "$___msg_size"
-  - "$workload_run_time"
-  - "$workload_run_time_max"
+$(indent 2 c_arg "-n" "$namespace")
+$(indent 2 c_arg "-c" "c$container")
+$(indent 2 c_arg "--basetime" "$basetime")
+$(indent 2 c_arg "--baseoffset" "$baseoffset")
+$(indent 2 c_arg "--crtime" "$(ts)")
+$(indent 2 c_num_arg "--exit_at_end" "$exit_at_end")
+$(indent 2 c_arg "--sync_host" "$sync_service")
+$(indent 2 c_arg "--sync_port" "$sync_port_num")
+$(indent 2 c_arg "--log_host" "$log_host")
+$(indent 2 c_arg "--log_port" "$log_port")
+$(indent 2 c_arg "--server" "service-${namespace}-server-$instance")
+$(indent 2 c_num_arg "--port" "$port")
+$(indent 2 c_arg "--data_rate" "$target_data_rate")
+$(indent 2 c_num_arg "--bytes" "$bytes_transfer")
+$(indent 2 c_num_arg "--bytes_max" "$bytes_transfer_max")
+$(indent 2 c_num_arg "--msg_size" "$___msg_size")
+$(indent 2 c_arg "--xfertime" "$workload_run_time")
+$(indent 2 c_arg "--xfertime_max" "$workload_run_time_max")
 $(indent 2 volume_mounts_yaml "$namespace" "$instance" "$secret_count")
 EOF
     done

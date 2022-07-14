@@ -49,22 +49,23 @@ $(indent 2 container_standard_auxiliary_yaml)
   - name: VERBOSE
     value: "$verbose"
 $(indent 2 bootstrap_command_yaml files.pl)
-  - "$namespace"
-  - "c${container}"
-  - "$basetime"
-  - "$baseoffset"
-  - "$(ts)"
-  - "$exit_at_end"
-  - "$sync_service"
-  - "$sync_port_num"
-  - "$log_host"
-  - "$log_port"
-  - "$___file_dirs_per_volume"
-  - "$___files_per_dir"
-  - "$___file_block_size"
-  - "$file_blocks"
-  - "$processes_per_pod"
-  - "$___files_direct"
+$(indent 2 c_arg "-n" "$namespace")
+$(indent 2 c_arg "-c" "c$container")
+$(indent 2 c_arg "--basetime" "$basetime")
+$(indent 2 c_arg "--baseoffset" "$baseoffset")
+$(indent 2 c_arg "--crtime" "$(ts)")
+$(indent 2 c_num_arg "--exit_at_end" "$exit_at_end")
+$(indent 2 c_arg "--sync_host" "$sync_service")
+$(indent 2 c_arg "--sync_port" "$sync_port_num")
+$(indent 2 c_arg "--log_host" "$log_host")
+$(indent 2 c_arg "--log_port" "$log_port")
+$(indent 2 c_num_arg "--dirs" "$___file_dirs_per_volume")
+$(indent 2 c_num_arg "--files" "$___files_per_dir")
+$(indent 2 c_num_arg "--blocksize" "$___file_block_size")
+$(indent 2 c_num_arg "--blockcount" "$file_blocks")
+$(indent 2 c_num_arg "--processes" "$processes_per_pod")
+$(indent 2 c_arg "--direct" "$___files_direct")
+  - "--"
 $(tmp_volume_paths=("${volume_mount_paths[@]/%/\"}"); IFS=$'\n'; echo "${tmp_volume_paths[*]/#/  - \"}")
 $(emptydirs=("${emptydirs[@]/%/\"}"); IFS=$'\n'; echo "${emptydirs[*]/#/  - \"}")
 $(indent 2 volume_mounts_yaml "$namespace" "$instance" "$secret_count")

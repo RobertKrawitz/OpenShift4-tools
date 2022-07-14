@@ -5,11 +5,22 @@ use strict;
 use Time::Piece;
 use Time::HiRes qw(gettimeofday usleep);
 use File::Basename;
+use Getopt::Long;
+Getopt::Long::Configure('bundling', 'no_ignore_case', 'pass_through');
 my ($dir) = $ENV{'BAK_CONFIGMAP'};
 require "$dir/clientlib.pl";
 
 $SIG{TERM} = sub { POSIX::_exit(0); };
-my ($basetime, $baseoffset, $listen_port, $container, $msgSize, $ts, $expected_clients) = @ARGV;
+my ($basetime, $baseoffset, $listen_port, $container, $msgSize, $ts, $expected_clients);
+GetOptions('basetime=f' => \$basetime,
+	   'baseoffset=f' => \$baseoffset,
+	   'port=i' => \$listen_port,
+	   'container=s' => \$container,
+	   'msgsize=d' => \$msgSize,
+	   'crtime=f' => \$ts,
+	   'expected_clients=i' => \$expected_clients,
+    );
+
 $basetime += $baseoffset;
 
 timestamp("Clusterbuster server starting");

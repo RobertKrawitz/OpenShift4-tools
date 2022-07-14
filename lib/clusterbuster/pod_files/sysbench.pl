@@ -8,10 +8,33 @@ use Time::HiRes qw(gettimeofday usleep);
 use File::Path qw(make_path remove_tree);
 use Sys::Hostname;
 use File::Basename;
+use Getopt::Long;
+Getopt::Long::Configure('bundling', 'no_ignore_case', 'pass_through');
 my ($dir) = $ENV{'BAK_CONFIGMAP'};
 require "$dir/clientlib.pl";
 
-our ($namespace, $container, $basetime, $baseoffset, $crtime, $processes, $rundir, $runtime, $exit_at_end, $synchost, $syncport, $loghost, $logport, $sysbench_generic_args, $sysbench_cmd, $sysbench_fileio_args, $sysbench_modes) = @ARGV;
+my ($namespace, $container, $basetime, $baseoffset, $crtime, $processes, $rundir, $runtime, $exit_at_end, $synchost, $syncport, $loghost, $logport, $sysbench_generic_args, $sysbench_cmd, $sysbench_fileio_args, $sysbench_modes);
+GetOptions('n=s' => \$namespace,
+	   'namespace=s' => \$namespace,
+	   'c=s' => \$container,
+	   'container=s' => \$container,
+	   'basetime=f' => \$basetime,
+	   'baseoffset=f' => \$baseoffset,
+	   'crtime=f' => \$crtime,
+	   'exit_at_end!' => \$exit_at_end,
+	   'synchost=s' => \$synchost,
+	   'sync_host=s' => \$synchost,
+	   'syncport=i' => \$syncport,
+	   'sync_port=i' => \$syncport,
+	   'loghost=s' => \$loghost,
+	   'log_host=s' => \$loghost,
+	   'logport=i' => \$logport,
+	   'log_port=i' => \$logport,
+	   'sysbench_generic_args=s' => \$sysbench_generic_args,
+	   'operation' => \$sysbench_cmd,
+	   'test_options' => \$sysbench_fileio_args,
+	   'subtests' => \$sysbench_modes,
+    );
 my ($start_time) = xtime();
 
 $SIG{TERM} = sub() { docleanup() };

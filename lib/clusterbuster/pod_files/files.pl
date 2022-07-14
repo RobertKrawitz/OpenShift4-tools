@@ -9,10 +9,38 @@ use Sys::Hostname;
 use File::Basename;
 use Fcntl qw(:DEFAULT O_DIRECT);
 use JSON;
+use Getopt::Long;
+Getopt::Long::Configure('bundling', 'no_ignore_case', 'pass_through');
 my ($dir) = $ENV{'BAK_CONFIGMAP'};
 require "$dir/clientlib.pl";
 
-our ($namespace, $container, $basetime, $baseoffset, $crtime, $exit_at_end, $sync_host, $sync_port, $log_host, $log_port, $dirs, $files_per_dir, $blocksize, $block_count, $processes, $direct, @dirs) = @ARGV;
+my ($namespace, $container, $basetime, $baseoffset, $crtime, $exit_at_end, $synchost, $syncport, $loghost, $logport, $dirs, $files_per_dir, $blocksize, $block_count, $processes, $direct);
+GetOptions('n=s' => \$namespace,
+	   'namespace=s' => \$namespace,
+	   'c=s' => \$container,
+	   'container=s' => \$container,
+	   'basetime=f' => \$basetime,
+	   'baseoffset=f' => \$baseoffset,
+	   'crtime=f' => \$crtime,
+	   'exit_at_end!' => \$exit_at_end,
+	   'synchost=s' => \$synchost,
+	   'sync_host=s' => \$synchost,
+	   'syncport=i' => \$syncport,
+	   'sync_port=i' => \$syncport,
+	   'loghost=s' => \$loghost,
+	   'log_host=s' => \$loghost,
+	   'logport=i' => \$logport,
+	   'log_port=i' => \$logport,
+	   'dirs=i' => \$dirs,
+	   'files=i' => \$files_per_dir,
+	   'direct:i' => \$direct,
+	   'blocksize=i' => \$blocksize,
+	   'blockcount=i' => \$block_count,
+	   'processes=i' => \$processes,
+    );
+
+my (@dirs) = @ARGV;
+
 my ($start_time, $elapsed_time, $end_time, $user, $sys, $cuser, $csys);
 $start_time = xtime();
 
@@ -22,7 +50,7 @@ $crtime += $baseoffset;
 my ($bufalign) = 8192;
 
 my ($pod) = hostname;
-initialize_timing($basetime, $crtime, $sync_host, $sync_port, "$namespace:$pod:$container", xtime());
+initialize_timing($basetime, $crtime, $synchost, $syncport, "$namespace:$pod:$container", xtime());
 $start_time = get_timing_parameter('start_time');
 
 if ($#dirs < 0) {
@@ -138,9 +166,9 @@ sub removethem($;$) {
 }
 
 sub run_one_operation($$$$$$$$) {
-    my ($op_name0, $op_name1, $op_name2, $op_func, $sync_host, $sync_port, $process, $data_start_time) = @_;
+    my ($op_name0, $op_name1, $op_name2, $op_func, $synchost, $syncport, $process, $data_start_time) = @_;
 
-    do_sync($sync_host, $sync_port);
+    do_sync($synchost, $syncport);
     timestamp("$op_name0 files...");
     drop_cache("service-${pod}-drop-cache", 7779);
     my ($ucpu0, $scpu0) = cputime();
@@ -173,7 +201,7 @@ sub run_one_operation($$$$$$$$) {
 	$answer{'data_rate'} = $answer{'data_size'} / $op_elapsed_time_0;
     }
     timestamp("$op_name1 files...");
-    do_sync($sync_host, $sync_port);
+    do_sync($synchost, $syncport);
     return (\%answer, $op_start_time, $op_end_time, $ucpu1, $scpu1);
 }
 
@@ -190,7 +218,7 @@ sub runit($) {
 
     my ($answer_create, $create_start_time, $create_end_time, $create_ucpu, $create_scpu) =
 	run_one_operation('Creating', 'Created', 'create', \&makethem,
-			  $sync_host, $sync_port, $process, $data_start_time);
+			  $synchost, $syncport, $process, $data_start_time);
     $extras{'create'} = $answer_create;
     my ($create_et) = $create_end_time - $create_start_time;
 
@@ -199,7 +227,7 @@ sub runit($) {
     timestamp("Back from sleep");
     my ($answer_read, $read_start_time, $read_end_time, $read_ucpu, $read_scpu) =
 	run_one_operation('Reading', 'Read', 'read', \&readthem,
-			  $sync_host, $sync_port, $process, $data_start_time);
+			  $synchost, $syncport, $process, $data_start_time);
     $extras{'read'} = $answer_read;
 
     timestamp("Sleeping for 60 seconds");
@@ -207,7 +235,7 @@ sub runit($) {
     timestamp("Back from sleep");
     my ($answer_remove, $remove_start_time, $remove_end_time, $remove_ucpu, $remove_scpu) =
 	run_one_operation('Creating', 'Removed', 'remove', \&removethem,
-			  $sync_host, $sync_port, $process, $data_start_time);
+			  $synchost, $syncport, $process, $data_start_time);
     $extras{'remove'} = $answer_remove;
     my ($remove_et) = $remove_end_time - $remove_start_time;
     my ($data_start_time) = $create_start_time;
@@ -231,9 +259,9 @@ sub runit($) {
 				     $data_elapsed_time,
 				     $user_cpu, $system_cpu, \%extras);
     
-    do_sync($sync_host, $sync_port, "$answer");
-    if ($log_port > 0) {
-	do_sync($log_host, $log_port, "$answer");
+    do_sync($synchost, $syncport, "$answer");
+    if ($logport > 0) {
+	do_sync($loghost, $logport, "$answer");
     }
 }
 

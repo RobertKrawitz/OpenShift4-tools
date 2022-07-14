@@ -7,10 +7,38 @@ use Time::HiRes qw(gettimeofday usleep);
 use Time::Piece;
 use Sys::Hostname;
 use File::Basename;
+use Getopt::Long;
+Getopt::Long::Configure('bundling', 'no_ignore_case', 'pass_through');
 my ($dir) = $ENV{'BAK_CONFIGMAP'};
 require "$dir/clientlib.pl";
 
 my ($namespace, $container, $basetime, $baseoffset, $crtime, $exit_at_end, $synchost, $syncport, $loghost, $logport, $srvhost, $connect_port, $data_rate, $bytes, $bytes_max, $msg_size, $xfertime, $xfertime_max) = @ARGV;
+GetOptions('n=s' => \$namespace,
+	   'namespace=s' => \$namespace,
+	   'c=s' => \$container,
+	   'container=s' => \$container,
+	   'basetime=f' => \$basetime,
+	   'baseoffset=f' => \$baseoffset,
+	   'crtime=f' => \$crtime,
+	   'exit_at_end!' => \$exit_at_end,
+	   'synchost=s' => \$synchost,
+	   'sync_host=s' => \$synchost,
+	   'syncport=i' => \$syncport,
+	   'sync_port=i' => \$syncport,
+	   'loghost=s' => \$loghost,
+	   'log_host=s' => \$loghost,
+	   'logport=i' => \$logport,
+	   'log_port=i' => \$logport,
+	   'server=s' => \$srvhost,
+	   'port=i' => \$connect_port,
+	   'data_rate=f' => \$data_rate,
+	   'bytes=i' => \$bytes,
+	   'bytes_max=i' => \$bytes_max,
+	   'msg_size=i' => \$msg_size,
+	   'xfertime=i' => \$xfertime,
+	   'xfertime_max=i' => \$xfertime_max,
+    );
+
 my ($start_time, $data_start_time, $data_end_time, $elapsed_time, $end_time, $user, $sys, $cuser, $csys);
 $start_time = xtime();
 

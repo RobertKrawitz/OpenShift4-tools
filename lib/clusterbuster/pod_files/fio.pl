@@ -10,11 +10,39 @@ use Sys::Hostname;
 use File::Basename;
 use JSON;
 my ($dir) = $ENV{'BAK_CONFIGMAP'};
+use Getopt::Long;
+Getopt::Long::Configure('bundling', 'no_ignore_case', 'pass_through');
 require "$dir/clientlib.pl";
 
 our ($namespace, $container, $basetime, $baseoffset, $crtime, $exit_at_end, $synchost, $syncport, $loghost, $logport,
      $processes, $rundir, $runtime, $jobfiles_dir, $fio_blocksizes, $fio_patterns, $fio_iodepths, $fio_fdatasyncs,
-     $fio_directs, $fio_ioengines, $fio_generic_args) = @ARGV;
+     $fio_directs, $fio_ioengines, $fio_generic_args);
+GetOptions('n=s' => \$namespace,
+	   'namespace=s' => \$namespace,
+	   'c=s' => \$container,
+	   'container=s' => \$container,
+	   'basetime=f' => \$basetime,
+	   'baseoffset=f' => \$baseoffset,
+	   'crtime=f' => \$crtime,
+	   'exit_at_end!' => \$exit_at_end,
+	   'synchost=s' => \$synchost,
+	   'sync_host=s' => \$synchost,
+	   'syncport=i' => \$syncport,
+	   'sync_port=i' => \$syncport,
+	   'loghost=s' => \$loghost,
+	   'log_host=s' => \$loghost,
+	   'logport=i' => \$logport,
+	   'log_port=i' => \$logport,
+	   'run_time=f' => \$runtime,
+	   'runtime=f' => \$runtime,
+	   'configdir=s' => \$jobfiles_dir,
+	   'blocksizes=s' => \$fio_blocksizes,
+	   'patterns=s' => \$fio_patterns,
+	   'iodepths=s' => \$fio_iodepths,
+	   'fdatasyncs=s' => \$fio_fdatasyncs,
+	   'directs=s' => \$fio_directs,
+	   'ioengines=s' => \$fio_ioengines,
+	   'generic_options=s' => \$fio_blocksizes,
 my ($start_time) = xtime();
 
 $SIG{TERM} = sub() { removeRundir() };

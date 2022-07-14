@@ -8,10 +8,32 @@ use Time::HiRes qw(gettimeofday usleep);
 use File::Path qw(make_path remove_tree);
 use Sys::Hostname;
 use File::Basename;
+use Getopt::Long;
+Getopt::Long::Configure('bundling', 'no_ignore_case', 'pass_through');
 my ($dir) = $ENV{'BAK_CONFIGMAP'};
 require "$dir/clientlib.pl";
 
-our ($namespace, $container, $basetime, $baseoffset, $crtime, $processes, $exit_at_end, $synchost, $syncport, $loghost, $logport, $sync_count, $sync_cluster_count, $sync_sleep) = @ARGV;
+my ($namespace, $container, $basetime, $baseoffset, $crtime, $processes, $exit_at_end, $synchost, $syncport, $loghost, $logport, $sync_count, $sync_cluster_count, $sync_sleep);
+GetOptions('n=s' => \$namespace,
+	   'namespace=s' => \$namespace,
+	   'c=s' => \$container,
+	   'container=s' => \$container,
+	   'basetime=f' => \$basetime,
+	   'baseoffset=f' => \$baseoffset,
+	   'crtime=f' => \$crtime,
+	   'exit_at_end!' => \$exit_at_end,
+	   'synchost=s' => \$synchost,
+	   'sync_host=s' => \$synchost,
+	   'syncport=i' => \$syncport,
+	   'sync_port=i' => \$syncport,
+	   'loghost=s' => \$loghost,
+	   'log_host=s' => \$loghost,
+	   'logport=i' => \$logport,
+	   'log_port=i' => \$logport,
+	   'count=i' => \$sync_count,
+	   'cluster_count=i' => \$sync_cluster_count,
+	   'sleep=i' => \$sync_sleep,
+    );
 my ($start_time) = xtime();
 
 $SIG{TERM} = sub() { docleanup() };

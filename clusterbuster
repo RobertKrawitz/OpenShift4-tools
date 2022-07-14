@@ -1909,6 +1909,28 @@ $(indent 2 volumes_yaml "$namespace" "$instance" "$secret_count")
 EOF
 }
 
+function c_arg() {
+    local argname=$1
+    local value=${2:-}
+    if [[ -n "$value" ]] ; then
+	cat <<EOF
+- "$argname"
+- "$value"
+EOF
+    fi
+}
+
+function c_num_arg() {
+    local argname=$1
+    local value=${2:-}
+    if [[ -n "$value" && $value -ne 0 ]] ; then
+	cat <<EOF
+- "$argname"
+- "$value"
+EOF
+    fi
+}
+
 ################################################################
 # Object YAML creation
 ################################################################
