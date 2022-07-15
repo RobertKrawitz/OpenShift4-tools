@@ -102,7 +102,7 @@ declare report_format=summary
 declare log_strategy=poll
 declare -i precleanup=1
 declare -i cleanup=0
-declare -i timeout=-1
+declare -i timeout=0
 declare pathdir=${0%/*}
 declare -a unknown_opts=()
 declare -a unknown_opt_names=()
@@ -2408,30 +2408,33 @@ function create_all_objects() {
     done < <("create_all_${objtype}" "$@" 2>&1)
 }
 
-# shellcheck disable=SC2120
-function do_cleanup() {
-    local -a objects_to_clean
-    local objtype
-    (( doit )) || return
-    if ((use_namespaces)) ; then
-	objects_to_clean=(namespace)
-    else
-	objects_to_clean=("$deployment_type" configmap secret service)
-    fi
-    for objtype in "${objects_to_clean[@]}" ; do
+function _do_cleanup() {
+    if [[ ${1:-} = '-f' ]] ; then
+	shift
 	# It appears that allowing processes to write to stderr inside
 	# a trap results in the subprocess not doing everything
 	# (in this case, oc delete doesn't complete).
-	if [[ -n $* ]] ; then
-	    exec >/dev/null
-	    exec 2>/dev/null
-	    "$OC" delete "$objtype" -l "$basename"
-	elif (( report_object_creation )) ; then
-	    __OC delete "$objtype" -l "$basename" 1>&2
-	else
-	    __OC delete "$objtype" -l "$basename" >/dev/null 2>&1
-	fi
-    done
+	exec >/dev/null
+	exec 2>/dev/null
+	"$OC" delete "${1:-ns}" -l "$basename" --timeout="${timeout}s"
+    elif ((report_object_creation)) ; then
+	__OC delete "${1:-ns}" -l "$basename" --timeout="${timeout}s" 1>&2
+    else
+	__OC delete "${1:-ns}" -l "$basename" --timeout="${timeout}s" >/dev/null 2>&1
+    fi
+}
+
+# shellcheck disable=SC2120
+function do_cleanup() {
+    local objects_to_clean
+    local objtype
+    (( doit )) || return
+    if ((use_namespaces)) ; then
+	objects_to_clean=namespace
+    else
+	objects_to_clean="${deployment_type},configmap,secret,service"
+    fi
+    _do_cleanup ${*:+-f} "$objects_to_clean" || killthemall "Cleanup timed out!"
 }
 
 ################################################################
