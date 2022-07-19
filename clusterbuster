@@ -473,7 +473,7 @@ $(_help_options_workloads)
                         there is reason to believe it is not functioning.
        --podsleep=N     Time for pod to sleep before exit
        --inject_error=<opt>
-                        For testing purposes, inject the specified error 
+                        For testing purposes, inject the specified error
                         condition (documented only in code).
 
 Here is a brief description of all available workloads:
@@ -823,7 +823,7 @@ function __OC() {
     if ((! doit)) ; then
 	echo "$OC" "$@" 1>&2
     elif [[ $1 = exec || $1 = rsh ]] ; then
-	# Capture error output 
+	# Capture error output
 	(set -o pipefail; "$OC" "$@" 2>&1 1>&3 |sed -e "s/^/${*//\//\\/}: /" |timestamp 1>&2) 3>&1
     elif [[ $1 = describe || $1 = get || $1 = status || $1 = logs ]] ; then
 	"$OC" "$@"
@@ -911,6 +911,18 @@ function killthemall() {
     trap : TERM
     if [[ -n "${pids_to_kill[*]}" ]] ; then
 	/bin/kill -TERM "${pids_to_kill[@]}" >/dev/null 2>&1
+	if (( $$ == BASHPID )) ; then
+	    wait
+	    local -i tstart=$(date +%s)
+	    until [[ -z "$(ps -o pid "${pids_to_kill[@]}" | awk '{print $1}' | grep -v "^${$}$" | tail -n +2)" ]] ; do
+		sleep 1
+		if (( $(date +%s) - tstart > 60 )) ; then
+		    warn "Unable to terminate all processes!"
+		    ps "${pids_to_kill[@]}" 1>&2
+		    break
+		fi
+	    done
+	fi
     fi
     exit 1
 }
@@ -1086,9 +1098,12 @@ function monitor_pods() {
     local pods_pending=''
     local -i pods_pending_retry=12
     local -i pods_unchanged_countdown=$pods_pending_retry
+    if [[ -n "${injected_errors[timeout]}" ]] ; then
+	warn "*** Injecting forced timeout error"
+    fi
     while : ; do
 	# Stop work as soon as we know we're done.
-	if [[ -n "$cb_tempdir" && -f "$cb_tempdir/___run_complete" ]] ; then
+	if [[ -z "${injected_errors[timeout]:-}" && -n "$cb_tempdir" && -f "$cb_tempdir/___run_complete" ]] ; then
 	    return 0
 	fi
 	# shellcheck disable=2034
@@ -1097,7 +1112,7 @@ function monitor_pods() {
 	local -i finished_pod_count=0
 	local -i other_pod_count=0
 	while read -r namespace name rdy status rest ; do
-	    if [[ -n "$cb_tempdir" && -f "$cb_tempdir/___run_complete" ]] ; then
+	    if [[ -z "${injected_errors[timeout]:-}" && -n "$cb_tempdir" && -f "$cb_tempdir/___run_complete" ]] ; then
 		# Don't exit out of this, which will leave the oc get pods process around
 		continue
 	    fi
@@ -1131,10 +1146,10 @@ function monitor_pods() {
 		    ;;
 	    esac
 	done <<< "$(__OC get pods -A --no-headers "$@" 2>/dev/null)"
-	if [[ -n "$cb_tempdir" && -f "$cb_tempdir/___run_complete" ]] ; then
+	if [[ -z "${injected_errors[timeout]:-}" && -n "$cb_tempdir" && -f "$cb_tempdir/___run_complete" ]] ; then
 	    return 0
 	fi
-	if ! supports_api -w "$requested_workload" supports_reporting ; then
+	if [[ -z "${injected_errors[timeout]}" ]] && ! supports_api -w "$requested_workload" supports_reporting ; then
 	    if (( running_pod_count + finished_pod_count > 0 && other_pod_count == 0 )) ; then
 		sleep "$workload_run_time"
 		return
@@ -1166,7 +1181,7 @@ function monitor_pods() {
 	fi
 	local -i i
 	for i in {1..5} ; do
-	    if [[ -n "$cb_tempdir" && -f "$cb_tempdir/___run_complete" ]] ; then
+	    if [[ -z "${injected_errors[timeout]:-}" && -n "$cb_tempdir" && -f "$cb_tempdir/___run_complete" ]] ; then
 		return 0
 	    fi
 	    sleep 1
@@ -1194,6 +1209,10 @@ function run_logger() {
 }
 
 function _log_helper() {
+    if [[ -n "${injected_errors[timeout]:-}" ]] ; then
+	echo "*** Injecting forced timeout error"
+	sleep infinity
+    fi
     until [[ $("$OC" get pod -ojsonpath='{.status.phase}' "$@" 2>/dev/null) != 'Running' ]] ; do
 	# Need to produce periodic output to stderr to prevent oc exec connection from prematurely terminating
 	"$OC" exec --stdin=false "$@" -- sh -c "while [[ ! -f '$sync_flag_file' ]] ; do sleep 5; echo KEEPALIVE 1>&2; done; jq -rS . '$sync_flag_file'" 2>/dev/null && break
@@ -1497,7 +1516,10 @@ function get_logs() {
 	if [[ -z "$*" ]] ; then
 	    echo "Workload $requested_workload does not support reporting" 1>&2
 	elif [[ -n "$artifactdir" ]] ; then
-	    _get_logs "$log_cmd" "$@" | tee "$artifactdir/clusterbuster-report.json" | print_report
+	    _get_logs "$log_cmd" "$@" > "$artifactdir/clusterbuster-report.tmp.json" && {
+		mv "$artifactdir/clusterbuster-report.tmp.json" "$artifactdir/clusterbuster-report.json"
+		print_report < "$artifactdir/clusterbuster-report.json"
+	    }
 	else
 	    _get_logs "$log_cmd" "$@" | print_report
 	fi
@@ -2449,6 +2471,18 @@ function _do_cleanup() {
 
 # shellcheck disable=SC2120
 function do_cleanup() {
+    local force=
+    local OPTIND=0
+    local -i precleanup=0
+    local opt
+    while getopts 'fp' opt "$@" ; do
+	case "$opt" in
+	    f) force=-f      ;;
+	    p) precleanup=1 ;;
+	    *)              ;;
+	esac
+    done
+    shift "$OPTIND"
     local objects_to_clean
     local objtype
     (( doit )) || return
@@ -2457,7 +2491,17 @@ function do_cleanup() {
     else
 	objects_to_clean="${deployment_type},configmap,secret,service"
     fi
-    _do_cleanup ${*:+-f} "$objects_to_clean" || killthemall "Cleanup timed out!"
+    if [[ -n "${injected_errors[precleanup]:-}"  && $precleanup -gt 0 ]] ; then
+	warn "*** Injecting precleanup error ${inject_errors[precleanup]:-}"
+	sleep "${injected_errors[precleanup]:-}"
+	killthemall "Cleanup timed out!"
+    fi
+    if [[ -n "${injected_errors[cleanup]:-}"  && $precleanup -eq 0 ]] ; then
+	warn "*** Injecting cleanup error ${inject_errors[cleanup]:-}"
+	sleep "${injected_errors[cleanup]:-}"
+	killthemall "Cleanup timed out!"
+    fi
+    _do_cleanup $force "$objects_to_clean" || killthemall "Cleanup timed out!"
 }
 
 ################################################################
@@ -2612,12 +2656,12 @@ function run_clusterbuster_2() {
     local -A expected_secrets=()
     local -i status=0
     if (( precleanup && doit )) ; then
-	do_cleanup 1>&2 || return 1
+	do_cleanup -p 1>&2 || return 1
     fi
     if ((cleanup)) ; then
-	trap 'killthemall "Cleaning up"; wait; remove_tmpdir; doit=1; do_cleanup force; exit 1' TERM INT HUP
+	trap 'killthemall "Cleaning up"; wait; remove_tmpdir; doit=1; do_cleanup -f; exit 1' TERM INT HUP
     else
-	trap 'killthemall "Not cleaning up"; wait; remove_tmpdir; exit 1; ' TERM HUP INT
+	trap 'killthemall "Not cleaning up"; wait; remove_tmpdir; exit 1' TERM HUP INT
     fi
     if [[ $take_prometheus_snapshot -gt 0 && -n "$artifactdir" ]] ; then
 	start_prometheus_snapshot || return 1

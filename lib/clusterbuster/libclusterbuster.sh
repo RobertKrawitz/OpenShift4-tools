@@ -24,11 +24,22 @@ declare -Ag __registered_workloads__=()
 declare -Ag __workload_aliases__=()
 
 function bool() {
+    local OPTIND=0
+    local yes=1
+    local no=0
+    while getopts 'y:t:n:f:Y:T:' opt "$@" ; do
+	case "$opt" in
+	    y|t) yes="$OPTARG"	      ;;
+	    n|f) no="$OPTARG"	      ;;
+	    Y|T) yes="$OPTARG"; no='' ;;
+	    *)               	      ;;
+	esac
+    done
     local value
     for value in "$@" ; do
 	case "${value,,}" in
-	    ''|1|y|yes|tru*) echo 1 ;;
-	    *)               echo 0 ;;
+	    ''|1|y|yes|tru*) echo "$yes" ;;
+	    *)               echo "$no"  ;;
 	esac
     done
 }
