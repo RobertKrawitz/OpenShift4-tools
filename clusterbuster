@@ -159,6 +159,7 @@ declare artifactdir=
 declare -a saved_argv=("$0" "$@")
 declare -a processed_options=("$0")
 declare -a pod_annotations=()
+declare -A injected_errors=()
 declare cb_tempdir=
 
 declare OC=${OC:-${KUBECTL:-}}
@@ -455,6 +456,9 @@ $(_help_options_workloads)
        --baseoffset=N   Add specified offset to base time
                         for calculation of start time offset
                         to correct for clock skew.  May be float.
+                        This normally should not be needed, as
+                        ClusterBuster can correct for clock skew
+                        itself.
        --log-strategy={poll,listen}
                         Use the desired logging strategy to retrieve logs.
                         - Poll indicates that sync pods should be polled
@@ -468,6 +472,9 @@ $(_help_options_workloads)
                         this tool is run.  Polling should be used unless
                         there is reason to believe it is not functioning.
        --podsleep=N     Time for pod to sleep before exit
+       --inject_error=<opt>
+                        For testing purposes, inject the specified error 
+                        condition (documented only in code).
 
 Here is a brief description of all available workloads:
 $(_document_workloads)
@@ -582,6 +589,15 @@ function set_metrics_file() {
     if [[ -z "$metrics_file" || $metrics_file == 1 ]] ; then
 	metrics_file="$__libdir__/$default_metrics_file"
     fi
+}
+
+function inject_error() {
+    local error="$1"
+    local condition
+    local options
+    IFS='=' read -r condition options <<< "$error"
+    injected_errors["$condition"]=${options:-SET}
+    warn "*** Registering error injection '$condition' = '${injected_errors[$condition]}'"
 }
 
 function process_option() {
@@ -711,6 +727,8 @@ function process_option() {
 		help
 	    fi
 	    ;;
+	# Testing
+	injecterror)		    inject_error "$optvalue"			;;
 	# Unknown options
 	*)
 	    unknown_opts+=("$1")
@@ -1121,6 +1139,11 @@ function monitor_pods() {
 		sleep "$workload_run_time"
 		return
 	    fi
+	fi
+
+	if [[ -n "${injected_errors[pending]:-}" ]] ; then
+	    warn "*** Injecting pending error"
+	    pending_pods+=("TEST/TEST")
 	fi
 
 	if [[ -n "${pending_pods[*]}" ]] ; then
