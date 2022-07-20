@@ -1098,7 +1098,7 @@ function monitor_pods() {
     local pods_pending=''
     local -i pods_pending_retry=12
     local -i pods_unchanged_countdown=$pods_pending_retry
-    if [[ -n "${injected_errors[timeout]}" ]] ; then
+    if [[ -n "${injected_errors[timeout]:-}" ]] ; then
 	warn "*** Injecting forced timeout error"
     fi
     while : ; do
@@ -1149,7 +1149,7 @@ function monitor_pods() {
 	if [[ -z "${injected_errors[timeout]:-}" && -n "$cb_tempdir" && -f "$cb_tempdir/___run_complete" ]] ; then
 	    return 0
 	fi
-	if [[ -z "${injected_errors[timeout]}" ]] && ! supports_api -w "$requested_workload" supports_reporting ; then
+	if [[ -z "${injected_errors[timeout]:-}" ]] && ! supports_api -w "$requested_workload" supports_reporting ; then
 	    if (( running_pod_count + finished_pod_count > 0 && other_pod_count == 0 )) ; then
 		sleep "$workload_run_time"
 		return
@@ -2491,12 +2491,12 @@ function do_cleanup() {
     else
 	objects_to_clean="${deployment_type},configmap,secret,service"
     fi
-    if [[ -n "${injected_errors[precleanup]:-}"  && $precleanup -gt 0 ]] ; then
+    if [[ -n "${injected_errors[precleanup]:-}" && $precleanup -gt 0 ]] ; then
 	warn "*** Injecting precleanup error ${inject_errors[precleanup]:-}"
 	sleep "${injected_errors[precleanup]:-}"
 	killthemall "Cleanup timed out!"
     fi
-    if [[ -n "${injected_errors[cleanup]:-}"  && $precleanup -eq 0 ]] ; then
+    if [[ -n "${injected_errors[cleanup]:-}" && $precleanup -eq 0 ]] ; then
 	warn "*** Injecting cleanup error ${inject_errors[cleanup]:-}"
 	sleep "${injected_errors[cleanup]:-}"
 	killthemall "Cleanup timed out!"
