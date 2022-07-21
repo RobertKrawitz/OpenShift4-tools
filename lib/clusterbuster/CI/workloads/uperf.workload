@@ -25,6 +25,10 @@ register_workload uperf dispatch_generic
 
 function test_uperf() {
     local runtimeclass=$1
+    local default_job_runtime=$2
+    if ((___uperf_job_runtime <= 0)) ; then
+	___uperf_job_runtime=$default_job_runtime
+    fi
     ___uperf_job_timeout=$(compute_timeout "$___uperf_job_timeout")
 
     local -i msg_size
