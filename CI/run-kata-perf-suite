@@ -99,14 +99,14 @@ function finis() {
     fi
     if [[ "$monitor_pid" -ne 0 ]] ; then
 	exec 3>&2 2>/dev/null
-	kill -INT "$monitor_pid"
+	kill -TERM "$monitor_pid"
 	wait "$monitor_pid"
 	exec 2>&3 3>&-
 	monitor_pid=
     fi
     if [[ -n "$job_pid" ]] ; then
 	exec 3>&2 2>/dev/null
-	kill -INT "$job_pid"
+	kill -TERM "$job_pid"
 	wait "$job_pid"
 	exec 2>&3 3>&-
 	job_pid=
@@ -683,8 +683,8 @@ if ((! debugonly)) ; then
     fi
 
     monitor "$run_timeout"
-    trap 'if ((monitor_pid > 0)) ; then kill -9 "$monitor_pid"; monitor_pid=0; fi; timedout=1; if ((job_pid > 0)) ; then kill -INT "$job_pid"; echo Cleaning up 1>&2 ; fi; fail=3; finis "Run timed out after $run_timeout seconds"' USR1
-    trap 'if ((monitor_pid > 0)) ; then kill -9 "$monitor_pid"; monitor_pid=0; fi; interrupted=1; if ((job_pid > 0)) ; then kill -INT "$job_pid"; echo Cleaning up 1>&2; fi; if ((fail < 2)); then fail=2; fi; finis "Run interrupted"' TERM INT HUP
+    trap 'if ((monitor_pid > 0)) ; then kill -9 "$monitor_pid"; monitor_pid=0; fi; timedout=1; if ((job_pid > 0)) ; then kill -TERM "$job_pid"; echo Cleaning up 1>&2 ; fi; fail=3; finis "Run timed out after $run_timeout seconds"' USR1
+    trap 'if ((monitor_pid > 0)) ; then kill -9 "$monitor_pid"; monitor_pid=0; fi; interrupted=1; if ((job_pid > 0)) ; then kill -TERM "$job_pid"; echo Cleaning up 1>&2; fi; if ((fail < 2)); then fail=2; fi; finis "Run interrupted"' TERM INT HUP
     trap 'finis' EXIT
     if ((force_pull_image)) ; then
 	force_pull_base_image
