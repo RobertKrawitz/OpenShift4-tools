@@ -35,6 +35,7 @@ class fio_analysis(ClusterBusterAnalyzeOne):
                                 for blocksize, data7 in data6.items():
                                     for runtime, data8 in data7.items():
                                         answer = dict()
+                                        answer['uuid'] = self._metadata['uuid']
                                         answer['test_description'] = dict()
                                         answer['test_description']['pods'] = pods
                                         answer['test_description']['workload'] = 'fio'
