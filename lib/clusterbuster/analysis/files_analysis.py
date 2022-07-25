@@ -34,6 +34,7 @@ class files_analysis(ClusterBusterAnalyzeOne):
                             for direct, data6 in data5.items():
                                 for runtime, data7 in data6.items():
                                     answer = dict()
+                                    answer['uuid'] = self._metadata['uuid']
                                     answer['test_description'] = dict()
                                     answer['test_description']['pods'] = pods
                                     answer['test_description']['dirs'] = dirs
