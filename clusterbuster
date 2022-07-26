@@ -160,6 +160,7 @@ declare -a saved_argv=("$0" "$@")
 declare -a processed_options=("$0")
 declare -a pod_annotations=()
 declare cb_tempdir=
+declare force_cleanup_timeout=
 
 declare OC=${OC:-${KUBECTL:-}}
 OC=${OC:-$(type -p oc)}
@@ -708,6 +709,12 @@ function process_option() {
 		echo "Undecipherable external sync host:port $optvalue"
 		help
 	    fi
+	    ;;
+	# Force delete everything after oc delete times out.
+	# This is dangerous and hence not documented.
+	# See https://access.redhat.com/solutions/4165791
+	forcecleanupiknowthisisdangerous)
+	    force_cleanup_timeout=${optvalue:-600}
 	    ;;
 	# Unknown options
 	*)
@@ -2408,13 +2415,17 @@ function create_all_objects() {
 
 # shellcheck disable=SC2120
 function do_cleanup() {
+    local ltimeout=
+    if [[ -n "${force_cleanup_timeout:-}" ]] ; then
+	ltimeout="--timeout=${force_cleanup_timeout}s"
+    fi
     local -a objects_to_clean
     local objtype
     (( doit )) || return
     if ((use_namespaces)) ; then
-	objects_to_clean=(namespace)
+	objects_to_clean=namespace
     else
-	objects_to_clean=("$deployment_type" configmap secret service)
+	objects_to_clean="$deployment_type,configmap,secret,service"
     fi
     for objtype in "${objects_to_clean[@]}" ; do
 	# It appears that allowing processes to write to stderr inside
@@ -2423,11 +2434,20 @@ function do_cleanup() {
 	if [[ -n $* ]] ; then
 	    exec >/dev/null
 	    exec 2>/dev/null
-	    "$OC" delete "$objtype" -l "$basename"
+	    "$OC" delete "$objtype" -l "$basename" $ltimeout
 	elif (( report_object_creation )) ; then
-	    __OC delete "$objtype" -l "$basename" 1>&2
+	    __OC delete "$objtype" -l "$basename" $ltimeout 1>&2
 	else
-	    __OC delete "$objtype" -l "$basename" >/dev/null 2>&1
+	    __OC delete "$objtype" -l "$basename" $ltimeout >/dev/null 2>&1
+	fi
+	if [[ $? -ne 0 ]] ; then
+	    if [[ -n "$force_cleanup_timeout" ]] ; then
+		warn "*** WARNING: Cleanup failed, doing a force delete!"
+		__OC delete pod,deployment,configmap,secret,service -A  -l "$basename" --force --grace-period=0 1>&2
+		if ((use_namespaces)) ; then
+		    __OC delete namespace -l "$basename" --force --grace-period=0 1>&2
+		fi
+	    fi
 	fi
     done
 }
