@@ -31,8 +31,11 @@ class ClusterBusterAnalysis:
     """
     Analyze ClusterBuster reports
     """
-    def __init__(self, data: dict):
+    def __init__(self, data: dict, report_type=None):
         self._data = data
+        if report_type is None:
+            report_type = 'ci'
+        self._report_type = report_type
 
     def Analyze(self):
         report = dict()
@@ -46,7 +49,7 @@ class ClusterBusterAnalysis:
             if workload == 'metadata' or workload == 'status':
                 continue
             try:
-                imported_lib = importlib.import_module(f'..{workload}_analysis', __name__)
+                imported_lib = importlib.import_module(f'..{self._report_type}.{workload}_analysis', __name__)
             except Exception:
                 print(f'Warning: no analyzer for workload {workload}', file=sys.stderr)
                 return None

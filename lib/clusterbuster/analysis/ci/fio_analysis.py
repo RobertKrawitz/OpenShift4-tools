@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from lib.clusterbuster.analysis.ClusterBusterAnalysis import ClusterBusterAnalyzeOne
+from ..ClusterBusterAnalysis import ClusterBusterAnalyzeOne
 
 
 class fio_analysis(ClusterBusterAnalyzeOne):

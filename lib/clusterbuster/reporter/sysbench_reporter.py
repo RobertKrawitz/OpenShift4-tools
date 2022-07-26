@@ -15,7 +15,7 @@
 # limitations under the License.
 
 import re
-from lib.clusterbuster.reporter.ClusterBusterReporter import ClusterBusterReporter
+from .ClusterBusterReporter import ClusterBusterReporter
 
 
 class sysbench_reporter(ClusterBusterReporter):

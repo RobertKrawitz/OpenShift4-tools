@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from lib.clusterbuster.reporter.ClusterBusterReporter import ClusterBusterReporter
+from .ClusterBusterReporter import ClusterBusterReporter
 
 
 class generic_reporter(ClusterBusterReporter):

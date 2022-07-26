@@ -15,7 +15,7 @@
 # limitations under the License.
 
 import base64
-from lib.clusterbuster.reporter.ClusterBusterReporter import ClusterBusterReporter
+from .ClusterBusterReporter import ClusterBusterReporter
 
 
 class fio_reporter(ClusterBusterReporter):
