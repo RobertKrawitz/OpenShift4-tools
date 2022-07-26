@@ -60,6 +60,7 @@ declare python_venv=
 declare basename=
 declare analyze_results=
 declare -i debugonly=0
+declare force_cleanup_timeout=
 
 declare -a runtimeclasses=('' 'kata')
 
@@ -437,6 +438,7 @@ function process_option() {
 	usepythonvenv*) use_python_venv="$(bool "$optvalue")"				;;
 	basename) basename=$optvalue							;;
 	uuid) uuid=$optvalue								;;
+	forcecleanupiknowthisisdangerous) force_cleanup_timeout=$optvalue		;;
 
 	virtiofsdwriteback) virtiofsd_writeback=$(bool "$optvalue")			;;
 	virtiofsddirect) virtiofsd_direct=$(bool "$optvalue")				;;
@@ -607,6 +609,7 @@ function run_clusterbuster() {
 	 --virtiofsd_writeback="$virtiofsd_writeback" \
 	 --virtiofsd_threadpoolsize="$virtiofsd_threadpoolsize" \
 	 --report_object_creation="$report_object_creation" \
+	 ${force_cleanup_timeout:+"--force-cleanup-i-know-this-is-dangerous=$force_cleanup_timeout"} \
 	 "$@" 2>&1 || status=$?
     if ((! debugonly)) ; then
 	job_end=$(date +%s)
