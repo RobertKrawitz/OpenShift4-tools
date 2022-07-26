@@ -161,6 +161,7 @@ declare -a processed_options=("$0")
 declare -a pod_annotations=()
 declare -A injected_errors=()
 declare cb_tempdir=
+declare force_cleanup_timeout=
 
 declare OC=${OC:-${KUBECTL:-}}
 OC=${OC:-$(type -p oc)}
@@ -729,6 +730,12 @@ function process_option() {
 	    ;;
 	# Testing
 	injecterror)		    inject_error "$optvalue"			;;
+	# Force delete everything after oc delete times out.
+	# This is dangerous and hence not documented.
+	# See https://access.redhat.com/solutions/4165791
+	forcecleanupiknowthisisdangerous)
+	    force_cleanup_timeout=${optvalue:-600}
+	    ;;
 	# Unknown options
 	*)
 	    unknown_opts+=("$1")
@@ -2454,6 +2461,7 @@ function create_all_objects() {
 }
 
 function _do_cleanup() {
+    local ltimeout="${force_cleanup_timeout:-${timeout}}"
     if [[ ${1:-} = '-f' ]] ; then
 	shift
 	# It appears that allowing processes to write to stderr inside
@@ -2461,11 +2469,20 @@ function _do_cleanup() {
 	# (in this case, oc delete doesn't complete).
 	exec >/dev/null
 	exec 2>/dev/null
-	"$OC" delete "${1:-ns}" -l "$basename" --timeout="${timeout}s"
+	"$OC" delete "${1:-ns}" -l "$basename" --timeout="${ltimeout}s"
     elif ((report_object_creation)) ; then
-	__OC delete "${1:-ns}" -l "$basename" --timeout="${timeout}s" 1>&2
+	__OC delete "${1:-ns}" -l "$basename" --timeout="${ltimeout}s" 1>&2
     else
-	__OC delete "${1:-ns}" -l "$basename" --timeout="${timeout}s" >/dev/null 2>&1
+	__OC delete "${1:-ns}" -l "$basename" --timeout="${ltimeout}s" >/dev/null 2>&1
+    fi
+    if [[ $? -ne 0 ]] ; then
+	if [[ -n "$force_cleanup_timeout" ]] ; then
+	    warn "*** Cleanup failed, doing a force delete!"
+	    __OC delete pod,deployment,configmap,secret,service -A  -l "$basename" --force --grace-period=0 1>&2
+	    if ((use_namespaces)) ; then
+		__OC delete namespace -l "$basename" --force --grace-period=0 1>&2
+	    fi
+	fi
     fi
 }
 
