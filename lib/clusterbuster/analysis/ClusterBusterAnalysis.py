@@ -19,7 +19,8 @@ import inspect
 
 
 class ClusterBusterAnalyzeOne:
-    def __init__(self, data: dict, metadata: dict):
+    def __init__(self, workload: str, data: dict, metadata: dict):
+        self._workload = workload
         self._data = data
         self._metadata = metadata
 
@@ -56,7 +57,7 @@ class ClusterBusterAnalysis:
             try:
                 for i in inspect.getmembers(imported_lib):
                     if i[0] == f'{workload}_analysis':
-                        report[workload] = i[1](workload_data, metadata).Analyze()
+                        report[workload] = i[1](workload, workload_data, metadata).Analyze()
             except Exception as exc:
                 raise(exc)
         report['metadata'] = dict()

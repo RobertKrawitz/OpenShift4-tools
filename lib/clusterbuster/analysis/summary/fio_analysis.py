@@ -22,8 +22,8 @@ class fio_analysis(ClusterBusterAnalyzeOne):
     Analyze fio data
     """
 
-    def __init__(self, data: dict, metadata: dict):
-        ClusterBusterAnalyzeOne.__init__(self, data, metadata)
+    def __init__(self, workload: str, data: dict, metadata: dict):
+        ClusterBusterAnalyzeOne.__init__(self, workload, data, metadata)
 
     def __accumulate(self, accumulator: dict, runtime: str, var, varvalue, acctype, value):
         if var not in accumulator:
@@ -45,7 +45,7 @@ class fio_analysis(ClusterBusterAnalyzeOne):
         runtimes = ['kata', 'runc']
         variables = ['throughput', 'iops']
         answer = {
-            'workload': 'fio',
+            'workload': self._workload,
             'uuid': self._metadata['uuid']
             }
         accumulator = dict()

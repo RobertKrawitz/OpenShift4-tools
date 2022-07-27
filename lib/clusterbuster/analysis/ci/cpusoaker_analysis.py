@@ -21,8 +21,8 @@ class cpusoaker_analysis(ClusterBusterAnalyzeOne):
     Analyze cpusoaker data
     """
 
-    def __init__(self, data: dict, metadata: dict):
-        ClusterBusterAnalyzeOne.__init__(self, data, metadata)
+    def __init__(self, workload: str, data: dict, metadata: dict):
+        ClusterBusterAnalyzeOne.__init__(self, workload, data, metadata)
 
     def Analyze(self):
         answers = list()

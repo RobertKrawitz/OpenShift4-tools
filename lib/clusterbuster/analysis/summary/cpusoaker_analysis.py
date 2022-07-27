@@ -21,13 +21,14 @@ class cpusoaker_analysis(ClusterBusterAnalyzeOne):
     Analyze cpusoaker data
     """
 
-    def __init__(self, data: dict, metadata: dict):
-        ClusterBusterAnalyzeOne.__init__(self, data, metadata)
+    def __init__(self, workload: str, data: dict, metadata: dict):
+        ClusterBusterAnalyzeOne.__init__(self, workload, data, metadata)
 
     def Analyze(self):
-        answer = dict()
-        answer['workload'] = 'cpusoaker'
-        answer['uuid'] = self._metadata['uuid']
+        answer = {
+            'workload': self._workload,
+            'uuid': self._metadata['uuid']
+            }
         max_pods = dict()
         memory = dict()
         pods_sec = dict()
