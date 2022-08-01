@@ -17,13 +17,13 @@ from ..ClusterBusterAnalysis import ClusterBusterAnalyzeOne
 from math import log, exp
 
 
-class files_analysis(ClusterBusterAnalyzeOne):
+class FilesAnalysisBase(ClusterBusterAnalyzeOne):
     """
     Analyze files data
     """
 
     def __init__(self, workload: str, data: dict, metadata: dict):
-        ClusterBusterAnalyzeOne.__init__(self, workload, data, metadata)
+        super().__init__(workload, data, metadata)
 
     def Analyze(self):
         answer = {
@@ -72,3 +72,7 @@ class files_analysis(ClusterBusterAnalyzeOne):
             for subop, data2 in data1.items():
                 answer['ratio'][op][subop] = answer['kata'][op][subop] / answer['runc'][op][subop]
         return answer
+
+class files_analysis(FilesAnalysisBase):
+    def __init__(self, workload: str, data: dict, metadata: dict):
+        super().__init__(workload, data, metadata)

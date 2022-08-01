@@ -19,7 +19,7 @@ from math import log, exp
 
 class ClusterBusterAnalyzeSummaryGeneric(ClusterBusterAnalyzeOne):
     """
-    Analyze fio data
+    Analyze data from multi-dimensional workloads
     """
 
     def __init__(self, workload: str, data: dict, metadata: dict, dimensions: list, variables: list,

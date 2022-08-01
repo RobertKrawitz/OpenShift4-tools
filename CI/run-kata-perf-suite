@@ -48,6 +48,7 @@ declare -i job_runtime=120
 declare -i job_timeout=-1200
 declare artifactdir=
 declare report_format=none
+declare analysis_format=
 declare -i report_object_creation=0
 declare -i cleanup=0
 declare dontdoit=
@@ -167,7 +168,7 @@ EOF
 	fi
 
 	if [[ -n "$analyze_results" ]] ; then
-	    "$__analyze__" -o "$analyze_results" "$artifactdir"
+	    "$__analyze__" ${analysis_format:-r "$analysis_format"} -o "$analyze_results" "$artifactdir"
 	fi
 	if [[ -n "$python_venv" && -d "$python_venv" ]] ; then
 	    if type -t deactivate >/dev/null ; then
@@ -360,6 +361,8 @@ $(_document_workloads)
                                 subdirectories.
         --reportformat=format   Format of report printed during run.
                                 Default none.  Options are as in clusterbuster.
+        --analysisformat=format Format of post-run analysis.  Currently 'ci'
+                                and 'summary' are supported.
         --runtimeclasses=classes
                                 Comma-separated list of runtime classes to test.
                                 Default is <empty> (i. e. default) and kata.
@@ -428,6 +431,7 @@ function process_option() {
 	artifactdir) artifactdir="${optvalue:-${artifactdir:-$(pwd)}}"			;;
 	analyze*) analyze_results="$optvalue"						;;
 	reportformat*) report_format=$optvalue						;;
+	analysisformat*) analysis_format=$optvalue					;;
 	runtimeclass*) readarray -t runtimeclasses <<< "$optvalue"			;;
 	reportobject*) report_object_creation=$(bool "$optvalue")			;;
 	cleanup*) cleanup=$(bool "$optvalue")						;;

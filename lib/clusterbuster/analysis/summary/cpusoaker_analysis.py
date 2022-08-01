@@ -34,6 +34,10 @@ class cpusoaker_analysis(ClusterBusterAnalyzeOne):
         pods_sec = dict()
         iterations_sec = dict()
         iterations_cpu_sec = dict()
+        min_pod_start_time = dict()
+        max_pod_start_time = dict()
+        first_pod_start = dict()
+        last_pod_start = dict()
         for pods, data1 in self._data.items():
             for runtime, data2 in data1.items():
                 if runtime not in max_pods:
@@ -42,10 +46,20 @@ class cpusoaker_analysis(ClusterBusterAnalyzeOne):
                     pods_sec[runtime] = dict()
                     iterations_sec[runtime] = dict()
                     iterations_cpu_sec[runtime] = dict()
+                    first_pod_start[runtime] = dict()
+                    last_pod_start[runtime] = dict()
+                    min_pod_start_time[runtime] = None
+                    max_pod_start_time[runtime] = None
+                if min_pod_start_time[runtime] is None or data2['first_pod_start'] < min_pod_start_time[runtime]:
+                    min_pod_start_time[runtime] = data2['first_pod_start']
+                if max_pod_start_time[runtime] is None or data2['first_pod_start'] > max_pod_start_time[runtime]:
+                    max_pod_start_time[runtime] = data2['first_pod_start']
                 if pods > max_pods[runtime]:
                     max_pods[runtime] = pods
                 memory[runtime][pods] = data2['memory_per_pod']
                 pods_sec[runtime][pods] = data2['pod_starts_per_second']
+                first_pod_start[runtime][pods] = data2['first_pod_start']
+                last_pod_start[runtime][pods] = data2['last_pod_start']
                 iterations_sec[runtime][pods] = data2['iterations_sec']
                 iterations_cpu_sec[runtime][pods] = data2['iterations_cpu_sec']
         min_max_pods = None
@@ -59,8 +73,15 @@ class cpusoaker_analysis(ClusterBusterAnalyzeOne):
             answer[runtime]['Iterations/sec'] = iterations_sec[runtime][min_max_pods]
             answer[runtime]['Iterations/CPU sec'] = iterations_cpu_sec[runtime][min_max_pods]
             answer[runtime]['Per-pod memory'] = memory[runtime][min_max_pods]
-        answer['Kata memory overhead/pod'] = memory['kata'][min_max_pods] - memory['runc'][min_max_pods]
+            answer[runtime]['Fastest pod start'] = min_pod_start_time[runtime]
+            answer[runtime]['Slowest pod start'] = max_pod_start_time[runtime]
+            answer[runtime]['Last n-1 pod start time'] = last_pod_start[runtime][min_max_pods] - first_pod_start[runtime][min_max_pods]
         answer['Ratio pod starts/sec'] = pods_sec['kata'][min_max_pods] / pods_sec['runc'][min_max_pods]
         answer['Ratio iterations/CPU sec'] = iterations_cpu_sec['kata'][min_max_pods] / iterations_sec['runc'][min_max_pods]
         answer['Ratio iterations/CPU sec'] = iterations_cpu_sec['kata'][min_max_pods] / iterations_cpu_sec['runc'][min_max_pods]
+        answer['Ratio fastest pod start time'] = min_pod_start_time['kata'] / min_pod_start_time['runc']
+        answer['Ratio slowest pod start time'] = max_pod_start_time['kata'] / max_pod_start_time['runc']
+        answer['Ratio last n-1 pod start time'] = answer['kata']['Last n-1 pod start time'] / answer['runc']['Last n-1 pod start time']
+        answer['Kata first pod start overhead'] = min_pod_start_time['kata'] - min_pod_start_time['runc']
+        answer['Kata memory overhead/pod'] = memory['kata'][min_max_pods] - memory['runc'][min_max_pods]
         return answer
