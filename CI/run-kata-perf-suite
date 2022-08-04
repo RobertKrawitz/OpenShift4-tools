@@ -63,7 +63,7 @@ declare analyze_results=
 declare -i debugonly=0
 declare force_cleanup_timeout=
 declare -i take_prometheus_snapshot=0
-declare snapshot_date_format='+%Y_%m_%dT%H_%M_%S%z'
+declare snapshot_date_format='%Y_%m_%dT%H_%M_%S%z'
 declare prometheus_snapshot_start_ts=
 
 declare -a runtimeclasses=('' 'kata')
@@ -99,14 +99,14 @@ function report_results() {
 }
 
 function retrieve_prometheus_timestamp() {
-    "${OC}" exec -n openshift-monitoring prometheus-k8s-0 -- /bin/sh -c "date  -- /bin/sh -c '+$snapshot_date_format'"
+    "${OC}" exec -n openshift-monitoring prometheus-k8s-0 -- /bin/sh -c "date -u '+$snapshot_date_format'"
 }
     
 function start_prometheus_snapshot() {
     echo "Starting Prometheus snapshot" 1>&2
-    $(OC) delete pod -n openshift-monitoring prometheus-k8s-0
+    "${OC}" delete pod -n openshift-monitoring prometheus-k8s-0
     local -i retry=12
-    until $(OC) get pod -n openshift-monitoring prometheus-k8s-0 >/dev/null 2>&1 ; do
+    until "${OC}" get pod -n openshift-monitoring prometheus-k8s-0 >/dev/null 2>&1 ; do
 	echo "Promtheus pod did not start, $retry attempt(s) left" 1>&2
 	((retry > 0)) || fatal "Prometheus pod did not restart!"
 	retry=$((retry-1))
