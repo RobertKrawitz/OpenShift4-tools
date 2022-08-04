@@ -29,30 +29,47 @@ class uperf_analysis(ClusterBusterAnalyzeSummaryGeneric):
     def analyze_one(self, var, data):
         if var == 'Overall':
             answer = """Total
-Rate (MB/sec)\t\t\tLatency (usec)
-Kata\trunc\tratio\tKata\trunc\tratio
+Rate (MB/sec)
+Kata\trunc\tratio\tmin_ratio\tmax_ratio
 """
-            answer += '\t'.join([self._prettyprint(data['kata']['rate'] / 1000000, precision=3, base=0),
-                                 self._prettyprint(data['runc']['rate'] / 1000000, precision=3, base=0),
-                                 self._prettyprint(data['ratio']['rate'], precision=3, base=0),
-                                 self._prettyprint(1000000 * data['kata']['avg_time_op'], precision=3, base=0),
-                                 self._prettyprint(1000000 * data['runc']['avg_time_op'], precision=3, base=0),
-                                 self._prettyprint(data['ratio']['avg_time_op'], precision=3, base=0)]) + "\n"
-            return answer + '\n'
+            answer += '\t'.join([self._prettyprint(data['rate']['kata'][True] / 1000000, precision=3, base=0),
+                                 self._prettyprint(data['rate']['runc'][True] / 1000000, precision=3, base=0),
+                                 self._prettyprint(data['rate']['ratio'][True], precision=3, base=0),
+                                 self._prettyprint(data['rate']['min_ratio'][True], precision=3, base=0),
+                                 self._prettyprint(data['rate']['max_ratio'][True], precision=3, base=0)]) + "\n"
+            answer += """Latency
+Kata\trunc\tratio\tmin_ratio\tmax_ratio
+"""
+            answer += '\t'.join([self._prettyprint(1000000 * data['avg_time_op']['kata'][True], precision=3, base=0),
+                                 self._prettyprint(1000000 * data['avg_time_op']['runc'][True], precision=3, base=0),
+                                 self._prettyprint(data['avg_time_op']['ratio'][True], precision=3, base=0),
+                                 self._prettyprint(data['avg_time_op']['min_ratio'][True], precision=3, base=0),
+                                 self._prettyprint(data['avg_time_op']['max_ratio'][True], precision=3, base=0)]) + "\n\n"
+            answer + '\n\n'
         else:
             answer = f"""{var}
-Value\tRate (MB/sec)\t\t\tLatency (usec)
-\tKata\trunc\tratio\tKata\trunc\tratio
+Rate (MB/sec)
+{var.replace('By ', '')}\tKata\trunc\tratio\tmin_ratio\tmax_ratio
 """
-            for value, vdata in data.items():
+            for value in data['rate']['kata'].keys():
                 answer += '\t'.join([str(value),
-                                     self._prettyprint(vdata['kata']['rate'] / 1000000, precision=3, base=0),
-                                     self._prettyprint(vdata['runc']['rate'] / 1000000, precision=3, base=0),
-                                     self._prettyprint(vdata['ratio']['rate'], precision=3, base=0),
-                                     self._prettyprint(1000000 * vdata['kata']['avg_time_op'], precision=3, base=0),
-                                     self._prettyprint(1000000 * vdata['runc']['avg_time_op'], precision=3, base=0),
-                                     self._prettyprint(vdata['ratio']['avg_time_op'], precision=3, base=0)]) + "\n"
-            return answer + '\n'
+                                     self._prettyprint(data['rate']['kata'][value] / 1000000, precision=3, base=0),
+                                     self._prettyprint(data['rate']['runc'][value] / 1000000, precision=3, base=0),
+                                     self._prettyprint(data['rate']['ratio'][value], precision=3, base=0),
+                                     self._prettyprint(data['rate']['min_ratio'][value], precision=3, base=0),
+                                     self._prettyprint(data['rate']['max_ratio'][value], precision=3, base=0)]) + "\n"
+            answer += f"""
+Latency
+{var.replace('By ', '')}\tKata\trunc\tratio\tmin_ratio\tmax_ratio
+"""
+            for value in data['avg_time_op']['kata'].keys():
+                answer += '\t'.join([str(value),
+                                     self._prettyprint(1000000 * data['avg_time_op']['kata'][value], precision=3, base=0),
+                                     self._prettyprint(1000000 * data['avg_time_op']['runc'][value], precision=3, base=0),
+                                     self._prettyprint(data['avg_time_op']['ratio'][value], precision=3, base=0),
+                                     self._prettyprint(data['avg_time_op']['min_ratio'][value], precision=3, base=0),
+                                     self._prettyprint(data['avg_time_op']['max_ratio'][value], precision=3, base=0)]) + "\n"
+        return answer + '\n\n'
 
     def Analyze(self):
         report = super().Analyze()

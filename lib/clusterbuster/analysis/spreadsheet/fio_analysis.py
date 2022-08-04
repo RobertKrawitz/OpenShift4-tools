@@ -38,30 +38,48 @@ class fio_analysis(ClusterBusterAnalyzeSummaryGeneric):
     def analyze_one(self, var, data):
         if var == 'Overall':
             answer = """Total
-Throughput (MB/sec)\t\t\tIO/sec
-Kata\trunc\tratio\tKata\trunc\tratio
+Throughput (MB/sec)
+Kata\trunc\tratio\tmin_ratio\tmax_ratio
 """
-            answer += '\t'.join([self._prettyprint(data['kata']['throughput'] / 1000000, precision=3, base=0),
-                                 self._prettyprint(data['runc']['throughput'] / 1000000, precision=3, base=0),
-                                 self._prettyprint(data['ratio']['throughput'], precision=3, base=0),
-                                 self._prettyprint(data['kata']['iops'], precision=3, base=0),
-                                 self._prettyprint(data['runc']['iops'], precision=3, base=0),
-                                 self._prettyprint(data['ratio']['iops'], precision=3, base=0)]) + "\n"
-            return answer + '\n'
+            answer += '\t'.join([self._prettyprint(data['throughput']['kata'][True] / 1000000, precision=3, base=0),
+                                 self._prettyprint(data['throughput']['runc'][True] / 1000000, precision=3, base=0),
+                                 self._prettyprint(data['throughput']['ratio'][True], precision=3, base=0),
+                                 self._prettyprint(data['throughput']['min_ratio'][True], precision=3, base=0),
+                                 self._prettyprint(data['throughput']['max_ratio'][True], precision=3, base=0)]) + "\n"
+                                 
+                                
+            answer += """IO/sec
+Kata\trunc\tratio\tmin_ratio\tmax_ratio
+"""
+            answer += '\t'.join([self._prettyprint(data['iops']['kata'][True], precision=3, base=0),
+                                 self._prettyprint(data['iops']['runc'][True], precision=3, base=0),
+                                 self._prettyprint(data['iops']['ratio'][True], precision=3, base=0),
+                                 self._prettyprint(data['iops']['min_ratio'][True], precision=3, base=0),
+                                 self._prettyprint(data['iops']['max_ratio'][True], precision=3, base=0)]) + "\n\n"
         else:
             answer = f"""{var}
-Value\tThroughput (MB/sec)\t\t\tIO/sec
-\tKata\trunc\tratio\tKata\trunc\tratio
+Throughput (MB/sec)
+{var.replace('By ', '')}\tKata\trunc\tratio\tmin_ratio\tmax_ratio
 """
-            for value, vdata in data.items():
+            for value in data['throughput']['kata'].keys():
                 answer += '\t'.join([str(value),
-                                     self._prettyprint(vdata['kata']['throughput'] / 1000000, precision=3, base=0),
-                                     self._prettyprint(vdata['runc']['throughput'] / 1000000, precision=3, base=0),
-                                     self._prettyprint(vdata['ratio']['throughput'], precision=3, base=0),
-                                     self._prettyprint(vdata['kata']['iops'], precision=3, base=0),
-                                     self._prettyprint(vdata['runc']['iops'], precision=3, base=0),
-                                     self._prettyprint(vdata['ratio']['iops'], precision=3, base=0)]) + "\n"
-            return answer + '\n'
+                                     self._prettyprint(data['throughput']['kata'][value] / 1000000, precision=3, base=0),
+                                     self._prettyprint(data['throughput']['runc'][value] / 1000000, precision=3, base=0),
+                                     self._prettyprint(data['throughput']['ratio'][value], precision=3, base=0),
+                                     self._prettyprint(data['throughput']['min_ratio'][value], precision=3, base=0),
+                                     self._prettyprint(data['throughput']['max_ratio'][value], precision=3, base=0)]) + "\n"
+            answer += f"""
+IO/sec
+{var.replace('By ', '')}\tKata\trunc\tratio\tmin_ratio\tmax_ratio
+"""
+            for value in data['iops']['kata'].keys():
+                answer += '\t'.join([str(value),
+                                     self._prettyprint(data['iops']['kata'][value], precision=3, base=0),
+                                     self._prettyprint(data['iops']['runc'][value], precision=3, base=0),
+                                     self._prettyprint(data['iops']['ratio'][value], precision=3, base=0),
+                                     self._prettyprint(data['iops']['min_ratio'][value], precision=3, base=0),
+                                     self._prettyprint(data['iops']['max_ratio'][value], precision=3, base=0)]) + "\n"
+        return answer + '\n\n'
 
     def Analyze(self):
         report = super().Analyze()

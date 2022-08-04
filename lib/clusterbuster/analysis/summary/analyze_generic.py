@@ -33,60 +33,60 @@ class ClusterBusterAnalyzeSummaryGeneric(ClusterBusterAnalyzeOne):
     def _retrieve_datum(self, var: str, value: dict):
         return value.get(var, 0)
 
-    def __accumulate(self, accumulator: dict, runtime: str, dimension: str, dim_value: str, variable: str, var_value: str):
+    def __accumulate(self, accumulator: dict, runtime: str, dimension: str, dim_value: str, variable: str, var_value: float):
         if dimension not in accumulator:
             accumulator[dimension] = {}
-        if dim_value not in accumulator[dimension]:
-            accumulator[dimension][dim_value] = {}
-        if runtime not in accumulator[dimension][dim_value]:
-            accumulator[dimension][dim_value][runtime] = {}
-        if variable not in accumulator[dimension][dim_value][runtime]:
-            accumulator[dimension][dim_value][runtime][variable] = {
-                                                            'sum': 0,
-                                                            'count': 0
-                                                            }
-        accumulator[dimension][dim_value][runtime][variable]['sum'] += var_value
-        accumulator[dimension][dim_value][runtime][variable]['count'] += 1
+        if variable not in accumulator[dimension]:
+            accumulator[dimension][variable] = {}
+        if dim_value not in accumulator[dimension][variable]:
+            accumulator[dimension][variable][dim_value] = {}
+        if runtime not in accumulator[dimension][variable][dim_value]:
+            accumulator[dimension][variable][dim_value][runtime] = {
+                'sum': 0,
+                'count': 0,
+                'values': [],
+                }
+        accumulator[dimension][variable][dim_value][runtime]['values'].append(var_value)
+        accumulator[dimension][variable][dim_value][runtime]['sum'] += log(var_value)
+        accumulator[dimension][variable][dim_value][runtime]['count'] += 1
 
     def __report_one_dimension(self, accumulator: dict):
         answer = dict()
-        for key, value in accumulator.items():
-            for runtime in self._runtimes:
-                value1 = value.get(runtime, None)
-                if value1 is None:
-                    continue
-                for variable in self._variables:
-                    if variable not in value1 or 'count' not in value1[variable] or value1[variable]['count'] == 0:
-                        continue
-                    if key not in answer:
-                        answer[key] = {}
-                    if runtime not in answer[key]:
-                        answer[key][runtime] = {}
-                    answer[key][runtime][variable] = exp(value1[variable]['sum'] / value1[variable]['count'])
-        for key, value in accumulator.items():
-            answer[key]['ratio'] = dict()
-            for variable in self._variables:
-                if variable in answer[key]['kata'] and variable in answer[key]['runc']:
-                    answer[key]['ratio'][variable] = answer[key]['kata'][variable] / answer[key]['runc'][variable]
-        return answer
-
-    def __report_overall(self, accumulator):
-        answer = dict()
-        for key, value in accumulator.items():
-            for runtime in self._runtimes:
-                value1 = value.get(runtime, None)
-                if value1 is None:
-                    continue
-                for variable in self._variables:
-                    if variable not in value1 or 'count' not in value1[variable] or value1[variable]['count'] == 0:
-                        continue
-                    if runtime not in answer:
-                        answer[runtime] = {}
-                    answer[runtime][variable] = exp(value1[variable]['sum'] / value1[variable]['count'])
-        answer['ratio'] = dict()
         for variable in self._variables:
-            if variable in answer['kata'] and variable in answer['runc']:
-                answer['ratio'][variable] = answer['kata'][variable] / answer['runc'][variable]
+            min_ratio = None
+            max_ratio = None
+            if variable not in accumulator:
+                continue
+            if variable not in answer:
+                answer[variable] = {}
+            for key, value in accumulator[variable].items():
+                for runtime in self._runtimes:
+                    if runtime not in value:
+                        continue
+                    value1 = value[runtime]
+                    if 'count' not in value1 or value1['count'] == 0:
+                        continue
+                    if runtime not in answer[variable]:
+                        answer[variable][runtime] = {}
+                    answer[variable][runtime][key] = exp(value1['sum'] / value1['count'])
+                if 'kata' in answer[variable] and 'runc' in answer[variable]:
+                    ratio = answer[variable]['kata'][key] / answer[variable]['runc'][key]
+                    if 'ratio' not in answer[variable]:
+                        answer[variable]['ratio'] = {}
+                    answer[variable]['ratio'][key] = ratio
+                min_ratio = None
+                max_ratio = None
+                for i in range(len(value['runc']['values'])):
+                    ratio = value['kata']['values'][i] / value['runc']['values'][i]
+                    if min_ratio is None or ratio < min_ratio:
+                        min_ratio = ratio
+                    if max_ratio is None or ratio > max_ratio:
+                        max_ratio = ratio
+                    if 'max_ratio' not in answer[variable]:
+                        answer[variable]['min_ratio'] = {}
+                        answer[variable]['max_ratio'] = {}
+                    answer[variable]['min_ratio'][key] = min_ratio
+                    answer[variable]['max_ratio'][key] = max_ratio
         return answer
 
     def __report(self, accumulator: dict):
@@ -97,7 +97,7 @@ class ClusterBusterAnalyzeSummaryGeneric(ClusterBusterAnalyzeOne):
         for dimension in self._dimensions:
             if dimension in accumulator:
                 answer[dimension] = self.__report_one_dimension(accumulator[dimension])
-        answer['Overall'] = self.__report_overall(accumulator['Overall'])
+        answer['Overall'] = self.__report_one_dimension(accumulator['Overall'])
         return answer
 
     def __analyze_one(self, accumulator: dict, data: dict, values: dict, dimensions: list):
@@ -114,14 +114,15 @@ class ClusterBusterAnalyzeSummaryGeneric(ClusterBusterAnalyzeOne):
             if len(dimensions) > 1:
                 self.__analyze_one(accumulator, value, values, dimensions[1:])
             else:
-                for runtime, data in value.items():
-                    for var in self._variables:
+                for var in self._variables:
+                    ratio = {}
+                    for runtime, data in value.items():
                         datum = self._retrieve_datum(var, data)
                         if (datum > 0):
-                            log_datum = log(datum)
+                            ratio[runtime] = datum
                             for dimension, dim_value in values.items():
-                                self.__accumulate(accumulator, runtime, dimension, dim_value, var, log_datum)
-                            self.__accumulate(accumulator, runtime, 'Overall', True, var, log_datum)
+                                self.__accumulate(accumulator, runtime, dimension, dim_value, var, datum)
+                            self.__accumulate(accumulator, runtime, 'Overall', True, var, datum)
 
     def Analyze(self):
         accumulator = dict()

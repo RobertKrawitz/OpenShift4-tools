@@ -33,9 +33,9 @@ uuid: {self._metadata['uuid']}
             if runtime in data and 'first_pod_start' in data[runtime]:
                 return data[runtime]['last_pod_start'] - data[runtime]['first_pod_start']
 
-        answer += self._analyze_variables(['iterations_sec', 'iterations_cpu_sec'], 'CPU (K ops/sec)', divisor=1000, integer=True)
-        answer += self._analyze_variables('first_pod_start', 'First pod start (sec)', integer=False, difference=True)
-        answer += self._analyze_variables('last_pod_start', 'Last pod start (sec)', integer=False, difference=True)
-        answer += self._analyze_variables('memory_per_pod', 'Memory/pod (MiB)', divisor=1048576, integer=False, ratio=False, difference=True)
-        answer += self._analyze_variables(None, 'Last N-1 Pod Start Interval', valfunc=pod_start_delta, integer=False, ratio=True, difference=True)
+        answer += self._analyze_variables(self._data, ['iterations_sec', 'iterations_cpu_sec'], 'CPU (K ops/sec)', divisor=1000, integer=True)
+        answer += self._analyze_variables(self._data, 'first_pod_start', 'First pod start (sec)', integer=False, difference=True)
+        answer += self._analyze_variables(self._data, 'last_pod_start', 'Last pod start (sec)', integer=False, difference=True)
+        answer += self._analyze_variables(self._data, 'memory_per_pod', 'Memory/pod (MiB)', divisor=1048576, integer=False, ratio=False, difference=True)
+        answer += self._analyze_variables(self._data, None, 'Last N-1 Pod Start Interval', valfunc=pod_start_delta, integer=False, ratio=True, difference=True)
         return answer

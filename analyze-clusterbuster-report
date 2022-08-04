@@ -23,14 +23,13 @@ parser = argparse.ArgumentParser(description='Analyze ClusterBuster report')
 
 parser.add_argument("-o", "--outfile", default=None, type=str, metavar='file', help='Output filename')
 parser.add_argument("-r", "--report-type", default=None, type=str, metavar='format', help='Analysis format')
-parser.add_argument("-t", "--plaintext", action='store_true', help="Report in plain text")
 parser.add_argument("files", metavar='file', type=str, nargs='*', help='Files to process')
 args = parser.parse_args()
 
 
 def do_analyze_clusterbuster(f):
-    report = ClusterBusterAnalysis(data, report_type=args.report_type, plaintext=args.plaintext).Analyze()
-    if args.plaintext:
+    report = ClusterBusterAnalysis(data, report_type=args.report_type).Analyze()
+    if isinstance(report, str):
         print(report, file=f)
     else:
         json.dump(report, fp=f, indent=2)

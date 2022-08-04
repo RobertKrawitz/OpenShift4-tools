@@ -30,11 +30,13 @@ class files_analysis(FilesAnalysisBase):
 uuid: {report['uuid']}
 Times in seconds
 
-Op\tKata\trunc\tratio
+Op\tKata\trunc\tratio\tmin_ratio\tmax_ratio
 """
         for op in ['create', 'read', 'remove']:
             answer += '\t'.join([op,
                                  self._prettyprint(report['kata'][op]['elapsed_time'], precision=3, base=0),
                                  self._prettyprint(report['runc'][op]['elapsed_time'], precision=3, base=0),
-                                 self._prettyprint(report['ratio'][op]['elapsed_time'], precision=3, base=0)]) + '\n'
+                                 self._prettyprint(report['ratio'][op]['elapsed_time'], precision=3, base=0),
+                                 self._prettyprint(report['min_ratio'][op]['elapsed_time'], precision=3, base=0),
+                                 self._prettyprint(report['max_ratio'][op]['elapsed_time'], precision=3, base=0)]) + '\n'
         return answer

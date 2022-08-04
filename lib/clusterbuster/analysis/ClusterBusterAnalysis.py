@@ -101,7 +101,7 @@ class ClusterBusterAnalyzeOne:
         else:
             return f'{self._fformat(num * (1000 ** 4), precision=precision)} p{suffix}'
 
-    def _analyze_variables(self, columns, header: str, divisor = 1.0, valfunc = None, integer: bool=True, ratio: bool=True, difference: bool=False):
+    def _analyze_variables(self, data, columns, header: str, divisor = 1.0, valfunc = None, integer: bool=True, ratio: bool=True, difference: bool=False):
         if not isinstance(columns, list):
             columns = [columns]
         pcolumns = []
@@ -120,7 +120,7 @@ class ClusterBusterAnalyzeOne:
             columns_out_base += '\tdelta'
             column_separator += '\t'
         columns_out_1 = '# Pods\t' + column_separator.join(pcolumns)
-        columns_out_2 = '\t' + '\t'.join([columns_out_base for c in pcolumns])
+        columns_out_2 = '# Pods\t' + '\t'.join([columns_out_base for c in pcolumns])
 
         answer = f"""
 {header}, N pods
@@ -128,7 +128,7 @@ class ClusterBusterAnalyzeOne:
 {columns_out_2}
 """
         rows = []
-        for pods, data1 in self._data.items():
+        for pods, data1 in data.items():
             row = [str(pods)]
             for column in columns:
                 if valfunc is not None:
@@ -167,17 +167,17 @@ class ClusterBusterAnalysis:
     """
     Analyze ClusterBuster reports
     """
-    def __init__(self, data: dict, report_type=None, plaintext=False):
+    def __init__(self, data: dict, report_type=None):
         self._data = data
         if report_type is None:
             report_type = 'ci'
         self._report_type = report_type
-        self._plaintext = plaintext
 
     def Analyze(self):
         report = dict()
         metadata = dict()
         status = dict()
+        report_type = None
         if 'metadata' in self._data:
             metadata = self._data['metadata']
         if 'status' in self._data:
@@ -194,11 +194,15 @@ class ClusterBusterAnalysis:
                 for i in inspect.getmembers(imported_lib):
                     if i[0] == f'{workload}_analysis':
                         report[workload] = i[1](workload, workload_data, metadata).Analyze()
+                        if report_type is None:
+                            report_type = type(report[workload])
+                        elif report_type != type(report[workload]):
+                            raise TypeError(f"Incompatible report types for {workload}: expect {report_type}, found {type(report[workload])}")
             except Exception as exc:
                 raise(exc)
-        if self._plaintext:
+        if report_type == str:
             return '\n\n'.join([v for v in report.values()])
-        else:
+        elif report_type == dict:
             report['metadata'] = dict()
             for v in ['uuid', 'run_host', 'openshift_version', 'kata_version']:
                 if v in metadata:
@@ -209,3 +213,5 @@ class ClusterBusterAnalysis:
             if 'failed' in status and len(status['failed']) > 0:
                 report['metadata']['failed'] = status['failed']
             return report
+        else:
+            raise TypeError("Unexpected report type {report_type}, expect either str or dict")
