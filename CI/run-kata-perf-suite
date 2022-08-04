@@ -49,8 +49,6 @@ declare -i job_timeout=-1200
 declare artifactdir=
 declare report_format=none
 declare analysis_format=
-declare -i report_object_creation=0
-declare -i cleanup=0
 declare dontdoit=
 declare -i run_timeout=0
 declare -i monitor_pid=0
@@ -58,16 +56,11 @@ declare -i force_pull_image=0
 declare job_pid=
 declare -i use_python_venv=1
 declare python_venv=
-declare basename=
 declare analyze_results=
 declare -i debugonly=0
-declare force_cleanup_timeout=
 
 declare -a runtimeclasses=('' 'kata')
-
-declare -i virtiofsd_direct=1
-declare -i virtiofsd_writeback=0
-declare -i virtiofsd_threadpoolsize=0
+declare -a extra_clusterbuster_args=()
 
 declare -i fail=0
 declare -i interrupted=0
@@ -325,7 +318,7 @@ function monitor() {
 
 function help() {
     ${PAGER:-less} <<EOF
-Usage: $0 [options] [workloads]
+Usage: $0 [options | clusterbuster_options] [workloads]
     Here is a brief description of all available workloads.  If not provided, 
         all workloads are run:
 $(_document_workloads)
@@ -333,6 +326,8 @@ $(_document_workloads)
     Size options may be specified by bytes, or K, Ki, M, Mi, G, Gi, T, or Ti.
     Boolean options may be specified as 1, yes, or true, with anything else
         equivalent to false.
+    Additional arguments that are not recognized are passed through to
+        clusterbuster.
 
     General options:
 
@@ -366,7 +361,6 @@ $(_document_workloads)
         --runtimeclasses=classes
                                 Comma-separated list of runtime classes to test.
                                 Default is <empty> (i. e. default) and kata.
-        --reportobjectcreation  Whether to report object creation.
         --cleanup               Clean up all pods after last run.
         --restart               Restart any failed or incomplete jobs from a
                                 prior run.  Default is no.  Can only be used
@@ -377,17 +371,11 @@ $(list_profiles '                                - ')
         --uuid=uuid             Specify a uuid for the job run.  Default is to
 				generate one.
 
-    Virtiofsd configuration options (for kata):
-        --virtiofsd-direct      Allow direct I/O requests from guest to operate
-                                as such.  Default is yes (NOT the kata default)
-        --virtiofsd-writeback   Use write back caching for virtiofsd.  Default
-                                is no.
-        --virtiofsd-threadpoolsize=n
-                                Use the specified thread pool size for
-                                virtiofsd.  Default is unset (equivalent to 1).
-
     Workload-specific options:
 $(_help_options_workloads)
+
+  Clusterbuster options:
+$("$__clusterbuster__" --help-options 2>&1)
 
 EOF
     exit
@@ -433,26 +421,17 @@ function process_option() {
 	reportformat*) report_format=$optvalue						;;
 	analysisformat*) analysis_format=$optvalue					;;
 	runtimeclass*) readarray -t runtimeclasses <<< "$optvalue"			;;
-	reportobject*) report_object_creation=$(bool "$optvalue")			;;
-	cleanup*) cleanup=$(bool "$optvalue")						;;
 	restart) restart=$(bool "$optvalue")						;;
 	runtimeout) run_timeout=$(parse_time "$optvalue")				;;
 	profile|runtype) process_profile "$optvalue"					;;
 	forcepull*) force_pull_image="$(bool "$optvalue")"				;;
 	usepythonvenv*) use_python_venv="$(bool "$optvalue")"				;;
-	basename) basename=$optvalue							;;
 	uuid) uuid=$optvalue								;;
-	forcecleanupiknowthisisdangerous) force_cleanup_timeout=$optvalue		;;
-
-	virtiofsdwriteback) virtiofsd_writeback=$(bool "$optvalue")			;;
-	virtiofsddirect) virtiofsd_direct=$(bool "$optvalue")				;;
-	virtiofsdthreadpool) virtiofsd_threadpoolsize=$optvalue				;;
 
 	# Unknown option -- can we delegate?
 	*)
 	    if ! call_api -A -a process_option "$option" ; then
-		unknown_opts+=("$option")
-		unknown_opt_names+=("$noptname ($noptname1)")
+		extra_clusterbuster_args+=("$option")
 	    fi
 	    ;;
     esac
@@ -467,14 +446,9 @@ while getopts 'hn-:B:' opt ; do
 	-) process_option "$OPTARG"	;;
 	h) help				;;
 	n) dontdoit=-n			;;
-	B) basename=$OPTARG		;;
 	*)				;;
     esac
 done
-
-if [[ -n "${unknown_opt_names[*]}" ]] ; then
-    help "${unknown_opt_names[@]}"
-fi
 
 shift $((OPTIND - 1))
 if [[ -n "$*" ]] ; then
@@ -597,9 +571,8 @@ function run_clusterbuster() {
     echo
     echo "*** Running $jobname at $(date -Is -u)"
     # shellcheck disable=SC2090
-    doit "$__clusterbuster__" ${dontdoit:+"$dontdoit"} \
-	 ${basename:+"--basename=$basename"} --uuid="$uuid" \
-	 --precleanup --cleanup="$cleanup" --image-pull-policy=IfNotPresent \
+    doit "$__clusterbuster__" ${dontdoit:+"$dontdoit"} --uuid="$uuid" \
+	 --precleanup --image-pull-policy=IfNotPresent \
 	 --metrics --report="$report_format" --workload="$workload" \
 	 ${job_runtime:+"--workload_runtime=$job_runtime"} \
 	 ${client_pin_node:+"--pin-node=client=$client_pin_node"} \
@@ -609,11 +582,7 @@ function run_clusterbuster() {
 	 ${jobname:+"--jobname=$jobname"} \
 	 ${tmp_jobdir:+"--artifactdir=$tmp_jobdir"} \
 	 ${runtimeclass:+"--runtimeclass=$runtimeclass"} \
-	 --virtiofsd_direct="$virtiofsd_direct" \
-	 --virtiofsd_writeback="$virtiofsd_writeback" \
-	 --virtiofsd_threadpoolsize="$virtiofsd_threadpoolsize" \
-	 --report_object_creation="$report_object_creation" \
-	 ${force_cleanup_timeout:+"--force-cleanup-i-know-this-is-dangerous=$force_cleanup_timeout"} \
+	 "${extra_clusterbuster_args[@]}" \
 	 "$@" 2>&1 || status=$?
     if ((! debugonly)) ; then
 	job_end=$(date +%s)

@@ -238,10 +238,14 @@ EOF
 }
 
 function _help_extended() {
-    _helpmsg "$@"
-    cat <<EOF
+    if [[ -z "$*" ]] ; then
+	_helpmsg "$@"
+	cat <<'EOF'
 
 Extended Options:
+EOF
+    fi
+    cat <<EOF
     General Options (short equivalents):
        --doit=<1,0>     Run the command or not (default 1) (inverse of -n)
        --jobname=name   Name of the job, for logging purposes.
