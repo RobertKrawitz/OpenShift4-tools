@@ -578,7 +578,6 @@ function run_clusterbuster_1() {
     [[ -z "$workload" ]] && fatal "Workload must be specified"
     jobname=$(printf '%s-%s-%04d-%s' "$workload" "$(xruntimeclass "$runtimeclass")" "$counter" "$jobname")
     jobdir=${artifactdir:+$artifactdir/$jobname}
-    counter=$((counter+1))
     if [[ $debugonly -eq 0 && -n "$jobdir" && -d "$jobdir" && -f "$jobdir/clusterbuster-report.json" ]] ; then
 	if ((restart)) ; then
 	    echo "$jobname is already present"
@@ -646,7 +645,8 @@ function run_clusterbuster_1() {
 
 function run_clusterbuster() {
     for runtimeclass in "${runtimeclasses[@]}" ; do
-	run_clusterbuster_1 "$@" -r "$runtimeclass"
+	run_clusterbuster_1 -r "$runtimeclass" "$@"
+	counter=$((counter+1))
     done
 }
 
@@ -683,12 +683,15 @@ if ((! debugonly)) ; then
 	if [[ -n "$artifactdir" && -f "$artifactdir/clusterbuster-report.json" ]] ; then
 	    rm -rf "$artifactdir"
 	fi
-	if [[ ! -d "$artifactdir" ]] ; then
+	if [[ -n "$artifactdir" && ! -d "$artifactdir" ]] ; then
 	    mkdir -p "$artifactdir" || fatal "Cannot create artifact directory!"
 	fi
     fi
-    exec > >(tee -a "$artifactdir/stdout.kata-perf-suite.log")
-    exec 2> >(tee -a "$artifactdir/stderr.kata-perf-suite.log" >&2)
+
+    if [[ -n "$artifactdir" && ! -d "$artifactdir" ]] ; then
+	exec > >(tee -a "$artifactdir/stdout.kata-perf-suite.log")
+	exec 2> >(tee -a "$artifactdir/stderr.kata-perf-suite.log" >&2)
+    fi
 
     if ((use_python_venv)) ; then
 	python_venv=$(mktemp -d -t "cb-ci-venv.XXXXXXXX")

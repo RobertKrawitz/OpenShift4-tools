@@ -29,12 +29,31 @@ function test_cpusoaker() {
     fi
     ___cpusoaker_job_timeout=$(compute_timeout "$___cpusoaker_job_timeout")
     namespaces=$___cpusoaker_starting_namespaces
+    local -A runtimes_to_test=()
+    local runtime
+    for runtime in "${runtimeclasses[@]}" ; do
+	runtime=${runtime:-runc}
+	runtimes+=("$runtime")
+	runtimes_to_test[$runtime]=1
+    done
     while ((___cpusoaker_max_namespaces == -1 || namespaces <= ___cpusoaker_max_namespaces)); do
-	job_name="$((namespaces*___cpusoaker_deps_per_namespace))"
-	if run_clusterbuster -y -j "$job_name" -w cpusoaker \
-			     -t "$___cpusoaker_job_timeout" -R "$___cpusoaker_job_runtime" -- \
-			     --deployments="$___cpusoaker_deps_per_namespace" \
-			     --namespaces="$namespaces" --objs_per_call=6 --parallel=100 ; then
+	for runtime in "${runtimes[@]}" ; do
+	    if [[ -n "${runtimes_to_test[$runtime]:-}" ]] ; then
+		local xruntime=$runtime
+		if [[ $xruntime = runc ]] ; then xruntime=''; fi
+		job_name="$((namespaces*___cpusoaker_deps_per_namespace))"
+		if run_clusterbuster_1 -r "$xruntime" -y  -j "$job_name" -w cpusoaker \
+				       -t "$___cpusoaker_job_timeout" -R "$___cpusoaker_job_runtime" -- \
+				       --deployments="$___cpusoaker_deps_per_namespace" \
+				       --namespaces="$namespaces" --objs_per_call=6 --parallel=100 ; then
+		    :
+		else
+		    unset runtimes_to_test[$runtime]
+		fi
+	    fi
+	done
+	if [[ -n "${runtimes_to_test[*]}" ]] ; then
+	    counter=$((counter+1))
 	    namespaces=$((namespaces+1))
 	else
 	    break
