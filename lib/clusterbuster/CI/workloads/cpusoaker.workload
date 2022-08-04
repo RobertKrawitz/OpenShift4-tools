@@ -23,8 +23,7 @@ declare -gi ___cpusoaker_job_timeout=0
 register_workload cpusoaker dispatch_generic cpu cpusoak scaling
 
 function test_cpusoaker() {
-    local runtimeclass=$1
-    local default_job_runtime=$2
+    local default_job_runtime=$1
     if ((___cpusoaker_job_runtime <= 0)) ; then
 	___cpusoaker_job_runtime=$default_job_runtime
     fi
@@ -32,7 +31,7 @@ function test_cpusoaker() {
     namespaces=$___cpusoaker_starting_namespaces
     while ((___cpusoaker_max_namespaces == -1 || namespaces <= ___cpusoaker_max_namespaces)); do
 	job_name="$((namespaces*___cpusoaker_deps_per_namespace))"
-	if run_clusterbuster -y -j "$job_name" -w cpusoaker -r "$runtimeclass" \
+	if run_clusterbuster -y -j "$job_name" -w cpusoaker \
 			     -t "$___cpusoaker_job_timeout" -R "$___cpusoaker_job_runtime" -- \
 			     --deployments="$___cpusoaker_deps_per_namespace" \
 			     --namespaces="$namespaces" --objs_per_call=6 --parallel=100 ; then

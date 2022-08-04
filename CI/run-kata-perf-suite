@@ -551,7 +551,7 @@ function doit() {
     fi
 }
 
-function run_clusterbuster() {
+function run_clusterbuster_1() {
     local OPTIND=0
     local opt
     local -i error_is_failure=1
@@ -644,6 +644,12 @@ function run_clusterbuster() {
     return $status
 }
 
+function run_clusterbuster() {
+    for runtimeclass in "${runtimeclasses[@]}" ; do
+	run_clusterbuster_1 "$@" -r "$runtimeclass"
+    done
+}
+
 if [[ -z "${workloads[*]}" ]] ; then
     workloads=($(print_workloads))
 fi
@@ -698,10 +704,8 @@ if ((! debugonly)) ; then
     fi
 fi
 
-for runtimeclass in "${runtimeclasses[@]}" ; do
-    for workload in "${workloads[@]}" ; do
-	# Use a separate counter for each workload/runtime
-	counter=0
-	call_api -w "$workload" test "$runtimeclass" "$job_runtime"
-    done
+for workload in "${workloads[@]}" ; do
+    # Use a separate counter for each workload/runtime
+    counter=0
+    call_api -w "$workload" test "$job_runtime"
 done
