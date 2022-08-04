@@ -478,7 +478,7 @@ function process_option() {
 	# Unknown option -- can we delegate?
 	*)
 	    if ! call_api -A -a process_option "$option" ; then
-		extra_clusterbuster_args+=("$option")
+		extra_clusterbuster_args+=("--$option")
 	    fi
 	    ;;
     esac
