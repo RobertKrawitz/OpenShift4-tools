@@ -27,7 +27,6 @@ declare -gi ___files_min_direct=1024
 register_workload files dispatch_generic
 
 function test_files() {
-    local runtimeclass=$1
     ___files_job_timeout=$(compute_timeout "$___files_job_timeout")
     if [[ -z "${___files_params[*]}" ]] ; then
 	for ninst in "${___files_ninst[@]}" ; do
@@ -64,7 +63,7 @@ function test_files() {
 	fi
 	job_name="${ninst}P-${___files_dirs_per_volume}D-${___files_per_dir}F-${___files_block_size}B-${file_size}S-${___files_direct}T"
 	# shellcheck disable=SC2090
-	run_clusterbuster -j "$job_name" -w files -r "$runtimeclass" -t "$___files_job_timeout" -- \
+	run_clusterbuster -j "$job_name" -w files -t "$___files_job_timeout" -- \
 			  --deployments="$ninst" \
 			  --dirs_per_volume="$___files_dirs_per_volume" \
 			  --files_per_dir="$___files_per_dir" \

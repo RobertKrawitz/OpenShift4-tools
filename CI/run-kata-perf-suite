@@ -58,6 +58,10 @@ declare -i use_python_venv=1
 declare python_venv=
 declare analyze_results=
 declare -i debugonly=0
+declare force_cleanup_timeout=
+declare -i take_prometheus_snapshot=0
+declare snapshot_date_format='%Y_%m_%dT%H_%M_%S%z'
+declare prometheus_snapshot_start_ts=
 
 declare -a runtimeclasses=('' 'kata')
 declare -a extra_clusterbuster_args=()
@@ -85,6 +89,42 @@ function report_results() {
 	local result
 	result="$(IFS=","; echo "${results[*]}")"
 	echo "${result//,/,$'\n'}"
+    fi
+}
+
+function retrieve_prometheus_timestamp() {
+    "${OC}" exec -n openshift-monitoring prometheus-k8s-0 -- /bin/sh -c "date -u '+$snapshot_date_format'"
+}
+    
+function start_prometheus_snapshot() {
+    echo "Starting Prometheus snapshot" 1>&2
+    "${OC}" delete pod -n openshift-monitoring prometheus-k8s-0
+    local -i retry=12
+    until "${OC}" get pod -n openshift-monitoring prometheus-k8s-0 >/dev/null 2>&1 ; do
+	echo "Promtheus pod did not start, $retry attempt(s) left" 1>&2
+	((retry > 0)) || fatal "Prometheus pod did not restart!"
+	retry=$((retry-1))
+	sleep 5
+    done
+    "${OC}" wait --for=condition=Ready -n openshift-monitoring pod/prometheus-k8s-0 || fatal "Prometheus pod did not become ready"
+    # Wait for prometheus pod to fully initialize
+    sleep 60
+    prometheus_snapshot_start_ts=$(retrieve_prometheus_timestamp) || fatal "Unable to retrieve starting timestamp from Prometheus!"
+    echo "Prometheus snapshot started" 1>&2
+}
+
+function retrieve_prometheus_snapshot() {
+    [[ -n "$prometheus_snapshot_start_ts" ]] || return
+    echo "Retrieving Prometheus snapshot" 1>&2
+    sleep 60
+    local prometheus_snapshot_end_ts
+    prometheus_snapshot_end_ts=$(retrieve_prometheus_timestamp)
+    local promdb_name="promdb_${prometheus_snapshot_start_ts}_${prometheus_snapshot_end_ts}"
+    local promdb_path="${artifactdir:+${artifactdir}/}${promdb_name}.tar"
+    if "${OC}" exec -n openshift-monitoring prometheus-k8s-0 -c prometheus -- /bin/sh -c "tar cf - . -C /prometheus --transform 's,^[.],./${promdb_name},' .; true" > "$promdb_path" ; then
+	echo "Prometheus snapshot retrieved" 1>&2
+    else
+	echo "Unable to retrieve Prometheus snapshot" 1>&2
     fi
 }
 
@@ -140,6 +180,9 @@ function finis() {
 	    statusmsg=Failed
 	else
 	    status=PASS
+	fi
+	if [[ -n "$prometheus_snapshot_start_ts" ]] ; then
+	    retrieve_prometheus_snapshot
 	fi
 	echo "Run took $(to_hms "$starting_timestamp" "$ending_timestamp") ($statusmsg)"
 	starting_timestamp=
@@ -228,7 +271,7 @@ function set_pin_nodes() {
     if [[ -z "$client_pin_node" || -z "$server_pin_node" || -z "$sync_pin_node" ]] ; then
 	local -a nodes
 	# shellcheck disable=SC2207
-	nodes=($(${OC} get node -l node-role.kubernetes.io/worker= -o jsonpath='{.items[*].metadata.name}'))
+	nodes=($("${OC}" get node -l node-role.kubernetes.io/worker= -o jsonpath='{.items[*].metadata.name}'))
 	local -i node_count=${#nodes[@]}
 	if ((node_count < 1)) ; then
 	    finis "No nodes found!"
@@ -248,7 +291,7 @@ function set_pin_nodes() {
 function get_node_memory() {
     local node=$1
     local mem
-    mem=$(oc get node "$node" -ojsonpath='{.status.allocatable.memory}')
+    mem=$("${OC}" get node "$node" -ojsonpath='{.status.allocatable.memory}')
     parse_size "$mem"
 }
 
@@ -284,11 +327,11 @@ function process_profile() {
 }
 
 function force_pull_base_image() {
-    for n in $(oc get node --no-headers |awk '{print $1}') ; do
+    for n in $("${OC}" get node --no-headers |awk '{print $1}') ; do
 	if ((debugonly)) ; then
-	    echo oc debug --no-stdin=true --no-tty=true node/"$n" -- chroot /host sh -c ' podman pull quay.io/rkrawitz/bench-army-base; podman pull quay.io/rkrawitz/bench-army-base'
+	    echo "${OC}" debug --no-stdin=true --no-tty=true node/"$n" -- chroot /host sh -c ' podman pull quay.io/rkrawitz/bench-army-base; podman pull quay.io/rkrawitz/bench-army-base'
 	else
-	    oc debug --no-stdin=true --no-tty=true node/"$n" -- chroot /host sh -c ' podman pull quay.io/rkrawitz/bench-army-base; podman pull quay.io/rkrawitz/bench-army-base' &
+	    "${OC}" debug --no-stdin=true --no-tty=true node/"$n" -- chroot /host sh -c ' podman pull quay.io/rkrawitz/bench-army-base; podman pull quay.io/rkrawitz/bench-army-base' &
 	fi
     done
     if ((! debugonly)) ; then
@@ -369,7 +412,10 @@ $(_document_workloads)
                                 Known profiles:
 $(list_profiles '                                - ')
         --uuid=uuid             Specify a uuid for the job run.  Default is to
-				generate one.
+                                generate one.
+        --prometheus-snapshot
+                                Take a Prometheus snapshot and save to the
+                                artifacts directory
 
     Workload-specific options:
 $(_help_options_workloads)
@@ -427,6 +473,7 @@ function process_option() {
 	forcepull*) force_pull_image="$(bool "$optvalue")"				;;
 	usepythonvenv*) use_python_venv="$(bool "$optvalue")"				;;
 	uuid) uuid=$optvalue								;;
+	prometheussnapshot) take_prometheus_snapshot=$(bool "$optvalue")		;;
 
 	# Unknown option -- can we delegate?
 	*)
@@ -525,7 +572,7 @@ function doit() {
     fi
 }
 
-function run_clusterbuster() {
+function run_clusterbuster_1() {
     local OPTIND=0
     local opt
     local -i error_is_failure=1
@@ -552,7 +599,6 @@ function run_clusterbuster() {
     [[ -z "$workload" ]] && fatal "Workload must be specified"
     jobname=$(printf '%s-%s-%04d-%s' "$workload" "$(xruntimeclass "$runtimeclass")" "$counter" "$jobname")
     jobdir=${artifactdir:+$artifactdir/$jobname}
-    counter=$((counter+1))
     if [[ $debugonly -eq 0 && -n "$jobdir" && -d "$jobdir" && -f "$jobdir/clusterbuster-report.json" ]] ; then
 	if ((restart)) ; then
 	    echo "$jobname is already present"
@@ -613,6 +659,13 @@ function run_clusterbuster() {
     return $status
 }
 
+function run_clusterbuster() {
+    for runtimeclass in "${runtimeclasses[@]}" ; do
+	run_clusterbuster_1 -r "$runtimeclass" "$@"
+	counter=$((counter+1))
+    done
+}
+
 if [[ -z "${workloads[*]}" ]] ; then
     workloads=($(print_workloads))
 fi
@@ -630,6 +683,9 @@ fi
 
 if ((! debugonly)) ; then
     set_pin_nodes
+    if ((take_prometheus_snapshot)) ; then
+	start_prometheus_snapshot
+    fi
     starting_timestamp=$(date +%s)
     job_datestamp=$(date -u '+%Y_%m_%dT%H_%M_%S%z' --date=@"$starting_timestamp")
     artifactdir=${artifactdir//%s/$job_datestamp}
@@ -646,12 +702,15 @@ if ((! debugonly)) ; then
 	if [[ -n "$artifactdir" && -f "$artifactdir/clusterbuster-report.json" ]] ; then
 	    rm -rf "$artifactdir"
 	fi
-	if [[ ! -d "$artifactdir" ]] ; then
+	if [[ -n "$artifactdir" && ! -d "$artifactdir" ]] ; then
 	    mkdir -p "$artifactdir" || fatal "Cannot create artifact directory!"
 	fi
     fi
-    exec > >(tee -a "$artifactdir/stdout.kata-perf-suite.log")
-    exec 2> >(tee -a "$artifactdir/stderr.kata-perf-suite.log" >&2)
+
+    if [[ -n "$artifactdir" && ! -d "$artifactdir" ]] ; then
+	exec > >(tee -a "$artifactdir/stdout.kata-perf-suite.log")
+	exec 2> >(tee -a "$artifactdir/stderr.kata-perf-suite.log" >&2)
+    fi
 
     if ((use_python_venv)) ; then
 	python_venv=$(mktemp -d -t "cb-ci-venv.XXXXXXXX")
@@ -667,10 +726,8 @@ if ((! debugonly)) ; then
     fi
 fi
 
-for runtimeclass in "${runtimeclasses[@]}" ; do
-    for workload in "${workloads[@]}" ; do
-	# Use a separate counter for each workload/runtime
-	counter=0
-	call_api -w "$workload" test "$runtimeclass" "$job_runtime"
-    done
+for workload in "${workloads[@]}" ; do
+    # Use a separate counter for each workload/runtime
+    counter=0
+    call_api -w "$workload" test "$job_runtime"
 done
