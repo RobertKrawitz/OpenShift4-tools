@@ -24,7 +24,7 @@ uperf-ninst=1,4
 uperf-timeout=300
 
 cpusoaker-timeout=600
-cpusoaker-deps-per-namespace=20
+cpusoaker-replica-increment=20
 
 artifactdir=
 virtiofsd-direct=1

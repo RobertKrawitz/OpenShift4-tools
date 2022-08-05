@@ -64,7 +64,7 @@ function test_files() {
 	job_name="${ninst}P-${___files_dirs_per_volume}D-${___files_per_dir}F-${___files_block_size}B-${file_size}S-${___files_direct}T"
 	# shellcheck disable=SC2090
 	run_clusterbuster -j "$job_name" -w files -t "$___files_job_timeout" -- \
-			  --deployments="$ninst" \
+			  --replicas="$ninst" \
 			  --dirs_per_volume="$___files_dirs_per_volume" \
 			  --files_per_dir="$___files_per_dir" \
 			  --file_block_size="$___files_block_size" \

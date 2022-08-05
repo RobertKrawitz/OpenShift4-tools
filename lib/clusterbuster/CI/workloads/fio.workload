@@ -64,7 +64,7 @@ function test_fio() {
 	job_name="${ninst}P"
 	# shellcheck disable=SC2090
 	run_clusterbuster -j "$job_name" -w fio -t "$___fio_job_timeout" -R "$___fio_job_runtime" -- \
-			  --deployments="$ninst" \
+			  --replicas="$ninst" \
 			  --fio-blocksize="$(IFS=,; echo "${___fio_blocksizes[*]}")" \
 			  --fio-patterns="$(IFS=,; echo "${___fio_patterns[*]}")" \
 			  --fio-ioengines="$(IFS=,; echo "${___fio_ioengines[*]}")" \

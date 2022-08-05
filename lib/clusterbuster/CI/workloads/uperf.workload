@@ -40,7 +40,7 @@ function test_uperf() {
 		for test_type in "${___uperf_test_types[@]}" ; do
 		    local job_name="${msg_size}B-${nthr}i-${ninst}P-${test_type}"
 		    run_clusterbuster -j "$job_name" -w uperf -t "$___uperf_job_timeout" -R "$___uperf_job_runtime" -- \
-				      --deployments="$ninst" \
+				      --replicas="$ninst" \
 				      --uperf_msg_size="$msg_size" \
 				      --uperf_test_type="$test_type" \
 				      --uperf_proto=tcp \
