@@ -42,7 +42,10 @@ class ClusterBusterReporter:
         if 'workload_reporting_class' in jdata['metadata']:
             workload = jdata["metadata"]["workload_reporting_class"]
         else:
-            workload = jdata["metadata"]["workload"]
+            try:
+                workload = jdata["metadata"]["workload"]
+            except Exception as exc:
+                raise TypeError("Unable to identify workload")
         if 'runtime_class' not in jdata['metadata']:
             runtime_class = jdata['metadata']['options']['runtime_classes'].get('default')
             if runtime_class:
