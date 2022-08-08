@@ -2412,7 +2412,7 @@ function create_all_configmaps() {
 }
 
 function drop_host_caches() {
-    ((doit && (drop_node_cache || drop_all_node_cache) )) || return
+    ((doit && (drop_node_cache || drop_all_node_cache) )) || return 0
     local -a nodes_to_drop
     if [[ -n "${pin_nodes[*]}" && $drop_all_node_cache -eq 0 ]] ; then
 	local n
@@ -2459,7 +2459,11 @@ function create_all_objects() {
 		objects_created[$found_objtype]=$((${objects_created[$found_objtype]:-}+1))
 	    fi
 	elif [[ -n "$line" ]] ; then
-	    (IFS=''; echo "$line" 1>&2)
+	    if ((doit)) ; then
+		(IFS=''; echo "$line" 1>&2)
+	    else
+		echo "$line"
+	    fi
 	fi
     done < <("create_all_${objtype}" "$@" 2>&1)
 }
@@ -2506,7 +2510,7 @@ function do_cleanup() {
     shift "$OPTIND"
     local objects_to_clean
     local objtype
-    (( doit )) || return
+    (( doit )) || return 0
     if ((use_namespaces)) ; then
 	objects_to_clean=namespace
     else
@@ -2684,12 +2688,12 @@ function run_clusterbuster_2() {
     else
 	trap 'killthemall "Not cleaning up"; wait; remove_tmpdir; exit 1' TERM HUP INT
     fi
-    if [[ $take_prometheus_snapshot -gt 0 && -n "$artifactdir" ]] ; then
-	start_prometheus_snapshot || return 1
-    else
-	set_start_timestamps || return 1
-    fi
     if [[ $doit -gt 0 && -n "${artifactdir:-}" ]] ; then
+	if [[ $take_prometheus_snapshot -gt 0 ]] ; then
+	    start_prometheus_snapshot || return 1
+	else
+	    set_start_timestamps || return 1
+	fi
 	artifactdir=${artifactdir//%s/$(readable_timestamp "$prometheus_starting_timestamp")}
 	artifactdir=${artifactdir//%w/$requested_workload}
 	artifactdir=${artifactdir//%n/$job_name}
@@ -2721,7 +2725,7 @@ function run_clusterbuster_2() {
     basetime=$(date +%s.%N)
     (drop_host_caches)
     create_all_objects deployments || return 1
-    (( doit )) || return
+    (( doit )) || return 0
 
     do_logging || return 1
     if ((! status)) ; then
