@@ -25,7 +25,7 @@ class files_analysis(FilesAnalysisBase):
         super().__init__(workload, data, metadata)
 
     def Analyze(self):
-        report = super().Analyze()
+        report, detail = super().Analyze(report_detail=True)
         answer = f"""Workload: {report['workload']}
 uuid: {report['uuid']}
 Times in seconds
@@ -45,4 +45,12 @@ Op\tMin ratio\tAvg ratio\tMax ratio
                                  self._prettyprint(report['min_ratio'][op]['elapsed_time'], precision=3, base=0),
                                  self._prettyprint(report['ratio'][op]['elapsed_time'], precision=3, base=0),
                                  self._prettyprint(report['max_ratio'][op]['elapsed_time'], precision=3, base=0)]) + '\n'
+        answer += "\tCreate\t\t\tRead\t\t\tRemove\n"
+        answer += "Case\tKata\trunc\tratio\tKata\trunc\tratio\tKata\trunc\tratio\n"
+        for case, row in detail.items():
+            answer += case
+            for op in ['create', 'read', 'remove']:
+                for rt in ['kata', 'runc', 'ratio']:
+                    answer += '\t' + self._prettyprint(row[op]['elapsed_time'][rt], precision=3, base=0)
+            answer += '\n'
         return answer
