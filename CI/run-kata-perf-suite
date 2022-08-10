@@ -74,6 +74,7 @@ declare -i counter=0
 declare -i global_counter=0
 declare -i hard_fail_on_error=0
 declare -i restart=0
+declare -i started_prom_capture=0
 # shellcheck disable=2155
 declare uuid=$(uuidgen -r)
 
@@ -232,7 +233,8 @@ function finis() {
 	else
 	    status=PASS
 	fi
-	if [[ -n "$prometheus_snapshot_start_ts" ]] ; then
+	if [[ -n "$prometheus_snapshot_start_ts" && $started_prom_capture -eq 0 ]] ; then
+	    started_prom_capture=1
 	    retrieve_prometheus_snapshot
 	fi
 	echo "Run took $(to_hms "$starting_timestamp" "$ending_timestamp") ($statusmsg)"
