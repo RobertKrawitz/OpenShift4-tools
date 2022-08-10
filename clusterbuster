@@ -924,7 +924,8 @@ function killthemall() {
 	/bin/kill -TERM "${pids_to_kill[@]}" >/dev/null 2>&1
 	if (( $$ == BASHPID )) ; then
 	    wait
-	    local -i tstart=$(date +%s)
+	    local -i tstart
+	    tstart=$(date +%s)
 	    until [[ -z "$(ps -o pid "${pids_to_kill[@]}" | awk '{print $1}' | grep -v "^${$}$" | tail -n +2)" ]] ; do
 		sleep 1
 		if (( $(date +%s) - tstart > 60 )) ; then
@@ -1293,7 +1294,7 @@ function _get_logs_poll() {
 function get_logs_poll() {
     local tfile
     tfile=$(mktemp ${cb_tempdir:+-p "$cb_tempdir"} -t '_clusterbusterlogs.XXXXXXXXXX') || fatal "Cannot create temporary file"
-    trap 'if [[ -n "$tfile" && -f "$tfile" ]] ; then rm -f "$tfile"; tfile=; fi; echo "Status: Fail"; return 1' INT TERM HUP USR1
+    trap 'if [[ -n "${tfile:-}" && -f "$tfile" ]] ; then rm -f "$tfile"; unset tfile; fi; echo "Status: Fail"; return 1' INT TERM HUP USR1
     _get_logs_poll "$@" > "$tfile"
     local status=$?
     if ((status == 0)) ; then
@@ -1302,8 +1303,10 @@ function get_logs_poll() {
     else
 	echo '"Status": "Fail"'
     fi
-    rm -f "$tfile"
-    tfile=
+    if [[ -n "${tfile:-}" && -f "$tfile" ]] ; then
+	rm -f "$tfile"
+    fi
+    unset tfile
     return $status
 }
 
@@ -2462,14 +2465,14 @@ function create_all_objects() {
 	    if ((doit)) ; then
 		(IFS=''; echo "$line" 1>&2)
 	    else
-		echo "$line"
+		(IFS=''; echo "$line")
 	    fi
 	fi
     done < <("create_all_${objtype}" "$@" 2>&1)
 }
 
-function _do_cleanup() {
-    local ltimeout="${force_cleanup_timeout:-${timeout}}"
+function _do_cleanup_1() {
+    local ltimeout="${force_cleanup_timeout:+--timeout=${timeout}s}"
     if [[ ${1:-} = '-f' ]] ; then
 	shift
 	# It appears that allowing processes to write to stderr inside
@@ -2477,13 +2480,19 @@ function _do_cleanup() {
 	# (in this case, oc delete doesn't complete).
 	exec >/dev/null
 	exec 2>/dev/null
-	"$OC" delete "${1:-ns}" -l "$basename" --timeout="${ltimeout}s"
+	# shellcheck disable=SC2086
+	"$OC" delete "${1:-ns}" -l "$basename" $ltimeout
     elif ((report_object_creation)) ; then
-	__OC delete "${1:-ns}" -l "$basename" --timeout="${ltimeout}s" 1>&2
+	# shellcheck disable=SC2086
+	__OC delete "${1:-ns}" -l "$basename" $ltimeout 1>&2
     else
-	__OC delete "${1:-ns}" -l "$basename" --timeout="${ltimeout}s" >/dev/null 2>&1
+	# shellcheck disable=SC2086
+	__OC delete "${1:-ns}" -l "$basename" $ltimeout >/dev/null 2>&1
     fi
-    if [[ $? -ne 0 ]] ; then
+}
+
+function _do_cleanup() {
+    if ! _do_cleanup_1 "$@" ; then
 	if [[ -n "$force_cleanup_timeout" ]] ; then
 	    warn "*** Cleanup failed, doing a force delete!"
 	    __OC delete pod,deployment,configmap,secret,service -A  -l "$basename" --force --grace-period=0 1>&2
@@ -2709,7 +2718,7 @@ function run_clusterbuster_2() {
     fi
     create_all_objects namespaces || return 1
     if get_sync -q ; then
-	if [[ $use_namespaces ]] ; then
+	if (( use_namespaces )) ; then
 	    global_sync_service="service-${sync_namespace}.${sync_namespace}.svc.cluster.local"
 	else
 	    global_sync_service="service-${basename}-0-sync"
@@ -2738,7 +2747,7 @@ function run_clusterbuster_1() {
     local -i status=0
     run_clusterbuster_2
     status=$?
-    if ((cleanup)) ; then
+    if ((cleanup && doit)) ; then
 	do_cleanup || {
 	    if ((status == 0)) ; then
 		status=1
