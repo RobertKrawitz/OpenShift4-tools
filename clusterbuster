@@ -2704,19 +2704,21 @@ function run_clusterbuster_2() {
     else
 	trap 'killthemall "Not cleaning up"; wait; remove_tmpdir; exit 1' TERM HUP INT
     fi
-    if [[ $doit -gt 0 && -n "${artifactdir:-}" ]] ; then
-	if [[ $take_prometheus_snapshot -gt 0 ]] ; then
+    if [[ $doit -gt 0 ]] ; then
+	if [[ -n "${artifactdir:-}" && $take_prometheus_snapshot -gt 0 ]] ; then
 	    start_prometheus_snapshot || return 1
 	else
 	    set_start_timestamps || return 1
 	fi
-	artifactdir=${artifactdir//%s/$(readable_timestamp "$prometheus_starting_timestamp")}
-	artifactdir=${artifactdir//%w/$requested_workload}
-	artifactdir=${artifactdir//%n/$job_name}
-	artifactdir="$(expand_string "$artifactdir")"
-	mkdir -p "$artifactdir" || fatal "Can't create log directory $artifactdir"
-	echo "${saved_argv[@]@Q}" > "$artifactdir/commandline"
-	exec 2> >(tee "$artifactdir/stderr.log" >&2)
+	if [[ -n "${artifactdir:-}" ]] ; then
+	    artifactdir=${artifactdir//%s/$(readable_timestamp "$prometheus_starting_timestamp")}
+	    artifactdir=${artifactdir//%w/$requested_workload}
+	    artifactdir=${artifactdir//%n/$job_name}
+	    artifactdir="$(expand_string "$artifactdir")"
+	    mkdir -p "$artifactdir" || fatal "Can't create log directory $artifactdir"
+	    echo "${saved_argv[@]@Q}" > "$artifactdir/commandline"
+	    exec 2> >(tee "$artifactdir/stderr.log" >&2)
+	fi
     fi
     allocate_namespaces || return 1
     find_first_deployment || return 1
