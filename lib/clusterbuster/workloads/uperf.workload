@@ -56,7 +56,7 @@ function _create_uperf_server_deployment() {
 apiVersion: v1
 kind: Pod
 metadata:
-  name: "$name"
+  name: $(mkpodname "$name")
 $(indent 2 standard_all_metadata_yaml "$namespace" server)
   selector:
     matchLabels:
@@ -111,7 +111,7 @@ $(indent 2 bootstrap_command_yaml uperf-client.pl)
   - "$log_port"
   - "$workload_run_time"
   - "$___uperf_ramp_time"
-  - "service-${namespace}-uperf-server-$instance"
+  - "svc-${namespace}-uperf-server-$instance"
   - "$___uperf_port"
 $(indent 2 _create_uperf_tests "${___uperf_tests[@]}")
 $(indent 2 volume_mounts_yaml "$namespace" "$instance" "$secret_count")
@@ -155,7 +155,7 @@ function _create_uperf_client_deployment() {
 apiVersion: v1
 kind: Pod
 metadata:
-  name: $name
+  name: $(mkpodname "$name")
 $(indent 2 standard_all_metadata_yaml "$namespace" client)
   selector:
     matchLabels:
@@ -175,7 +175,7 @@ EOF
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: $name
+  name: $(mkpodname "$name")
 $(indent 2 standard_deployment_metadata_yaml "$namespace" client)
 $(indent 2 standard_labels_yaml)
 spec:

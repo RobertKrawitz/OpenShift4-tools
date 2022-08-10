@@ -201,8 +201,8 @@ class ClusterBusterAnalysis:
             except Exception as exc:
                 raise(exc)
         if report_type == str:
-            return '\n\n'.join([v for v in report.values()])
-        elif report_type == dict:
+            return '\n\n'.join([str(v) for v in report.values()])
+        elif report_type == dict or report_type == list:
             report['metadata'] = dict()
             for v in ['uuid', 'run_host', 'openshift_version', 'kata_version']:
                 if v in metadata:
@@ -214,4 +214,4 @@ class ClusterBusterAnalysis:
                 report['metadata']['failed'] = status['failed']
             return report
         else:
-            raise TypeError("Unexpected report type {report_type}, expect either str or dict")
+            raise TypeError(f"Unexpected report type {report_type}, expect either str or dict")

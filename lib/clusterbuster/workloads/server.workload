@@ -54,7 +54,7 @@ function _create_server_deployment() {
 apiVersion: v1
 kind: Pod
 metadata:
-  name: "$name"
+  name: $(mkpodname "$name")
 $(indent 2 standard_all_metadata_yaml "$namespace" server)
   selector:
     matchLabels:
@@ -68,7 +68,7 @@ EOF
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: "$name"
+  name: $(mkpodname "$name")
 $(indent 2 standard_deployment_metadata_yaml "$namespace" server)
 $(indent 2 standard_labels_yaml)
 spec:
@@ -123,7 +123,7 @@ $(indent 2 bootstrap_command_yaml client.pl)
   - "$sync_port_num"
   - "$log_host"
   - "$log_port"
-  - "service-${namespace}-server-$instance"
+  - "svc-${namespace}-server-$instance"
   - "$port"
   - "$target_data_rate"
   - "$bytes_transfer"
@@ -172,7 +172,7 @@ function _create_client_deployment() {
 apiVersion: v1
 kind: Pod
 metadata:
-  name: $name
+  name: $(mkpodname "$name")
 $(indent 2 standard_all_metadata_yaml "$namespace" client)
   selector:
     matchLabels:
@@ -188,7 +188,7 @@ EOF
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: $name
+  name: $(mkpodname "$name")
 $(indent 2 standard_deployment_metadata_yaml "$namespace" client)
 $(indent 2 standard_labels_yaml)
 spec:

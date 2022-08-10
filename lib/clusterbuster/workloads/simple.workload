@@ -88,7 +88,7 @@ function _create_deployment_simple_yaml() {
 apiVersion: v1
 kind: Pod
 metadata:
-  name: $name
+  name: $(mkpodname "$name")
 $(indent 2 namespace_yaml "$namespace")
 $(indent 2 privilege_yaml)
   selector:
@@ -104,7 +104,7 @@ EOF
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: $name
+  name: $(mkpodname "$name")
 $(indent 2 namespace_yaml "$namespace")
 $(indent 2 privilege_yaml)
 $(indent 2 standard_labels_yaml)
