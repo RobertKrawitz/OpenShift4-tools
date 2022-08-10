@@ -143,6 +143,7 @@ declare -i virtiofsd_threadpoolsize=0
 declare -a virtiofsd_args=()
 declare -i liveness_probe_frequency=0
 declare -i liveness_probe_sleep_time=0
+declare pod_prefix=
 
 declare -r sync_flag_file="/tmp/syncfile";
 declare -r controller_timestamp_file="/tmp/timing.json";
@@ -420,7 +421,8 @@ $(print_workloads_supporting_reporting '                        - ')
                         Index number of first namespace to be created
        --first_deployment=N
                         Index number of first pod to be created
-
+       --pod-prefix=prefix
+			Prefix all created pods with this prefix.
        --sleep=N        Number of seconds between object creations
                         Below options default to sleeptime
        --sleep_between_secrets=N
@@ -697,6 +699,7 @@ function process_option() {
 	objspercall)		    objs_per_call=$optvalue			;;
 	parallel)		    parallel=$optvalue				;;
 	sleep)			    sleeptime=$optvalue				;;
+	podprefix)		    pod_prefix=${optvalue:+$optvalue-}		;;
 	firstdeployment)	    first_deployment=$optvalue			;;
 	parallelconfigmaps)	    parallel_configmaps=$optvalue		;;
 	parallelsecrets)	    parallel_secrets=$optvalue			;;
@@ -1144,7 +1147,7 @@ function monitor_pods() {
 		    ;;
 		completed|terminated)
 		    if supports_api -w "$requested_workload" supports_reporting ; then
-			if ! __OC exec --stdin=false -n "${basename}-sync" "${basename}-sync" -- test -f /tmp/clusterbuster-finished ; then
+			if ! __OC exec --stdin=false -n "${basename}-sync" "$(mkpodname "${basename}-sync")" -- test -f /tmp/clusterbuster-finished ; then
 			    echo "Sync pod exited prematurely!" 1>&2
 			    echo "Tail end of logs:" 1>&2
 			    oc logs -n "${basename}-sync" "${basename}-sync" |tail -20 1>&2
@@ -1564,6 +1567,10 @@ function indent() {
     else
 	_indent "$column"
     fi
+}
+
+function mkpodname() {
+    echo "${pod_prefix}$(IFS=-; echo "$*")"
 }
 
 function tolerations_yaml() {
@@ -2178,17 +2185,17 @@ function create_service() {
     local namespace=$1
     local deployment=$2
     shift 2
-    create_object -t Service -n "$namespace" "service-${deployment}" <<EOF
+    create_object -t Service -n "$namespace" "svc-${deployment}" <<EOF
 apiVersion: v1
 kind: Service
 metadata:
-  name: "service-${deployment}"
+  name: "svc-${deployment}"
 $(indent 2 namespace_yaml "$namespace")
 $(indent 2 standard_labels_yaml -t '')
 spec:
 $(indent 2 <<< "$headless")
   ports:
-$(indent 4 _create_service_ports "service-${deployment}" "$@")
+$(indent 4 _create_service_ports "svc-${deployment}" "$@")
   selector:
     name: "${deployment}"
 EOF
@@ -2199,11 +2206,11 @@ function create_external_service() {
     local deployment=$2
     local portnum=$3
     local external_name=$4
-    create_object -t Service -n "$namespace" "service-${deployment}" <<EOF
+    create_object -t Service -n "$namespace" "svc-${deployment}" <<EOF
 apiVersion: v1
 kind: Service
 metadata:
-  name: "service-${deployment}"
+  name: "svc-${deployment}"
 $(indent 2 namespace_yaml "$namespace")
 $(indent 2 standard_labels_yaml -t '')
 spec:
@@ -2247,7 +2254,7 @@ function create_sync_deployment() {
 apiVersion: v1
 kind: Pod
 metadata:
-  name: ${namespace}
+  name: $(mkpodname "${namespace}")
 $(indent 2 standard_all_metadata_yaml "$namespace" sync)
   selector:
     matchLabels:
@@ -2284,20 +2291,20 @@ function create_drop_cache_deployment() {
     local namespace=$1
     local workload=$2
     local instance=$3
-    create_object -t Pod -n "$namespace" "${namespace}-${workload}-${instance}-drop-cache" <<EOF
+    create_object -t Pod -n "$namespace" "${namespace}-${workload}-${instance}-dc" <<EOF
 apiVersion: v1
 kind: Pod
 metadata:
-  name: ${namespace}-${workload}-${instance}-drop-cache
+  name: $(mkpodname "${namespace}-${workload}-${instance}-dc")
 $(indent 2 standard_all_metadata_yaml "$namespace" drop_cache)
   selector:
     matchLabels:
-      app: ${namespace}-${workload}-${instance}-drop-cache
-$(indent 2 standard_labels_yaml -t 'drop-cache')
-    name: ${namespace}-${workload}-${instance}-drop-cache
-    app: ${namespace}-${workload}-${instance}-drop-cache
-    k8s-app: ${namespace}-${workload}-${instance}-drop-cache
-    ${basename}-drop-cache: "$uuid"
+      app: ${namespace}-${workload}-${instance}-dc
+$(indent 2 standard_labels_yaml -t 'dc')
+    name: ${namespace}-${workload}-${instance}-dc
+    app: ${namespace}-${workload}-${instance}-dc
+    k8s-app: ${namespace}-${workload}-${instance}-dc
+    ${basename}-dc: "$uuid"
   securityContext:
     privileged: true
 $(create_spec -P -c drop-cache -r '' create_container_drop_cache "$namespace" "$instance" 0)
@@ -2719,9 +2726,9 @@ function run_clusterbuster_2() {
     create_all_objects namespaces || return 1
     if get_sync -q ; then
 	if (( use_namespaces )) ; then
-	    global_sync_service="service-${sync_namespace}.${sync_namespace}.svc.cluster.local"
+	    global_sync_service="svc-${sync_namespace}.${sync_namespace}.svc.cluster.local"
 	else
-	    global_sync_service="service-${basename}-0-sync"
+	    global_sync_service="svc-${basename}-0-sync"
 	fi
     fi
 

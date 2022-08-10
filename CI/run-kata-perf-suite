@@ -60,6 +60,7 @@ declare analyze_results=
 declare -i debugonly=0
 declare force_cleanup_timeout=
 declare -i take_prometheus_snapshot=0
+declare unique_job_prefix=
 declare snapshot_date_format='%Y_%m_%dT%H_%M_%S%z'
 declare prometheus_snapshot_start_ts=
 
@@ -70,6 +71,7 @@ declare -i fail=0
 declare -i interrupted=0
 declare -i timedout=0
 declare -i counter=0
+declare -i global_counter=0
 declare -i hard_fail_on_error=0
 declare -i restart=0
 # shellcheck disable=2155
@@ -449,6 +451,8 @@ $(list_profiles '                                - ')
         --prometheus-snapshot
                                 Take a Prometheus snapshot and save to the
                                 artifacts directory
+        --unique-prefix         Prefix the pod names in each job with a
+                                distinct string to aid in later identification.
 
     Workload-specific options:
 $(_help_options_workloads)
@@ -507,6 +511,7 @@ function process_option() {
 	usepythonvenv*) use_python_venv="$(bool "$optvalue")"				;;
 	uuid) uuid=$optvalue								;;
 	prometheussnapshot) take_prometheus_snapshot=$(bool "$optvalue")		;;
+	uniqueprefix) unique_job_prefix=$(bool -Y "$optvalue")				;;
 
 	# Unknown option -- can we delegate?
 	*)
@@ -615,6 +620,7 @@ function run_clusterbuster_1() {
     local runtimeclass=
     local workload=
     local timeout=
+    local job_prefix=
     local job_runtime
     while getopts 'ynj:r:R:w:t:' opt "$@" ; do
 	case "$opt" in
@@ -630,6 +636,7 @@ function run_clusterbuster_1() {
     done
     [[ -z "$jobname" ]] && fatal "Job name must be specified"
     [[ -z "$workload" ]] && fatal "Workload must be specified"
+    job_prefix=$(printf '%s-%s-%04d' "$workload" "$(xruntimeclass "$runtimeclass")" "$counter")
     jobname=$(printf '%s-%s-%04d-%s' "$workload" "$(xruntimeclass "$runtimeclass")" "$counter" "$jobname")
     jobdir=${artifactdir:+$artifactdir/$jobname}
     if [[ $debugonly -eq 0 && -n "$jobdir" && -d "$jobdir" && -f "$jobdir/clusterbuster-report.json" ]] ; then
@@ -661,6 +668,7 @@ function run_clusterbuster_1() {
 	 ${jobname:+"--jobname=$jobname"} \
 	 ${tmp_jobdir:+"--artifactdir=$tmp_jobdir"} \
 	 ${runtimeclass:+"--runtimeclass=$runtimeclass"} \
+	 ${unique_job_prefix:+"--pod-prefix=$job_prefix"} \
 	 "${extra_clusterbuster_args[@]}" \
 	 "$@" 2>&1 || status=$?
     if ((! debugonly)) ; then

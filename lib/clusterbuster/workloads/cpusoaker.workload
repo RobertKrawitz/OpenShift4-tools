@@ -68,7 +68,7 @@ function _create_cpusoaker_deployment() {
 apiVersion: v1
 kind: Pod
 metadata:
-  name: $name
+  name: $(mkpodname "$name")
 $(indent 2 standard_all_metadata_yaml "$namespace" client)
   selector:
     matchLabels:
@@ -84,7 +84,7 @@ EOF
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: $name
+  name: $(mkpodname "$name")
 $(indent 2 standard_deployment_metadata_yaml "$namespace" client)
 spec:
   replicas: $replicas

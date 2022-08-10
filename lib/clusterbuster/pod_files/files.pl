@@ -12,7 +12,7 @@ use JSON;
 my ($dir) = $ENV{'BAK_CONFIGMAP'};
 require "$dir/clientlib.pl";
 
-our ($namespace, $container, $basetime, $baseoffset, $crtime, $exit_at_end, $sync_host, $sync_port, $log_host, $log_port, $dirs, $files_per_dir, $blocksize, $block_count, $processes, $direct, @dirs) = @ARGV;
+our ($namespace, $container, $basetime, $baseoffset, $crtime, $exit_at_end, $sync_host, $sync_port, $log_host, $log_port, $dirs, $files_per_dir, $blocksize, $block_count, $processes, $direct, $drop_cache_service, @dirs) = @ARGV;
 my ($start_time, $elapsed_time, $end_time, $user, $sys, $cuser, $csys);
 $start_time = xtime();
 
@@ -142,12 +142,12 @@ sub run_one_operation($$$$$$$$) {
 
     do_sync($sync_host, $sync_port);
     timestamp("$op_name0 files...");
-    drop_cache("service-${pod}-drop-cache", 7779);
+    drop_cache($drop_cache_service, 7779);
     my ($ucpu0, $scpu0) = cputime();
     my ($op_start_time) = xtime() - $data_start_time;
     my ($ops) = &$op_func($process);
     my ($op_end_time_0) = xtime() - $data_start_time;
-    drop_cache("service-${pod}-drop-cache", 7779);
+    drop_cache($drop_cache_service, 7779);
     my ($op_end_time) = xtime() - $data_start_time;
     my ($op_elapsed_time) = $op_end_time - $op_start_time;
     my ($op_elapsed_time_0) = $op_end_time_0 - $op_start_time;

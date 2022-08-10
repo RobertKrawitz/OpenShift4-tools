@@ -65,6 +65,7 @@ $(indent 2 bootstrap_command_yaml files.pl)
   - "$file_blocks"
   - "$processes_per_pod"
   - "$___files_direct"
+  - "svc-${namespace}-files-${instance}-${replica}-dc"
 $(tmp_volume_paths=("${volume_mount_paths[@]/%/\"}"); IFS=$'\n'; echo "${tmp_volume_paths[*]/#/  - \"}")
 $(emptydirs=("${emptydirs[@]/%/\"}"); IFS=$'\n'; echo "${emptydirs[*]/#/  - \"}")
 $(indent 2 volume_mounts_yaml "$namespace" "$instance" "$secret_count")
@@ -85,7 +86,7 @@ function _create_files_deployment() {
 apiVersion: v1
 kind: Pod
 metadata:
-  name: $name
+  name: $(mkpodname "$name")
 $(indent 2 standard_all_metadata_yaml "$namespace" client)
   selector:
     matchLabels:
@@ -101,7 +102,7 @@ EOF
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: ${namespace}-files-$instance
+  name: $(mkpodname "$name")
 $(indent 2 standard_deployment_metadata_yaml "$namespace" client)
 spec:
   replicas: $replicas
@@ -132,11 +133,11 @@ function create_deployment_files() {
 	if [[ $deployment_type = pod ]] ; then
 	    local -i replica=0
 	    while (( replica++ < replicas )) ; do
-		create_service -H "$namespace" "${namespace}-files-${instance}-${replica}-drop-cache" "$drop_cache_port"
+		create_service -H "$namespace" "${namespace}-files-${instance}-${replica}-dc" "$drop_cache_port"
 		create_drop_cache_deployment "$namespace" files "${instance}-${replica}"
 	    done
 	else
-	    create_service -H "$namespace" "${namespace}-files-${instance}-drop-cache" "$drop_cache_port"
+	    create_service -H "$namespace" "${namespace}-files-${instance}-dc" "$drop_cache_port"
 	    create_drop_cache_deployment "$namespace" files "${instance}"
 	fi
 	_create_files_deployment "$namespace" "$instance" "$secret_count"  "$replicas" "$containers_per_pod" "$log_host" "$log_port"
