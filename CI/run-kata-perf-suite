@@ -128,6 +128,56 @@ function retrieve_prometheus_snapshot() {
     fi
 }
 
+function _report_ci_results() {
+    local status=$1
+    local start_timestamp=$2
+    local end_timestamp=$3
+    cat > "$artifactdir/clusterbuster-ci-results.json.tmp" <<EOF
+{
+  "result": "$status",
+  "job_start": "$(date -Is -u --date="@$start_timestamp")",
+  "job_end": "$(date -Is -u --date="@$end_timestamp")",
+  "job_runtime": $((end_timestamp - start_timestamp)),
+  "ran": [
+$(report_results "${jobs[@]}")
+  ],
+  "failed": [
+$(report_results "${failures[@]}")
+  ]
+}
+EOF
+}
+
+function report_ci_results() {
+    if [[ -z "${artifactdir:-}" || ! -d "$artifactdir" ]] ; then
+	return
+    fi
+    local OPTIND=0
+    local status=
+    local -i start_timestamp=${starting_timestamp:-0}
+    local -i end_timestamp=-1
+    while getopts 'e:s:t:' opt "$@" ; do
+	case "$opt" in
+	    s) status=$OPTARG 		;;
+	    t) start_timestamp=$OPTARG	;;
+	    e) end_timestamp=$OPTARG	;;
+	    *)				;;
+	esac
+    done
+    if ((end_timestamp < 0)) ; then
+	end_timestamp=$(date +%s)
+    fi
+    if [[ -z "$status" ]] ; then
+	if [[ -n "${failures[*]}" ]] ; then
+	    status=FAILING
+	else
+	    status=PASSING
+	fi
+    fi
+    _report_ci_results "$status" "$start_timestamp" "$end_timestamp" &&
+	mv "$artifactdir/clusterbuster-ci-results.json.tmp" "$artifactdir/clusterbuster-ci-results.json"
+}
+
 function finis() {
     if [[ -n "$*" ]] ; then
 	echo "$*" 1>&2
@@ -147,7 +197,6 @@ function finis() {
 	job_pid=
     fi
     local saved_starting_timestamp=$starting_timestamp
-    local ending_timestamp
     local status
     if [[ -n "${starting_timestamp:-}" && $$ -eq "$BASHPID" ]] ; then
 	local ending_timestamp
@@ -186,23 +235,7 @@ function finis() {
 	fi
 	echo "Run took $(to_hms "$starting_timestamp" "$ending_timestamp") ($statusmsg)"
 	starting_timestamp=
-	if [[ -n "$artifactdir" && -d "$artifactdir" ]] ; then
-	    cat > "$artifactdir/clusterbuster-ci-results.json" <<EOF
-{
-  "result": "$status",
-  "job_start": "$(date -Is -u --date="@$saved_starting_timestamp")",
-  "job_end": "$(date -Is -u --date="@$ending_timestamp")",
-  "job_runtime": $((ending_timestamp - saved_starting_timestamp)),
-  "ran": [
-$(report_results "${jobs[@]}")
-  ],
-  "failed": [
-$(report_results "${failures[@]}")
-  ]
-}
-EOF
-	fi
-
+	report_ci_results -s "$status" -t "$saved_starting_timestamp" -e "$ending_timestamp"
 	if [[ -n "$analyze_results" ]] ; then
 	    "$__analyze__" ${analysis_format:-r "$analysis_format"} -o "$analyze_results" "$artifactdir"
 	fi
@@ -655,6 +688,8 @@ function run_clusterbuster_1() {
 	    fi
 	    ((hard_fail_on_error)) && finis "Job $jobname failed, exiting!"
 	fi
+	# Save intermediate status in case something goes wrong.
+	report_ci_results
     fi
     return $status
 }
