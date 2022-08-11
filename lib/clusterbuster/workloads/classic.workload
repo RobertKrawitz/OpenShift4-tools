@@ -70,7 +70,7 @@ function _create_deployment_classic_yaml() {
 apiVersion: v1
 kind: Pod
 metadata:
-  name: $name
+  name: $(mkpodname "$name")
 $(indent 2 standard_all_metadata_yaml "$namespace" client)
   selector:
     matchLabels:
@@ -86,7 +86,7 @@ EOF
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: $name
+  name: $(mkpodname "$name")
 $(indent 2 standard_deployment_metadata_yaml "$namespace" client)
 $(indent 2 standard_labels_yaml)
 spec:

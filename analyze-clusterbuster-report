@@ -27,7 +27,7 @@ parser.add_argument("files", metavar='file', type=str, nargs='*', help='Files to
 args = parser.parse_args()
 
 
-def do_analyze_clusterbuster(f):
+def do_analyze_clusterbuster(f, data):
     report = ClusterBusterAnalysis(data, report_type=args.report_type).Analyze()
     if isinstance(report, str):
         print(report, file=f)
@@ -39,9 +39,9 @@ try:
     data = ClusterBusterLoader(args.files).Load()
     if args.outfile and args.outfile != '-':
         with open(args.outfile, 'w') as f:
-            do_analyze_clusterbuster(f)
+            do_analyze_clusterbuster(f, data)
     else:
-        do_analyze_clusterbuster(sys.stdout)
+        do_analyze_clusterbuster(sys.stdout, data)
 except KeyboardInterrupt:
     sys.exit(1)
 except BrokenPipeError:

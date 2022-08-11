@@ -100,7 +100,7 @@ class ClusterBusterAnalyzeSummaryGeneric(ClusterBusterAnalyzeOne):
         answer['Overall'] = self.__report_one_dimension(accumulator['Overall'])
         return answer
 
-    def __analyze_one(self, accumulator: dict, data: dict, values: dict, dimensions: list):
+    def __analyze_one(self, accumulator: dict, detail: dict, data: dict, values: dict, dimensions: list, case_name: str = None):
         dimension = dimensions[0]
         ignore = False
         if dimension.startswith('-'):
@@ -109,22 +109,43 @@ class ClusterBusterAnalyzeSummaryGeneric(ClusterBusterAnalyzeOne):
         for key, value in data.items():
             if self._filters is not None and dimension in self._filters and not self._filters[dimension](dimension, value):
                 continue
-            if not ignore:
-                values[dimension] = key
-            if len(dimensions) > 1:
-                self.__analyze_one(accumulator, value, values, dimensions[1:])
+            if ignore:
+                out_case_name = case_name
             else:
+                case_label = dimension.replace('By ', '') + ': ' + str(key)
+                values[dimension] = key
+                if case_name is None:
+                    out_case_name = case_label
+                else:
+                    out_case_name = case_name + ", " + case_label
+            if len(dimensions) > 1:
+                self.__analyze_one(accumulator, detail, value, values, dimensions[1:], case_name=out_case_name)
+            else:
+                detail_row = dict()
                 for var in self._variables:
+                    detail_row[var] = dict()
                     ratio = {}
                     for runtime, data in value.items():
                         datum = self._retrieve_datum(var, data)
+                        detail_row[var][runtime] = datum
                         if (datum > 0):
                             ratio[runtime] = datum
                             for dimension, dim_value in values.items():
                                 self.__accumulate(accumulator, runtime, dimension, dim_value, var, datum)
                             self.__accumulate(accumulator, runtime, 'Overall', True, var, datum)
+                    if 'kata' in detail_row[var] and 'runc' in detail_row[var] and detail_row[var]['kata'] > 0 and detail_row[var]['runc'] > 0:
+                        detail_row[var]['ratio' ] = detail_row[var]['kata'] / detail_row[var]['runc']
+                detail[out_case_name] = detail_row
 
-    def Analyze(self):
+    def Analyze(self, report_summary: bool=True, report_detail: bool=False):
         accumulator = dict()
-        self.__analyze_one(accumulator, self._data, dict(), self._dimensions)
-        return self.__report(accumulator)
+        detail = dict()
+        self.__analyze_one(accumulator, detail, self._data, dict(), self._dimensions)
+        if report_summary:
+            if report_detail:
+                return self.__report(accumulator), detail
+            else:
+                return self.__report(accumulator)
+        else:
+            if report_detail:
+                return detail

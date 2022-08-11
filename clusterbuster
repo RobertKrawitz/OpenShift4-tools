@@ -143,6 +143,7 @@ declare -i virtiofsd_threadpoolsize=0
 declare -a virtiofsd_args=()
 declare -i liveness_probe_frequency=0
 declare -i liveness_probe_sleep_time=0
+declare pod_prefix=
 
 declare -r sync_flag_file="/tmp/syncfile";
 declare -r controller_timestamp_file="/tmp/timing.json";
@@ -420,7 +421,8 @@ $(print_workloads_supporting_reporting '                        - ')
                         Index number of first namespace to be created
        --first_deployment=N
                         Index number of first pod to be created
-
+       --pod-prefix=prefix
+			Prefix all created pods with this prefix.
        --sleep=N        Number of seconds between object creations
                         Below options default to sleeptime
        --sleep_between_secrets=N
@@ -697,6 +699,7 @@ function process_option() {
 	objspercall)		    objs_per_call=$optvalue			;;
 	parallel)		    parallel=$optvalue				;;
 	sleep)			    sleeptime=$optvalue				;;
+	podprefix)		    pod_prefix=${optvalue:+$optvalue-}		;;
 	firstdeployment)	    first_deployment=$optvalue			;;
 	parallelconfigmaps)	    parallel_configmaps=$optvalue		;;
 	parallelsecrets)	    parallel_secrets=$optvalue			;;
@@ -924,7 +927,8 @@ function killthemall() {
 	/bin/kill -TERM "${pids_to_kill[@]}" >/dev/null 2>&1
 	if (( $$ == BASHPID )) ; then
 	    wait
-	    local -i tstart=$(date +%s)
+	    local -i tstart
+	    tstart=$(date +%s)
 	    until [[ -z "$(ps -o pid "${pids_to_kill[@]}" | awk '{print $1}' | grep -v "^${$}$" | tail -n +2)" ]] ; do
 		sleep 1
 		if (( $(date +%s) - tstart > 60 )) ; then
@@ -1143,7 +1147,7 @@ function monitor_pods() {
 		    ;;
 		completed|terminated)
 		    if supports_api -w "$requested_workload" supports_reporting ; then
-			if ! __OC exec --stdin=false -n "${basename}-sync" "${basename}-sync" -- test -f /tmp/clusterbuster-finished ; then
+			if ! __OC exec --stdin=false -n "${basename}-sync" "$(mkpodname "${basename}-sync")" -- test -f /tmp/clusterbuster-finished ; then
 			    echo "Sync pod exited prematurely!" 1>&2
 			    echo "Tail end of logs:" 1>&2
 			    oc logs -n "${basename}-sync" "${basename}-sync" |tail -20 1>&2
@@ -1293,7 +1297,7 @@ function _get_logs_poll() {
 function get_logs_poll() {
     local tfile
     tfile=$(mktemp ${cb_tempdir:+-p "$cb_tempdir"} -t '_clusterbusterlogs.XXXXXXXXXX') || fatal "Cannot create temporary file"
-    trap 'if [[ -n "$tfile" && -f "$tfile" ]] ; then rm -f "$tfile"; tfile=; fi; echo "Status: Fail"; return 1' INT TERM HUP USR1
+    trap 'if [[ -n "${tfile:-}" && -f "$tfile" ]] ; then rm -f "$tfile"; unset tfile; fi; echo "Status: Fail"; return 1' INT TERM HUP USR1
     _get_logs_poll "$@" > "$tfile"
     local status=$?
     if ((status == 0)) ; then
@@ -1302,8 +1306,10 @@ function get_logs_poll() {
     else
 	echo '"Status": "Fail"'
     fi
-    rm -f "$tfile"
-    tfile=
+    if [[ -n "${tfile:-}" && -f "$tfile" ]] ; then
+	rm -f "$tfile"
+    fi
+    unset tfile
     return $status
 }
 
@@ -1561,6 +1567,10 @@ function indent() {
     else
 	_indent "$column"
     fi
+}
+
+function mkpodname() {
+    echo "${pod_prefix}$(IFS=-; echo "$*")"
 }
 
 function tolerations_yaml() {
@@ -2175,17 +2185,17 @@ function create_service() {
     local namespace=$1
     local deployment=$2
     shift 2
-    create_object -t Service -n "$namespace" "service-${deployment}" <<EOF
+    create_object -t Service -n "$namespace" "svc-${deployment}" <<EOF
 apiVersion: v1
 kind: Service
 metadata:
-  name: "service-${deployment}"
+  name: "svc-${deployment}"
 $(indent 2 namespace_yaml "$namespace")
 $(indent 2 standard_labels_yaml -t '')
 spec:
 $(indent 2 <<< "$headless")
   ports:
-$(indent 4 _create_service_ports "service-${deployment}" "$@")
+$(indent 4 _create_service_ports "svc-${deployment}" "$@")
   selector:
     name: "${deployment}"
 EOF
@@ -2196,11 +2206,11 @@ function create_external_service() {
     local deployment=$2
     local portnum=$3
     local external_name=$4
-    create_object -t Service -n "$namespace" "service-${deployment}" <<EOF
+    create_object -t Service -n "$namespace" "svc-${deployment}" <<EOF
 apiVersion: v1
 kind: Service
 metadata:
-  name: "service-${deployment}"
+  name: "svc-${deployment}"
 $(indent 2 namespace_yaml "$namespace")
 $(indent 2 standard_labels_yaml -t '')
 spec:
@@ -2244,7 +2254,7 @@ function create_sync_deployment() {
 apiVersion: v1
 kind: Pod
 metadata:
-  name: ${namespace}
+  name: $(mkpodname "${namespace}")
 $(indent 2 standard_all_metadata_yaml "$namespace" sync)
   selector:
     matchLabels:
@@ -2281,20 +2291,20 @@ function create_drop_cache_deployment() {
     local namespace=$1
     local workload=$2
     local instance=$3
-    create_object -t Pod -n "$namespace" "${namespace}-${workload}-${instance}-drop-cache" <<EOF
+    create_object -t Pod -n "$namespace" "${namespace}-${workload}-${instance}-dc" <<EOF
 apiVersion: v1
 kind: Pod
 metadata:
-  name: ${namespace}-${workload}-${instance}-drop-cache
+  name: $(mkpodname "${namespace}-${workload}-${instance}-dc")
 $(indent 2 standard_all_metadata_yaml "$namespace" drop_cache)
   selector:
     matchLabels:
-      app: ${namespace}-${workload}-${instance}-drop-cache
-$(indent 2 standard_labels_yaml -t 'drop-cache')
-    name: ${namespace}-${workload}-${instance}-drop-cache
-    app: ${namespace}-${workload}-${instance}-drop-cache
-    k8s-app: ${namespace}-${workload}-${instance}-drop-cache
-    ${basename}-drop-cache: "$uuid"
+      app: ${namespace}-${workload}-${instance}-dc
+$(indent 2 standard_labels_yaml -t 'dc')
+    name: ${namespace}-${workload}-${instance}-dc
+    app: ${namespace}-${workload}-${instance}-dc
+    k8s-app: ${namespace}-${workload}-${instance}-dc
+    ${basename}-dc: "$uuid"
   securityContext:
     privileged: true
 $(create_spec -P -c drop-cache -r '' create_container_drop_cache "$namespace" "$instance" 0)
@@ -2412,7 +2422,7 @@ function create_all_configmaps() {
 }
 
 function drop_host_caches() {
-    ((doit && (drop_node_cache || drop_all_node_cache) )) || return
+    ((doit && (drop_node_cache || drop_all_node_cache) )) || return 0
     local -a nodes_to_drop
     if [[ -n "${pin_nodes[*]}" && $drop_all_node_cache -eq 0 ]] ; then
 	local n
@@ -2459,13 +2469,17 @@ function create_all_objects() {
 		objects_created[$found_objtype]=$((${objects_created[$found_objtype]:-}+1))
 	    fi
 	elif [[ -n "$line" ]] ; then
-	    (IFS=''; echo "$line" 1>&2)
+	    if ((doit)) ; then
+		(IFS=''; echo "$line" 1>&2)
+	    else
+		(IFS=''; echo "$line")
+	    fi
 	fi
     done < <("create_all_${objtype}" "$@" 2>&1)
 }
 
-function _do_cleanup() {
-    local ltimeout="${force_cleanup_timeout:-${timeout}}"
+function _do_cleanup_1() {
+    local ltimeout="${force_cleanup_timeout:+--timeout=${timeout}s}"
     if [[ ${1:-} = '-f' ]] ; then
 	shift
 	# It appears that allowing processes to write to stderr inside
@@ -2473,13 +2487,19 @@ function _do_cleanup() {
 	# (in this case, oc delete doesn't complete).
 	exec >/dev/null
 	exec 2>/dev/null
-	"$OC" delete "${1:-ns}" -l "$basename" --timeout="${ltimeout}s"
+	# shellcheck disable=SC2086
+	"$OC" delete "${1:-ns}" -l "$basename" $ltimeout
     elif ((report_object_creation)) ; then
-	__OC delete "${1:-ns}" -l "$basename" --timeout="${ltimeout}s" 1>&2
+	# shellcheck disable=SC2086
+	__OC delete "${1:-ns}" -l "$basename" $ltimeout 1>&2
     else
-	__OC delete "${1:-ns}" -l "$basename" --timeout="${ltimeout}s" >/dev/null 2>&1
+	# shellcheck disable=SC2086
+	__OC delete "${1:-ns}" -l "$basename" $ltimeout >/dev/null 2>&1
     fi
-    if [[ $? -ne 0 ]] ; then
+}
+
+function _do_cleanup() {
+    if ! _do_cleanup_1 "$@" ; then
 	if [[ -n "$force_cleanup_timeout" ]] ; then
 	    warn "*** Cleanup failed, doing a force delete!"
 	    __OC delete pod,deployment,configmap,secret,service -A  -l "$basename" --force --grace-period=0 1>&2
@@ -2506,7 +2526,7 @@ function do_cleanup() {
     shift "$OPTIND"
     local objects_to_clean
     local objtype
-    (( doit )) || return
+    (( doit )) || return 0
     if ((use_namespaces)) ; then
 	objects_to_clean=namespace
     else
@@ -2684,19 +2704,21 @@ function run_clusterbuster_2() {
     else
 	trap 'killthemall "Not cleaning up"; wait; remove_tmpdir; exit 1' TERM HUP INT
     fi
-    if [[ $take_prometheus_snapshot -gt 0 && -n "$artifactdir" ]] ; then
-	start_prometheus_snapshot || return 1
-    else
-	set_start_timestamps || return 1
-    fi
-    if [[ $doit -gt 0 && -n "${artifactdir:-}" ]] ; then
-	artifactdir=${artifactdir//%s/$(readable_timestamp "$prometheus_starting_timestamp")}
-	artifactdir=${artifactdir//%w/$requested_workload}
-	artifactdir=${artifactdir//%n/$job_name}
-	artifactdir="$(expand_string "$artifactdir")"
-	mkdir -p "$artifactdir" || fatal "Can't create log directory $artifactdir"
-	echo "${saved_argv[@]@Q}" > "$artifactdir/commandline"
-	exec 2> >(tee "$artifactdir/stderr.log" >&2)
+    if [[ $doit -gt 0 ]] ; then
+	if [[ -n "${artifactdir:-}" && $take_prometheus_snapshot -gt 0 ]] ; then
+	    start_prometheus_snapshot || return 1
+	else
+	    set_start_timestamps || return 1
+	fi
+	if [[ -n "${artifactdir:-}" ]] ; then
+	    artifactdir=${artifactdir//%s/$(readable_timestamp "$prometheus_starting_timestamp")}
+	    artifactdir=${artifactdir//%w/$requested_workload}
+	    artifactdir=${artifactdir//%n/$job_name}
+	    artifactdir="$(expand_string "$artifactdir")"
+	    mkdir -p "$artifactdir" || fatal "Can't create log directory $artifactdir"
+	    echo "${saved_argv[@]@Q}" > "$artifactdir/commandline"
+	    exec 2> >(tee "$artifactdir/stderr.log" >&2)
+	fi
     fi
     allocate_namespaces || return 1
     find_first_deployment || return 1
@@ -2705,10 +2727,10 @@ function run_clusterbuster_2() {
     fi
     create_all_objects namespaces || return 1
     if get_sync -q ; then
-	if [[ $use_namespaces ]] ; then
-	    global_sync_service="service-${sync_namespace}.${sync_namespace}.svc.cluster.local"
+	if (( use_namespaces )) ; then
+	    global_sync_service="svc-${sync_namespace}.${sync_namespace}.svc.cluster.local"
 	else
-	    global_sync_service="service-${basename}-0-sync"
+	    global_sync_service="svc-${basename}-0-sync"
 	fi
     fi
 
@@ -2721,7 +2743,7 @@ function run_clusterbuster_2() {
     basetime=$(date +%s.%N)
     (drop_host_caches)
     create_all_objects deployments || return 1
-    (( doit )) || return
+    (( doit )) || return 0
 
     do_logging || return 1
     if ((! status)) ; then
@@ -2734,7 +2756,7 @@ function run_clusterbuster_1() {
     local -i status=0
     run_clusterbuster_2
     status=$?
-    if ((cleanup)) ; then
+    if ((cleanup && doit)) ; then
 	do_cleanup || {
 	    if ((status == 0)) ; then
 		status=1

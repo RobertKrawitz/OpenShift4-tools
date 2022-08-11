@@ -25,7 +25,8 @@ class FilesAnalysisBase(ClusterBusterAnalyzeOne):
     def __init__(self, workload: str, data: dict, metadata: dict):
         super().__init__(workload, data, metadata)
 
-    def Analyze(self):
+    def Analyze(self, report_summary: bool=True, report_detail: bool=False):
+        detail = dict()
         answer = {
             'workload': self._workload,
             'uuid': self._metadata['uuid'],
@@ -44,12 +45,16 @@ class FilesAnalysisBase(ClusterBusterAnalyzeOne):
                             for direct, data6 in data5.items():
                                 if direct == 0:
                                     continue
+                                case_label=f'Pods: {pods}, Dirs: {dirs}, Files: {files}, Blocksize: {blocksize}, Filesize: {filesize}'
+                                detail_row = dict()
                                 for runtime, data7 in data6.items():
                                     if runtime not in summary:
                                         summary[runtime] = dict()
                                         count[runtime] = dict()
                                         ratio[runtime] = dict()
                                     for op, data8 in data7.items():
+                                        if op not in detail_row:
+                                            detail_row[op] = dict()
                                         known_ops[op] = 1
                                         if op not in times:
                                             times[op] = {}
@@ -59,6 +64,8 @@ class FilesAnalysisBase(ClusterBusterAnalyzeOne):
                                             ratio[runtime][op] = dict()
                                         for subop, val in data8.items():
                                             known_subops[subop] = 1
+                                            if subop not in detail_row[op]:
+                                                detail_row[op][subop] = dict()
                                             if subop not in times[op]:
                                                 times[op][subop] = {
                                                     'kata': [],
@@ -66,12 +73,19 @@ class FilesAnalysisBase(ClusterBusterAnalyzeOne):
                                                     }
                                             times[op][subop][runtime].append(val)
                                             if val > 0:
+                                                detail_row[op][subop][runtime] = val
                                                 if subop not in summary[runtime][op]:
                                                     summary[runtime][op][subop] = 0
                                                     count[runtime][op][subop] = 0
                                                     ratio[runtime][op][subop] = 0
                                                 count[runtime][op][subop] += 1
                                                 summary[runtime][op][subop] += log(val)
+                                for op, detail1 in detail_row.items():
+                                    for subop, detail2 in detail1.items():
+                                        if 'kata' in detail2 and 'runc' in detail2 and detail2['kata'] > 0 and detail2['runc'] > 0:
+                                            detail2['ratio'] = detail2['kata'] / detail2['runc']
+                                if len(detail_row.keys()) > 0:
+                                    detail[case_label] = detail_row
         for runtime, data1 in summary.items():
             answer[runtime] = dict()
             for op, data2 in data1.items():
@@ -105,7 +119,14 @@ class FilesAnalysisBase(ClusterBusterAnalyzeOne):
                             max_ratio = ratio
                 answer['min_ratio'][op][subop] = min_ratio
                 answer['max_ratio'][op][subop] = max_ratio
-        return answer
+        if report_summary:
+            if report_detail:
+                return answer, detail
+            else:
+                return answer
+        else:
+            if report_detail:
+                return detail
 
 class files_analysis(FilesAnalysisBase):
     def __init__(self, workload: str, data: dict, metadata: dict):

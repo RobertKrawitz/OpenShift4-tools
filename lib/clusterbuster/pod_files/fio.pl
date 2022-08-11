@@ -13,8 +13,8 @@ my ($dir) = $ENV{'BAK_CONFIGMAP'};
 require "$dir/clientlib.pl";
 
 our ($namespace, $container, $basetime, $baseoffset, $crtime, $exit_at_end, $synchost, $syncport, $loghost, $logport,
-     $processes, $rundir, $runtime, $jobfiles_dir, $fio_blocksizes, $fio_patterns, $fio_iodepths, $fio_fdatasyncs,
-     $fio_directs, $fio_ioengines, $fio_generic_args) = @ARGV;
+     $processes, $rundir, $runtime, $jobfiles_dir, $drop_cache_service, $drop_cache_port, $fio_blocksizes, $fio_patterns,
+     $fio_iodepths, $fio_fdatasyncs, $fio_directs, $fio_ioengines, $fio_generic_args) = @ARGV;
 my ($start_time) = xtime();
 
 $SIG{TERM} = sub() { removeRundir() };
@@ -99,7 +99,7 @@ sub runit(;$) {
 		    foreach my $direct (@directs) {
 			foreach my $ioengine (@ioengines) {
 			    my ($jobname) = sprintf("%04d-%s-%d-%d-%d-%d-%s", $jobidx, $pattern, $size, $iodepth, $fdatasync, $direct, $ioengine);
-			    drop_cache("service-${pod}-drop-cache", 7779);
+			    drop_cache($drop_cache_service, $drop_cache_port);
 			    do_sync($synchost, $syncport, "$namespace:$pod:$container:$$:$jobname");
 			    if ($jobidx == 1) {
 				timestamp("Running...");
