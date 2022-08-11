@@ -82,7 +82,7 @@ EOF
 	local name=${namespace}-cpusoaker-${instance}
 	create_object -n "$namespace" "$name" <<EOF
 apiVersion: apps/v1
-kind: Deployment
+kind: $deployment_type
 metadata:
   name: $(mkpodname "$name")
 $(indent 2 standard_deployment_metadata_yaml "$namespace" client)

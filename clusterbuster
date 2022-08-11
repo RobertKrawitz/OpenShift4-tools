@@ -1138,7 +1138,7 @@ function monitor_pods() {
 		    oc logs -n "$namespace" "$name" |tail -20 1>&2
 		    killthemall
 		    ;;
-		pending)
+		pending|containercreating)
 		    other_pod_count=$((other_pod_count+1))
 		    pending_pods+=("$namespace/$name")
 		    ;;
@@ -2502,7 +2502,7 @@ function _do_cleanup() {
     if ! _do_cleanup_1 "$@" ; then
 	if [[ -n "$force_cleanup_timeout" ]] ; then
 	    warn "*** Cleanup failed, doing a force delete!"
-	    __OC delete pod,deployment,configmap,secret,service -A  -l "$basename" --force --grace-period=0 1>&2
+	    __OC delete deployment,replicaset,pod,configmap,secret,service -A  -l "$basename" --force --grace-period=0 1>&2
 	    if ((use_namespaces)) ; then
 		__OC delete namespace -l "$basename" --force --grace-period=0 1>&2
 	    fi
@@ -2841,10 +2841,17 @@ if [[ -n "$metrics_file" && ! -r "$metrics_file" ]] ; then
     fatal "Cannot read metrics file $metrics_file"
 fi
 
-if [[ $deployment_type != pod && $deployment_type != deployment ]] ; then
-    echo "--deployment_type must be either pod or deployment"
-    help
-fi
+case "${deployment_type,,}" in
+    # If we're using deployments or replicasets, we do not want
+    # to exit when workers complete, or the controller will
+    # immediately try to re-create them.
+    replicaset) deployment_type=ReplicaSet; exit_at_end=0 ;;
+    deployment) deployment_type=Deployment; exit_at_end=0 ;;
+    pod) deployment_type=pod		   		  ;;
+    *)
+	echo "--deployment_type must be pod, deployment, or replicaset"
+	help
+esac
 
 if [[ -z $OC && $doit -gt 0 ]] ; then
     fatal "Cannot find oc or kubectl command, exiting!"

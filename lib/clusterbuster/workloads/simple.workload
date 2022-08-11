@@ -102,7 +102,7 @@ EOF
 	local name="${namespace}-${requested_workload}-${instance}"
 	create_object -n "$namespace" "$name" <<EOF
 apiVersion: apps/v1
-kind: Deployment
+kind: $deployment_type
 metadata:
   name: $(mkpodname "$name")
 $(indent 2 namespace_yaml "$namespace")
