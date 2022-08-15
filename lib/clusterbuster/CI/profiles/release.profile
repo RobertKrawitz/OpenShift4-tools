@@ -34,3 +34,4 @@ virtiofsd-direct=1
 restart=0
 use-python-venv=1
 cleanup=1
+deployment-type=replicaset
