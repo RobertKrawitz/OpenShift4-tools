@@ -96,7 +96,7 @@ kind: $deployment_type
 metadata:
   name: $(mkpodname "$name")
 $(indent 2 standard_deployment_metadata_yaml "$namespace" client)
-$(indent 2 standard_labels_yaml)
+$(indent 2 standard_labels_yaml sysbench "$namespace" "$instance" 1)
 spec:
   replicas: 1
   selector:

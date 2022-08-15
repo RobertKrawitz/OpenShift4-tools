@@ -72,7 +72,7 @@ $(indent 2 standard_all_metadata_yaml "$namespace" client)
   selector:
     matchLabels:
       app: ${namespace}-classic-${instance}
-$(indent 2 standard_labels_yaml "classic" "$namespace" "$instance")
+$(indent 2 standard_labels_yaml "classic" "$namespace" "$instance" 1)
 $(create_spec _create_containers_classic_yaml "$@")
   restartPolicy: Never
 EOF
@@ -85,7 +85,7 @@ kind: $deployment_type
 metadata:
   name: $(mkpodname "$name")
 $(indent 2 standard_deployment_metadata_yaml "$namespace" client)
-$(indent 2 standard_labels_yaml classic "$namespace" "$instance")
+$(indent 2 standard_labels_yaml classic "$namespace" "$instance" 1)
 spec:
   replicas: $replicas
   selector:
@@ -95,7 +95,7 @@ spec:
     type: RollingUpdate
   template:
     metadata:
-$(indent 6 standard_labels_yaml "classic" "$namespace" "$instance")
+$(indent 6 standard_labels_yaml "classic" "$namespace" "$instance" 1)
 $(indent 6 standard_pod_metadata_yaml "$namespace" client)
 $(indent 4 create_spec _create_containers_classic_yaml "$@")
 EOF

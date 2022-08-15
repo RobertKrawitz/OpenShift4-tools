@@ -59,7 +59,7 @@ $(indent 2 standard_all_metadata_yaml "$namespace" server)
   selector:
     matchLabels:
       app: ${namespace}-server-${instance}
-$(indent 2 standard_labels_yaml server "$namespace" "$instance" 1)
+$(indent 2 standard_labels_yaml server "$namespace" "$instance" )
 $(create_spec -c server _create_server_server_container_yaml "$@")
   restartPolicy: Never
 EOF
@@ -69,7 +69,7 @@ apiVersion: apps/v1
 kind: $deployment_type
 metadata:
   name: $(mkpodname "$name")
-$(indent 2 standard_deployment_metadata_yaml "$namespace" server)
+$(indent 2 standard_deployment_metadata_yaml "$namespace" server )
 $(indent 2 standard_labels_yaml server "$namespace" "$instance")
 spec:
   replicas: 1
@@ -81,7 +81,7 @@ spec:
   template:
     metadata:
       labels:
-$(indent 6 standard_labels_yaml server "$namespace" "$instance" 1)
+$(indent 6 standard_labels_yaml server "$namespace" "$instance" )
 $(indent 6 standard_pod_metadata_yaml "$namespace" server)
 $(indent 4 create_spec -c server _create_server_server_container_yaml "$@")
 EOF
@@ -176,8 +176,8 @@ metadata:
 $(indent 2 standard_all_metadata_yaml "$namespace" client)
   selector:
     matchLabels:
-      app: ${namespace}-client-${instance}
-$(indent 2 standard_labels_yaml client "$namespace" "$instance" 1)
+      app: ${namespace}-server-client-${instance}
+$(indent 2 standard_labels_yaml server-client "$namespace" "$instance" 1)
 $(create_spec ${affinity_yaml:+-A "$affinity_yaml"} _create_server_client_container_yaml "$@" "$replica")
   restartPolicy: Never
 EOF
@@ -190,18 +190,18 @@ kind: $deployment_type
 metadata:
   name: $(mkpodname "$name")
 $(indent 2 standard_deployment_metadata_yaml "$namespace" client)
-$(indent 2 standard_labels_yaml)
+$(indent 2 standard_labels_yaml server-client "$namespace" "$instance" 1)
 spec:
   replicas: $replicas
   restartPolicy: Always
   selector:
     matchLabels:
-      app: ${namespace}-client-${instance}
+      app: ${namespace}-server-client-${instance}
   strategy:
     type: RollingUpdate
   template:
     metadata:
-$(indent 6 standard_labels_yaml client "$namespace" "$instance" 1)
+$(indent 6 standard_labels_yaml server-client "$namespace" "$instance" 1)
 $(indent 6 standard_pod_metadata_yaml "$namespace" client)
 $(indent 4 create_spec ${affinity_yaml:+-A "$affinity_yaml"} _create_server_client_container_yaml "$@" "x")
 EOF

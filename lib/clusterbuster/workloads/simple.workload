@@ -94,7 +94,7 @@ $(indent 2 privilege_yaml)
   selector:
     matchLabels:
       app: ${namespace}-${requested_workload}-${instance}
-$(indent 2 standard_labels_yaml "${requested_workload}" "$namespace" "$instance")
+$(indent 2 standard_labels_yaml "${requested_workload}" "$namespace" "$instance" 1)
 $(create_spec _create_containers_${requested_workload}_yaml "$@")
 EOF
 	done
@@ -107,7 +107,7 @@ metadata:
   name: $(mkpodname "$name")
 $(indent 2 namespace_yaml "$namespace")
 $(indent 2 privilege_yaml)
-$(indent 2 standard_labels_yaml)
+$(indent 2 standard_labels_yaml "${requested_workload}" "$namespace" "$instance" 1)
 spec:
   replicas: $replicas
   selector:
@@ -117,7 +117,7 @@ spec:
     type: RollingUpdate
   template:
     metadata:
-$(indent 6 standard_labels_yaml "${requested_workload}" "$namespace" "$instance")
+$(indent 6 standard_labels_yaml "${requested_workload}" "$namespace" "$instance" 1)
 $(indent 6 standard_pod_metadata_yaml "$namespace" client)
 $(indent 4 create_spec _create_containers_${requested_workload}_yaml "$@")
 EOF
