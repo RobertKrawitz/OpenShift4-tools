@@ -14,6 +14,7 @@
 # limitations under the License.
 
 from .ClusterBusterLoader import LoadOneReport
+import sys
 
 
 class fio_loader(LoadOneReport):
@@ -30,6 +31,9 @@ class fio_loader(LoadOneReport):
             fdatasync = job_metadata['fdatasync']
             direct = job_metadata['direct']
             ioengine = job_metadata['ioengine']
+            if 'results' not in self._summary or job not in self._summary['results']:
+                print(f'Cannot load fio results for {self._metadata["job_name"]}/{job}', file=sys.stderr)
+                continue
             result = self._summary['results'][job]['job_results']
             self._MakeHierarchy(self._answer, ['fio', self._count, ioengine, iodepth, fdatasync,
                                                direct, pattern, blocksize, self._runtime_env, 'total'])
@@ -47,3 +51,4 @@ class fio_loader(LoadOneReport):
                         root['total']['iops'] = 0
                     root[op]['iops'] = result[op]['io_rate']
                     root['total']['iops'] += result[op]['io_rate']
+        print(self._answer, file=sys.stderr)
