@@ -23,7 +23,21 @@ class SpreadsheetAnalysis(ClusterBusterAnalyzeSummaryGeneric):
         analysis_vars = [v['var'] for v in self._sp_variables]
         ClusterBusterAnalyzeSummaryGeneric.__init__(self, workload, data, metadata, dimensions, analysis_vars, filters=filters)
 
+    def print_safe(self, data: dict, d1, d2, multiplier: float = 1):
+        try:
+            val = data[d1][d2]
+            return self._prettyprint(val * multiplier, precision=3, base=0)
+        except Exception:
+            return 'N/A'
+
     def _analyze_one(self, dimension, data):
+        def print_safe(data: dict, d1, d2, multiplier: float = 1):
+            try:
+                val = data[d1][d2]
+                return self._prettyprint(val * multiplier, precision=3, base=0)
+            except Exception:
+                return 'N/A'
+
         answer = ""
         if dimension == 'Overall':
             answer += """Total
@@ -34,8 +48,8 @@ Metric\tKata\trunc
                 name = v.get('name', var)
                 multiplier = v.get('multiplier', 1)
                 answer += '\t'.join([name,
-                                     self._prettyprint(data[var]['kata'][True] * multiplier, precision=3, base=0),
-                                     self._prettyprint(data[var]['runc'][True] * multiplier, precision=3, base=0)]) + "\n"
+                                     self.print_safe(data[var], 'kata', True, multiplier),
+                                     self.print_safe(data[var], 'runc', True, multiplier)]) + "\n"
             answer += """
 Total (Ratio)
 Metric\tMin ratio\tAvg ratio\tMax ratio
@@ -44,9 +58,9 @@ Metric\tMin ratio\tAvg ratio\tMax ratio
                 var = v['var']
                 name = v.get('name', var)
                 answer += '\t'.join([name,
-                                     self._prettyprint(data[var]['min_ratio'][True] * multiplier, precision=3, base=0),
-                                     self._prettyprint(data[var]['ratio'][True] * multiplier, precision=3, base=0),
-                                     self._prettyprint(data[var]['max_ratio'][True] * multiplier, precision=3, base=0)]) + "\n"
+                                     self.print_safe(data[var], 'min_ratio', True),
+                                     self.print_safe(data[var], 'ratio', True),
+                                     self.print_safe(data[var], 'max_ratio', True)]) + "\n"
         else:
             answer += dimension
             for v in self._sp_variables:
@@ -60,8 +74,8 @@ Metric\tMin ratio\tAvg ratio\tMax ratio
 """
                 for value in data[var]['kata'].keys():
                     answer += '\t'.join([str(value),
-                                         self._prettyprint(data[var]['kata'][value] * multiplier, precision=3, base=0),
-                                         self._prettyprint(data[var]['runc'][value] * multiplier, precision=3, base=0)]) + "\n"
+                                         self.print_safe(data[var], 'kata', value, multiplier),
+                                         self.print_safe(data[var], 'runc', value, multiplier)]) + "\n"
             for v in self._sp_variables:
                 var = v['var']
                 name = v.get('name', var)
@@ -71,9 +85,9 @@ Metric\tMin ratio\tAvg ratio\tMax ratio
 """
                 for value in data[var]['kata'].keys():
                     answer += '\t'.join([str(value),
-                                         self._prettyprint(data[var]['min_ratio'][value], precision=3, base=0),
-                                         self._prettyprint(data[var]['ratio'][value], precision=3, base=0),
-                                         self._prettyprint(data[var]['max_ratio'][value], precision=3, base=0)]) + "\n"
+                                         self.print_safe(data[var], 'min_ratio', value),
+                                         self.print_safe(data[var], 'ratio', value),
+                                         self.print_safe(data[var], 'max_ratio', value)]) + "\n"
         return answer + '\n\n'
 
     def Analyze(self, report_detail=True):
@@ -105,7 +119,7 @@ uuid: {report['uuid']}
                     var = v['var']
                     multiplier = v.get('multiplier', 1)
                     for rt in ['kata', 'runc']:
-                        answer += '\t' + self._prettyprint(row[var][rt] * multiplier, precision=3, base=0)
-                    answer += '\t' + self._prettyprint(row[var]['ratio'], precision=3, base=0)
+                        answer += '\t' + self.print_safe(row, var, rt, multiplier)
+                    answer += '\t' + self.print_safe(row, var, 'ratio')
                 answer += '\n'
         return answer
