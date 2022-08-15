@@ -97,15 +97,24 @@ class ClusterBusterReporter:
             items = [items]
         for item in ClusterBusterReporter.enumerate_dirs(items):
             with open(item) as f:
-                answers.append(ClusterBusterReporter.report_one(json.load(f), format, **kwargs))
+                try:
+                    answers.append(ClusterBusterReporter.report_one(json.load(f), format, **kwargs))
+                except Exception as exc:
+                    print(f'Unable to load {item}: {exc}', file=sys.stderr)
         for item in items:
             jdata = dict()
             if isinstance(item, str):
                 continue
             if isinstance(item, io.TextIOBase):
-                jdata = json.load(item)
+                try:
+                    jdata = json.load(item)
+                except Exception as exc:
+                    print(f'Unable to load {item}: {exc}', file=sys.stderr)
             elif item is None:
-                jdata = json.load(sys.stdin)
+                try:
+                    jdata = json.load(sys.stdin)
+                except Exception as exc:
+                    print(f'Unable to load <stdin>: {exc}', file=sys.stderr)
             elif isinstance(item, dict):
                 jdata = item
             else:

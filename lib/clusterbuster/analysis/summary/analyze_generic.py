@@ -69,7 +69,7 @@ class ClusterBusterAnalyzeSummaryGeneric(ClusterBusterAnalyzeOne):
                     if runtime not in answer[variable]:
                         answer[variable][runtime] = {}
                     answer[variable][runtime][key] = exp(value1['sum'] / value1['count'])
-                if 'kata' in answer[variable] and 'runc' in answer[variable]:
+                if 'kata' in answer[variable] and 'runc' in answer[variable] and key in answer[variable]['kata'] and key in answer[variable]['runc']:
                     ratio = answer[variable]['kata'][key] / answer[variable]['runc'][key]
                     if 'ratio' not in answer[variable]:
                         answer[variable]['ratio'] = {}
@@ -77,6 +77,8 @@ class ClusterBusterAnalyzeSummaryGeneric(ClusterBusterAnalyzeOne):
                 min_ratio = None
                 max_ratio = None
                 for i in range(len(value['runc']['values'])):
+                    if 'kata' not in value or i not in value['kata']['values'] or i not in value['runc']['values']:
+                        continue
                     ratio = value['kata']['values'][i] / value['runc']['values'][i]
                     if min_ratio is None or ratio < min_ratio:
                         min_ratio = ratio

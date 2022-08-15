@@ -70,6 +70,8 @@ $(indent 2 bootstrap_command_yaml fio.pl)
   - "$___fio_workdir"
   - "$workload_run_time"
   - "$configmap_mount_dir"
+  - "svc-${namespace}-fio-${instance}-dc"
+  - "$drop_cache_port"
   - "${___fio_blocksizes[*]:-}"
   - "${___fio_patterns[*]:-}"
   - "${___fio_iodepths[*]:-}"
@@ -77,7 +79,6 @@ $(indent 2 bootstrap_command_yaml fio.pl)
   - "${___fio_directs[*]:-}"
   - "${___fio_ioengines[*]:-}"
   - "${___fio_generic_options[*]:-}"
-
 $(indent 2 volume_mounts_yaml "$namespace" "${instance}" "$secret_count")
 EOF
     done
@@ -137,7 +138,7 @@ function create_deployment_fio() {
     local -i syncs_needed=$((2 + (${#___fio_patterns[@]} * ${#___fio_blocksizes[@]} * ${#___fio_iodepths[@]} * ${#___fio_directs[@]} * ${#___fio_fdatasyncs[@]} * ${#___fio_ioengines[@]}) ))
     create_sync_service_if_needed "$namespace" "$syncs_needed" "$((containers_per_pod * replicas * count))"
     for instance in $(seq "$first_deployment" $((count + first_deployment - 1))) ; do
-	create_service -H "$namespace" "${namespace}-fio-${instance}-drop-cache" "$drop_cache_port"
+	create_service -H "$namespace" "${namespace}-fio-${instance}-dc" "$drop_cache_port"
 	create_drop_cache_deployment "$namespace" fio "$instance"
 	_create_fio_deployment "$namespace" "${instance}" "$secret_count"  "$replicas" "$containers_per_pod" "$log_host" "$log_port"
     done

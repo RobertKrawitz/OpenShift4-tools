@@ -66,6 +66,7 @@ $(indent 2 bootstrap_command_yaml files.pl)
   - "$processes_per_pod"
   - "$___files_direct"
   - "svc-${namespace}-files-${instance}-${replica}-dc"
+  - "$drop_cache_port"
 $(tmp_volume_paths=("${volume_mount_paths[@]/%/\"}"); IFS=$'\n'; echo "${tmp_volume_paths[*]/#/  - \"}")
 $(emptydirs=("${emptydirs[@]/%/\"}"); IFS=$'\n'; echo "${emptydirs[*]/#/  - \"}")
 $(indent 2 volume_mounts_yaml "$namespace" "$instance" "$secret_count")

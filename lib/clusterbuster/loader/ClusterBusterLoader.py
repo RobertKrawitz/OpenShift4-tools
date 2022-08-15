@@ -17,16 +17,32 @@ import importlib
 import inspect
 import os
 import json
+import sys
 from lib.clusterbuster.reporter.ClusterBusterReporter import ClusterBusterReporter
 
 
 class LoadOneReport:
     def __init__(self, report: dict, answer: dict):
-        self._report = report
-        self._answer = answer
-        self._metadata = self._report['metadata']
-        self._summary = self._report['summary']
-        self._metrics = self._summary['metrics']
+        try:
+            self._report = report
+            self._answer = answer
+            self._metadata = self._report['metadata']
+            self._summary = self._report['summary']
+            self._metrics = self._summary['metrics']
+        except Exception:
+            if not getattr(self, '_report', False):
+                self._report = {}
+            if not getattr(self, '_answer', False):
+                self._answer = {}
+            if 'metadata' not in self._report:
+                self._metadata = {}
+            if 'summary' not in self._report:
+                self._summary = {
+                    'results': {},
+                    'metrics': {}
+                    }
+            if 'metrics' not in self._summary:
+                self._metrics = {}
         if 'metadata' not in answer or 'uuid' not in answer['metadata']:
             answer['metadata'] = dict()
             answer['metadata']['start_time'] = self._metadata['cluster_start_time']
@@ -81,7 +97,18 @@ class ClusterBusterLoader:
         self.reports = ClusterBusterReporter.report(dirs_and_files, format="json-summary")
         if len(dirs_and_files) == 1 and os.path.isfile(os.path.join(dirs_and_files[0], "clusterbuster-ci-results.json")):
             with open(os.path.join(dirs_and_files[0], "clusterbuster-ci-results.json")) as f:
-                self.status = json.load(f)
+                try:
+                    self.status = json.load(f)
+                    print(json.dumps(self.status['metadata'], indent=2), file=sys.stderr)
+                except Exception as exc:
+                    print(f"Warning: unable to load {dirs_and_files[0]}: {exc}", file=sys.stderr)
+                    self.status = {
+                        'metadata': {},
+                        'status': 'N/A'
+                        }
+        else:
+            print(f'Unable to load {dirs_and_files}', file=sys.stderr)
+            self.status = {}
 
     def Load(self):
         answer = dict()

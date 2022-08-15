@@ -707,8 +707,8 @@ function run_clusterbuster_1() {
 function run_clusterbuster() {
     for runtimeclass in "${runtimeclasses[@]}" ; do
 	run_clusterbuster_1 -r "$runtimeclass" "$@"
-	counter=$((counter+1))
     done
+    counter=$((counter+1))
 }
 
 if [[ -z "${workloads[*]}" ]] ; then
