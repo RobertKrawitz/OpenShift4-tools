@@ -101,7 +101,7 @@ spec:
   replicas: 1
   selector:
     matchLabels:
-      app: ${namespace}-sysbench-$instance
+      app: ${namespace}-sysbench-${instance}
   strategy:
     type: RollingUpdate
   template:

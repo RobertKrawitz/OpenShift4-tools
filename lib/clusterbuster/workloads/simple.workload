@@ -93,7 +93,7 @@ $(indent 2 namespace_yaml "$namespace")
 $(indent 2 privilege_yaml)
   selector:
     matchLabels:
-      app: ${namespace}-${instance}
+      app: ${namespace}-${requested_workload}-${instance}
 $(indent 2 standard_labels_yaml "${requested_workload}" "$namespace" "$instance")
 $(create_spec _create_containers_${requested_workload}_yaml "$@")
 EOF
@@ -112,12 +112,13 @@ spec:
   replicas: $replicas
   selector:
     matchLabels:
-      app: ${namespace}-${instance}
+      app: ${namespace}-${requested_workload}-${instance}
   strategy:
     type: RollingUpdate
   template:
     metadata:
 $(indent 6 standard_labels_yaml "${requested_workload}" "$namespace" "$instance")
+$(indent 6 standard_pod_metadata_yaml "$namespace" client)
 $(indent 4 create_spec _create_containers_${requested_workload}_yaml "$@")
 EOF
     fi

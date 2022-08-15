@@ -59,9 +59,6 @@ EOF
 function _create_deployment_classic_yaml() {
     local namespace=$1
     local instance=$2
-    local secret_count=$3
-    local -i replicas=$4
-    local -i containers_per_pod=$5
     if [[ $deployment_type = pod ]] ; then
 	local -i replica=0
 	while (( replica++ < replicas )) ; do
@@ -74,7 +71,7 @@ metadata:
 $(indent 2 standard_all_metadata_yaml "$namespace" client)
   selector:
     matchLabels:
-      app: ${namespace}-${instance}
+      app: ${namespace}-classic-${instance}
 $(indent 2 standard_labels_yaml "classic" "$namespace" "$instance")
 $(create_spec _create_containers_classic_yaml "$@")
   restartPolicy: Never
@@ -88,12 +85,12 @@ kind: $deployment_type
 metadata:
   name: $(mkpodname "$name")
 $(indent 2 standard_deployment_metadata_yaml "$namespace" client)
-$(indent 2 standard_labels_yaml)
+$(indent 2 standard_labels_yaml classic "$namespace" "$instance")
 spec:
   replicas: $replicas
   selector:
     matchLabels:
-      app: ${namespace}-${instance}
+      app: ${namespace}-classic-${instance}
   strategy:
     type: RollingUpdate
   template:
