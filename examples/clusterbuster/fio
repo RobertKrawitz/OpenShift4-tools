@@ -4,9 +4,8 @@
 cleanup
 workloadruntime=10
 workload=fio
-replicas=1
+replicas=4
 anti_affinity
 exit_at_end
 precleanup
 no-report-object-creation
-depspernamespace=4

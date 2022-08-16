@@ -33,7 +33,7 @@ declare -gi ___fio_pod_memsize=
 
 register_workload fio dispatch_generic
 
-function test_fio() {
+function fio_test() {
     local default_job_runtime=$1
     if ((___fio_job_runtime <= 0)) ; then
 	___fio_job_runtime=$default_job_runtime
@@ -78,7 +78,7 @@ function test_fio() {
     done
 }
 
-function process_option_fio() {
+function fio_process_option() {
     local opt=$1
     read -r noptname1 noptname optvalue <<< "$(parse_option "$opt")"
     case "$noptname1" in
@@ -102,7 +102,7 @@ function process_option_fio() {
     esac
 }
 
-function help_options_fio() {
+function fio_help_options() {
     cat <<'EOF'
    Fio test options:
         --fio-block-sizes=n[,n...]
@@ -154,7 +154,7 @@ function help_options_fio() {
 EOF
 }
 
-function document_fio() {
+function fio_document() {
 cat <<'EOF'
 * fio: a front end for the Flexible I/O tester.
   See https://fio.readthedocs.io/en/latest/fio_doc.html for more

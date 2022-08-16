@@ -20,7 +20,7 @@
 
 declare -ig ___msg_size=32768
 
-function _create_server_server_container_yaml() {
+function _server_create_server_container_yaml() {
     local namespace=$1
     local instance=$2
     local secret_count=$3
@@ -44,7 +44,7 @@ $(indent 2 volume_mounts_yaml "$namespace" "$instance" "$secret_count")
 EOF
 }
 
-function _create_server_server_deployment() {
+function _server_create_server_deployment() {
     local namespace=$1
     local instance=$2
     local secret_count=$3
@@ -60,7 +60,7 @@ $(indent 2 standard_all_metadata_yaml "$namespace" server)
     matchLabels:
       app: ${namespace}-server-${instance}
 $(indent 2 standard_labels_yaml server "$namespace" "$instance" )
-$(create_spec -c server _create_server_server_container_yaml "$@")
+$(create_spec -c server _server_create_server_container_yaml "$@")
   restartPolicy: Never
 EOF
     else
@@ -83,12 +83,12 @@ spec:
       labels:
 $(indent 6 standard_labels_yaml server "$namespace" "$instance" )
 $(indent 6 standard_pod_metadata_yaml "$namespace" server)
-$(indent 4 create_spec -c server _create_server_server_container_yaml "$@")
+$(indent 4 create_spec -c server _server_create_server_container_yaml "$@")
 EOF
     fi
 }
 
-function _create_server_client_container_yaml() {
+function _server_create_client_container_yaml() {
     local namespace=$1
     local instance=$2
     local secret_count=$3
@@ -136,7 +136,7 @@ EOF
     done
 }
 
-function _create_server_client_affinity_yaml() {
+function _server_create_client_affinity_yaml() {
     (( affinity )) || return 0
     local server=$1
     local affinity_type
@@ -158,12 +158,12 @@ affinity:
 EOF
 }
 
-function _create_server_client_deployment() {
+function _server_create_client_deployment() {
     local namespace=$1
     local instance=$2
     local secret_count=$3
     local replicas=$4
-    local affinity_yaml="$(_create_server_client_affinity_yaml "${namespace}-server-${instance}")"
+    local affinity_yaml="$(_server_create_client_affinity_yaml "${namespace}-server-${instance}")"
     if [[ $deployment_type = pod ]] ; then
 	local -i replica=0
 	while (( replica++ < replicas )) ; do
@@ -178,7 +178,7 @@ $(indent 2 standard_all_metadata_yaml "$namespace" client)
     matchLabels:
       app: ${namespace}-server-client-${instance}
 $(indent 2 standard_labels_yaml server-client "$namespace" "$instance" 1)
-$(create_spec ${affinity_yaml:+-A "$affinity_yaml"} _create_server_client_container_yaml "$@" "$replica")
+$(create_spec ${affinity_yaml:+-A "$affinity_yaml"} _server_create_client_container_yaml "$@" "$replica")
   restartPolicy: Never
 EOF
 	done
@@ -203,12 +203,12 @@ spec:
     metadata:
 $(indent 6 standard_labels_yaml server-client "$namespace" "$instance" 1)
 $(indent 6 standard_pod_metadata_yaml "$namespace" client)
-$(indent 4 create_spec ${affinity_yaml:+-A "$affinity_yaml"} _create_server_client_container_yaml "$@" "x")
+$(indent 4 create_spec ${affinity_yaml:+-A "$affinity_yaml"} _server_create_client_container_yaml "$@" "x")
 EOF
     fi
 }
 
-function create_deployment_server() {
+function server_create_deployment() {
     local namespace=$1
     local count=${2:-1}
     local secret_count=${3:-1}
@@ -222,22 +222,22 @@ function create_deployment_server() {
     for instance in $(seq $first_deployment $((count + first_deployment - 1))) ; do
 	create_service "$namespace" "${namespace}-server-${instance}" "$port"
 	if [[ $deployment_type = pod ]] ; then
-	    _create_server_server_deployment "$namespace" "$instance" "$secret_count" "$((containers_per_pod * replicas))"
+	    _server_create_server_deployment "$namespace" "$instance" "$secret_count" "$((containers_per_pod * replicas))"
 	else
-	    _create_server_server_deployment "$namespace" "$instance" "$secret_count" "-1"
+	    _server_create_server_deployment "$namespace" "$instance" "$secret_count" "-1"
 	fi
-	_create_server_client_deployment "$namespace" "$instance" "$secret_count" "$replicas" "$containers_per_pod" "$log_host" "$log_port"
+	_server_create_client_deployment "$namespace" "$instance" "$secret_count" "$replicas" "$containers_per_pod" "$log_host" "$log_port"
     done
 }
 
-function list_configmaps_server() {
+function server_list_configmaps() {
     cat <<EOF
 ${__podfile_dir__}/client.pl
 ${__podfile_dir__}/server.pl
 EOF
 }
 
-function calculate_logs_required_server() {
+function server_calculate_logs_required() {
     local -i namespaces=$1
     local -i deps_per_namespace=${2:-1}
     local -i replicas=${3:-1}
@@ -245,23 +245,23 @@ function calculate_logs_required_server() {
     echo $((namespaces * containers_per_pod * replicas * deps_per_namespace))
 }
 
-function help_options_server() {
+function server_help_options() {
     cat <<'EOF'
-    Client/server options:
-       msgsize         Message size in data transfer
-       pin_node=server=<node>
+    Client/server Options:
+       --msgsize       Message size in data transfer
+       --pin_node=server=<node>
                        Specify node to which the server is bound.
 EOF
 }
 
-function document_server() {
+function server_document() {
     cat <<'EOF'
 * server: a client-server workload with optional bidirectional data
   trasfer, optionally at a specified data rate.
 EOF
 }
 
-function process_options_server() {
+function server_process_options() {
     local opt
     local -a unknown_opts=()
     local ftest
@@ -280,11 +280,11 @@ function process_options_server() {
     fi
 }
 
-function supports_reporting_server() {
+function server_supports_reporting() {
     :
 }
 
-function report_options_server() {
+function server_report_options() {
     cat <<EOF
 "msg_size": $___msg_size
 EOF

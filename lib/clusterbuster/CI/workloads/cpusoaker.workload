@@ -22,7 +22,7 @@ declare -gi ___cpusoaker_job_timeout=0
 
 register_workload cpusoaker dispatch_generic cpu cpusoak scaling
 
-function test_cpusoaker() {
+function cpusoaker_test() {
     local default_job_runtime=$1
     if ((___cpusoaker_replica_increment < 1)) ; then
 	echo "Replica increment must be at least 1" 1>&2
@@ -70,7 +70,7 @@ function test_cpusoaker() {
     done
 }
 
-function process_option_cpusoaker() {
+function cpusoaker_process_option() {
     local opt=$1
     read -r noptname1 noptname optvalue <<< "$(parse_option "$opt")"
     case "$noptname1" in
@@ -85,7 +85,7 @@ function process_option_cpusoaker() {
 }
 
 
-function help_options_cpusoaker() {
+function cpusoaker_help_options() {
     cat <<'EOF'
     CPUsoaker options:
         --cpusoaker-starting-replicas=n
@@ -110,7 +110,7 @@ function help_options_cpusoaker() {
 EOF
 }
 
-function document_cpusoaker() {
+function cpusoaker_document() {
 cat <<'EOF'
 * cpusoaker: a simple CPU soaker running a continuous tight loop.
 EOF

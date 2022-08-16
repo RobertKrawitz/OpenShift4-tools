@@ -27,7 +27,7 @@ declare -gir ___uperf_port=30000
 declare -gir ___uperf_port_addrs=24
 declare -gi ___uperf_ramp_time=3
 
-function _create_uperf_server_container_yaml() {
+function _uperf_create_server_container_yaml() {
     local namespace=$1
     local instance=$2
     local secret_count=$3
@@ -47,7 +47,7 @@ $(indent 2 volume_mounts_yaml "$namespace" "$instance" "$secret_count")
 EOF
 }
 
-function _create_uperf_security_context() {
+function _uperf_create_security_context() {
     cat <<EOF
 securityContext:
   sysctls:
@@ -56,7 +56,7 @@ securityContext:
 EOF
 }
 
-function _create_uperf_server_deployment() {
+function _uperf_create_server_deployment() {
     local namespace=$1
     local instance=$2
     local secret_count=$3
@@ -71,20 +71,20 @@ $(indent 2 standard_all_metadata_yaml "$namespace" server)
     matchLabels:
       app: ${namespace}-${instance}
 $(indent 2 standard_labels_yaml uperf-server "$namespace" "$instance")
-$(create_spec -c server _create_uperf_server_container_yaml "$@")
+$(create_spec -c server _uperf_create_server_container_yaml "$@")
   restartPolicy: Never
-$(indent 2 _create_uperf_security_context)
+$(indent 2 _uperf_create_security_context)
 EOF
 }
 
-function _create_uperf_tests() {
+function _uperf_create_tests() {
     local test
     for test in "$@" ; do
 	echo "- \"$test\""
     done
 }
 
-function _create_uperf_client_container_yaml() {
+function _uperf_create_client_container_yaml() {
     local namespace=$1
     local instance=$2
     local secret_count=$3
@@ -119,13 +119,13 @@ $(indent 2 bootstrap_command_yaml uperf-client.pl)
   - "$___uperf_ramp_time"
   - "svc-${namespace}-uperf-server-$instance"
   - "$___uperf_port"
-$(indent 2 _create_uperf_tests "${___uperf_tests[@]}")
+$(indent 2 _uperf_create_tests "${___uperf_tests[@]}")
 $(indent 2 volume_mounts_yaml "$namespace" "$instance" "$secret_count")
 EOF
     done
 }
 
-function _create_uperf_client_affinity_yaml() {
+function _uperf_create_client_affinity_yaml() {
     (( affinity )) || return 0
     local server=$1
     local affinity_type
@@ -147,12 +147,12 @@ affinity:
 EOF
 }
 
-function _create_uperf_client_deployment() {
+function _uperf_create_client_deployment() {
     local namespace=$1
     local instance=$2
     local secret_count=$3
     local replicas=$4
-    local affinity_yaml="$(_create_uperf_client_affinity_yaml "${namespace}-uperf-server-${instance}")"
+    local affinity_yaml="$(_uperf_create_client_affinity_yaml "${namespace}-uperf-server-${instance}")"
     if [[ $deployment_type = pod ]] ; then
 	local -i replica=0
 	while (( replica++ < replicas )) ; do
@@ -167,9 +167,9 @@ $(indent 2 standard_all_metadata_yaml "$namespace" client)
     matchLabels:
       app: ${namespace}-uperf-client-${instance}
 $(indent 2 standard_labels_yaml uperf-client "$namespace" "$instance" 1)
-$(create_spec ${affinity_yaml:+-A "$affinity_yaml"} _create_uperf_client_container_yaml "$@" "$replica")
+$(create_spec ${affinity_yaml:+-A "$affinity_yaml"} _uperf_create_client_container_yaml "$@" "$replica")
   restartPolicy: Never
-$(indent 2 _create_uperf_security_context)
+$(indent 2 _uperf_create_security_context)
 EOF
 	done
     else
@@ -193,13 +193,13 @@ spec:
     metadata:
 $(indent 6 standard_labels_yaml uperf-client "$namespace" "$instance" 1)
 $(indent 6 standard_pod_metadata_yaml "$namespace" client)
-$(indent 4 create_spec ${affinity_yaml:+-A "$affinity_yaml"} _create_uperf_client_container_yaml "$@" "x")
-$(indent 6 _create_uperf_security_context)
+$(indent 4 create_spec ${affinity_yaml:+-A "$affinity_yaml"} _uperf_create_client_container_yaml "$@" "x")
+$(indent 6 _uperf_create_security_context)
 EOF
     fi
 }
 
-function create_deployment_uperf() {
+function uperf_create_deployment() {
     local namespace=$1
     local count=${2:-1}
     local secret_count=${3:-1}
@@ -213,15 +213,15 @@ function create_deployment_uperf() {
     for instance in $(seq "$first_deployment" $((count + first_deployment - 1))) ; do
 	create_service "$namespace" "${namespace}-uperf-server-${instance}" $(seq "$___uperf_port" $((___uperf_port + ___uperf_port_addrs)))
 	if [[ $deployment_type = pod ]] ; then
-	    _create_uperf_server_deployment "$namespace" "$instance" "$secret_count" "$((containers_per_pod * replicas))"
+	    _uperf_create_server_deployment "$namespace" "$instance" "$secret_count" "$((containers_per_pod * replicas))"
 	else
-	    _create_uperf_server_deployment "$namespace" "$instance" "$secret_count" "-1"
+	    _uperf_create_server_deployment "$namespace" "$instance" "$secret_count" "-1"
 	fi
-	_create_uperf_client_deployment "$namespace" "$instance" "$secret_count" "$replicas" "$containers_per_pod" "$log_host" "$log_port"
+	_uperf_create_client_deployment "$namespace" "$instance" "$secret_count" "$replicas" "$containers_per_pod" "$log_host" "$log_port"
     done
 }
 
-function list_configmaps_uperf() {
+function uperf_list_configmaps() {
     cat <<EOF
 ${__podfile_dir__}/uperf-client.pl
 ${__podfile_dir__}/uperf-server.pl
@@ -231,7 +231,7 @@ ${__podfile_dir__}/uperf-stream.xml
 EOF
 }
 
-function calculate_logs_required_uperf() {
+function uperf_calculate_logs_required() {
     local -i namespaces=$1
     local -i deps_per_namespace=${2:-1}
     local -i replicas=${3:-1}
@@ -239,30 +239,34 @@ function calculate_logs_required_uperf() {
     echo $((namespaces * containers_per_pod * replicas * deps_per_namespace))
 }
 
-function help_options_uperf() {
+function uperf_help_options() {
     cat <<'EOF'
-    uperf options:
-       workload-runtime
+    Uperf Options:
+       --workload-runtime
                        How many seconds to run each test for.
-       pin_node=server=<node>
+       --pin_node=server=<node>
                        Specify node to which the server is bound.
-      The following options take a comma-separated list of each
-      value to test.  The outer product of all specified tests
-      is run.
-       uperf-msg-size  Specify the message size(s) to be tested.
-       uperf-test-type Type of test to run (currently stream or rr)
-       uperf-protocol  Protocol (tcp or udp).
-       uperf-nthr      Number of threads to be tested.
+     The following options take a comma-separated list of each
+     value to test.  The outer product of all specified tests
+     is run.
+       --uperf-msg-size=<sizes>
+                       Specify the message size(s) to be tested.
+       --uperf-test-type=<types>
+                       Type of test to run (currently stream or rr)
+       --uperf-protocol=protocol
+                       Protocol (tcp or udp).
+       --uperf-nthr=<n>
+                       Number of threads to be tested.
 EOF
 }
 
-function document_uperf() {
+function uperf_document() {
     cat <<'EOF'
 * uperf: a partial front end to uperf (https://www.uperf.org)
 EOF
 }
 
-function process_options_uperf() {
+function uperf_process_options() {
     local opt
     local -a unknown_opts=()
     for opt in "$@" ; do
@@ -302,11 +306,11 @@ function process_options_uperf() {
     done
 }
 
-function supports_reporting_uperf() {
+function uperf_supports_reporting() {
     :
 }
 
-function generate_metadata_uperf() {
+function uperf_generate_metadata() {
     local -a jobs=()
     local -i jobidx=1
     local -i msgsize
@@ -338,7 +342,7 @@ EOF
     echo '}'
 }
 
-function report_options_uperf() {
+function uperf_report_options() {
     cat <<EOF
 "msg_size": $___msg_size
 EOF

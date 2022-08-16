@@ -24,7 +24,7 @@ declare -ag ___sysbench_fileio_options=()
 declare -Ag ___sysbench_fileio_tests=()
 declare -g ___sysbench_fileio_test_string='seqwr,seqrd,rndwr,rndrd'
 
-function _create_containers_sysbench_yaml() {
+function _sysbench_create_containers_yaml() {
     local namespace=$1
     local instance=$2
     local secret_count=$3
@@ -70,7 +70,7 @@ EOF
     done
 }
 
-function _create_sysbench_deployment() {
+function _sysbench_create_deployment() {
     local namespace=$1
     local instance=$2
     local secret_count=$3
@@ -86,7 +86,7 @@ $(indent 2 standard_all_metadata_yaml "$namespace" client)
     matchLabels:
       app: ${namespace}-sysbench-${instance}
 $(indent 2 standard_labels_yaml sysbench "$namespace" "$instance" 1)
-$(create_spec _create_containers_sysbench_yaml "$@")
+$(create_spec _sysbench_create_containers_yaml "$@")
   restartPolicy: Never
 EOF
     else
@@ -108,12 +108,12 @@ spec:
     metadata:
 $(indent 6 standard_labels_yaml sysbench "$namespace" "$instance" 1)
 $(indent 6 standard_pod_metadata_yaml "$namespace" client)
-$(indent 4 create_spec _create_containers_sysbench_yaml "$@")
+$(indent 4 create_spec _sysbench_create_containers_yaml "$@")
 EOF
     fi
 }
 
-function create_deployment_sysbench() {
+function sysbench_create_deployment() {
     local namespace=$1
     local count=${2:-1}
     local secret_count=${3:-1}
@@ -124,17 +124,17 @@ function create_deployment_sysbench() {
     local -i instance
     create_sync_service_if_needed "$namespace" "$(( (${#___sysbench_fileio_tests[@]} * 3) + 2))" "$((containers_per_pod * replicas * count))"
     for instance in $(seq $first_deployment $((count + first_deployment - 1))) ; do
-	_create_sysbench_deployment "$namespace" "$instance" "$secret_count"  "$replicas" "$containers_per_pod" "$log_host" "$log_port"
+	_sysbench_create_deployment "$namespace" "$instance" "$secret_count"  "$replicas" "$containers_per_pod" "$log_host" "$log_port"
     done
 }
 
-function list_configmaps_sysbench() {
+function sysbench_list_configmaps() {
     cat <<EOF
 ${__podfile_dir__}/sysbench.pl
 EOF
 }
 
-function calculate_logs_required_sysbench() {
+function sysbench_calculate_logs_required() {
     local -i namespaces=$1
     local -i deps_per_namespace=${2:-1}
     local -i replicas=${3:-1}
@@ -142,7 +142,7 @@ function calculate_logs_required_sysbench() {
     echo $((namespaces * containers_per_pod * processes_per_pod * replicas * deps_per_namespace))
 }
 
-function help_options_sysbench() {
+function sysbench_help_options() {
     cat <<'EOF'
     Sysbench General Options:
        --sysbench-general-options=<options>
@@ -159,7 +159,7 @@ function help_options_sysbench() {
 EOF
 }
 
-function document_sysbench() {
+function sysbench_document() {
     cat <<'EOF'
 * sysbench: scriptable multi-threaded benchmark tool based on LuaJIT.
   Currently supports only file I/O operations.
@@ -167,7 +167,7 @@ function document_sysbench() {
 EOF
 }
 
-function process_options_sysbench() {
+function sysbench_process_options() {
     local opt
     local -a unknown_opts=()
     local ftest
@@ -190,11 +190,11 @@ function process_options_sysbench() {
     done
 }
 
-function supports_reporting_sysbench() {
+function sysbench_supports_reporting() {
     :
 }
 
-function report_options_sysbench() {
+function sysbench_report_options() {
     cat <<EOF
 "sysbench_general_options": [$(quote_list "${___sysbench_general_options[@]}")],
 "sysbench_Generic_options": [$(quote_list "${___sysbench_generic_options[@]}")],

@@ -217,8 +217,8 @@ Usage: $0 [options] [name]
 
     Options:
        -B basename     Base name of pods.  Default is
-       	  	       \$CLUSTERBUSTER_DEFAULT_BASENAME if defined or
-		       otherwise 'clusterbuster'.
+                       \$CLUSTERBUSTER_DEFAULT_BASENAME if defined or
+                       otherwise 'clusterbuster'.
                        All objects are labeled with this name.
        -E              Don't exit after all operations are complete.
        -e              Exit after all operations are complete (default).
@@ -255,7 +255,7 @@ EOF
        --basename=name  Specify the base name for any namespaces (-B)
        --namespaces=N   Number of namespaces
        --jobfile=jobfile
-			Process job file (-f)
+                        Process job file (-f)
        --sync           Synchronize start of workload instances (default yes)
        --precleanup     Clean up any prior objects
        --cleanup        Clean up generated objects
@@ -422,7 +422,7 @@ $(print_workloads_supporting_reporting '                        - ')
        --first_deployment=N
                         Index number of first pod to be created
        --pod-prefix=prefix
-			Prefix all created pods with this prefix.
+                        Prefix all created pods with this prefix.
        --sleep=N        Number of seconds between object creations
                         Below options default to sleeptime
        --sleep_between_secrets=N
@@ -430,19 +430,19 @@ $(print_workloads_supporting_reporting '                        - ')
        --sleep_between_deployments=N
 
        --objs_per_call=N
-			Number of objects per CLI call.  Only objects
-       			within a namespace can be created this way;
-			to improve creation performance with multiple
-			namespaces, use --parallel.
+                        Number of objects per CLI call.  Only objects
+                        within a namespace can be created this way;
+                        to improve creation performance with multiple
+                        namespaces, use --parallel.
                         Below options all default to objs_per_call
        --objs_per_call_secrets=N
        --objs_per_call_namespaces=N
        --objs_per_call_deployments=N
 
        --parallel=N     Number of operations in parallel.  Only
-       			operations across namespaces can be
-			parallelized; to improve performance
-			within one namespace, use --objs_per_call.
+                        operations across namespaces can be
+                        parallelized; to improve performance
+                        within one namespace, use --objs_per_call.
                         Below options all default to parallel
        --parallel_secrets=N
        --parallel_namespaces=N
@@ -459,7 +459,7 @@ $(print_workloads_supporting_reporting '                        - ')
 Workload-specific options:
 $(_help_options_workloads)
 
-    Advanced options (generally not required):
+Advanced options (generally not required):
        --baseoffset=N   Add specified offset to base time
                         for calculation of start time offset
                         to correct for clock skew.  May be float.

@@ -24,7 +24,7 @@ declare -ig ___file_dirs_per_volume=1
 declare -ig ___files_per_dir=1
 declare -ig ___files_direct=0
 
-function _create_containers_files_yaml() {
+function _files_create_containers_yaml() {
     local namespace=$1
     local instance=$2
     local secret_count=$3
@@ -32,6 +32,7 @@ function _create_containers_files_yaml() {
     local -i containers_per_pod=$5
     local log_host=${6:-}
     local -i log_port=${7:-0}
+    local replica=${8:+-$8}
     local -i container
     local sync_service=
     local sync_port_num=
@@ -65,7 +66,7 @@ $(indent 2 bootstrap_command_yaml files.pl)
   - "$file_blocks"
   - "$processes_per_pod"
   - "$___files_direct"
-  - "svc-${namespace}-files-${instance}-dc"
+  - "svc-${namespace}-files-${instance}${replica}-dc"
   - "$drop_cache_port"
 $(tmp_volume_paths=("${volume_mount_paths[@]/%/\"}"); IFS=$'\n'; echo "${tmp_volume_paths[*]/#/  - \"}")
 $(emptydirs=("${emptydirs[@]/%/\"}"); IFS=$'\n'; echo "${emptydirs[*]/#/  - \"}")
@@ -74,16 +75,15 @@ EOF
     done
 }
 
-function _create_files_deployment() {
+function _files_create_deployment() {
     local namespace=$1
     local instance=$2
     local secret_count=$3
     local -i replicas=$4
-    if [[ $deployment_type = pod ]] ; then
-	local -i replica=0
-	while (( replica++ < replicas )) ; do
-	    local name="${namespace}-files-${instance}-${replica}"
-	    create_object -n "$namespace" "$name"  <<EOF
+    local -i replica=0
+    while (( replica++ < replicas )) ; do
+	local name="${namespace}-files-${instance}-${replica}"
+	create_object -n "$namespace" "$name"  <<EOF
 apiVersion: v1
 kind: Pod
 metadata:
@@ -93,36 +93,13 @@ $(indent 2 standard_all_metadata_yaml "$namespace" client)
     matchLabels:
       app: ${namespace}-files-${instance}
 $(indent 2 standard_labels_yaml files "$namespace" "${instance}-${replica}" 1)
-$(create_spec _create_containers_files_yaml "$@")
+$(create_spec _files_create_containers_yaml "$@" "$replica")
   restartPolicy: Never
 EOF
-	done
-    else
-	local name="${namespace}-files-${instance}"
-	create_object -n "$namespace" "$name" <<EOF
-apiVersion: apps/v1
-kind: $deployment_type
-metadata:
-  name: $(mkpodname "$name")
-$(indent 2 standard_deployment_metadata_yaml "$namespace" client)
-$(indent 2 standard_labels_yaml files "$namespace" "$instance" 1)
-spec:
-  replicas: $replicas
-  selector:
-    matchLabels:
-      app: ${namespace}-files-${instance}
-  strategy:
-    type: RollingUpdate
-  template:
-    metadata:
-$(indent 6 standard_labels_yaml files "$namespace" "$instance" 1)
-$(indent 6 standard_pod_metadata_yaml "$namespace" client)
-$(indent 4 create_spec _create_containers_files_yaml "$@")
-EOF
-    fi
+    done
 }
 
-function create_deployment_files() {
+function files_create_deployment() {
     local namespace=$1
     local count=${2:-1}
     local secret_count=${3:-1}
@@ -133,21 +110,16 @@ function create_deployment_files() {
     local -i instance
     create_sync_service_if_needed "$namespace" 8 "$((containers_per_pod * processes_per_pod * replicas * count))"
     for instance in $(seq $first_deployment $((count + first_deployment - 1))) ; do
-	if [[ $deployment_type = pod ]] ; then
-	    local -i replica=0
-	    while (( replica++ < replicas )) ; do
-		create_service -H "$namespace" "${namespace}-files-${instance}-${replica}-dc" "$drop_cache_port"
-		create_drop_cache_deployment "$namespace" files "${instance}-${replica}"
-	    done
-	else
-	    create_service -H "$namespace" "${namespace}-files-${instance}-dc" "$drop_cache_port"
-	    create_drop_cache_deployment "$namespace" files "${instance}"
-	fi
-	_create_files_deployment "$namespace" "$instance" "$secret_count"  "$replicas" "$containers_per_pod" "$log_host" "$log_port"
+	local -i replica=0
+	while (( replica++ < replicas )) ; do
+	    create_service -H "$namespace" "${namespace}-files-${instance}-${replica}-dc" "$drop_cache_port"
+	    create_drop_cache_deployment "$namespace" files "${instance}-${replica}"
+	done
+	_files_create_deployment "$namespace" "$instance" "$secret_count"  "$replicas" "$containers_per_pod" "$log_host" "$log_port"
     done
 }
 
-function calculate_logs_required_files() {
+function files_calculate_logs_required() {
     local -i namespaces=$1
     local -i deps_per_namespace=${2:-1}
     local -i replicas=${3:-1}
@@ -155,16 +127,16 @@ function calculate_logs_required_files() {
     echo $((namespaces * containers_per_pod * processes_per_pod * replicas * deps_per_namespace))
 }
 
-function list_configmaps_files() {
+function files_list_configmaps() {
     cat <<EOF
 ${__podfile_dir__}/files.pl
 ${__podfile_dir__}/drop_cache.pl
 EOF
 }
 
-function help_options_files() {
+function files_help_options() {
     cat <<'EOF'
-    Using Files:
+    Many Files Options:
        --dirs-per-volume=N
                         Create the specified number of directories per volume.
                         Default 1.
@@ -182,14 +154,14 @@ function help_options_files() {
 EOF
 }
 
-function document_files() {
+function files_document() {
     cat <<'EOF'
 * files: a simple filesystem stressor that creates and removes a large
   number of files.
 EOF
 }
 
-function process_options_files() {
+function files_process_options() {
     local opt
     local -a unknown_opts=()
     for opt in "$@" ; do
@@ -211,15 +183,15 @@ function process_options_files() {
     fi
 }
 
-function supports_reporting_files() {
+function files_supports_reporting() {
     :
 }
 
-function generate_metadata_files() {
-    report_options_files
+function files_generate_metadata() {
+    files_report_options
 }
 
-function report_options_files() {
+function files_report_options() {
     cat <<EOF
 "dirs_per_volume": $___file_dirs_per_volume,
 "files_per_dir": $___files_per_dir,
