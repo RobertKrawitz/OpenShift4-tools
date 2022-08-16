@@ -18,7 +18,7 @@
 # Simple workloads (pause pod, clusterbuster, logging)
 ################################################################
 
-function _create_containers_classic_yaml() {
+function _classic_create_containers_yaml() {
     local namespace=$1
     local instance=$2
     local secret_count=$3
@@ -56,12 +56,9 @@ EOF
     done
 }
 
-function _create_deployment_classic_yaml() {
+function _classic_create_deployment_yaml() {
     local namespace=$1
     local instance=$2
-    local secret_count=$3
-    local -i replicas=$4
-    local -i containers_per_pod=$5
     if [[ $deployment_type = pod ]] ; then
 	local -i replica=0
 	while (( replica++ < replicas )) ; do
@@ -74,9 +71,9 @@ metadata:
 $(indent 2 standard_all_metadata_yaml "$namespace" client)
   selector:
     matchLabels:
-      app: ${namespace}-${instance}
-$(indent 2 standard_labels_yaml "classic" "$namespace" "$instance")
-$(create_spec _create_containers_classic_yaml "$@")
+      app: ${namespace}-classic-${instance}
+$(indent 2 standard_labels_yaml "classic" "$namespace" "$instance" 1)
+$(create_spec _classic_create_containers_yaml "$@")
   restartPolicy: Never
 EOF
 	done
@@ -84,28 +81,28 @@ EOF
 	local name="${namespace}-classic-${instance}"
 	create_object -n "$namespace" "$name" <<EOF
 apiVersion: apps/v1
-kind: Deployment
+kind: $deployment_type
 metadata:
   name: $(mkpodname "$name")
 $(indent 2 standard_deployment_metadata_yaml "$namespace" client)
-$(indent 2 standard_labels_yaml)
+$(indent 2 standard_labels_yaml classic "$namespace" "$instance" 1)
 spec:
   replicas: $replicas
   selector:
     matchLabels:
-      app: ${namespace}-${instance}
+      app: ${namespace}-classic-${instance}
   strategy:
     type: RollingUpdate
   template:
     metadata:
-$(indent 6 standard_labels_yaml "classic" "$namespace" "$instance")
+$(indent 6 standard_labels_yaml "classic" "$namespace" "$instance" 1)
 $(indent 6 standard_pod_metadata_yaml "$namespace" client)
-$(indent 4 create_spec _create_containers_classic_yaml "$@")
+$(indent 4 create_spec _classic_create_containers_yaml "$@")
 EOF
     fi
 }
 
-function create_deployment_classic() {
+function classic_create_deployment() {
     local namespace=$1
     local count=${2:-1}
     local secret_count=${3:-1}
@@ -116,17 +113,17 @@ function create_deployment_classic() {
     local -i instance
     create_sync_service_if_needed "$namespace" 2 "$((containers_per_pod * replicas * count))"
     for instance in $(seq $first_deployment $((count + first_deployment - 1))) ; do
-	_create_deployment_classic_yaml "$namespace" "$instance" "$secret_count" "$((processes_per_pod))" "$containers_per_pod" "$log_host" "$log_port"
+	_classic_create_deployment_yaml "$namespace" "$instance" "$secret_count" "$((processes_per_pod))" "$containers_per_pod" "$log_host" "$log_port"
     done
 }
 
-function list_configmaps_classic() {
+function classic_list_configmaps() {
     cat <<EOF
 ${__podfile_dir__}/classic.pl
 EOF
 }
 
-function calculate_logs_required_classic() {
+function classic_calculate_logs_required() {
     local -i namespaces=$1
     local -i deps_per_namespace=${2:-1}
     local -i replicas=${3:-1}
@@ -134,18 +131,18 @@ function calculate_logs_required_classic() {
     echo $((namespaces * containers_per_pod * replicas * deps_per_namespace))
 }
 
-function document_classic() {
+function classic_document() {
     cat <<'EOF'
 * classic: a simple pod based on busybox that logs the date
   once per minute.  Useful for testing the control plane.
 EOF
 }
 
-function workload_reporting_class_classic() {
+function classic_workload_reporting_class() {
     echo generic
 }
 
-function supports_reporting_classic() {
+function classic_supports_reporting() {
     :
 }
 

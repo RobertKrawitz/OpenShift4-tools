@@ -1,0 +1,12 @@
+# Run as
+# clusterbuster -f memory
+
+cleanup
+workload=memory
+workloadruntime=10
+precleanup=1
+no-report-object-creation
+replicas=8
+processes=3
+namespaces=1
+memorysize=1Gi

@@ -160,9 +160,10 @@ function dispatch_generic() {
     local workload=$1
     local API=$2
     shift 2
-    if type -t "${API}_${workload}" >/dev/null ; then
+    local funcname="${workload}_${API}"
+    if type -t "$funcname" >/dev/null ; then
 	((probe_only)) && return 0
-	"${API}_${workload}" "$@"
+	"$funcname" "$@"
     else
 	return 1
     fi

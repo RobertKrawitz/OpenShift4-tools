@@ -25,7 +25,7 @@ declare -ig ___log_processes=1
 declare -ig ___log_delay_usec=0
 declare -ig ___log_xfertime=0
 
-function _create_containers_pausepod_yaml() {
+function _simple-pausepod_create_containers_yaml() {
     local namespace=$1
     local instance=$2
     local secret_count=$3
@@ -43,7 +43,7 @@ EOF
     done
 }
 
-function _create_containers_log_yaml() {
+function _simple-log_create_containers_yaml() {
     local namespace=$1
     local instance=$2
     local secret_count=$3
@@ -74,7 +74,7 @@ $(indent 2 volume_mounts_yaml "$namespace" "${instance}" "$secret_count")
 EOF
     done
 }
-function _create_deployment_simple_yaml() {
+function _simple_create_deployment_yaml() {
     local namespace=$1
     local instance=$2
     local secret_count=$3
@@ -93,37 +93,39 @@ $(indent 2 namespace_yaml "$namespace")
 $(indent 2 privilege_yaml)
   selector:
     matchLabels:
-      app: ${namespace}-${instance}
-$(indent 2 standard_labels_yaml "${requested_workload}" "$namespace" "$instance")
-$(create_spec _create_containers_${requested_workload}_yaml "$@")
+      app: ${namespace}-${requested_workload}-${instance}
+$(indent 2 standard_labels_yaml "${requested_workload}" "$namespace" "$instance" 1)
+$(create_spec _${requested_workload}_create_containers_yaml "$@")
+  restartPolicy: Never
 EOF
 	done
     else
 	local name="${namespace}-${requested_workload}-${instance}"
 	create_object -n "$namespace" "$name" <<EOF
 apiVersion: apps/v1
-kind: Deployment
+kind: $deployment_type
 metadata:
   name: $(mkpodname "$name")
 $(indent 2 namespace_yaml "$namespace")
 $(indent 2 privilege_yaml)
-$(indent 2 standard_labels_yaml)
+$(indent 2 standard_labels_yaml "${requested_workload}" "$namespace" "$instance" 1)
 spec:
   replicas: $replicas
   selector:
     matchLabels:
-      app: ${namespace}-${instance}
+      app: ${namespace}-${requested_workload}-${instance}
   strategy:
     type: RollingUpdate
   template:
     metadata:
-$(indent 6 standard_labels_yaml "${requested_workload}" "$namespace" "$instance")
-$(indent 4 create_spec _create_containers_${requested_workload}_yaml "$@")
+$(indent 6 standard_labels_yaml "${requested_workload}" "$namespace" "$instance" 1)
+$(indent 6 standard_pod_metadata_yaml "$namespace" client)
+$(indent 4 create_spec _${requested_workload}_create_containers_yaml "$@")
 EOF
     fi
 }
 
-function _create_deployment_simple() {
+function _simple_create_deployment() {
     local namespace=$1
     local count=${2:-1}
     local secret_count=${3:-1}
@@ -132,38 +134,38 @@ function _create_deployment_simple() {
     local -i instance
     create_sync_service_if_needed "$namespace" 0 $((replicas * (count + first_deployment)))
     for instance in $(seq $first_deployment $((count + first_deployment - 1))) ; do
-	_create_deployment_simple_yaml "$namespace" "${instance}" "$secret_count"  "$replicas" "$containers_per_pod"
+	_simple_create_deployment_yaml "$namespace" "${instance}" "$secret_count"  "$replicas" "$containers_per_pod"
     done
 }
 
 # The simple workloads do not support logging or synchronization.
 # The Log workload is about log generation
 
-function supports_reporting_simple() {
+function simple-log_supports_reporting() {
     :
 }
 
-function supports_reporting_pausepod() {
+function simple-pausepod_supports_reporting() {
     :
 }
 
-function list_configmaps_simple() {
+function simple-log_list_configmaps() {
     :
 }
 
-function list_configmaps_pausepod() {
+function simple-pausepod_list_configmaps() {
     :
 }
 
-function workload_reporting_class_simple() {
+function simple-log_workload_reporting_class() {
     echo generic_nodata
 }
 
-function workload_reporting_class_pausepod() {
+function simple-pausepod_workload_reporting_class() {
     echo generic_nodata
 }
 
-function calculate_logs_required_simple() {
+function _simple_calculate_logs_required() {
     local -i namespaces=$1
     local -i deps_per_namespace=${2:-1}
     local -i replicas=${3:-1}
@@ -171,25 +173,29 @@ function calculate_logs_required_simple() {
     echo $((namespaces * replicas * deps_per_namespace))
 }
 
-function calculate_logs_required_pausepod() {
-    calculate_logs_required_simple "$@"
+function simple-log_calculate_logs_required() {
+    _simple_calculate_logs_required "$@"
 }
 
-function list_configmaps_log() {
+function simple-pausepod_calculate_logs_required() {
+    _simple_calculate_logs_required "$@"
+}
+
+function simple-log_list_configmaps() {
     cat <<EOF
 ${__podfile_dir__}/logger.pl
 EOF
 }
 
-function create_deployment_pausepod() {
-    _create_deployment_simple "$@"
+function simple-pausepod_create_deployment() {
+    _simple_create_deployment "$@"
 }
 
-function create_deployment_log() {
-    _create_deployment_simple "$@"
+function simple-log_create_deployment() {
+    _simple_create_deployment "$@"
 }
 
-function help_options_log() {
+function simple-log_help_options() {
     cat <<EOF
     Log Options:
        --log-bytes-per-line=<bytes_per_line>
@@ -214,7 +220,7 @@ function help_options_log() {
 EOF
 }
 
-function document_pausepod() {
+function simple-pausepod_document() {
     cat <<'EOF'
 * pausepod: a minimal pod that does nothing.  Useful for stressing
   the control plane.  See
@@ -222,13 +228,13 @@ function document_pausepod() {
 EOF
 }
 
-function document_log() {
+function simple-log_document() {
     cat <<'EOF'
 * log: a pod that emits log messages at a controllable rate.
 EOF
 }
 
-function process_options_log() {
+function simple-log_process_options() {
     local opt
     local -a unknown_opts=()
     for opt in "$@" ; do
@@ -248,7 +254,7 @@ function process_options_log() {
     fi
 }
 
-function report_options_log() {
+function simple-log_report_options() {
     cat <<EOF
 "log_bytes_per_line": $___log_bytes_per_line,
 "log_bytes_per_io": $___log_bytes_per_io,
@@ -259,5 +265,5 @@ function report_options_log() {
 EOF
 }
 
-register_workload pausepod dispatch_generic pause
-register_workload log dispatch_generic logger logging
+register_workload simple-pausepod dispatch_generic pausepod pause
+register_workload simple-log dispatch_generic log logger logging

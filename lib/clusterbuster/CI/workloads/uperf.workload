@@ -23,7 +23,7 @@ declare -gi ___uperf_job_timeout=0
 
 register_workload uperf dispatch_generic
 
-function test_uperf() {
+function uperf_test() {
     local default_job_runtime=$1
     if ((___uperf_job_runtime <= 0)) ; then
 	___uperf_job_runtime=$default_job_runtime
@@ -40,7 +40,7 @@ function test_uperf() {
 		for test_type in "${___uperf_test_types[@]}" ; do
 		    local job_name="${msg_size}B-${nthr}i-${ninst}P-${test_type}"
 		    run_clusterbuster -j "$job_name" -w uperf -t "$___uperf_job_timeout" -R "$___uperf_job_runtime" -- \
-				      --deployments="$ninst" \
+				      --replicas="$ninst" \
 				      --uperf_msg_size="$msg_size" \
 				      --uperf_test_type="$test_type" \
 				      --uperf_proto=tcp \
@@ -52,7 +52,7 @@ function test_uperf() {
     done
 }
 
-function process_option_uperf() {
+function uperf_process_option() {
     local opt=$1
     read -r noptname1 noptname optvalue <<< "$(parse_option "$opt")"
     case "$noptname1" in
@@ -67,7 +67,7 @@ function process_option_uperf() {
 }
 
 
-function help_options_uperf() {
+function uperf_help_options() {
     cat <<'EOF'
     Uperf test options:
         --uperf-msg-sizes=n[,n...]
@@ -89,7 +89,7 @@ function help_options_uperf() {
 EOF
 }
 
-function document_uperf() {
+function uperf_document() {
 cat <<'EOF'
 * uperf: a partial front end to uperf (https://www.uperf.org)
 EOF

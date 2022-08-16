@@ -217,8 +217,8 @@ Usage: $0 [options] [name]
 
     Options:
        -B basename     Base name of pods.  Default is
-       	  	       \$CLUSTERBUSTER_DEFAULT_BASENAME if defined or
-		       otherwise 'clusterbuster'.
+                       \$CLUSTERBUSTER_DEFAULT_BASENAME if defined or
+                       otherwise 'clusterbuster'.
                        All objects are labeled with this name.
        -E              Don't exit after all operations are complete.
        -e              Exit after all operations are complete (default).
@@ -255,7 +255,7 @@ EOF
        --basename=name  Specify the base name for any namespaces (-B)
        --namespaces=N   Number of namespaces
        --jobfile=jobfile
-			Process job file (-f)
+                        Process job file (-f)
        --sync           Synchronize start of workload instances (default yes)
        --precleanup     Clean up any prior objects
        --cleanup        Clean up generated objects
@@ -422,7 +422,7 @@ $(print_workloads_supporting_reporting '                        - ')
        --first_deployment=N
                         Index number of first pod to be created
        --pod-prefix=prefix
-			Prefix all created pods with this prefix.
+                        Prefix all created pods with this prefix.
        --sleep=N        Number of seconds between object creations
                         Below options default to sleeptime
        --sleep_between_secrets=N
@@ -430,19 +430,19 @@ $(print_workloads_supporting_reporting '                        - ')
        --sleep_between_deployments=N
 
        --objs_per_call=N
-			Number of objects per CLI call.  Only objects
-       			within a namespace can be created this way;
-			to improve creation performance with multiple
-			namespaces, use --parallel.
+                        Number of objects per CLI call.  Only objects
+                        within a namespace can be created this way;
+                        to improve creation performance with multiple
+                        namespaces, use --parallel.
                         Below options all default to objs_per_call
        --objs_per_call_secrets=N
        --objs_per_call_namespaces=N
        --objs_per_call_deployments=N
 
        --parallel=N     Number of operations in parallel.  Only
-       			operations across namespaces can be
-			parallelized; to improve performance
-			within one namespace, use --objs_per_call.
+                        operations across namespaces can be
+                        parallelized; to improve performance
+                        within one namespace, use --objs_per_call.
                         Below options all default to parallel
        --parallel_secrets=N
        --parallel_namespaces=N
@@ -459,7 +459,7 @@ $(print_workloads_supporting_reporting '                        - ')
 Workload-specific options:
 $(_help_options_workloads)
 
-    Advanced options (generally not required):
+Advanced options (generally not required):
        --baseoffset=N   Add specified offset to base time
                         for calculation of start time offset
                         to correct for clock skew.  May be float.
@@ -867,13 +867,14 @@ function ___OC() {
 # The big red button if something goes wrong.
 
 function childrenof() {
+    IFS=' '
     function is_descendent() {
-	local pid=$1
+	local -i child=$1
 	local ancestor=$2
-	if ((pid == ancestor)) ; then
+	if ((child == ancestor)) ; then
 	    true
 	else
-	    parent=${ps_parents[$pid]:-1}
+	    parent=${ps_parents[$child]:-1}
 	    case "$parent" in
 		1)           false ;;
 		"$ancestor") true  ;;
@@ -893,10 +894,11 @@ function childrenof() {
     local target=$1
     local -A ps_parents=()
     local -A ps_commands=()
-    local -i ppid
-    local -i pid
+    local ppid
+    local pid
+    local command
     local ignore
-    while read -r pid ppid command ; do
+    while read -r pid ppid command ignore; do
 	ps_parents["$pid"]=$ppid
 	ps_commands["$pid"]=$command
     done <<< "$(ps -axo pid,ppid,command | tail -n +2)"
@@ -1138,7 +1140,7 @@ function monitor_pods() {
 		    oc logs -n "$namespace" "$name" |tail -20 1>&2
 		    killthemall
 		    ;;
-		pending)
+		pending|containercreating)
 		    other_pod_count=$((other_pod_count+1))
 		    pending_pods+=("$namespace/$name")
 		    ;;
@@ -1695,8 +1697,8 @@ labels:
 EOF
     if [[ -n "$workload" ]] ; then
 	cat <<EOF
-  name: "${namespace}-${workload}-${instance}"
-  app: "${namespace}-${workload}-${instance}"
+  name: "${namespace}${workload:+-$workload}${instance:+-$instance}"
+  app: "${namespace}${workload:+-$workload}${instance:+-$instance}"
   ${basename}-${workload}: "true"
 ${logger:+  ${basename}-logger: $true}
 EOF
@@ -1981,9 +1983,9 @@ EOF
 # Object YAML creation
 ################################################################
 
-function really_create_objects() {
+function _really_create_objects() {
     if [[ $doit -ne 0 && -n $accumulateddata ]] ; then
-	(__OC --validate=false apply -f - <<< "$accumulateddata" | timestamp 1>&2) || {
+	__OC --validate=false apply -f - <<< "$accumulateddata" || {
 	    echo "Create objects failed:" 1>&2
 	    echo "$accumulateddata" 1>&2
 	    killthemall "Failed to create objects"
@@ -1991,6 +1993,12 @@ function really_create_objects() {
 	accumulateddata=
 	objs_item_count=0
     fi
+}
+
+function really_create_objects() {
+    _really_create_objects "$@" | timestamp 1>&2
+    accumulateddata=
+    objs_item_count=0
 }
 
 function create_object() {
@@ -2014,7 +2022,7 @@ function create_object() {
     local -i data_found=0
     while IFS='' read -r 'line' ; do
 	line=${line%% }
-	if [[ -n $line ]] ; then
+	if [[ $line =~ [^[:space:]] ]] ; then
 	    data_found=1
 	    [[ -n $data ]] || data="---$nl"
 	    data+="$line$nl"
@@ -2045,7 +2053,7 @@ function echo_if_desired() {
     fi
 }
 
-function create_object_from_file() {
+function _create_object_from_file() {
     function _ns() {
 	((use_namespaces)) && echo -n "-n $namespace"
     }
@@ -2059,9 +2067,9 @@ function create_object_from_file() {
 	[[ -r "$file" ]] || fatal "Can't read file $file!"
     done
     # shellcheck disable=SC2046
-    (_OC create "$objtype" $(_ns) "$objname" "${@/#/--from-file=}" | echo_if_desired 1>&2) || killthemall "Unable to create object $objtype/$namespace:$objname"
+    _OC create "$objtype" $(_ns) "$objname" "${@/#/--from-file=}" || killthemall "Unable to create object $objtype/$namespace:$objname"
     # shellcheck disable=SC2046
-    (_OC label "$objtype" $(_ns) "$objname" "${basename}base=true" 'clusterbusterbase=true' "${basename}-uuid=${uuid}" "${basename}-id=$uuid" "${basename}=true" | echo_if_desired 1>&2) || killthemall "Unable to label $objtype/$namespace:$objname"
+    _OC label "$objtype" $(_ns) "$objname" "${basename}base=true" 'clusterbusterbase=true' "${basename}-uuid=${uuid}" "${basename}-id=$uuid" "${basename}=true" || killthemall "Unable to label $objtype/$namespace:$objname"
     if (( doit )) ; then
 	if [[ -n "$artifactdir" ]] ; then
 	    mkdir -p "$artifactdir/$objtype"
@@ -2080,6 +2088,10 @@ function create_object_from_file() {
 	fi
 	(( !sleeptime )) || sleep "$sleeptime"
     fi
+}
+
+function create_object_from_file() {
+    _create_object_from_file "$@" |echo_if_desired |timestamp 1>&2
 }
 
 function create_namespace() {
@@ -2457,12 +2469,12 @@ function create_all_objects() {
 	if [[ $line = *'__KUBEFAIL__ '* ]] ; then
 	    echo "${line#__KUBEFAIL__ }" 1>&2
 	    return 1
-	elif [[ $line =~ ^[[:digit:]]{4}(-[[:digit:]]{2}){2}T([[:digit:]]{2}:){2}[[:digit:]]{2}\.[[:digit:]]{6}\ +([-a-z0-9]+)/([-a-z0-9]+)\ +created$ ]] ; then
+	elif [[ $line =~ ^[[:digit:]]{4}(-[[:digit:]]{2}){2}T([[:digit:]]{2}:){2}[[:digit:]]{2}\.[[:digit:]]{6}\ +(([-a-z0-9]+)(\.[-a-z0-9]*)?)/([-a-z0-9]+)\ +created$ ]] ; then
 	    if (( report_object_creation )) ; then
 		echo "$line" 1>&2
 	    fi
 	    total_objects_created=$((total_objects_created+1))
-	    found_objtype=${BASH_REMATCH[3]}
+	    found_objtype=${BASH_REMATCH[4]}
 	    if [[ -z ${objects_created[$found_objtype]:-} ]] ; then
 		objects_created[$found_objtype]=1
 	    else
@@ -2502,7 +2514,7 @@ function _do_cleanup() {
     if ! _do_cleanup_1 "$@" ; then
 	if [[ -n "$force_cleanup_timeout" ]] ; then
 	    warn "*** Cleanup failed, doing a force delete!"
-	    __OC delete pod,deployment,configmap,secret,service -A  -l "$basename" --force --grace-period=0 1>&2
+	    __OC delete deployment,replicaset,pod,configmap,secret,service -A  -l "$basename" --force --grace-period=0 1>&2
 	    if ((use_namespaces)) ; then
 		__OC delete namespace -l "$basename" --force --grace-period=0 1>&2
 	    fi
@@ -2841,10 +2853,17 @@ if [[ -n "$metrics_file" && ! -r "$metrics_file" ]] ; then
     fatal "Cannot read metrics file $metrics_file"
 fi
 
-if [[ $deployment_type != pod && $deployment_type != deployment ]] ; then
-    echo "--deployment_type must be either pod or deployment"
-    help
-fi
+case "${deployment_type,,}" in
+    # If we're using deployments or replicasets, we do not want
+    # to exit when workers complete, or the controller will
+    # immediately try to re-create them.
+    replicaset|rs)         deployment_type=ReplicaSet; exit_at_end=0 ;;
+    deployment|dep|deploy) deployment_type=Deployment; exit_at_end=0 ;;
+    pod) deployment_type=pod		   		  ;;
+    *)
+	echo "--deployment_type must be pod, deployment, or replicaset"
+	help
+esac
 
 if [[ -z $OC && $doit -gt 0 ]] ; then
     fatal "Cannot find oc or kubectl command, exiting!"

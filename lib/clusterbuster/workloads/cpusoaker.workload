@@ -18,7 +18,7 @@
 # CPU soaker workload
 ################################################################
 
-function _create_containers_cpusoaker_yaml() {
+function _cpusoaker_create_containers_yaml() {
     local namespace=$1
     local instance=$2
     local secret_count=$3
@@ -57,7 +57,7 @@ EOF
     done
 }
 
-function _create_cpusoaker_deployment() {
+function _cpusoaker_create_deployment() {
     local namespace=$1
     local instance=$2
     if [[ $deployment_type = pod ]] ; then
@@ -74,7 +74,7 @@ $(indent 2 standard_all_metadata_yaml "$namespace" client)
     matchLabels:
       app: ${namespace}-cpusoaker-${instance}
 $(indent 2 standard_labels_yaml cpusoaker "$namespace" "$instance" 1)
-$(create_spec _create_containers_cpusoaker_yaml "$@")
+$(create_spec _cpusoaker_create_containers_yaml "$@")
   restartPolicy: Never
 EOF
 	done
@@ -82,10 +82,11 @@ EOF
 	local name=${namespace}-cpusoaker-${instance}
 	create_object -n "$namespace" "$name" <<EOF
 apiVersion: apps/v1
-kind: Deployment
+kind: $deployment_type
 metadata:
   name: $(mkpodname "$name")
-$(indent 2 standard_deployment_metadata_yaml "$namespace" client)
+$(indent 2 standard_labels_yaml cpusoaker "$namespace" "$instance")
+$(indent 2 standard_deployment_metadata_yaml "$namespace" client 1)
 spec:
   replicas: $replicas
   selector:
@@ -97,12 +98,12 @@ spec:
     metadata:
 $(indent 6 standard_labels_yaml cpusoaker "$namespace" "$instance" 1)
 $(indent 6 standard_pod_metadata_yaml "$namespace" client)
-$(indent 4 create_spec _create_containers_cpusoaker_yaml "$@")
+$(indent 4 create_spec _cpusoaker_create_containers_yaml "$@")
 EOF
     fi
 }
 
-function create_deployment_cpusoaker() {
+function cpusoaker_create_deployment() {
     local namespace=$1
     local count=${2:-1}
     local secret_count=${3:-1}
@@ -113,17 +114,17 @@ function create_deployment_cpusoaker() {
     local -i instance
     create_sync_service_if_needed "$namespace" 2 "$((containers_per_pod * replicas * processes_per_pod * count))"
     for instance in $(seq $first_deployment $((count + first_deployment - 1))) ; do
-	_create_cpusoaker_deployment "$namespace" "$instance" "$secret_count"  "$((processes_per_pod))" "$containers_per_pod" "$log_host" "$log_port"
+	_cpusoaker_create_deployment "$namespace" "$instance" "$secret_count"  "$((processes_per_pod))" "$containers_per_pod" "$log_host" "$log_port"
     done
 }
 
-function list_configmaps_cpusoaker() {
+function cpusoaker_list_configmaps() {
     cat <<EOF
 ${__podfile_dir__}/cpusoaker.pl
 EOF
 }
 
-function calculate_logs_required_cpusoaker() {
+function cpusoaker_calculate_logs_required() {
     local -i namespaces=$1
     local -i deps_per_namespace=${2:-1}
     local -i replicas=${3:-1}
@@ -131,13 +132,13 @@ function calculate_logs_required_cpusoaker() {
     echo $((namespaces * processes_per_pod * containers_per_pod * replicas * deps_per_namespace))
 }
 
-function document_cpusoaker() {
+function cpusoaker_document() {
     cat <<'EOF'
 * cpusoaker: a simple CPU soaker running a continuous tight loop.
 EOF
 }
 
-function supports_reporting_cpusoaker() {
+function cpusoaker_supports_reporting() {
     :
 }
 

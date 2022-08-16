@@ -26,7 +26,7 @@ declare -gi ___files_min_direct=1024
 
 register_workload files dispatch_generic
 
-function test_files() {
+function files_test() {
     ___files_job_timeout=$(compute_timeout "$___files_job_timeout")
     if [[ -z "${___files_params[*]}" ]] ; then
 	for ninst in "${___files_ninst[@]}" ; do
@@ -64,7 +64,7 @@ function test_files() {
 	job_name="${ninst}P-${___files_dirs_per_volume}D-${___files_per_dir}F-${___files_block_size}B-${file_size}S-${___files_direct}T"
 	# shellcheck disable=SC2090
 	run_clusterbuster -j "$job_name" -w files -t "$___files_job_timeout" -- \
-			  --deployments="$ninst" \
+			  --replicas="$ninst" \
 			  --dirs_per_volume="$___files_dirs_per_volume" \
 			  --files_per_dir="$___files_per_dir" \
 			  --file_block_size="$___files_block_size" \
@@ -73,7 +73,7 @@ function test_files() {
     done
 }
 
-function process_option_files() {
+function files_process_option() {
     local opt=$1
     read -r noptname1 noptname optvalue <<< "$(parse_option "$opt")"
     case "$noptname1" in
@@ -90,7 +90,7 @@ function process_option_files() {
     esac
 }
 
-function help_options_files() {
+function files_help_options() {
     cat <<'EOF'
     Files test options:
         --files-timeout=seconds
@@ -127,7 +127,7 @@ function help_options_files() {
 EOF
 }
 
-function document_files() {
+function files_document() {
 cat <<'EOF'
 * files: a simple filesystem stressor that creates and removes a large
   number of files.

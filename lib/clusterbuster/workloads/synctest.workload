@@ -23,7 +23,7 @@ declare -g ___synctest_count=5
 declare -g ___synctest_cluster_count=1
 declare -g ___synctest_sleep=0
 
-function _create_containers_synctest_yaml() {
+function _synctest_create_containers_yaml() {
     local namespace=$1
     local instance=$2
     local secret_count=$3
@@ -66,7 +66,7 @@ EOF
     done
 }
 
-function _create_synctest_deployment() {
+function _synctest_create_deployment() {
     local namespace=$1
     local instance=$2
     local secret_count=$3
@@ -82,17 +82,17 @@ $(indent 2 standard_all_metadata_yaml "$namespace" client)
     matchLabels:
       app: ${namespace}-synctest-${instance}
 $(indent 2 standard_labels_yaml synctest "$namespace" "$instance" 1)
-$(create_spec _create_containers_synctest_yaml "$@")
+$(create_spec _synctest_create_containers_yaml "$@")
   restartPolicy: Never
 EOF
     else
 	create_object -n "$namespace" "$name" <<EOF
 apiVersion: apps/v1
-kind: Deployment
+kind: $deployment_type
 metadata:
   name: $(mkpodname "$name")
 $(indent 2 standard_deployment_metadata_yaml "$namespace" client)
-$(indent 2 standard_labels_yaml)
+$(indent 2 standard_labels_yaml synctest "$namespace" "$instance" 1)
 spec:
   replicas: 1
   selector:
@@ -104,12 +104,12 @@ spec:
     metadata:
 $(indent 6 standard_labels_yaml synctest "$namespace" "$instance" 1)
 $(indent 6 standard_pod_metadata_yaml "$namespace" client)
-$(indent 4 create_spec _create_containers_synctest_yaml "$@")
+$(indent 4 create_spec _synctest_create_containers_yaml "$@")
 EOF
     fi
 }
 
-function create_deployment_synctest() {
+function synctest_create_deployment() {
     local namespace=$1
     local count=${2:-1}
     local secret_count=${3:-1}
@@ -120,17 +120,17 @@ function create_deployment_synctest() {
     local -i instance
     create_sync_service_if_needed "$namespace" "$(((___synctest_count * ___synctest_cluster_count) + 2))" "$((containers_per_pod * replicas * processes_per_pod * count))"
     for instance in $(seq $first_deployment $((count + first_deployment - 1))) ; do
-	_create_synctest_deployment "$namespace" "$instance" "$secret_count"  "$replicas" "$containers_per_pod" "$log_host" "$log_port"
+	_synctest_create_deployment "$namespace" "$instance" "$secret_count"  "$replicas" "$containers_per_pod" "$log_host" "$log_port"
     done
 }
 
-function list_configmaps_synctest() {
+function synctest_list_configmaps() {
     cat <<EOF
 ${__podfile_dir__}/synctest.pl
 EOF
 }
 
-function help_options_synctest() {
+function synctest_help_options() {
     cat <<'EOF'
     Synctest General Options:
        --synctest-count=n
@@ -142,13 +142,13 @@ function help_options_synctest() {
 EOF
 }
 
-function document_synctest() {
+function synctest_document() {
     cat <<'EOF'
 * synctest: tests internal sync
 EOF
 }
 
-function process_options_synctest() {
+function synctest_process_options() {
     local opt
     local -a unknown_opts=()
     local ftest
@@ -167,7 +167,7 @@ function process_options_synctest() {
     fi
 }
 
-function calculate_logs_required_synctest() {
+function synctest_calculate_logs_required() {
     local -i namespaces=$1
     local -i deps_per_namespace=${2:-1}
     local -i replicas=${3:-1}
@@ -175,18 +175,18 @@ function calculate_logs_required_synctest() {
     echo $((namespaces * processes_per_pod * containers_per_pod * replicas * deps_per_namespace))
 }
 
-function report_options_synctest() {
+function synctest_report_options() {
     cat <<EOF
 "synctest_count": $___synctest_count,
 "synctest_sleep": $___synctest_sleep
 EOF
 }
 
-function workload_reporting_class_synctest() {
+function synctest_workload_reporting_class() {
     echo generic
 }
 
-function supports_reporting_synctest() {
+function synctest_supports_reporting() {
     :
 }
 

@@ -14,21 +14,28 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-declare -gi ___cpusoaker_starting_namespaces=1
-declare -gi ___cpusoaker_deps_per_namespace=5
-declare -gi ___cpusoaker_max_namespaces=-1
+declare -gi ___cpusoaker_starting_replicas=0
+declare -gi ___cpusoaker_replica_increment=5
+declare -gi ___cpusoaker_max_replicas=-1
 declare -gi ___cpusoaker_job_runtime=0
 declare -gi ___cpusoaker_job_timeout=0
 
 register_workload cpusoaker dispatch_generic cpu cpusoak scaling
 
-function test_cpusoaker() {
+function cpusoaker_test() {
     local default_job_runtime=$1
+    if ((___cpusoaker_replica_increment < 1)) ; then
+	echo "Replica increment must be at least 1" 1>&2
+	return
+    fi
     if ((___cpusoaker_job_runtime <= 0)) ; then
 	___cpusoaker_job_runtime=$default_job_runtime
     fi
     ___cpusoaker_job_timeout=$(compute_timeout "$___cpusoaker_job_timeout")
-    namespaces=$___cpusoaker_starting_namespaces
+    if ((___cpusoaker_starting_replicas <= 0)) ; then
+	___cpusoaker_starting_replicas=$___cpusoaker_replica_increment
+    fi
+    replicas=$___cpusoaker_starting_replicas
     local -A runtimes_to_test=()
     local runtime
     for runtime in "${runtimeclasses[@]}" ; do
@@ -36,16 +43,15 @@ function test_cpusoaker() {
 	runtimes+=("$runtime")
 	runtimes_to_test[$runtime]=1
     done
-    while ((___cpusoaker_max_namespaces == -1 || namespaces <= ___cpusoaker_max_namespaces)); do
+    while ((___cpusoaker_max_replicas == -1 || replicas <= ___cpusoaker_max_replicas)); do
 	for runtime in "${runtimes[@]}" ; do
 	    if [[ -n "${runtimes_to_test[$runtime]:-}" ]] ; then
 		local xruntime=$runtime
 		if [[ $xruntime = runc ]] ; then xruntime=''; fi
-		job_name="$((namespaces*___cpusoaker_deps_per_namespace))"
+		job_name="$replicas"
 		if run_clusterbuster_1 -r "$xruntime" -y  -j "$job_name" -w cpusoaker \
 				       -t "$___cpusoaker_job_timeout" -R "$___cpusoaker_job_runtime" -- \
-				       --deployments="$___cpusoaker_deps_per_namespace" \
-				       --namespaces="$namespaces" --objs_per_call=6 --parallel=100 ; then
+				       --replicas="$replicas" ; then
 		    :
 		else
 		    unset runtimes_to_test[$runtime]
@@ -54,7 +60,7 @@ function test_cpusoaker() {
 	done
 	if [[ -n "${runtimes_to_test[*]}" ]] ; then
 	    counter=$((counter+1))
-	    namespaces=$((namespaces+1))
+	    replicas=$((replicas+___cpusoaker_replica_increment))
 	else
 	    break
 	fi
@@ -64,31 +70,33 @@ function test_cpusoaker() {
     done
 }
 
-function process_option_cpusoaker() {
+function cpusoaker_process_option() {
     local opt=$1
     read -r noptname1 noptname optvalue <<< "$(parse_option "$opt")"
     case "$noptname1" in
-	cpusoakerstarting*) ___cpusoaker_starting_namespaces=$optvalue	;;
-	cpusoakerdeps*)     ___cpusoaker_deps_per_namespace=$optvalue	;;
+	cpusoakerstarting*) ___cpusoaker_starting_replicas=$optvalue	;;
+	cpusoakerreplicai*) ___cpusoaker_replica_increment=$optvalue	;;
 	cpusoaker*runtime)  ___cpusoaker_job_runtime=$optvalue		;;
 	cpusoaker*timeout)  ___cpusoaker_job_timeout=$optvalue		;;
-	cpusoakermax*)      ___cpusoaker_max_namespaces=$optvalue	;;
+	cpusoakermax*)      ___cpusoaker_max_replicas=$optvalue		;;
 	*) 		    return 1					;;
     esac
     return 0
 }
 
 
-function help_options_cpusoaker() {
+function cpusoaker_help_options() {
     cat <<'EOF'
     CPUsoaker options:
-        --cpusoaker-starting-namespaces=n
+        --cpusoaker-starting-replicas=n
                                 Start the test with the specified number of
-                                namespaces, incrementing until failure.
-                                Default 1.
-        --cpusoaker-deps-per-namespace=n
-                                Deploy the specified number of pods per
-                                namespace.  Default is 5.
+                                replicas, incrementing until failure.
+                                Default 5.
+        --cpusoaker-replica-increment=n
+                                Increment the number of replicas by the
+                                specified number until failure or until
+                                --cpusoaker-max-replicas is reached.  Default
+                                is cpusoaker-starting-replicas.
         --cpusoaker-runtime=seconds
                                 Allow the pods to run for the specified time.
                                 Default is 0.  Typically set to 60 to collect
@@ -96,13 +104,13 @@ function help_options_cpusoaker() {
         --cpusoaker-timeout=seconds
                                 Time the job out after specified time.  Default
                                 is the global timeout default.
-        --cpusoaker-max-namespaces=n
-                                Maximum number of namespaces to scale to.
+        --cpusoaker-max-replicas=n
+                                Maximum number of replicas to scale to.
                                 Default is -1, equivalent to no upper limit.
 EOF
 }
 
-function document_cpusoaker() {
+function cpusoaker_document() {
 cat <<'EOF'
 * cpusoaker: a simple CPU soaker running a continuous tight loop.
 EOF
