@@ -47,7 +47,6 @@ EOF
 function _server_create_server_deployment() {
     local namespace=$1
     local instance=$2
-    local secret_count=$3
     local name=${namespace}-${instance}-server
     if [[ $deployment_type = pod ]] ; then
 	create_object -n "$namespace" "$name" <<EOF
@@ -161,8 +160,7 @@ EOF
 function _server_create_client_deployment() {
     local namespace=$1
     local instance=$2
-    local secret_count=$3
-    local replicas=$4
+    local -i replicas=$4
     local affinity_yaml="$(_server_create_client_affinity_yaml "${namespace}-server-${instance}")"
     if [[ $deployment_type = pod ]] ; then
 	local -i replica=0

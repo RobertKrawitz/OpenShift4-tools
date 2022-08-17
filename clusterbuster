@@ -30,6 +30,17 @@ Actual version is ${BASH_VERSION}
 EOF
 fi
 
+declare ___arg
+for ___arg in "$@" ; do
+    if [[ "${___arg:-}" = '--force-abort'* ]] ; then
+	echo "*** Warning: will abort on any shell error!" 1>&2
+	set -e
+	set -o errtrace
+	#trap 'killthemall "Caught error, aborting!"' ERR
+	break
+    fi
+done
+
 declare -i namespaces=1
 declare -i use_namespaces=1
 declare -i deps_per_namespace=1
@@ -482,6 +493,7 @@ Advanced options (generally not required):
        --inject_error=<opt>
                         For testing purposes, inject the specified error
                         condition (documented only in code).
+       --force-abort    Abort the run on any error.
 
 Here is a brief description of all available workloads:
 $(_document_workloads)
@@ -623,6 +635,7 @@ function process_option() {
 	verbose)		    verbose=$(bool "$optvalue")			;;
 	doit)			    doit=$(bool "$optvalue")			;;
 	quiet)			    verbose=$((! $(bool "$optvalue")))		;;
+	forceabort*)		    set -e					;;
 	# Reporting
 	artifactdir)		    artifactdir="$optvalue"			;;
 	logstrategy)		    log_strategy=$optvalue			;;

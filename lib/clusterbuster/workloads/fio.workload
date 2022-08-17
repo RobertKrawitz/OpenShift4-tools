@@ -38,16 +38,13 @@ function _fio_create_containers_yaml() {
     local secret_count=$3
     local -i replicas=$4
     local -i containers_per_pod=$5
-    local -i processes=$6
-    local log_host=${7:-}
-    local -i log_port=${8:-0}
-    local -i replica=$9
+    local log_host=${6:-}
+    local -i log_port=${7:-0}
+    local -i replica=$8
     local -i container
     local sync_service=
     local sync_port_num=
     IFS=: read -r sync_service sync_port_num <<< "$(get_sync)"
-    # shellcheck disable=2031
-    local workdir=${common_workdir:-${emptydirs[0]:-/tmp}}
     for container in $(seq 0 $((containers_per_pod - 1))) ; do
 	cat <<EOF
 - name: "c${container}"
@@ -68,7 +65,7 @@ $(indent 2 bootstrap_command_yaml fio.pl)
   - "$sync_port_num"
   - "$log_host"
   - "$log_port"
-  - "$processes"
+  - "$processes_per_pod"
   - "$___fio_workdir"
   - "$workload_run_time"
   - "$configmap_mount_dir"
@@ -86,15 +83,17 @@ EOF
     done
 }
 
-function _fio_create_deployment() {
+function _fio_create_deployment_yaml() {
     local namespace=$1
     local instance=$2
     local secret_count=$3
     local -i replicas=$4
-    local name=${namespace}-fio-${instance}
     local -i replica=0
+    local depname="${namespace}-${requested_workload}-${instance}"
     while (( replica++ < replicas )) ; do
-	local name="${namespace}-files-${instance}-${replica}"
+	local name="${depname}-${replica}"
+	create_service -H "$namespace" "${name}-dc" "$drop_cache_port"
+	create_drop_cache_deployment "$namespace" "$requested_workload" "${instance}-${replica}"
 	create_object -n "$namespace" "$name" <<EOF
 apiVersion: v1
 kind: Pod
@@ -103,9 +102,9 @@ metadata:
 $(indent 2 standard_all_metadata_yaml "$namespace" client)
   selector:
     matchLabels:
-      app: ${namespace}-fio-${instance}-${replica}
-$(indent 2 standard_labels_yaml fio "$namespace" "${instance}-${replica}" 1)
-$(create_spec _fio_create_containers_yaml "$@" "$replica")
+      app: $name
+$(indent 2 standard_labels_yaml "$requested_workload" "$namespace" "${instance}-${replica}" 1)
+$(create_spec "_${requested_workload}_create_containers_yaml" "$@" "$replica")
   restartPolicy: Never
 EOF
     done
@@ -123,12 +122,7 @@ function fio_create_deployment() {
     local -i syncs_needed=$((2 + (${#___fio_patterns[@]} * ${#___fio_blocksizes[@]} * ${#___fio_iodepths[@]} * ${#___fio_directs[@]} * ${#___fio_fdatasyncs[@]} * ${#___fio_ioengines[@]}) ))
     create_sync_service_if_needed "$namespace" "$syncs_needed" "$((containers_per_pod * replicas * count))"
     for instance in $(seq "$first_deployment" $((count + first_deployment - 1))) ; do
-	local -i replica=0
-	while ((replica++ < replicas)) ; do
-	    create_service -H "$namespace" "${namespace}-fio-${instance}-${replica}-dc" "$drop_cache_port"
-	    create_drop_cache_deployment "$namespace" fio "${instance}-${replica}"
-	done
-	_fio_create_deployment "$namespace" "${instance}" "$secret_count" "$replicas" "$containers_per_pod" "$processes_per_pod" "$log_host" "$log_port"
+	"_${requested_workload}_create_deployment_yaml" "$namespace" "$instance" "$secret_count" "$replicas" "$containers_per_pod" "$log_host" "$log_port"
     done
 }
 

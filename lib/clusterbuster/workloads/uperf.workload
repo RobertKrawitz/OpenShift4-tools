@@ -152,11 +152,11 @@ function _uperf_create_client_deployment() {
     local instance=$2
     local secret_count=$3
     local replicas=$4
-    local affinity_yaml="$(_uperf_create_client_affinity_yaml "${namespace}-uperf-server-${instance}")"
+    local affinity_yaml="$(_${requested_workload}_create_client_affinity_yaml "${namespace}-${requested_workload}-server-${instance}")"
     if [[ $deployment_type = pod ]] ; then
 	local -i replica=0
 	while (( replica++ < replicas )) ; do
-	    local name=${namespace}-${instance}-uperf-client-${replica}
+	    local name=${namespace}-${instance}-${requested_workload}-client-${replica}
 	    create_object -n "$namespace" "$name" <<EOF
 apiVersion: v1
 kind: Pod
@@ -165,11 +165,11 @@ metadata:
 $(indent 2 standard_all_metadata_yaml "$namespace" client)
   selector:
     matchLabels:
-      app: ${namespace}-uperf-client-${instance}
-$(indent 2 standard_labels_yaml uperf-client "$namespace" "$instance" 1)
-$(create_spec ${affinity_yaml:+-A "$affinity_yaml"} _uperf_create_client_container_yaml "$@" "$replica")
+      app: ${namespace}-${requested_workload}-client-${instance}
+$(indent 2 standard_labels_yaml ${requested_workload}-client "$namespace" "$instance" 1)
+$(create_spec ${affinity_yaml:+-A "$affinity_yaml"} _${requested_workload}_create_client_container_yaml "$@" "$replica")
   restartPolicy: Never
-$(indent 2 _uperf_create_security_context)
+$(indent 2 _${requested_workload}_create_security_context)
 EOF
 	done
     else
@@ -180,21 +180,21 @@ kind: $deployment_type
 metadata:
   name: $(mkpodname "$name")
 $(indent 2 standard_deployment_metadata_yaml "$namespace" client)
-$(indent 2 standard_labels_yaml uperf-client "$namespace" "$instance" 1)
+$(indent 2 standard_labels_yaml ${requested_workload}-client "$namespace" "$instance" 1)
 spec:
   replicas: $replicas
   restartPolicy: Always
   selector:
     matchLabels:
-      app: ${namespace}-uperf-client-${instance}
+      app: ${namespace}-${requested_workload}-client-${instance}
   strategy:
     type: RollingUpdate
   template:
     metadata:
-$(indent 6 standard_labels_yaml uperf-client "$namespace" "$instance" 1)
+$(indent 6 standard_labels_yaml ${requested_workload}-client "$namespace" "$instance" 1)
 $(indent 6 standard_pod_metadata_yaml "$namespace" client)
-$(indent 4 create_spec ${affinity_yaml:+-A "$affinity_yaml"} _uperf_create_client_container_yaml "$@" "x")
-$(indent 6 _uperf_create_security_context)
+$(indent 4 create_spec ${affinity_yaml:+-A "$affinity_yaml"} _${requested_workload}_create_client_container_yaml "$@" "x")
+$(indent 6 _${requested_workload}_create_security_context)
 EOF
     fi
 }

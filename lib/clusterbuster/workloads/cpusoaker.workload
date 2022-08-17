@@ -22,7 +22,7 @@ function _cpusoaker_create_containers_yaml() {
     local namespace=$1
     local instance=$2
     local secret_count=$3
-    local -i processes=$4
+    local -i replicas=$4
     local -i containers_per_pod=$5
     local log_host=${6:-}
     local -i log_port=${7:-0}
@@ -50,20 +50,22 @@ $(indent 2 bootstrap_command_yaml cpusoaker.pl)
   - "$sync_port_num"
   - "$log_host"
   - "$log_port"
-  - "$processes"
+  - "$processes_per_pod"
   - "$workload_run_time"
 $(indent 2 volume_mounts_yaml "$namespace" "${instance}" "$secret_count")
 EOF
     done
 }
 
-function _cpusoaker_create_deployment() {
+function _cpusoaker_create_deployment_yaml() {
     local namespace=$1
     local instance=$2
+    local -i replicas=$4
+    local depname="${namespace}-${requested_workload}-${instance}"
     if [[ $deployment_type = pod ]] ; then
 	local -i replica=0
 	while (( replica++ < replicas )) ; do
-	    local name=${namespace}-cpusoaker-${instance}-${replica}
+	    local name="${depname}-${replica}"
 	    create_object -n "$namespace" "$name" <<EOF
 apiVersion: v1
 kind: Pod
@@ -72,33 +74,33 @@ metadata:
 $(indent 2 standard_all_metadata_yaml "$namespace" client)
   selector:
     matchLabels:
-      app: ${namespace}-cpusoaker-${instance}
-$(indent 2 standard_labels_yaml cpusoaker "$namespace" "$instance" 1)
-$(create_spec _cpusoaker_create_containers_yaml "$@")
+      app: $name
+$(indent 2 standard_labels_yaml ${requested_workload} "$namespace" "${instance}-${replica}" 1)
+$(create_spec "_${requested_workload}_create_containers_yaml" "$@" "$replica")
   restartPolicy: Never
 EOF
 	done
     else
-	local name=${namespace}-cpusoaker-${instance}
+	local name="$depname"
 	create_object -n "$namespace" "$name" <<EOF
 apiVersion: apps/v1
 kind: $deployment_type
 metadata:
   name: $(mkpodname "$name")
-$(indent 2 standard_labels_yaml cpusoaker "$namespace" "$instance")
-$(indent 2 standard_deployment_metadata_yaml "$namespace" client 1)
+$(indent 2 standard_deployment_metadata_yaml "$namespace" client)
+$(indent 2 standard_labels_yaml "$requested_workload" "$namespace" "$instance" 1)
 spec:
   replicas: $replicas
   selector:
     matchLabels:
-      app: ${namespace}-cpusoaker-${instance}
+      app: ${namespace}-${requested_workload}-${instance}
   strategy:
     type: RollingUpdate
   template:
     metadata:
-$(indent 6 standard_labels_yaml cpusoaker "$namespace" "$instance" 1)
+$(indent 6 standard_labels_yaml "$requested_workload" "$namespace" "$instance" 1)
 $(indent 6 standard_pod_metadata_yaml "$namespace" client)
-$(indent 4 create_spec _cpusoaker_create_containers_yaml "$@")
+$(indent 4 create_spec "_${requested_workload}_create_containers_yaml" "$@")
 EOF
     fi
 }
@@ -114,7 +116,7 @@ function cpusoaker_create_deployment() {
     local -i instance
     create_sync_service_if_needed "$namespace" 2 "$((containers_per_pod * replicas * processes_per_pod * count))"
     for instance in $(seq $first_deployment $((count + first_deployment - 1))) ; do
-	_cpusoaker_create_deployment "$namespace" "$instance" "$secret_count"  "$((processes_per_pod))" "$containers_per_pod" "$log_host" "$log_port"
+	"_${requested_workload}_create_deployment_yaml" "$namespace" "$instance" "$secret_count" "$replicas" "$containers_per_pod" "$log_host" "$log_port"
     done
 }
 
