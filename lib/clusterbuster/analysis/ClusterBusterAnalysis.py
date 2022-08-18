@@ -182,7 +182,6 @@ class ClusterBusterAnalysis:
             metadata = self._data['metadata']
         if 'status' in self._data:
             status = self._data['status']
-            print(f'>>>>>> {metadata}', file=sys.stderr)
         for workload, workload_data in self._data.items():
             if workload == 'metadata' or workload == 'status':
                 continue
@@ -213,7 +212,6 @@ class ClusterBusterAnalysis:
                     report['metadata'][v] = status[v]
             if 'failed' in status and len(status['failed']) > 0:
                 report['metadata']['failed'] = status['failed']
-            print(f'>>>>>>>>>>>>>>>>>>> {report["metadata"]}', file=sys.stderr)
             return report
         else:
             raise TypeError(f"Unexpected report type {report_type}, expect either str or dict")
