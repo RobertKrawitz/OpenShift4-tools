@@ -90,49 +90,20 @@ EOF
 function _server_create_client_container_yaml() {
     local namespace=$1
     local instance=$2
-    local secret_count=$3
-    local containers_per_pod=$5
-    local log_host=$6
-    local log_port=$7
-    local -i container
-    local sync_service=
-    local sync_port_num=
-    IFS=: read -r sync_service sync_port_num <<< $(get_sync)
     if [[ $target_data_rate != 0 && $target_data_rate != '' && $workload_run_time_max -eq 0 && bytes_transfer_max -eq 0 ]] ; then
 	bytes_transfer=$default_bytes_transfer
 	bytes_transfer_max=$default_bytes_transfer
     fi
-    for container in $(seq 0 $((containers_per_pod - 1))) ; do
-	cat <<EOF
-- name: c${container}
-  image: "$container_image"
-  imagePullPolicy: $image_pull_policy
-$(indent 2 container_standard_auxiliary_yaml)
-  env:
-  - name: VERBOSE
-    value: "$verbose"
-$(indent 2 bootstrap_command_yaml client.pl)
-  - "$namespace"
-  - "c$container"
-  - "$basetime"
-  - "$baseoffset"
-  - "$(ts)"
-  - "$exit_at_end"
-  - "$sync_service"
-  - "$sync_port_num"
-  - "$log_host"
-  - "$log_port"
-  - "svc-${namespace}-server-$instance"
-  - "$port"
-  - "$target_data_rate"
-  - "$bytes_transfer"
-  - "$bytes_transfer_max"
-  - "$___msg_size"
-  - "$workload_run_time"
-  - "$workload_run_time_max"
-$(indent 2 volume_mounts_yaml "$namespace" "$instance" "$secret_count")
+    make_standard_containers -c client.pl -- "$@" <<EOF
+svc-${namespace}-server-$instance
+$port
+$target_data_rate
+$bytes_transfer
+$bytes_transfer_max
+$___msg_size
+$workload_run_time
+$workload_run_time_max
 EOF
-    done
 }
 
 function _server_create_client_affinity_yaml() {

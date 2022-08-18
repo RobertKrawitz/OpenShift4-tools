@@ -25,54 +25,19 @@ declare -ig ___files_per_dir=1
 declare -ig ___files_direct=0
 
 function _files_create_containers_yaml() {
-    local namespace=$1
-    local instance=$2
-    local secret_count=$3
-    local -i replicas=$4
-    local -i containers_per_pod=$5
-    local log_host=${6:-}
-    local -i log_port=${7:-0}
-    local replica=${8:+-$8}
-    local -i container
-    local sync_service=
-    local sync_port_num=
     local -i file_blocks=$((___file_size/___file_block_size))
-    IFS=: read -r sync_service sync_port_num <<< $(get_sync)
-    # shellcheck disable=1340
-    for container in $(seq 0 $((containers_per_pod - 1))) ; do
-	# shellcheck disable=2030
-	cat <<EOF
-- name: "c${container}"
-  imagePullPolicy: $image_pull_policy
-  image: "$container_image"
-$(indent 2 container_standard_auxiliary_yaml)
-  env:
-  - name: VERBOSE
-    value: "$verbose"
-$(indent 2 bootstrap_command_yaml files.pl)
-  - "$namespace"
-  - "c${container}"
-  - "$basetime"
-  - "$baseoffset"
-  - "$(ts)"
-  - "$exit_at_end"
-  - "$sync_service"
-  - "$sync_port_num"
-  - "$log_host"
-  - "$log_port"
-  - "$___file_dirs_per_volume"
-  - "$___files_per_dir"
-  - "$___file_block_size"
-  - "$file_blocks"
-  - "$processes_per_pod"
-  - "$___files_direct"
-  - "svc-${namespace}-files-${instance}${replica}-dc"
-  - "$drop_cache_port"
-$(tmp_volume_paths=("${volume_mount_paths[@]/%/\"}"); IFS=$'\n'; echo "${tmp_volume_paths[*]/#/  - \"}")
-$(emptydirs=("${emptydirs[@]/%/\"}"); IFS=$'\n'; echo "${emptydirs[*]/#/  - \"}")
-$(indent 2 volume_mounts_yaml "$namespace" "$instance" "$secret_count")
+    local mounts=("${volume_mount_paths[@]}" "${emptydirs[@]}")
+    make_standard_containers -- "$@" <<EOF
+$___file_dirs_per_volume
+$___files_per_dir
+$___file_block_size
+$file_blocks
+$processes_per_pod
+$___files_direct
+svc-${namespace}-files-${instance}-${replica}-dc
+$drop_cache_port
+$(IFS=$'\n'; echo -n "${mounts[*]}")
 EOF
-    done
 }
 
 function _files_create_deployment_yaml() {

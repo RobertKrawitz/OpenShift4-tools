@@ -1638,6 +1638,72 @@ EOF
     fi
 }
 
+function mk_container_args() {
+    local arg
+    while read -r arg ; do
+	echo "- \"$arg\""
+    done
+}
+
+function standard_container_args() {
+    local namespace=$1
+    local container=$2
+    mk_container_args <<EOF
+$namespace
+c$container
+$basetime
+$baseoffset
+$(ts)
+$exit_at_end
+$sync_service
+$sync_port_num
+$log_host
+$log_port
+EOF
+}
+
+function make_standard_containers() {
+    local OPTARG
+    local OPTIND=0
+    local opt
+    local command="${requested_workload}.pl"
+    local image="$container_image"
+    while getopts 'c:i:' opt "$@" ; do
+	case "$opt" in
+	    c) command="$OPTARG";;
+	    i) image="$OPTARG"  ;;
+	    *)		        ;;
+	esac
+    done
+    shift $((OPTIND-1))
+    local namespace=$1
+    local instance=$2
+    local secret_count=$3
+    local containers_per_pod=$5
+    local log_host=$6
+    local log_port=$7
+    local -i container
+    local sync_service=
+    local sync_port_num=
+    local container_args="$(mk_container_args)"
+    IFS=: read -r sync_service sync_port_num <<< "$(get_sync)"
+    for container in $(seq 0 $((containers_per_pod - 1))) ; do
+	cat <<EOF
+- name: "c${container}"
+  imagePullPolicy: $image_pull_policy
+  image: "$container_image"
+$(indent 2 container_standard_auxiliary_yaml)
+  env:
+  - name: VERBOSE
+    value: "$verbose"
+$(indent 2 bootstrap_command_yaml "$command")
+$(indent 2 standard_container_args "$namespace" "$container")
+$(indent 2 <<< "$container_args")
+$(indent 2 volume_mounts_yaml "$namespace" "${instance}" "$secret_count")
+EOF
+    done
+}
+
 function container_standard_auxiliary_yaml() {
     container_resources_yaml
     liveness_probe_yaml

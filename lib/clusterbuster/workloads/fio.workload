@@ -33,54 +33,21 @@ declare -g  ___fio_prepare_job_file
 declare -g  ___fio_processed_job_file
 
 function _fio_create_containers_yaml() {
-    local namespace=$1
-    local instance=$2
-    local secret_count=$3
-    local -i replicas=$4
-    local -i containers_per_pod=$5
-    local log_host=${6:-}
-    local -i log_port=${7:-0}
-    local -i replica=$8
-    local -i container
-    local sync_service=
-    local sync_port_num=
-    IFS=: read -r sync_service sync_port_num <<< "$(get_sync)"
-    for container in $(seq 0 $((containers_per_pod - 1))) ; do
-	cat <<EOF
-- name: "c${container}"
-  imagePullPolicy: $image_pull_policy
-  image: "$container_image"
-$(indent 2 container_standard_auxiliary_yaml)
-  env:
-  - name: VERBOSE
-    value: "$verbose"
-$(indent 2 bootstrap_command_yaml fio.pl)
-  - "$namespace"
-  - "c${container}"
-  - "$basetime"
-  - "$baseoffset"
-  - "$(ts)"
-  - "$exit_at_end"
-  - "$sync_service"
-  - "$sync_port_num"
-  - "$log_host"
-  - "$log_port"
-  - "$processes_per_pod"
-  - "$___fio_workdir"
-  - "$workload_run_time"
-  - "$configmap_mount_dir"
-  - "svc-${namespace}-fio-${instance}-${replica}-dc"
-  - "$drop_cache_port"
-  - "${___fio_blocksizes[*]:-}"
-  - "${___fio_patterns[*]:-}"
-  - "${___fio_iodepths[*]:-}"
-  - "${___fio_fdatasyncs[*]:-}"
-  - "${___fio_directs[*]:-}"
-  - "${___fio_ioengines[*]:-}"
-  - "${___fio_generic_options[*]:-}"
-$(indent 2 volume_mounts_yaml "$namespace" "${instance}" "$secret_count")
+    make_standard_containers -- "$@" <<EOF
+$processes_per_pod
+$___fio_workdir
+$workload_run_time
+$configmap_mount_dir
+svc-${namespace}-fio-${instance}-${replica}-dc
+$drop_cache_port
+${___fio_blocksizes[*]:-}
+${___fio_patterns[*]:-}
+${___fio_iodepths[*]:-}
+${___fio_fdatasyncs[*]:-}
+${___fio_directs[*]:-}
+${___fio_ioengines[*]:-}
+${___fio_generic_options[*]:-}
 EOF
-    done
 }
 
 function _fio_create_deployment_yaml() {

@@ -70,59 +70,21 @@ $(indent 2 standard_all_metadata_yaml "$namespace" server)
   selector:
     matchLabels:
       app: ${namespace}-${instance}
-$(indent 2 standard_labels_yaml uperf-server "$namespace" "$instance")
-$(create_spec -c server _uperf_create_server_container_yaml "$@")
+$(indent 2 standard_labels_yaml ${requested_workload}-server "$namespace" "$instance")
+$(create_spec -c server _${requested_workload}_create_server_container_yaml "$@")
+$(indent 2 _${requested_workload}_create_security_context)
   restartPolicy: Never
-$(indent 2 _uperf_create_security_context)
 EOF
-}
-
-function _uperf_create_tests() {
-    local test
-    for test in "$@" ; do
-	echo "- \"$test\""
-    done
 }
 
 function _uperf_create_client_container_yaml() {
-    local namespace=$1
-    local instance=$2
-    local secret_count=$3
-    local containers_per_pod=$5
-    local log_host=$6
-    local log_port=$7
-    local -i container
-    local sync_service=
-    local sync_port_num=
-    IFS=: read -r sync_service sync_port_num <<< $(get_sync)
-    for container in $(seq 0 $((containers_per_pod - 1))) ; do
-	cat <<EOF
-- name: c${container}
-  image: "$container_image"
-  image_pull_policy: $image_pull_policy
-$(indent 2 container_standard_auxiliary_yaml)
-  env:
-  - name: VERBOSE
-    value: "$verbose"
-$(indent 2 bootstrap_command_yaml uperf-client.pl)
-  - "$namespace"
-  - "c$container"
-  - "$basetime"
-  - "$baseoffset"
-  - "$(ts)"
-  - "$exit_at_end"
-  - "$sync_service"
-  - "$sync_port_num"
-  - "$log_host"
-  - "$log_port"
-  - "$workload_run_time"
-  - "$___uperf_ramp_time"
-  - "svc-${namespace}-uperf-server-$instance"
-  - "$___uperf_port"
-$(indent 2 _uperf_create_tests "${___uperf_tests[@]}")
-$(indent 2 volume_mounts_yaml "$namespace" "$instance" "$secret_count")
+    make_standard_containers -- "$@" <<EOF
+$workload_run_time
+$___uperf_ramp_time
+svc-${namespace}-uperf-server-$instance
+$___uperf_port
+$(IFS=$'\n'; echo "${___uperf_tests[*]}")
 EOF
-    done
 }
 
 function _uperf_create_client_affinity_yaml() {
@@ -168,8 +130,8 @@ $(indent 2 standard_all_metadata_yaml "$namespace" client)
       app: ${namespace}-${requested_workload}-client-${instance}
 $(indent 2 standard_labels_yaml ${requested_workload}-client "$namespace" "$instance" 1)
 $(create_spec ${affinity_yaml:+-A "$affinity_yaml"} _${requested_workload}_create_client_container_yaml "$@" "$replica")
-  restartPolicy: Never
 $(indent 2 _${requested_workload}_create_security_context)
+  restartPolicy: Never
 EOF
 	done
     else
@@ -191,8 +153,8 @@ spec:
     type: RollingUpdate
   template:
     metadata:
-$(indent 6 standard_labels_yaml ${requested_workload}-client "$namespace" "$instance" 1)
 $(indent 6 standard_pod_metadata_yaml "$namespace" client)
+$(indent 6 standard_labels_yaml ${requested_workload}-client "$namespace" "$instance" 1)
 $(indent 4 create_spec ${affinity_yaml:+-A "$affinity_yaml"} _${requested_workload}_create_client_container_yaml "$@" "x")
 $(indent 6 _${requested_workload}_create_security_context)
 EOF

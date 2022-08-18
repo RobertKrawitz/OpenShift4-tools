@@ -24,46 +24,11 @@ declare -g ___synctest_cluster_count=1
 declare -g ___synctest_sleep=0
 
 function _synctest_create_containers_yaml() {
-    local namespace=$1
-    local instance=$2
-    local secret_count=$3
-    local -i replicas=$4
-    local -i containers_per_pod=$5
-    local log_host=${6:-}
-    local -i log_port=${7:-0}
-    local -i container
-    local sync_service=
-    local sync_port_num=
-    IFS=: read -r sync_service sync_port_num <<< $(get_sync)
-    # shellcheck disable=2031
-    local workdir=${common_workdir:-${emptydirs[0]:-/tmp}}
-    for container in $(seq 0 $((containers_per_pod - 1))) ; do
-	cat <<EOF
-- name: "c${container}"
-  imagePullPolicy: $image_pull_policy
-  image: "$container_image"
-$(indent 2 container_standard_auxiliary_yaml)
-  env:
-  - name: VERBOSE
-    value: "$verbose"
-$(indent 2 bootstrap_command_yaml synctest.pl)
-  - "$namespace"
-  - "c${container}"
-  - "$basetime"
-  - "$baseoffset"
-  - "$(ts)"
-  - "$processes_per_pod"
-  - "$exit_at_end"
-  - "$sync_service"
-  - "$sync_port_num"
-  - "$log_host"
-  - "$log_port"
-  - "$___synctest_count"
-  - "$___synctest_cluster_count"
-  - "$___synctest_sleep"
-$(indent 2 volume_mounts_yaml "$namespace" "$instance" "$secret_count")
+    make_standard_containers -- "$@" <<EOF
+$___synctest_count
+$___synctest_cluster_count
+$___synctest_sleep
 EOF
-    done
 }
 
 function _synctest_create_deployment_yaml() {
