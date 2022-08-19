@@ -2104,11 +2104,13 @@ function create_standard_deployment() {
     local workload="$requested_workload"
     local opt
     local security_context=
-    while getopts 'A:w:S:' opt "$@" ; do
+    local allow_replica_controller=1
+    while getopts 'A:w:S:p' opt "$@" ; do
 	case "$opt" in
 	    A) affinity_yaml="$OPTARG"	  ;;
 	    w) workload="$OPTARG"	  ;;
 	    S) security_context="$OPTARG" ;;
+	    p) allow_replica_controller=0 ;;
 	    *)				  ;;
 	esac
     done
@@ -2122,7 +2124,11 @@ function create_standard_deployment() {
 	    create_pod_deployment "$@"
 	    ;;
 	replicaset|deployment)
-	    create_replication_deployment "$@"
+	    if ((allow_replica_controller)) ; then
+		create_replication_deployment "$@"
+	    else
+		create_pod_deployment "$@"
+	    fi
 	    ;;
 	*)
 	    fatal "Unknown deployment type $deployment_type"
@@ -2451,7 +2457,7 @@ $(indent 2 volume_mounts_yaml "$namespace" 0 0)
 EOF
 }
 
-function create_drop_cache_deployment() {
+function _create_drop_cache_deployment() {
     local namespace=$1
     local workload=$2
     local instance=$3
@@ -2487,6 +2493,19 @@ $(create_spec -P -c drop-cache -r '' create_container_drop_cache "$namespace" "$
         topologyKey: kubernetes.io/hostname
   restartPolicy: Never
 EOF
+}
+
+function create_drop_cache_deployment() {
+    local namespace=$1
+    local workload=$2
+    local instance=$3
+    local -i replicas=$4
+    local -i replica=0
+    while ((replica++ < replicas)) ; do
+	local name="${namespace}-${workload}-${instance}-${replica}-dc"
+	create_service -H "$namespace" "$name" "$drop_cache_port"
+	_create_drop_cache_deployment "$namespace" "$workload" "${instance}-${replica}"
+    done
 }
 
 ################################################################

@@ -32,7 +32,7 @@ declare -g  ___fio_workdir="/tmp"
 declare -g  ___fio_prepare_job_file
 declare -g  ___fio_processed_job_file
 
-function _fio_create_containers_yaml() {
+function fio_create_containers_yaml() {
     make_standard_containers -- "$@" <<EOF
 $processes_per_pod
 $___fio_workdir
@@ -50,33 +50,6 @@ ${___fio_generic_options[*]:-}
 EOF
 }
 
-function _fio_create_deployment_yaml() {
-    local namespace=$1
-    local instance=$2
-    local secret_count=$3
-    local -i replicas=$4
-    local -i replica=0
-    local depname="${namespace}-${requested_workload}-${instance}"
-    while (( replica++ < replicas )) ; do
-	local name="${depname}-${replica}"
-	create_service -H "$namespace" "${name}-dc" "$drop_cache_port"
-	create_drop_cache_deployment "$namespace" "$requested_workload" "${instance}-${replica}"
-	create_object -n "$namespace" "$name" <<EOF
-apiVersion: v1
-kind: Pod
-metadata:
-  name: $(mkpodname "$name")
-$(indent 2 standard_all_metadata_yaml "$namespace" client)
-  selector:
-    matchLabels:
-      app: $name
-$(indent 2 standard_labels_yaml "$requested_workload" "$namespace" "${instance}-${replica}" 1)
-$(create_spec "_${requested_workload}_create_containers_yaml" "$@" "$replica")
-  restartPolicy: Never
-EOF
-    done
-}
-
 function fio_create_deployment() {
     local namespace=$1
     local count=${2:-1}
@@ -89,7 +62,8 @@ function fio_create_deployment() {
     local -i syncs_needed=$((2 + (${#___fio_patterns[@]} * ${#___fio_blocksizes[@]} * ${#___fio_iodepths[@]} * ${#___fio_directs[@]} * ${#___fio_fdatasyncs[@]} * ${#___fio_ioengines[@]}) ))
     create_sync_service_if_needed "$namespace" "$syncs_needed" "$((containers_per_pod * replicas * count))"
     for instance in $(seq "$first_deployment" $((count + first_deployment - 1))) ; do
-	"_${requested_workload}_create_deployment_yaml" "$namespace" "$instance" "$secret_count" "$replicas" "$containers_per_pod" "$log_host" "$log_port"
+	create_drop_cache_deployment "$namespace" "$workload" "$instance" "$replicas"
+	create_standard_deployment -p "$namespace" "$instance" "$secret_count" "$replicas" "$containers_per_pod" "$log_host" "$log_port"
     done
 }
 
