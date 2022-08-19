@@ -2050,6 +2050,24 @@ $(indent 2 volumes_yaml "$namespace" "$instance" "$secret_count")
 EOF
 }
 
+function create_single_pod_deployment() {
+    local name="${depname}"
+    create_object -n "$namespace" "$name" <<EOF
+apiVersion: v1
+kind: Pod
+metadata:
+  name: $(mkpodname "$name")
+$(indent 2 standard_all_metadata_yaml "$namespace" client)
+  selector:
+    matchLabels:
+      app: $name
+$(indent 2 standard_labels_yaml "$workload" "$namespace" "${instance}" 1)
+$(create_spec ${affinity_yaml:+-A "$affinity_yaml"} ${node_class:+-c "$node_class"} "${workload}_create_containers_yaml" "$@")
+${security_context:+$(indent 2 <<< "$security_context")}
+  restartPolicy: Never
+EOF
+}
+
 function create_pod_deployment() {
     local -i replica=0
     while (( replica++ < replicas )) ; do
@@ -2064,7 +2082,7 @@ $(indent 2 standard_all_metadata_yaml "$namespace" client)
     matchLabels:
       app: $name
 $(indent 2 standard_labels_yaml "$workload" "$namespace" "${instance}-${replica}" 1)
-$(create_spec ${affinity_yaml:+-A "$affinity_yaml"} "${workload}_create_containers_yaml" "$@" "$replica")
+$(create_spec ${affinity_yaml:+-A "$affinity_yaml"} ${node_class:+-c "$node_class"} "${workload}_create_containers_yaml" "$@" "$replica")
 ${security_context:+$(indent 2 <<< "$security_context")}
   restartPolicy: Never
 EOF
@@ -2091,7 +2109,7 @@ spec:
     metadata:
 $(indent 6 standard_labels_yaml ${workload} "$namespace" "$instance" 1)
 $(indent 6 standard_pod_metadata_yaml "$namespace" client)
-$(indent 4 create_spec ${affinity_yaml:+-A "$affinity_yaml"} "${workload}_create_containers_yaml" "$@" "x")
+$(indent 4 create_spec ${affinity_yaml:+-A "$affinity_yaml"} ${node_class:+-c "$node_class"} "${workload}_create_containers_yaml" "$@" "x")
 ${security_context:+$(indent 6 <<< "$security_context")}
 EOF
 }
@@ -2104,12 +2122,14 @@ function create_standard_deployment() {
     local opt
     local security_context=
     local allow_replica_controller=1
-    while getopts 'A:w:S:p' opt "$@" ; do
+    local node_class=
+    while getopts 'A:w:S:pc:' opt "$@" ; do
 	case "$opt" in
 	    A) affinity_yaml="$OPTARG"	  ;;
 	    w) workload="$OPTARG"	  ;;
 	    S) security_context="$OPTARG" ;;
 	    p) allow_replica_controller=0 ;;
+	    c) node_class="$OPTARG"	  ;;
 	    *)				  ;;
 	esac
     done
@@ -2119,6 +2139,9 @@ function create_standard_deployment() {
     local -i replicas=$4
     local depname="${namespace}-${workload}-${instance}"
     case "${deployment_type,,}" in
+	single_pod)
+	    create_single_pod_deployment "$@"
+	    ;;
 	pod)
 	    create_pod_deployment "$@"
 	    ;;

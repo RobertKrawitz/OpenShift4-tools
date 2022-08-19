@@ -9,7 +9,9 @@ my ($dir) = $ENV{'BAK_CONFIGMAP'};
 require "$dir/clientlib.pl";
 
 $SIG{TERM} = sub { POSIX::_exit(0); };
-my ($basetime, $baseoffset, $listen_port, $container, $msgSize, $ts, $expected_clients) = @ARGV;
+my ($namespace, $container, $basetime, $baseoffset, $crtime,
+    $exit_at_end, $synchost, $syncport, $loghost, $logport, $listen_port,
+    $msgSize, $ts, $expected_clients) = @ARGV;
 $basetime += $baseoffset;
 
 timestamp("Clusterbuster server starting");

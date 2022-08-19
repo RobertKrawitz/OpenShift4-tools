@@ -27,23 +27,9 @@ declare -gir ___uperf_port=30000
 declare -gir ___uperf_port_addrs=24
 declare -gi ___uperf_ramp_time=3
 
-function _uperf_server_create_container_yaml() {
-    local namespace=$1
-    local instance=$2
-    local secret_count=$3
-    local expected_clients=$4
-    cat <<EOF
-- name: server
-  image: "$container_image"
-  image_pull_policy: $image_pull_policy
-$(indent 2 container_standard_auxiliary_yaml)
-  ports:
-  - containerPort: $___uperf_port
-$(indent 2 bootstrap_command_yaml uperf-server.pl)
-  - "$basetime"
-  - "$baseoffset"
-  - "$___uperf_port"
-$(indent 2 volume_mounts_yaml "$namespace" "$instance" "$secret_count")
+function uperf-server_create_containers_yaml() {
+    make_standard_containers -c uperf-server.pl -- "$@" <<EOF
+$___uperf_port
 EOF
 }
 
@@ -59,7 +45,6 @@ EOF
 function _uperf_server_create_deployment() {
     local namespace=$1
     local instance=$2
-    local secret_count=$3
     local name=${namespace}-${instance}-server
     create_object -n "$namespace" "$name" <<EOF
 apiVersion: v1
@@ -120,11 +105,8 @@ function uperf_create_deployment() {
 
     for instance in $(seq "$first_deployment" $((count + first_deployment - 1))) ; do
 	create_service "$namespace" "${namespace}-uperf-server-${instance}" $(seq "$___uperf_port" $((___uperf_port + ___uperf_port_addrs)))
-	if [[ $deployment_type = pod ]] ; then
-	    _uperf_server_create_deployment "$namespace" "$instance" "$secret_count" "$((containers_per_pod * replicas))"
-	else
-	    _uperf_server_create_deployment "$namespace" "$instance" "$secret_count" "-1"
-	fi
+	deployment_type=single_pod create_standard_deployment -w uperf-server -p -S "$(_uperf_create_security_context)" -c server \
+		       "$namespace" "$instance" "$secret_count" "$replicas" "$containers_per_pod"
 	create_standard_deployment -w uperf_client -A "$(_uperf_create_client_affinity_yaml)" -S "$(_uperf_create_security_context)" \
 				   "$namespace" "$instance" "$secret_count" "$replicas" "$containers_per_pod"
     done
