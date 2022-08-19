@@ -134,8 +134,6 @@ function server_create_deployment() {
     local secret_count=${3:-1}
     local replicas=${4:-1}
     local containers_per_pod=${5:-1}
-    local log_host=${6:-}
-    local -i log_port=${7:-0}
     local -i instance
     create_sync_service_if_needed "$namespace" 2 "$((containers_per_pod * replicas * count))"
 
@@ -147,7 +145,7 @@ function server_create_deployment() {
 	    _server_server_create_deployment "$namespace" "$instance" "$secret_count" "-1"
 	fi
 	create_standard_deployment -w server-client -A "$(_server_create_client_affinity_yaml ${namespace}-server-${instance})" \
-				   "$namespace" "$instance" "$secret_count" "$replicas" "$containers_per_pod" "$log_host" "$log_port"
+				   "$namespace" "$instance" "$secret_count" "$replicas" "$containers_per_pod"
     done
 }
 

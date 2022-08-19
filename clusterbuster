@@ -1585,7 +1585,8 @@ function indent() {
 }
 
 function mkpodname() {
-    echo "${pod_prefix}$(IFS=-; echo "$*")"
+    local podname="${pod_prefix}$(IFS=-; echo "$*")"
+    echo "${podname//_/-}"
 }
 
 function tolerations_yaml() {
@@ -1680,8 +1681,6 @@ function make_standard_containers() {
     local instance=$2
     local secret_count=$3
     local containers_per_pod=$5
-    local log_host=$6
-    local log_port=$7
     local -i container
     local sync_service=
     local sync_port_num=
@@ -2627,7 +2626,7 @@ function drop_host_caches() {
 function create_all_deployments() {
     local i
     for i in $(seq 0 "$((parallel_deployments - 1))") ; do
-	create_objects_n deployment "$parallel_deployments" "$objs_per_call_deployments" "$i" "$sleep_between_deployments" "$deps_per_namespace" "$secrets" "$replicas" "$containers_per_pod" "$log_host" "$log_port" &
+	create_objects_n deployment "$parallel_deployments" "$objs_per_call_deployments" "$i" "$sleep_between_deployments" "$deps_per_namespace" "$secrets" "$replicas" "$containers_per_pod" &
     done
     wait || killthemall "Unable to create deployments"
 }
