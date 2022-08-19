@@ -20,8 +20,6 @@ declare -gi ___cpusoaker_max_replicas=-1
 declare -gi ___cpusoaker_job_runtime=0
 declare -gi ___cpusoaker_job_timeout=0
 
-register_workload cpusoaker dispatch_generic cpu cpusoak scaling
-
 function cpusoaker_test() {
     local default_job_runtime=$1
     if ((___cpusoaker_replica_increment < 1)) ; then
@@ -115,3 +113,5 @@ cat <<'EOF'
 * cpusoaker: a simple CPU soaker running a continuous tight loop.
 EOF
 }
+
+register_workload cpusoaker cpu cpusoak scaling

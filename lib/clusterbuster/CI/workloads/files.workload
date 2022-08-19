@@ -24,8 +24,6 @@ declare -gi ___files_job_timeout=9000
 declare -ga ___files_params=()
 declare -gi ___files_min_direct=1024
 
-register_workload files dispatch_generic
-
 function files_test() {
     ___files_job_timeout=$(compute_timeout "$___files_job_timeout")
     if [[ -z "${___files_params[*]}" ]] ; then
@@ -133,3 +131,5 @@ cat <<'EOF'
   number of files.
 EOF
 }
+
+register_workload files

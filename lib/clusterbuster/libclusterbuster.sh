@@ -170,8 +170,18 @@ function dispatch_generic() {
 }
 
 function register_workload() {
-    local workload_name=$1
-    local workload_dispatch_function=$2
+    local OPTIND=0
+    local OPTARG
+    local workload_dispatch_function=dispatch_generic
+    local arg
+    while getopts 'd:' arg "$@" ; do
+	case "$arg" in
+	    d) workload_dispatch_function=$OPTARG ;;
+	    *)                                    ;;
+	esac
+    done
+    shift $((OPTIND-1))
+    local workload_name=$1; shift
     if [[ ! $workload =~ [[:alpha:]][[:alnum:]_]+ ]] ; then
 	fatal "Illegal workload name $workload"
     elif [[ -n "${__workload_aliases__[${workload_name,,}]:-}" ]] ; then
@@ -182,7 +192,6 @@ function register_workload() {
     fi
     __registered_workloads__[$workload_name]=$workload_dispatch_function
     __workload_aliases__[${workload_name,,}]=$workload_name
-    shift 2
     local walias
     for walias in "$@" ; do
 	if [[ -n "${__registered_workloads__[$walias]:-}" || -n "${__workload_aliases__[${walias,,}]:-}" ]] ; then

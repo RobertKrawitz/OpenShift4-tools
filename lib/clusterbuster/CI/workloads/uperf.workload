@@ -21,8 +21,6 @@ declare -ga ___uperf_test_types=(stream rr)
 declare -gi ___uperf_job_runtime=0
 declare -gi ___uperf_job_timeout=0
 
-register_workload uperf dispatch_generic
-
 function uperf_test() {
     local default_job_runtime=$1
     if ((___uperf_job_runtime <= 0)) ; then
@@ -94,3 +92,5 @@ cat <<'EOF'
 * uperf: a partial front end to uperf (https://www.uperf.org)
 EOF
 }
+
+register_workload uperf

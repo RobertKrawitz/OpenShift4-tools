@@ -20,60 +20,12 @@
 
 declare -ig ___memory_size=1048576
 
-function _memory_create_containers_yaml() {
+function memory_create_containers_yaml() {
     make_standard_containers -- "$@" <<EOF
 $processes_per_pod
 $___memory_size
 $workload_run_time
 EOF
-}
-
-function _memory_create_deployment_yaml() {
-    local namespace=$1
-    local instance=$2
-    local -i replicas=$4
-    local depname="${namespace}-${requested_workload}-${instance}"
-    if [[ $deployment_type = pod ]] ; then
-	local -i replica=0
-	while (( replica++ < replicas )) ; do
-	    local name="${depname}-${replica}"
-	    create_object -n "$namespace" "$name" <<EOF
-apiVersion: v1
-kind: Pod
-metadata:
-  name: $(mkpodname "$name")
-$(indent 2 standard_all_metadata_yaml "$namespace" client)
-  selector:
-    matchLabels:
-      app: $name
-$(indent 2 standard_labels_yaml ${requested_workload} "$namespace" "${instance}-${replica}" 1)
-$(create_spec "_${requested_workload}_create_containers_yaml" "$@" "$replica")
-  restartPolicy: Never
-EOF
-	done
-    else
-	local name="$depname"
-	create_object -n "$namespace" "$name" <<EOF
-apiVersion: apps/v1
-kind: $deployment_type
-metadata:
-  name: $(mkpodname "$name")
-$(indent 2 standard_deployment_metadata_yaml "$namespace" client)
-$(indent 2 standard_labels_yaml "$requested_workload" "$namespace" "$instance" 1)
-spec:
-  replicas: $replicas
-  selector:
-    matchLabels:
-      app: ${namespace}-${requested_workload}-${instance}
-  strategy:
-    type: RollingUpdate
-  template:
-    metadata:
-$(indent 6 standard_labels_yaml "$requested_workload" "$namespace" "$instance" 1)
-$(indent 6 standard_pod_metadata_yaml "$namespace" client)
-$(indent 4 create_spec "_${requested_workload}_create_containers_yaml" "$@")
-EOF
-    fi
 }
 
 function memory_create_deployment() {
@@ -87,7 +39,7 @@ function memory_create_deployment() {
     local -i instance
     create_sync_service_if_needed "$namespace" 2 "$((containers_per_pod * replicas * processes_per_pod * count))"
     for instance in $(seq $first_deployment $((count + first_deployment - 1))) ; do
-	"_${requested_workload}_create_deployment_yaml" "$namespace" "$instance" "$secret_count" "$replicas" "$containers_per_pod" "$log_host" "$log_port"
+	create_standard_deployment "$namespace" "$instance" "$secret_count" "$replicas" "$containers_per_pod" "$log_host" "$log_port"
     done
 }
 
@@ -144,4 +96,4 @@ function memory_supports_reporting() {
     :
 }
 
-register_workload memory dispatch_generic
+register_workload memory

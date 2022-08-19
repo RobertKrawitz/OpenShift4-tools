@@ -291,4 +291,4 @@ function fio_report_options() {
 EOF
 }
 
-register_workload fio dispatch_generic
+register_workload fio

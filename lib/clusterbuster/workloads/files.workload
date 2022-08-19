@@ -163,4 +163,4 @@ function files_report_options() {
 EOF
 }
 
-register_workload files dispatch_generic file
+register_workload files file

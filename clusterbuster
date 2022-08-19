@@ -2005,58 +2005,131 @@ function create_spec() {
     local OPTIND=0
     local OPTARG
     local ns_yaml=${node_selector:+"nodeSelector:${nl}  $node_selector: \"\""}
-    local rc=
+    local runtime_class
     local use_pbench=1
+    local opt
     while getopts "A:c:r:Pp" opt "$@" ; do
 	case "$opt" in
 	    A) affinity_yaml=$OPTARG ;;
 	    c) node_class=$OPTARG    ;;
-	    r) rc=$OPTARG	    ;;
-	    P) use_pbench=	    ;;
-	    p) use_pbench=1	    ;;
-	    *)                      ;;
+	    r) runtime_class=$OPTARG ;;
+	    P) use_pbench=	     ;;
+	    p) use_pbench=1	     ;;
+	    *)                       ;;
 	esac
     done
     shift $((OPTIND-1))
-    if [[ -z "$(type -t "$1")" ]] ; then
-	fatal "Cannot run $1: command not found"
-    fi
+    (( $# >= 4 )) || fatal "Usage: create_spec <container_func> namespace instance secret_count args..."
     # Node specifiers override affinity
     if [[ -n "$node_class" && -n "${pin_nodes[$node_class]:-}" ]] ; then
-	affinity_yaml=
-	ns_yaml="nodeSelector:${nl}  kubernetes.io/hostname: \"${pin_nodes[$node_class]}\""
+	affinity_yaml="nodeSelector:${nl}  kubernetes.io/hostname: \"${pin_nodes[$node_class]}\""
     elif [[ -n "${pin_nodes[default]:-}" ]] ; then
-	affinity_yaml=
-	ns_yaml="nodeSelector:${nl}  kubernetes.io/hostname: \"${pin_nodes[default]}\""
+	affinity_yaml="nodeSelector:${nl}  kubernetes.io/hostname: \"${pin_nodes[default]}\""
     fi
-    if [[ $node_class != sync && $node_class != drop-cache ]] ; then
+    if [[ -z "${runtime_class+x}" ]] ; then
 	if [[ -n "$node_class" && -n "${runtime_classes[$node_class]:-}" ]] ; then
-	    rc="runtimeClassName: \"${runtime_classes[$node_class]}\""
+	    runtime_class=${runtime_classes[$node_class]}
 	elif [[ -n "${runtime_classes[default]:-}" ]] ; then
-	    rc="runtimeClassName: \"${runtime_classes[default]}\""
+	    runtime_class=${runtime_classes[default]}
 	fi
     fi
-    if (( $# < 4 )) ; then
-	echo "Usage: create_spec <container_func> namespace instance secret_count args..." 1>&2
-	exit 1
-    fi
     local create_container_function=$1; shift
+    [[ -n "$(type -t "$create_container_function")" ]] || fatal "Cannot run $create_container_function: command not found"
     local namespace=$1
     local instance=$2
     local secret_count=$3
     cat <<EOF
 spec:
-$(indent 2 <<< "$ns_yaml")
   terminationGracePeriodSeconds: 1
 $(indent 2 <<< "$affinity_yaml")
 $(indent 2 tolerations_yaml ${tolerations+"${tolerations[@]}"})
-$(indent 2 <<< "$rc")
+${runtime_class:+$(indent 2 <<< "runtimeClassName: \"$runtime_class\"")}
+${use_pbench:+$(indent 2 <<< "$(pbench_agent_yaml)")}
   containers:
 $(indent 2 "$create_container_function" "$@")
-$(indent 2 <<< "${use_pbench:+$(pbench_agent_yaml)}")
 $(indent 2 volumes_yaml "$namespace" "$instance" "$secret_count")
 EOF
 }
+
+function create_pod_deployment() {
+    local -i replica=0
+    while (( replica++ < replicas )) ; do
+	local name="${depname}-${replica}"
+	create_object -n "$namespace" "$name" <<EOF
+apiVersion: v1
+kind: Pod
+metadata:
+  name: $(mkpodname "$name")
+$(indent 2 standard_all_metadata_yaml "$namespace" client)
+  selector:
+    matchLabels:
+      app: $name
+$(indent 2 standard_labels_yaml "$workload" "$namespace" "${instance}-${replica}" 1)
+$(create_spec ${affinity_yaml:+-A "$affinity_yaml"} "${workload}_create_containers_yaml" "$@" "$replica")
+${security_context:+$(indent 2 <<< "$security_context")}
+  restartPolicy: Never
+EOF
+    done
+}
+
+function create_replication_deployment() {
+    local name="$depname"
+    create_object -n "$namespace" "$name" <<EOF
+apiVersion: apps/v1
+kind: $deployment_type
+metadata:
+  name: $(mkpodname "$name")
+$(indent 2 standard_deployment_metadata_yaml "$namespace" client)
+$(indent 2 standard_labels_yaml "${workload}" "$namespace" "$instance" 1)
+spec:
+  replicas: $replicas
+  selector:
+    matchLabels:
+      app: ${namespace}-${workload}-${instance}
+  strategy:
+    type: RollingUpdate
+  template:
+    metadata:
+$(indent 6 standard_labels_yaml ${workload} "$namespace" "$instance" 1)
+$(indent 6 standard_pod_metadata_yaml "$namespace" client)
+$(indent 4 create_spec ${affinity_yaml:+-A "$affinity_yaml"} "${workload}_create_containers_yaml" "$@" "x")
+${security_context:+$(indent 6 <<< "$security_context")}
+EOF
+}
+
+function create_standard_deployment() {
+    local OPTIND=0
+    local OPTARG=
+    local affinity_yaml=
+    local workload="$requested_workload"
+    local opt
+    local security_context=
+    while getopts 'A:w:S:' opt "$@" ; do
+	case "$opt" in
+	    A) affinity_yaml="$OPTARG"	  ;;
+	    w) workload="$OPTARG"	  ;;
+	    S) security_context="$OPTARG" ;;
+	    *)				  ;;
+	esac
+    done
+    shift $((OPTIND-1))
+    local namespace=$1
+    local instance=$2
+    local -i replicas=$4
+    local depname="${namespace}-${workload}-${instance}"
+    case "${deployment_type,,}" in
+	pod)
+	    create_pod_deployment "$@"
+	    ;;
+	replicaset|deployment)
+	    create_replication_deployment "$@"
+	    ;;
+	*)
+	    fatal "Unknown deployment type $deployment_type"
+	    ;;
+    esac
+}
+				       
 
 ################################################################
 # Object YAML creation
