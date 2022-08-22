@@ -29,28 +29,6 @@ $((containers_per_pod * replicas))
 EOF
 }
 
-function _server_create_client_affinity_yaml() {
-    (( affinity )) || return 0
-    local server=$1
-    local affinity_type
-    case "$affinity" in
-	1) affinity_type=Affinity     ;;
-	*) affinity_type=AntiAffinity ;;
-    esac
-    cat << EOF
-affinity:
-  pod$affinity_type:
-    requiredDuringSchedulingIgnoredDuringExecution:
-    - labelSelector:
-        matchExpressions:
-        - key: app
-          operator: In
-          values:
-          - "$server"
-      topologyKey: kubernetes.io/hostname
-EOF
-}
-
 function server-client_create_containers_yaml() {
     local namespace=$1
     local instance=$2
@@ -82,8 +60,9 @@ function server_create_deployment() {
     for instance in $(seq $first_deployment $((count + first_deployment - 1))) ; do
 	create_service "$namespace" "${namespace}-server-server-${instance}" "$port"
 	deployment_type=single_pod create_standard_deployment -w server-server -p -c server \
-		       "$namespace" "$instance" "$secret_count" "$replicas" "$containers_per_pod"
-	create_standard_deployment -w server-client -A "$(_server_create_client_affinity_yaml ${namespace}-server-${instance})" \
+		       -A "$(create_affinity_yaml ${namespace}-server-client-${instance})" \
+		       "$namespace" "$instance" "$secret_count" "$replicas" 1
+	create_standard_deployment -w server-client -A "$(create_affinity_yaml ${namespace}-server-server-${instance})" \
 				   "$namespace" "$instance" "$secret_count" "$replicas" "$containers_per_pod"
     done
 }
@@ -139,6 +118,7 @@ function server_process_options() {
 }
 
 function server_supports_reporting() {
+    echo "server_supports_reporting" 1>&2
     :
 }
 

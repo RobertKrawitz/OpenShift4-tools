@@ -42,55 +42,13 @@ securityContext:
 EOF
 }
 
-function _uperf_server_create_deployment() {
-    local namespace=$1
-    local instance=$2
-    local name=${namespace}-${instance}-server
-    create_object -n "$namespace" "$name" <<EOF
-apiVersion: v1
-kind: Pod
-metadata:
-  name: $(mkpodname "$name")
-$(indent 2 standard_all_metadata_yaml "$namespace" server)
-  selector:
-    matchLabels:
-      app: ${namespace}-${instance}
-$(indent 2 standard_labels_yaml ${requested_workload}-server "$namespace" "$instance")
-$(create_spec -c server _${requested_workload}_server_create_container_yaml "$@")
-$(indent 2 _${requested_workload}_create_security_context)
-  restartPolicy: Never
-EOF
-}
-
-function uperf_client_create_containers_yaml() {
+function uperf-client_create_containers_yaml() {
     make_standard_containers -c uperf-client.pl -- "$@" <<EOF
 $workload_run_time
 $___uperf_ramp_time
 svc-${namespace}-uperf-server-$instance
 $___uperf_port
 $(IFS=$'\n'; echo "${___uperf_tests[*]}")
-EOF
-}
-
-function _uperf_create_client_affinity_yaml() {
-    (( affinity )) || return 0
-    local server=$1
-    local affinity_type
-    case "$affinity" in
-	1) affinity_type=Affinity     ;;
-	*) affinity_type=AntiAffinity ;;
-    esac
-    cat << EOF
-affinity:
-  pod$affinity_type:
-    requiredDuringSchedulingIgnoredDuringExecution:
-    - labelSelector:
-        matchExpressions:
-        - key: app
-          operator: In
-          values:
-          - "$server"
-      topologyKey: kubernetes.io/hostname
 EOF
 }
 
@@ -105,9 +63,11 @@ function uperf_create_deployment() {
 
     for instance in $(seq "$first_deployment" $((count + first_deployment - 1))) ; do
 	create_service "$namespace" "${namespace}-uperf-server-${instance}" $(seq "$___uperf_port" $((___uperf_port + ___uperf_port_addrs)))
-	deployment_type=single_pod create_standard_deployment -w uperf-server -p -S "$(_uperf_create_security_context)" -c server \
-		       "$namespace" "$instance" "$secret_count" "$replicas" "$containers_per_pod"
-	create_standard_deployment -w uperf_client -A "$(_uperf_create_client_affinity_yaml)" -S "$(_uperf_create_security_context)" \
+	deployment_type=single_pod create_standard_deployment -w uperf-server -p -c server \
+		       -A "$(create_affinity_yaml "${namespace}-uperf-client-${instance}")" \
+		       "$namespace" "$instance" "$secret_count" 1 1
+	create_standard_deployment -w uperf-client -A "$(create_affinity_yaml "${namespace}-uperf-server-${instance}")" \
+				   -S "$(_uperf_create_security_context)" \
 				   "$namespace" "$instance" "$secret_count" "$replicas" "$containers_per_pod"
     done
 }
