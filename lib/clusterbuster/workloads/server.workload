@@ -20,192 +20,32 @@
 
 declare -ig ___msg_size=32768
 
-function _server_create_server_container_yaml() {
-    local namespace=$1
-    local instance=$2
-    local secret_count=$3
-    local expected_clients=$4
-    cat <<EOF
-- name: server
-  image: "$container_image"
-  imagePullPolicy: $image_pull_policy
-$(indent 2 container_standard_auxiliary_yaml)
-  ports:
-  - containerPort: $port
-$(indent 2 bootstrap_command_yaml server.pl)
-  - "$basetime"
-  - "$baseoffset"
-  - "$port"
-  - "${namespace}-${instance}-server"
-  - "$___msg_size"
-  - "$(ts)"
-  - "$expected_clients"
-$(indent 2 volume_mounts_yaml "$namespace" "$instance" "$secret_count")
+function server-server_create_containers_yaml() {
+    make_standard_containers -c server.pl -- "$@" <<EOF
+$port
+$___msg_size
+$(ts)
+$((containers_per_pod * replicas))
 EOF
 }
 
-function _server_create_server_deployment() {
+function server-client_create_containers_yaml() {
     local namespace=$1
     local instance=$2
-    local secret_count=$3
-    local name=${namespace}-${instance}-server
-    if [[ $deployment_type = pod ]] ; then
-	create_object -n "$namespace" "$name" <<EOF
-apiVersion: v1
-kind: Pod
-metadata:
-  name: $(mkpodname "$name")
-$(indent 2 standard_all_metadata_yaml "$namespace" server)
-  selector:
-    matchLabels:
-      app: ${namespace}-server-${instance}
-$(indent 2 standard_labels_yaml server "$namespace" "$instance" )
-$(create_spec -c server _server_create_server_container_yaml "$@")
-  restartPolicy: Never
-EOF
-    else
-	create_object -n "$namespace" "$name" <<EOF
-apiVersion: apps/v1
-kind: $deployment_type
-metadata:
-  name: $(mkpodname "$name")
-$(indent 2 standard_deployment_metadata_yaml "$namespace" server )
-$(indent 2 standard_labels_yaml server "$namespace" "$instance")
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: ${namespace}-server-$instance
-  strategy:
-    type: RollingUpdate
-  template:
-    metadata:
-      labels:
-$(indent 6 standard_labels_yaml server "$namespace" "$instance" )
-$(indent 6 standard_pod_metadata_yaml "$namespace" server)
-$(indent 4 create_spec -c server _server_create_server_container_yaml "$@")
-EOF
-    fi
-}
-
-function _server_create_client_container_yaml() {
-    local namespace=$1
-    local instance=$2
-    local secret_count=$3
-    local containers_per_pod=$5
-    local log_host=$6
-    local log_port=$7
-    local -i container
-    local sync_service=
-    local sync_port_num=
-    IFS=: read -r sync_service sync_port_num <<< $(get_sync)
     if [[ $target_data_rate != 0 && $target_data_rate != '' && $workload_run_time_max -eq 0 && bytes_transfer_max -eq 0 ]] ; then
 	bytes_transfer=$default_bytes_transfer
 	bytes_transfer_max=$default_bytes_transfer
     fi
-    for container in $(seq 0 $((containers_per_pod - 1))) ; do
-	cat <<EOF
-- name: c${container}
-  image: "$container_image"
-  imagePullPolicy: $image_pull_policy
-$(indent 2 container_standard_auxiliary_yaml)
-  env:
-  - name: VERBOSE
-    value: "$verbose"
-$(indent 2 bootstrap_command_yaml client.pl)
-  - "$namespace"
-  - "c$container"
-  - "$basetime"
-  - "$baseoffset"
-  - "$(ts)"
-  - "$exit_at_end"
-  - "$sync_service"
-  - "$sync_port_num"
-  - "$log_host"
-  - "$log_port"
-  - "svc-${namespace}-server-$instance"
-  - "$port"
-  - "$target_data_rate"
-  - "$bytes_transfer"
-  - "$bytes_transfer_max"
-  - "$___msg_size"
-  - "$workload_run_time"
-  - "$workload_run_time_max"
-$(indent 2 volume_mounts_yaml "$namespace" "$instance" "$secret_count")
+    make_standard_containers -c client.pl -- "$@" <<EOF
+svc-${namespace}-server-server-$instance
+$port
+$target_data_rate
+$bytes_transfer
+$bytes_transfer_max
+$___msg_size
+$workload_run_time
+$workload_run_time_max
 EOF
-    done
-}
-
-function _server_create_client_affinity_yaml() {
-    (( affinity )) || return 0
-    local server=$1
-    local affinity_type
-    case "$affinity" in
-	1) affinity_type=Affinity     ;;
-	*) affinity_type=AntiAffinity ;;
-    esac
-    cat << EOF
-affinity:
-  pod$affinity_type:
-    requiredDuringSchedulingIgnoredDuringExecution:
-    - labelSelector:
-        matchExpressions:
-        - key: app
-          operator: In
-          values:
-          - "$server"
-      topologyKey: kubernetes.io/hostname
-EOF
-}
-
-function _server_create_client_deployment() {
-    local namespace=$1
-    local instance=$2
-    local secret_count=$3
-    local replicas=$4
-    local affinity_yaml="$(_server_create_client_affinity_yaml "${namespace}-server-${instance}")"
-    if [[ $deployment_type = pod ]] ; then
-	local -i replica=0
-	while (( replica++ < replicas )) ; do
-	    local name=${namespace}-${instance}-client-${replica}
-	    create_object -n "$namespace" "$name" <<EOF
-apiVersion: v1
-kind: Pod
-metadata:
-  name: $(mkpodname "$name")
-$(indent 2 standard_all_metadata_yaml "$namespace" client)
-  selector:
-    matchLabels:
-      app: ${namespace}-server-client-${instance}
-$(indent 2 standard_labels_yaml server-client "$namespace" "$instance" 1)
-$(create_spec ${affinity_yaml:+-A "$affinity_yaml"} _server_create_client_container_yaml "$@" "$replica")
-  restartPolicy: Never
-EOF
-	done
-    else
-	local name=${namespace}-${instance}-client
-	create_object -n "$namespace" "$name" <<EOF
-apiVersion: apps/v1
-kind: $deployment_type
-metadata:
-  name: $(mkpodname "$name")
-$(indent 2 standard_deployment_metadata_yaml "$namespace" client)
-$(indent 2 standard_labels_yaml server-client "$namespace" "$instance" 1)
-spec:
-  replicas: $replicas
-  restartPolicy: Always
-  selector:
-    matchLabels:
-      app: ${namespace}-server-client-${instance}
-  strategy:
-    type: RollingUpdate
-  template:
-    metadata:
-$(indent 6 standard_labels_yaml server-client "$namespace" "$instance" 1)
-$(indent 6 standard_pod_metadata_yaml "$namespace" client)
-$(indent 4 create_spec ${affinity_yaml:+-A "$affinity_yaml"} _server_create_client_container_yaml "$@" "x")
-EOF
-    fi
 }
 
 function server_create_deployment() {
@@ -214,19 +54,16 @@ function server_create_deployment() {
     local secret_count=${3:-1}
     local replicas=${4:-1}
     local containers_per_pod=${5:-1}
-    local log_host=${6:-}
-    local -i log_port=${7:-0}
     local -i instance
     create_sync_service_if_needed "$namespace" 2 "$((containers_per_pod * replicas * count))"
 
     for instance in $(seq $first_deployment $((count + first_deployment - 1))) ; do
-	create_service "$namespace" "${namespace}-server-${instance}" "$port"
-	if [[ $deployment_type = pod ]] ; then
-	    _server_create_server_deployment "$namespace" "$instance" "$secret_count" "$((containers_per_pod * replicas))"
-	else
-	    _server_create_server_deployment "$namespace" "$instance" "$secret_count" "-1"
-	fi
-	_server_create_client_deployment "$namespace" "$instance" "$secret_count" "$replicas" "$containers_per_pod" "$log_host" "$log_port"
+	create_service "$namespace" "${namespace}-server-server-${instance}" "$port"
+	deployment_type=single_pod create_standard_deployment -w server-server -p -c server \
+		       -A "$(create_affinity_yaml ${namespace}-server-client-${instance})" \
+		       "$namespace" "$instance" "$secret_count" "$replicas" 1
+	create_standard_deployment -w server-client -A "$(create_affinity_yaml ${namespace}-server-server-${instance})" \
+				   "$namespace" "$instance" "$secret_count" "$replicas" "$containers_per_pod"
     done
 }
 
@@ -281,6 +118,7 @@ function server_process_options() {
 }
 
 function server_supports_reporting() {
+    echo "server_supports_reporting" 1>&2
     :
 }
 
@@ -290,4 +128,4 @@ function server_report_options() {
 EOF
 }
 
-register_workload server dispatch_generic
+register_workload server

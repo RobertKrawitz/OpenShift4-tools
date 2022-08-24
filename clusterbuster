@@ -30,6 +30,17 @@ Actual version is ${BASH_VERSION}
 EOF
 fi
 
+declare ___arg
+for ___arg in "$@" ; do
+    if [[ "${___arg:-}" = '--force-abort'* ]] ; then
+	echo "*** Warning: will abort on any shell error!" 1>&2
+	set -e
+	set -o errtrace
+	#trap 'killthemall "Caught error, aborting!"' ERR
+	break
+    fi
+done
+
 declare -i namespaces=1
 declare -i use_namespaces=1
 declare -i deps_per_namespace=1
@@ -482,6 +493,7 @@ Advanced options (generally not required):
        --inject_error=<opt>
                         For testing purposes, inject the specified error
                         condition (documented only in code).
+       --force-abort    Abort the run on any error.
 
 Here is a brief description of all available workloads:
 $(_document_workloads)
@@ -623,6 +635,7 @@ function process_option() {
 	verbose)		    verbose=$(bool "$optvalue")			;;
 	doit)			    doit=$(bool "$optvalue")			;;
 	quiet)			    verbose=$((! $(bool "$optvalue")))		;;
+	forceabort*)		    set -e					;;
 	# Reporting
 	artifactdir)		    artifactdir="$optvalue"			;;
 	logstrategy)		    log_strategy=$optvalue			;;
@@ -966,7 +979,7 @@ function create_sync_service_if_needed() {
     if ((sync_count <= 0)) ; then return; fi
     if get_sync -q ; then
 	if [[ $namespace = "${namespaces_to_create[0]:-}" ]] ; then
-	    create_service -h "$sync_namespace" "$sync_namespace" "$sync_port"
+	    create_service -h "$sync_namespace" "${sync_namespace}-sync" "$sync_port"
 	    create_sync_deployment "$sync_namespace" "$sync_count" $((sync_clients * ${#namespaces_to_create[@]}))
 	fi
 	create_external_service "$namespace" "${namespace}-sync" "$sync_port" "$global_sync_service"
@@ -1572,7 +1585,8 @@ function indent() {
 }
 
 function mkpodname() {
-    echo "${pod_prefix}$(IFS=-; echo "$*")"
+    local podname="${pod_prefix}$(IFS=-; echo "$*")"
+    echo "${podname//_/-}"
 }
 
 function tolerations_yaml() {
@@ -1625,6 +1639,70 @@ EOF
     fi
 }
 
+function mk_container_args() {
+    local arg
+    while read -r arg ; do
+	echo "- \"$arg\""
+    done
+}
+
+function standard_container_args() {
+    local namespace=$1
+    local container=$2
+    mk_container_args <<EOF
+$namespace
+c$container
+$basetime
+$baseoffset
+$(ts)
+$exit_at_end
+$sync_service
+$sync_port_num
+$log_host
+$log_port
+EOF
+}
+
+function make_standard_containers() {
+    local OPTARG
+    local OPTIND=0
+    local opt
+    local command="${requested_workload}.pl"
+    local image="$container_image"
+    while getopts 'c:i:' opt "$@" ; do
+	case "$opt" in
+	    c) command="$OPTARG";;
+	    i) image="$OPTARG"  ;;
+	    *)		        ;;
+	esac
+    done
+    shift $((OPTIND-1))
+    local namespace=$1
+    local instance=$2
+    local secret_count=$3
+    local containers_per_pod=$5
+    local -i container
+    local sync_service=
+    local sync_port_num=
+    local container_args="$(mk_container_args)"
+    IFS=: read -r sync_service sync_port_num <<< "$(get_sync)"
+    for container in $(seq 0 $((containers_per_pod - 1))) ; do
+	cat <<EOF
+- name: "c${container}"
+  imagePullPolicy: $image_pull_policy
+  image: "$container_image"
+$(indent 2 container_standard_auxiliary_yaml)
+  env:
+  - name: VERBOSE
+    value: "$verbose"
+$(indent 2 bootstrap_command_yaml "$command")
+$(indent 2 standard_container_args "$namespace" "$container")
+$(indent 2 <<< "$container_args")
+$(indent 2 volume_mounts_yaml "$namespace" "${instance}" "$secret_count")
+EOF
+    done
+}
+
 function container_standard_auxiliary_yaml() {
     container_resources_yaml
     liveness_probe_yaml
@@ -1673,9 +1751,13 @@ function container_resources_json() {
 function standard_labels_yaml() {
     local objtype=worker
     local OPTIND=0
-    while getopts 't:' opt "$@" ; do
+    local logger=
+    local suffix=
+    while getopts 't:ls:' opt "$@" ; do
 	case "$opt" in
 	    t) objtype="$OPTARG" ;;
+	    l) logger=true	 ;;
+	    s) suffix="$OPTARG"  ;;
 	    *)			 ;;
 	esac
     done
@@ -1683,13 +1765,14 @@ function standard_labels_yaml() {
     local workload=${1:-}
     local namespace=${2:-}
     local instance=${3:-}
-    local logger=${4:+logger}
+    local replica=${4:-}
     # Different versions of bash expand quotes inside the ${logger:+...} differently.
     local true='"true"'
     cat <<EOF
 labels:
   ${basename}-uuid: "$uuid"
   ${basename}-id: "$uuid"
+${workload:+  ${basename}-${workload}: "$uuid"}
   ${basename}: "true"
   clusterbusterbase: "true"
   ${basename}base: "true"
@@ -1697,9 +1780,12 @@ labels:
 EOF
     if [[ -n "$workload" ]] ; then
 	cat <<EOF
-  name: "${namespace}${workload:+-$workload}${instance:+-$instance}"
-  app: "${namespace}${workload:+-$workload}${instance:+-$instance}"
-  ${basename}-${workload}: "true"
+  name: "${namespace}${workload:+-$workload}${instance:+-$instance}${suffix:+-$suffix}"
+  app: "${namespace}${workload:+-$workload}${suffix:+-$suffix}"
+  k8s-app: "${namespace}${workload:+-$workload}${suffix:+-$suffix}"
+  instance: "${namespace}${workload:+-$workload}${instance:+-$instance}${suffix:+-$suffix}"
+  replica: "${namespace}${workload:+-$workload}${instance:+-$instance}${replica:+-$replica}${suffix:+-$suffix}"
+  ${workload}: "true"
 ${logger:+  ${basename}-logger: $true}
 EOF
     fi
@@ -1920,63 +2006,42 @@ EOF
     fi
 }
 
-function create_spec() {
-    local affinity_yaml=
-    local node_class=client
+function create_affinity_yaml() {
     local OPTIND=0
     local OPTARG
-    local ns_yaml=${node_selector:+"nodeSelector:${nl}  $node_selector: \"\""}
-    local rc=
-    local use_pbench=1
-    while getopts "A:c:r:Pp" opt "$@" ; do
+    local _affinity="$affinity"
+    local topo_key="kubernetes.io/hostname"
+    local key="instance"
+    local operator="In"
+    local opt
+    while getopts "a:k:o:t:" opt "$@" ; do
 	case "$opt" in
-	    A) affinity_yaml=$OPTARG ;;
-	    c) node_class=$OPTARG    ;;
-	    r) rc=$OPTARG	    ;;
-	    P) use_pbench=	    ;;
-	    p) use_pbench=1	    ;;
-	    *)                      ;;
+	    a) _affinity="$OPTARG" ;;
+	    k) key="$OPTARG"       ;;
+	    o) operator="$OPTARG"  ;;
+	    t) topo_key="$OPTARG"  ;;
+	    *)                     ;;
 	esac
     done
+    case "${_affinity,,}" in
+	1|af*|podaf) _affinity=Affinity	    ;;
+	*)	     _affinity=AntiAffinity ;;
+    esac
     shift $((OPTIND-1))
-    if [[ -z "$(type -t "$1")" ]] ; then
-	fatal "Cannot run $1: command not found"
-    fi
-    # Node specifiers override affinity
-    if [[ -n "$node_class" && -n "${pin_nodes[$node_class]:-}" ]] ; then
-	affinity_yaml=
-	ns_yaml="nodeSelector:${nl}  kubernetes.io/hostname: \"${pin_nodes[$node_class]}\""
-    elif [[ -n "${pin_nodes[default]:-}" ]] ; then
-	affinity_yaml=
-	ns_yaml="nodeSelector:${nl}  kubernetes.io/hostname: \"${pin_nodes[default]}\""
-    fi
-    if [[ $node_class != sync && $node_class != drop-cache ]] ; then
-	if [[ -n "$node_class" && -n "${runtime_classes[$node_class]:-}" ]] ; then
-	    rc="runtimeClassName: \"${runtime_classes[$node_class]}\""
-	elif [[ -n "${runtime_classes[default]:-}" ]] ; then
-	    rc="runtimeClassName: \"${runtime_classes[default]}\""
-	fi
-    fi
-    if (( $# < 4 )) ; then
-	echo "Usage: create_spec <container_func> namespace instance secret_count args..." 1>&2
-	exit 1
-    fi
-    local create_container_function=$1; shift
-    local namespace=$1
-    local instance=$2
-    local secret_count=$3
-    cat <<EOF
-spec:
-$(indent 2 <<< "$ns_yaml")
-  terminationGracePeriodSeconds: 1
-$(indent 2 <<< "$affinity_yaml")
-$(indent 2 tolerations_yaml ${tolerations+"${tolerations[@]}"})
-$(indent 2 <<< "$rc")
-  containers:
-$(indent 2 "$create_container_function" "$@")
-$(indent 2 <<< "${use_pbench:+$(pbench_agent_yaml)}")
-$(indent 2 volumes_yaml "$namespace" "$instance" "$secret_count")
+    if [[ -n "${1:-}" ]] ; then
+	cat <<EOF
+affinity:
+  pod$_affinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+    - labelSelector:
+        matchExpressions:
+        - key: $key
+          operator: $operator
+          values:
+          - "$1"
+      topologyKey: $topo_key
 EOF
+    fi
 }
 
 ################################################################
@@ -2112,7 +2177,7 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: "${namespace}"
-$(indent 2 standard_labels_yaml -t '')
+$(indent 2 standard_labels_yaml -t namespace)
 EOF
     fi
 }
@@ -2133,7 +2198,7 @@ kind: Secret
 metadata:
   name: "$secname"
 $(indent 2 namespace_yaml "$namespace")
-$(indent 2 standard_labels_yaml -t '')
+$(indent 2 standard_labels_yaml -t service)
 data:
   key1: "$(base64 <<< "${namespace}X${i}Y${j}Z1")"
   key2: "$(base64 <<< "${namespace}X${i}Y${j}Z2")"
@@ -2182,12 +2247,15 @@ EOF
 
 function create_service() {
     local OPTIND=0
+    local OPTARG
     local -i force_headless_services=-1
     local headless=
-    while getopts 'hH' opt ; do
+    local key=name
+    while getopts 'hHk:' opt ; do
 	case "$opt" in
 	    h) force_headless_services=1 ;;
 	    H) force_headless_services=0 ;;
+	    k) key="$OPTARG"		 ;;
 	    *) ;;
 	esac
     done
@@ -2203,13 +2271,13 @@ kind: Service
 metadata:
   name: "svc-${deployment}"
 $(indent 2 namespace_yaml "$namespace")
-$(indent 2 standard_labels_yaml -t '')
+$(indent 2 standard_labels_yaml -t service)
 spec:
 $(indent 2 <<< "$headless")
   ports:
 $(indent 4 _create_service_ports "svc-${deployment}" "$@")
   selector:
-    name: "${deployment}"
+    ${key}: "${deployment}"
 EOF
 }
 
@@ -2224,13 +2292,181 @@ kind: Service
 metadata:
   name: "svc-${deployment}"
 $(indent 2 namespace_yaml "$namespace")
-$(indent 2 standard_labels_yaml -t '')
+$(indent 2 standard_labels_yaml -t service)
 spec:
   ports:
   - port: $portnum
   type: ExternalName
   externalName: $external_name
 EOF
+}
+
+function create_spec() {
+    local affinity_yaml=
+    local node_class=client
+    local OPTIND=0
+    local OPTARG
+    local ns_yaml=${node_selector:+"nodeSelector:${nl}  $node_selector: \"\""}
+    local runtime_class
+    local use_pbench=1
+    local opt
+    while getopts "A:c:r:Pp" opt "$@" ; do
+	case "$opt" in
+	    A) affinity_yaml=$OPTARG ;;
+	    c) node_class=$OPTARG    ;;
+	    r) runtime_class=$OPTARG ;;
+	    P) use_pbench=	     ;;
+	    p) use_pbench=1	     ;;
+	    *)                       ;;
+	esac
+    done
+    shift $((OPTIND-1))
+    (( $# >= 4 )) || fatal "Usage: create_spec <container_func> namespace instance secret_count args..."
+    # Node specifiers override affinity
+    if [[ -n "$node_class" && -n "${pin_nodes[$node_class]:-}" ]] ; then
+	affinity_yaml="nodeSelector:${nl}  kubernetes.io/hostname: \"${pin_nodes[$node_class]}\""
+    elif [[ -n "${pin_nodes[default]:-}" ]] ; then
+	affinity_yaml="nodeSelector:${nl}  kubernetes.io/hostname: \"${pin_nodes[default]}\""
+    fi
+    if [[ -z "${runtime_class+x}" ]] ; then
+	if [[ -n "$node_class" && -n "${runtime_classes[$node_class]:-}" ]] ; then
+	    runtime_class=${runtime_classes[$node_class]}
+	elif [[ -n "${runtime_classes[default]:-}" ]] ; then
+	    runtime_class=${runtime_classes[default]}
+	fi
+    fi
+    local create_container_function=$1; shift
+    [[ -n "$(type -t "$create_container_function")" ]] || fatal "Cannot run $create_container_function: command not found"
+    local namespace=$1
+    local instance=$2
+    local secret_count=$3
+    cat <<EOF
+spec:
+  terminationGracePeriodSeconds: 1
+$(indent 2 <<< "$affinity_yaml")
+$(indent 2 tolerations_yaml ${tolerations+"${tolerations[@]}"})
+${runtime_class:+$(indent 2 <<< "runtimeClassName: \"$runtime_class\"")}
+${use_pbench:+$(indent 2 <<< "$(pbench_agent_yaml)")}
+  containers:
+$(indent 2 "$create_container_function" "$@")
+$(indent 2 volumes_yaml "$namespace" "$instance" "$secret_count")
+EOF
+}
+
+function create_single_pod_deployment() {
+    local namespace=$1
+    local instance=$2
+    local name="${namespace}-${workload}-${instance}"
+    create_object -n "$namespace" "$name" <<EOF
+apiVersion: v1
+kind: Pod
+metadata:
+  name: $(mkpodname "$name")
+$(indent 2 standard_all_metadata_yaml "$namespace" client)
+  selector:
+    matchLabels:
+      app: $name
+$(indent 2 standard_labels_yaml -l "$workload" "$namespace" "${instance}")
+$(create_spec ${affinity_yaml:+-A "$affinity_yaml"} ${node_class:+-c "$node_class"} "${workload}_create_containers_yaml" "$@")
+${security_context:+$(indent 2 <<< "$security_context")}
+  restartPolicy: Never
+EOF
+}
+
+function create_pod_deployment() {
+    local namespace=$1
+    local instance=$2
+    local -i replicas=$4
+    local -i replica=0
+    local depname="${namespace}-${workload}-${instance}"
+    while (( replica++ < replicas )) ; do
+	local name="${depname}-${replica}"
+	create_object -n "$namespace" "$name" <<EOF
+apiVersion: v1
+kind: Pod
+metadata:
+  name: $(mkpodname "$name")
+$(indent 2 standard_all_metadata_yaml "$namespace" client)
+  selector:
+    matchLabels:
+      app: $name
+$(indent 2 standard_labels_yaml -l "$workload" "$namespace" "${instance}" "${replica}")
+$(create_spec ${affinity_yaml:+-A "$affinity_yaml"} ${node_class:+-c "$node_class"} "${workload}_create_containers_yaml" "$@" "$replica")
+${security_context:+$(indent 2 <<< "$security_context")}
+  restartPolicy: Never
+EOF
+    done
+}
+
+function create_replication_deployment() {
+    local namespace=$1
+    local instance=$2
+    local -i replicas=$4
+    local name="${namespace}-${workload}-${instance}"
+    create_object -n "$namespace" "$name" <<EOF
+apiVersion: apps/v1
+kind: $deployment_type
+metadata:
+  name: $(mkpodname "$name")
+$(indent 2 standard_deployment_metadata_yaml "$namespace" client)
+$(indent 2 standard_labels_yaml -l "$workload" "$namespace" "$instance")
+spec:
+  replicas: $replicas
+  selector:
+    matchLabels:
+      instance: ${namespace}-${workload}-${instance}
+  strategy:
+    type: RollingUpdate
+  template:
+    metadata:
+$(indent 6 standard_labels_yaml -l "$workload" "$namespace" "$instance")
+$(indent 6 standard_pod_metadata_yaml "$namespace" client)
+$(indent 4 create_spec ${affinity_yaml:+-A "$affinity_yaml"} ${node_class:+-c "$node_class"} "${workload}_create_containers_yaml" "$@" "x")
+${security_context:+$(indent 6 <<< "$security_context")}
+EOF
+}
+
+function create_standard_deployment() {
+    local OPTIND=0
+    local OPTARG=
+    local affinity_yaml=
+    local workload="$requested_workload"
+    local opt
+    local security_context=
+    local allow_replica_controller=1
+    local node_class=
+    while getopts 'A:w:S:pc:' opt "$@" ; do
+	case "$opt" in
+	    A) affinity_yaml="$OPTARG"	  ;;
+	    w) workload="$OPTARG"	  ;;
+	    S) security_context="$OPTARG" ;;
+	    p) allow_replica_controller=0 ;;
+	    c) node_class="$OPTARG"	  ;;
+	    *)				  ;;
+	esac
+    done
+    shift $((OPTIND-1))
+    local namespace=$1
+    local instance=$2
+    local -i replicas=$4
+    case "${deployment_type,,}" in
+	single_pod)
+	    create_single_pod_deployment "$@"
+	    ;;
+	pod)
+	    create_pod_deployment "$@"
+	    ;;
+	replicaset|deployment)
+	    if ((allow_replica_controller)) ; then
+		create_replication_deployment "$@"
+	    else
+		create_pod_deployment "$@"
+	    fi
+	    ;;
+	*)
+	    fatal "Unknown deployment type $deployment_type"
+	    ;;
+    esac
 }
 
 function create_container_sync() {
@@ -2271,11 +2507,7 @@ $(indent 2 standard_all_metadata_yaml "$namespace" sync)
   selector:
     matchLabels:
       app: ${namespace}
-$(indent 2 standard_labels_yaml -t 'sync')
-    name: ${namespace}
-    app: ${namespace}
-    k8s-app: ${namespace}
-    ${basename}-sync: "$uuid"
+$(indent 2 standard_labels_yaml 'sync' "$namespace")
 $(create_spec -P -c sync -r '' create_container_sync "$namespace" 0 0 "$sync_count" "$@")
   restartPolicy: Never
 EOF
@@ -2303,38 +2535,31 @@ function create_drop_cache_deployment() {
     local namespace=$1
     local workload=$2
     local instance=$3
-    create_object -t Pod -n "$namespace" "${namespace}-${workload}-${instance}-dc" <<EOF
+    local -i replicas=$4
+    local -i replica=0
+    while ((replica++ < replicas)) ; do
+	local name="${namespace}-${workload}-${instance}-${replica}-dc"
+	create_service -H -k replica "$namespace" "${name}" "$drop_cache_port"
+	create_object -t Pod -n "$namespace" "${namespace}-${workload}-${instance}-${replica}-dc" <<EOF
 apiVersion: v1
 kind: Pod
 metadata:
-  name: $(mkpodname "${namespace}-${workload}-${instance}-dc")
+  name: $(mkpodname "$name")
 $(indent 2 standard_all_metadata_yaml "$namespace" drop_cache)
+$(indent 2 standard_labels_yaml -s dc "$workload" "$namespace" "$instance" "$replica")
   selector:
     matchLabels:
-      app: ${namespace}-${workload}-${instance}-dc
-$(indent 2 standard_labels_yaml -t 'dc')
-    name: ${namespace}-${workload}-${instance}-dc
-    app: ${namespace}-${workload}-${instance}-dc
-    k8s-app: ${namespace}-${workload}-${instance}-dc
-    ${basename}-dc: "$uuid"
+      replica: ${namespace}-${workload}-${instance}-${replica}
   securityContext:
     privileged: true
 $(create_spec -P -c drop-cache -r '' create_container_drop_cache "$namespace" "$instance" 0)
   - name: "proc-sys-vm"
     hostPath:
       path: "/proc/sys/vm"
-  affinity:
-    podAffinity:
-      requiredDuringSchedulingIgnoredDuringExecution:
-      - labelSelector:
-          matchExpressions:
-          - key: app
-            operator: In
-            values:
-            - "${namespace}-${workload}-${instance}"
-        topologyKey: kubernetes.io/hostname
+$(indent 2 create_affinity_yaml -a affinity -k replica "$name")
   restartPolicy: Never
 EOF
+    done
 }
 
 ################################################################
@@ -2456,7 +2681,7 @@ function drop_host_caches() {
 function create_all_deployments() {
     local i
     for i in $(seq 0 "$((parallel_deployments - 1))") ; do
-	create_objects_n deployment "$parallel_deployments" "$objs_per_call_deployments" "$i" "$sleep_between_deployments" "$deps_per_namespace" "$secrets" "$replicas" "$containers_per_pod" "$log_host" "$log_port" &
+	create_objects_n deployment "$parallel_deployments" "$objs_per_call_deployments" "$i" "$sleep_between_deployments" "$deps_per_namespace" "$secrets" "$replicas" "$containers_per_pod" &
     done
     wait || killthemall "Unable to create deployments"
 }
@@ -2740,9 +2965,9 @@ function run_clusterbuster_2() {
     create_all_objects namespaces || return 1
     if get_sync -q ; then
 	if (( use_namespaces )) ; then
-	    global_sync_service="svc-${sync_namespace}.${sync_namespace}.svc.cluster.local"
+	    global_sync_service="svc-${sync_namespace}-sync.${sync_namespace}.svc.cluster.local"
 	else
-	    global_sync_service="svc-${basename}-0-sync"
+	    global_sync_service="svc-${basename}-sync-0-sync"
 	fi
     fi
 

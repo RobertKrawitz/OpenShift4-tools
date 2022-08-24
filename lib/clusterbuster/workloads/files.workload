@@ -24,79 +24,20 @@ declare -ig ___file_dirs_per_volume=1
 declare -ig ___files_per_dir=1
 declare -ig ___files_direct=0
 
-function _files_create_containers_yaml() {
-    local namespace=$1
-    local instance=$2
-    local secret_count=$3
-    local -i replicas=$4
-    local -i containers_per_pod=$5
-    local log_host=${6:-}
-    local -i log_port=${7:-0}
-    local replica=${8:+-$8}
-    local -i container
-    local sync_service=
-    local sync_port_num=
+function files_create_containers_yaml() {
     local -i file_blocks=$((___file_size/___file_block_size))
-    IFS=: read -r sync_service sync_port_num <<< $(get_sync)
-    # shellcheck disable=1340
-    for container in $(seq 0 $((containers_per_pod - 1))) ; do
-	# shellcheck disable=2030
-	cat <<EOF
-- name: "c${container}"
-  imagePullPolicy: $image_pull_policy
-  image: "$container_image"
-$(indent 2 container_standard_auxiliary_yaml)
-  env:
-  - name: VERBOSE
-    value: "$verbose"
-$(indent 2 bootstrap_command_yaml files.pl)
-  - "$namespace"
-  - "c${container}"
-  - "$basetime"
-  - "$baseoffset"
-  - "$(ts)"
-  - "$exit_at_end"
-  - "$sync_service"
-  - "$sync_port_num"
-  - "$log_host"
-  - "$log_port"
-  - "$___file_dirs_per_volume"
-  - "$___files_per_dir"
-  - "$___file_block_size"
-  - "$file_blocks"
-  - "$processes_per_pod"
-  - "$___files_direct"
-  - "svc-${namespace}-files-${instance}${replica}-dc"
-  - "$drop_cache_port"
-$(tmp_volume_paths=("${volume_mount_paths[@]/%/\"}"); IFS=$'\n'; echo "${tmp_volume_paths[*]/#/  - \"}")
-$(emptydirs=("${emptydirs[@]/%/\"}"); IFS=$'\n'; echo "${emptydirs[*]/#/  - \"}")
-$(indent 2 volume_mounts_yaml "$namespace" "$instance" "$secret_count")
+    local mounts=("${volume_mount_paths[@]}" "${emptydirs[@]}")
+    make_standard_containers -- "$@" <<EOF
+$___file_dirs_per_volume
+$___files_per_dir
+$___file_block_size
+$file_blocks
+$processes_per_pod
+$___files_direct
+svc-${namespace}-files-${instance}-${replica}-dc
+$drop_cache_port
+$(IFS=$'\n'; echo -n "${mounts[*]}")
 EOF
-    done
-}
-
-function _files_create_deployment() {
-    local namespace=$1
-    local instance=$2
-    local secret_count=$3
-    local -i replicas=$4
-    local -i replica=0
-    while (( replica++ < replicas )) ; do
-	local name="${namespace}-files-${instance}-${replica}"
-	create_object -n "$namespace" "$name"  <<EOF
-apiVersion: v1
-kind: Pod
-metadata:
-  name: $(mkpodname "$name")
-$(indent 2 standard_all_metadata_yaml "$namespace" client)
-  selector:
-    matchLabels:
-      app: ${namespace}-files-${instance}
-$(indent 2 standard_labels_yaml files "$namespace" "${instance}-${replica}" 1)
-$(create_spec _files_create_containers_yaml "$@" "$replica")
-  restartPolicy: Never
-EOF
-    done
 }
 
 function files_create_deployment() {
@@ -105,17 +46,11 @@ function files_create_deployment() {
     local secret_count=${3:-1}
     local replicas=${4:-1}
     local containers_per_pod=${5:-1}
-    local log_host=${6:-}
-    local -i log_port=${7:-0}
     local -i instance
     create_sync_service_if_needed "$namespace" 8 "$((containers_per_pod * processes_per_pod * replicas * count))"
     for instance in $(seq $first_deployment $((count + first_deployment - 1))) ; do
-	local -i replica=0
-	while (( replica++ < replicas )) ; do
-	    create_service -H "$namespace" "${namespace}-files-${instance}-${replica}-dc" "$drop_cache_port"
-	    create_drop_cache_deployment "$namespace" files "${instance}-${replica}"
-	done
-	_files_create_deployment "$namespace" "$instance" "$secret_count"  "$replicas" "$containers_per_pod" "$log_host" "$log_port"
+	create_drop_cache_deployment "$namespace" "$workload" "$instance" "$replicas"
+	create_standard_deployment -p "$namespace" "$instance" "$secret_count" "$replicas" "$containers_per_pod"
     done
 }
 
@@ -201,4 +136,4 @@ function files_report_options() {
 EOF
 }
 
-register_workload files dispatch_generic file
+register_workload files file

@@ -9,11 +9,12 @@ my ($dir) = $ENV{'BAK_CONFIGMAP'};
 require "$dir/clientlib.pl";
 
 $SIG{TERM} = sub { POSIX::_exit(0); };
-my ($basetime, $baseoffset, $listen_port) = @ARGV;
+my ($namespace, $container, $basetime, $baseoffset, $crtime,
+    $exit_at_end, $synchost, $syncport, $loghost, $logport, $listen_port) = @ARGV;
 $basetime += $baseoffset;
 $SIG{CHLD} = 'IGNORE';
 
-timestamp("Starting uperf server");
+timestamp("Starting uperf server on port $listen_port");
 system("uperf", "-s", "-v", "-P", "$listen_port");
 timestamp("Done!");
 

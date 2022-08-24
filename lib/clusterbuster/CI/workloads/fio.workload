@@ -31,8 +31,6 @@ declare -gi ___fio_ramptime=5
 declare -gi ___fio_job_timeout=9000
 declare -gi ___fio_pod_memsize=
 
-register_workload fio dispatch_generic
-
 function fio_test() {
     local default_job_runtime=$1
     if ((___fio_job_runtime <= 0)) ; then
@@ -161,3 +159,5 @@ cat <<'EOF'
   details.
 EOF
 }
+
+register_workload fio

@@ -20,90 +20,12 @@
 
 declare -ig ___memory_size=1048576
 
-function _memory_create_containers_yaml() {
-    local namespace=$1
-    local instance=$2
-    local secret_count=$3
-    local -i processes=$4
-    local -i containers_per_pod=$5
-    local log_host=${6:-}
-    local -i log_port=${7:-0}
-    local -i container
-    local sync_service=
-    local sync_port_num=
-    IFS=: read -r sync_service sync_port_num <<< $(get_sync)
-    for container in $(seq 0 $((containers_per_pod - 1))) ; do
-	cat <<EOF
-- name: "c$container"
-  imagePullPolicy: $image_pull_policy
-  image: "$container_image"
-$(indent 2 container_standard_auxiliary_yaml)
-  env:
-  - name: VERBOSE
-    value: "$verbose"
-$(indent 2 bootstrap_command_yaml memory.pl)
-  - "$namespace"
-  - "c$container"
-  - "$basetime"
-  - "$baseoffset"
-  - "$(ts)"
-  - "$exit_at_end"
-  - "$sync_service"
-  - "$sync_port_num"
-  - "$log_host"
-  - "$log_port"
-  - "$processes"
-  - "$___memory_size"
-  - "$workload_run_time"
-$(indent 2 volume_mounts_yaml "$namespace" "${instance}" "$secret_count")
+function memory_create_containers_yaml() {
+    make_standard_containers -- "$@" <<EOF
+$processes_per_pod
+$___memory_size
+$workload_run_time
 EOF
-    done
-}
-
-function _memory_create_deployment() {
-    local namespace=$1
-    local instance=$2
-    if [[ $deployment_type = pod ]] ; then
-	local -i replica=0
-	while (( replica++ < replicas )) ; do
-	    local name=${namespace}-memory-${instance}-${replica}
-	    create_object -n "$namespace" "$name" <<EOF
-apiVersion: v1
-kind: Pod
-metadata:
-  name: $(mkpodname "$name")
-$(indent 2 standard_all_metadata_yaml "$namespace" client)
-  selector:
-    matchLabels:
-      app: ${namespace}-memory-${instance}
-$(indent 2 standard_labels_yaml memory "$namespace" "$instance" 1)
-$(create_spec _memory_create_containers_yaml "$@")
-  restartPolicy: Never
-EOF
-	done
-    else
-	local name=${namespace}-memory-${instance}
-	create_object -n "$namespace" "$name" <<EOF
-apiVersion: apps/v1
-kind: $deployment_type
-metadata:
-  name: $(mkpodname "$name")
-$(indent 2 standard_deployment_metadata_yaml "$namespace" client)
-$(indent 2 standard_labels_yaml memory "$namespace" "$instance")
-spec:
-  replicas: $replicas
-  selector:
-    matchLabels:
-      app: ${namespace}-memory-${instance}
-  strategy:
-    type: RollingUpdate
-  template:
-    metadata:
-$(indent 6 standard_labels_yaml memory "$namespace" "$instance" 1)
-$(indent 6 standard_pod_metadata_yaml "$namespace" client)
-$(indent 4 create_spec _memory_create_containers_yaml "$@")
-EOF
-    fi
 }
 
 function memory_create_deployment() {
@@ -112,12 +34,10 @@ function memory_create_deployment() {
     local secret_count=${3:-1}
     local replicas=${4:-1}
     local containers_per_pod=${5:-1}
-    local log_host=${6:-}
-    local -i log_port=${7:-0}
     local -i instance
     create_sync_service_if_needed "$namespace" 2 "$((containers_per_pod * replicas * processes_per_pod * count))"
     for instance in $(seq $first_deployment $((count + first_deployment - 1))) ; do
-	_memory_create_deployment "$namespace" "$instance" "$secret_count"  "$((processes_per_pod))" "$containers_per_pod" "$log_host" "$log_port"
+	create_standard_deployment "$namespace" "$instance" "$secret_count" "$replicas" "$containers_per_pod"
     done
 }
 
@@ -174,4 +94,4 @@ function memory_supports_reporting() {
     :
 }
 
-register_workload memory dispatch_generic
+register_workload memory
