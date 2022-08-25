@@ -24,11 +24,7 @@ declare -g ___synctest_cluster_count=1
 declare -g ___synctest_sleep=0
 
 function synctest_create_containers_yaml() {
-    make_standard_containers -- "$@" <<EOF
-$___synctest_count
-$___synctest_cluster_count
-$___synctest_sleep
-EOF
+    mk_yaml_args "$___synctest_count" "$___synctest_cluster_count" "$___synctest_sleep"
 }
 
 function synctest_create_deployment() {
@@ -40,7 +36,8 @@ function synctest_create_deployment() {
     local -i instance
     create_sync_service_if_needed "$namespace" "$(((___synctest_count * ___synctest_cluster_count) + 2))" "$((containers_per_pod * replicas * processes_per_pod * count))"
     for instance in $(seq $first_deployment $((count + first_deployment - 1))) ; do
-	create_standard_deployment "$namespace" "$instance" "$secret_count" "$replicas" "$containers_per_pod"
+	create_standard_deployment -a synctest_arglist -e synctest.pl \
+				   "$namespace" "$instance" "$secret_count" "$replicas" "$containers_per_pod"
     done
 }
 

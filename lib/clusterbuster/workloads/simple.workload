@@ -84,7 +84,7 @@ function _simple_create_deployment() {
     local -i instance
     create_sync_service_if_needed "$namespace" 0 $((replicas * (count + first_deployment)))
     for instance in $(seq $first_deployment $((count + first_deployment - 1))) ; do
-	create_standard_deployment "$namespace" "$instance" "$secret_count" "$replicas" "$containers_per_pod"
+	create_standard_deployment -C "${workload}_create_containers_yaml" -e "${workload/simple-/}.pl" "$namespace" "$instance" "$secret_count" "$replicas" "$containers_per_pod"
     done
 }
 

@@ -27,10 +27,8 @@ declare -gir ___uperf_port=30000
 declare -gir ___uperf_port_addrs=24
 declare -gi ___uperf_ramp_time=3
 
-function uperf-server_create_containers_yaml() {
-    make_standard_containers -c uperf-server.pl -- "$@" <<EOF
-$___uperf_port
-EOF
+function uperf_server_arglist() {
+    mk_yaml_args "$___uperf_port"
 }
 
 function _uperf_create_security_context() {
@@ -42,14 +40,9 @@ securityContext:
 EOF
 }
 
-function uperf-client_create_containers_yaml() {
-    make_standard_containers -c uperf-client.pl -- "$@" <<EOF
-$workload_run_time
-$___uperf_ramp_time
-svc-${namespace}-uperf-server-$instance
-$___uperf_port
-$(IFS=$'\n'; echo "${___uperf_tests[*]}")
-EOF
+function uperf_client_arglist() {
+    mk_yaml_args "$workload_run_time" "$___uperf_ramp_time" "svc-${namespace}-uperf-server-$instance" \
+		 "$___uperf_port" "${___uperf_tests[@]}"
 }
 
 function uperf_create_deployment() {
@@ -63,10 +56,13 @@ function uperf_create_deployment() {
 
     for instance in $(seq "$first_deployment" $((count + first_deployment - 1))) ; do
 	create_service "$namespace" "${namespace}-uperf-server-${instance}" $(seq "$___uperf_port" $((___uperf_port + ___uperf_port_addrs)))
-	deployment_type=single_pod create_standard_deployment -w uperf-server -p -c server \
-		       -A "$(create_affinity_yaml "${namespace}-uperf-client-${instance}")" \
-		       "$namespace" "$instance" "$secret_count" 1 1
-	create_standard_deployment -w uperf-client -A "$(create_affinity_yaml "${namespace}-uperf-server-${instance}")" \
+	create_standard_deployment -w uperf-server -p -c server -d single_pod -e uperf-server.pl \
+				   -A "$(create_affinity_yaml "${namespace}-uperf-client-${instance}")" \
+				   -a uperf_server_arglist \
+				   "$namespace" "$instance" "$secret_count" 1 1
+	create_standard_deployment -w uperf-client -e uperf-client.pl \
+				   -A "$(create_affinity_yaml "${namespace}-uperf-server-${instance}")" \
+				   -a uperf_client_arglist \
 				   -S "$(_uperf_create_security_context)" \
 				   "$namespace" "$instance" "$secret_count" "$replicas" "$containers_per_pod"
     done
