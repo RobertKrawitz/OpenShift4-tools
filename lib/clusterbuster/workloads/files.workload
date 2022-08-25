@@ -25,6 +25,7 @@ declare -ig ___files_per_dir=1
 declare -ig ___files_direct=0
 
 function files_arglist() {
+    local mk_args_func="$1"; shift
     local namespace=$1
     local instance=$2
     local secret_count=$3
@@ -32,9 +33,9 @@ function files_arglist() {
     local containers_per_pod=$5
     local -i file_blocks=$((___file_size/___file_block_size))
     local mounts=("${volume_mount_paths[@]}" "${emptydirs[@]}")
-    mk_yaml_args "$___file_dirs_per_volume" "$___files_per_dir" "$___file_block_size" "$file_blocks" \
-		 "$processes_per_pod" "$___files_direct" "svc-${namespace}-files-${instance}-${replica}-dc" \
-		 "$drop_cache_port" "${mounts[@]}"
+    "$mk_args_func" "$___file_dirs_per_volume" "$___files_per_dir" "$___file_block_size" "$file_blocks" \
+		    "$processes_per_pod" "$___files_direct" "svc-${namespace}-files-${instance}-${replica}-dc" \
+		    "$drop_cache_port" "${mounts[@]}"
 }
 
 function files_create_deployment() {

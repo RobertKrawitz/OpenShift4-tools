@@ -19,7 +19,8 @@
 ################################################################
 
 function cpusoaker_arglist() {
-    mk_yaml_args "$processes_per_pod" "$workload_run_time"
+    local mk_args_func="$1"; shift
+    "$mk_args_func" "$processes_per_pod" "$workload_run_time"
 }
 
 function cpusoaker_create_deployment() {

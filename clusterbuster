@@ -1639,6 +1639,23 @@ EOF
     fi
 }
 
+function mk_cli_args() {
+    local OPTARG
+    local OPTIND=0
+    local -a answers=()
+    while getopts 's' opt "$@" ; do
+	case "$opt" in
+	    s)
+		readarray -t answers
+		;;
+	    *)
+		;;
+	esac
+    done
+    answers+=("$@")
+    echo "${answers[*]}"
+}
+
 function mk_yaml_args() {
     function yamlize() {
 	local arg=$1
@@ -1708,7 +1725,7 @@ $(indent 2 container_standard_auxiliary_yaml)
     value: "$verbose"
 $(indent 2 bootstrap_command_yaml "$node_executable")
 $(indent 2 standard_yaml_args "$namespace" "$container")
-$(if [[ -n "${arglist_function}" ]] ; then "${arglist_function}" "$@" "$container" | indent 2 ; fi)
+$(if [[ -n "${arglist_function}" ]] ; then "${arglist_function}" mk_yaml_args "$@" "$container" | indent 2 ; fi)
 $(indent 2 volume_mounts_yaml "$namespace" "${instance}" "$secret_count")
 EOF
     done
@@ -2469,7 +2486,7 @@ function create_standard_deployment() {
     if (($# != 5)) ; then
 	fatal "Usage: create_standard_deployment <args> namespace instance secret_count replicas containers"
     fi
-    
+
     case "${deployment_type,,}" in
 	single_pod)
 	    create_single_pod_deployment "$@"

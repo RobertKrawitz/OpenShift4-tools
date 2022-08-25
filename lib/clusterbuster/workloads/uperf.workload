@@ -28,7 +28,8 @@ declare -gir ___uperf_port_addrs=24
 declare -gi ___uperf_ramp_time=3
 
 function uperf_server_arglist() {
-    mk_yaml_args "$___uperf_port"
+    local mk_args_func="$1"; shift
+    "$mk_args_func" "$___uperf_port"
 }
 
 function _uperf_create_security_context() {
@@ -41,8 +42,9 @@ EOF
 }
 
 function uperf_client_arglist() {
-    mk_yaml_args "$workload_run_time" "$___uperf_ramp_time" "svc-${namespace}-uperf-server-$instance" \
-		 "$___uperf_port" "${___uperf_tests[@]}"
+    local mk_args_func="$1"; shift
+    "$mk_args_func" "$workload_run_time" "$___uperf_ramp_time" "svc-${namespace}-uperf-server-$instance" \
+		    "$___uperf_port" "${___uperf_tests[@]}"
 }
 
 function uperf_create_deployment() {
