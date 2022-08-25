@@ -18,10 +18,8 @@
 # Simple workloads (pause pod, clusterbuster, logging)
 ################################################################
 
-function classic_create_containers_yaml() {
-    make_standard_containers -- "$@" <<EOF
-${workload_run_time:-10}
-EOF
+function classic_arglist() {
+    mk_yaml_args "${workload_run_time:-10}"
 }
 
 function classic_create_deployment() {
@@ -33,7 +31,8 @@ function classic_create_deployment() {
     local -i instance
     create_sync_service_if_needed "$namespace" 2 "$((containers_per_pod * replicas * count))"
     for instance in $(seq $first_deployment $((count + first_deployment - 1))) ; do
-	create_standard_deployment "$namespace" "$instance" "$secret_count" "$replicas" "$containers_per_pod"
+	create_standard_deployment -a classic_arglist -e classic.pl \
+				   "$namespace" "$instance" "$secret_count" "$replicas" "$containers_per_pod"
     done
 }
 

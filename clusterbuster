@@ -1639,39 +1639,49 @@ EOF
     fi
 }
 
-function mk_container_args() {
+function mk_yaml_args() {
+    function yamlize() {
+	local arg=$1
+	if [[ $arg =~ $'\n' ]] ; then
+	    echo "- |"$'\n'"  ${arg//$'\n'/$'\n  '}"
+	else
+	    echo "- \"$arg\""
+	fi
+    }
+    local OPTARG
+    local OPTIND=0
     local arg
-    while read -r arg ; do
-	echo "- \"$arg\""
+    while getopts 's' opt "$@" ; do
+	case "$opt" in
+	    s)
+		while read -r arg ; do
+		    yamlize "$arg"
+		done
+		;;
+	    *)
+		;;
+	esac
+    done
+    shift $((OPTIND-1))
+    for arg in "$@" ; do
+	yamlize "$arg"
     done
 }
 
-function standard_container_args() {
+function standard_yaml_args() {
     local namespace=$1
     local container=$2
-    mk_container_args <<EOF
-$namespace
-c$container
-$basetime
-$baseoffset
-$(ts)
-$exit_at_end
-$sync_service
-$sync_port_num
-$log_host
-$log_port
-EOF
+    mk_yaml_args "$namespace" "c$container" "$basetime" "$baseoffset" "$(ts)" \
+		 "$exit_at_end" "$sync_service" "$sync_port_num" "$log_host" "$log_port"
 }
 
-function make_standard_containers() {
+function create_standard_containers() {
     local OPTARG
     local OPTIND=0
     local opt
-    local command="${requested_workload}.pl"
     local image="$container_image"
-    while getopts 'c:i:' opt "$@" ; do
+    while getopts 'i:' opt "$@" ; do
 	case "$opt" in
-	    c) command="$OPTARG";;
 	    i) image="$OPTARG"  ;;
 	    *)		        ;;
 	esac
@@ -1680,13 +1690,14 @@ function make_standard_containers() {
     local namespace=$1
     local instance=$2
     local secret_count=$3
-    local containers_per_pod=$5
+    local replicas=$4
+    local containers=$5
     local -i container
     local sync_service=
     local sync_port_num=
-    local container_args="$(mk_container_args)"
+    local yaml_args="$(mk_yaml_args)"
     IFS=: read -r sync_service sync_port_num <<< "$(get_sync)"
-    for container in $(seq 0 $((containers_per_pod - 1))) ; do
+    for container in $(seq 0 $((containers - 1))) ; do
 	cat <<EOF
 - name: "c${container}"
   imagePullPolicy: $image_pull_policy
@@ -1695,9 +1706,9 @@ $(indent 2 container_standard_auxiliary_yaml)
   env:
   - name: VERBOSE
     value: "$verbose"
-$(indent 2 bootstrap_command_yaml "$command")
-$(indent 2 standard_container_args "$namespace" "$container")
-$(indent 2 <<< "$container_args")
+$(indent 2 bootstrap_command_yaml "$node_executable")
+$(indent 2 standard_yaml_args "$namespace" "$container")
+$(if [[ -n "${arglist_function}" ]] ; then "${arglist_function}" "$@" "$container" | indent 2 ; fi)
 $(indent 2 volume_mounts_yaml "$namespace" "${instance}" "$secret_count")
 EOF
     done
@@ -2321,7 +2332,7 @@ function create_spec() {
 	esac
     done
     shift $((OPTIND-1))
-    (( $# >= 4 )) || fatal "Usage: create_spec <container_func> namespace instance secret_count args..."
+    (( $# >= 3 )) || fatal "Usage: create_spec namespace instance secret_count args..."
     # Node specifiers override affinity
     if [[ -n "$node_class" && -n "${pin_nodes[$node_class]:-}" ]] ; then
 	affinity_yaml="nodeSelector:${nl}  kubernetes.io/hostname: \"${pin_nodes[$node_class]}\""
@@ -2335,7 +2346,6 @@ function create_spec() {
 	    runtime_class=${runtime_classes[default]}
 	fi
     fi
-    local create_container_function=$1; shift
     [[ -n "$(type -t "$create_container_function")" ]] || fatal "Cannot run $create_container_function: command not found"
     local namespace=$1
     local instance=$2
@@ -2367,7 +2377,7 @@ $(indent 2 standard_all_metadata_yaml "$namespace" client)
     matchLabels:
       app: $name
 $(indent 2 standard_labels_yaml -l "$workload" "$namespace" "${instance}")
-$(create_spec ${affinity_yaml:+-A "$affinity_yaml"} ${node_class:+-c "$node_class"} "${workload}_create_containers_yaml" "$@")
+$(create_spec ${affinity_yaml:+-A "$affinity_yaml"} ${node_class:+-c "$node_class"} "$@")
 ${security_context:+$(indent 2 <<< "$security_context")}
   restartPolicy: Never
 EOF
@@ -2391,7 +2401,7 @@ $(indent 2 standard_all_metadata_yaml "$namespace" client)
     matchLabels:
       app: $name
 $(indent 2 standard_labels_yaml -l "$workload" "$namespace" "${instance}" "${replica}")
-$(create_spec ${affinity_yaml:+-A "$affinity_yaml"} ${node_class:+-c "$node_class"} "${workload}_create_containers_yaml" "$@" "$replica")
+$(create_spec ${affinity_yaml:+-A "$affinity_yaml"} ${node_class:+-c "$node_class"} "$@" "$replica")
 ${security_context:+$(indent 2 <<< "$security_context")}
   restartPolicy: Never
 EOF
@@ -2421,7 +2431,7 @@ spec:
     metadata:
 $(indent 6 standard_labels_yaml -l "$workload" "$namespace" "$instance")
 $(indent 6 standard_pod_metadata_yaml "$namespace" client)
-$(indent 4 create_spec ${affinity_yaml:+-A "$affinity_yaml"} ${node_class:+-c "$node_class"} "${workload}_create_containers_yaml" "$@" "x")
+$(indent 4 create_spec ${affinity_yaml:+-A "$affinity_yaml"} ${node_class:+-c "$node_class"} "$@" "x")
 ${security_context:+$(indent 6 <<< "$security_context")}
 EOF
 }
@@ -2435,20 +2445,31 @@ function create_standard_deployment() {
     local security_context=
     local allow_replica_controller=1
     local node_class=
-    while getopts 'A:w:S:pc:' opt "$@" ; do
+    local deployment_type=$deployment_type
+    local arglist_function=
+    local create_container_function=create_standard_containers
+    while getopts 'A:w:S:pc:d:e:C:a:' opt "$@" ; do
 	case "$opt" in
-	    A) affinity_yaml="$OPTARG"	  ;;
-	    w) workload="$OPTARG"	  ;;
-	    S) security_context="$OPTARG" ;;
-	    p) allow_replica_controller=0 ;;
-	    c) node_class="$OPTARG"	  ;;
-	    *)				  ;;
+	    A) affinity_yaml="$OPTARG"		   ;;
+	    a) arglist_function="$OPTARG"	   ;;
+	    C) create_container_function="$OPTARG" ;;
+	    c) node_class="$OPTARG"		   ;;
+	    d) deployment_type="$OPTARG"	   ;;
+	    e) node_executable="$OPTARG"	   ;;
+	    p) allow_replica_controller=0	   ;;
+	    S) security_context="$OPTARG"	   ;;
+	    w) workload="$OPTARG"	  	   ;;
+	    *)					   ;;
 	esac
     done
+    [[ -n "$(type -t "$create_container_function")" ]] || fatal "Cannot run create container function $create_container_function: command not found"
+    [[ -n "$node_executable" ]] || fatal "No node executable provided"
+    [[ -z "$arglist_function" || -n "$(type -t "$arglist_function")" ]] || fatal "Cannot run arglist function $arglist_function: command not found"
     shift $((OPTIND-1))
-    local namespace=$1
-    local instance=$2
-    local -i replicas=$4
+    if (($# != 5)) ; then
+	fatal "Usage: create_standard_deployment <args> namespace instance secret_count replicas containers"
+    fi
+    
     case "${deployment_type,,}" in
 	single_pod)
 	    create_single_pod_deployment "$@"
@@ -2508,7 +2529,7 @@ $(indent 2 standard_all_metadata_yaml "$namespace" sync)
     matchLabels:
       app: ${namespace}
 $(indent 2 standard_labels_yaml 'sync' "$namespace")
-$(create_spec -P -c sync -r '' create_container_sync "$namespace" 0 0 "$sync_count" "$@")
+$(create_container_function=create_container_sync create_spec -P -c sync -r '' "$namespace" 0 0 "$sync_count" "$@")
   restartPolicy: Never
 EOF
 }
@@ -2552,7 +2573,7 @@ $(indent 2 standard_labels_yaml -s dc "$workload" "$namespace" "$instance" "$rep
       replica: ${namespace}-${workload}-${instance}-${replica}
   securityContext:
     privileged: true
-$(create_spec -P -c drop-cache -r '' create_container_drop_cache "$namespace" "$instance" 0)
+$(create_container_function=create_container_drop_cache create_spec -P -c drop-cache -r '' "$namespace" "$instance" 0)
   - name: "proc-sys-vm"
     hostPath:
       path: "/proc/sys/vm"
