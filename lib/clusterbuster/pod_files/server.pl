@@ -74,6 +74,9 @@ while ($expected_clients != 0) {
 timestamp("Waiting for all clients to exit:");
 while ((my $pid = wait()) >= 0) {
     timestamp("   $pid");
+    if ($? > 0) {
+	finish(1, $?);
+    }
 }
 timestamp("Done!");
 

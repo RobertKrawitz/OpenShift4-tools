@@ -47,13 +47,28 @@ sub runit() {
 	do_sync($loghost, $logport, $results);
     }
 }
-$SIG{CHLD} = 'IGNORE';
+my (%pids) = ();
 if ($processes > 1) {
     for (my $i = 0; $i < $processes; $i++) {
-        if ((my $child = fork()) == 0) {
+	my $child;
+        if (($child = fork()) == 0) {
             runit();
             exit(0);
-        }
+        } else {
+	    $pids{$child} = 1;
+	}
+    }
+    while (%pids) {
+	my ($child) = wait();
+	if ($child == -1) {
+	    finish($exit_at_end);
+	} elsif (defined $pids{$child}) {
+	    if ($?) {
+		timestamp("Pid $child returned status $?!");
+		finish($exit_at_end, $?)
+	    }
+	    delete $pids{$child};
+	}
     }
 } else {
     runit();

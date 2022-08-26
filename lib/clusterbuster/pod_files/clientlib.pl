@@ -272,11 +272,15 @@ sub run_cmd_to_stderr(@) {
     }
 }
 
-sub finish($) {
-    my ($exit_at_end) = @_;
+sub finish($;$) {
+    my ($exit_at_end, $status) = @_;
     run_cmd_to_stderr("lscpu");
     run_cmd_to_stderr("dmesg");
     if ($exit_at_end) {
+	if (defined $status && $status != 0) {
+	    print STDERR "FAIL!\n";
+	    POSIX::_exit($status);
+	}
 	timestamp("About to exit");
 	while (wait() > 0) {}
 	timestamp("Done waiting");
