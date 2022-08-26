@@ -5,7 +5,7 @@ use strict;
 use Time::Piece;
 use Time::HiRes qw(gettimeofday usleep);
 use JSON;
-my ($verbose, $sync_file, $controller_timestamp_file);
+my ($verbose, $sync_file, $error_file, $controller_timestamp_file);
 my ($offset_from_controller) = 0;
 my ($predelay) = 0;
 my ($postdelay) = 0;
@@ -15,7 +15,8 @@ GetOptions("v!"  => \$verbose,
 	   "t:s" => \$controller_timestamp_file,
 	   "d:i" => \$predelay,
 	   "D:i" => \$postdelay,
-	   "f:s" => \$sync_file);
+	   "f:s" => \$sync_file,
+	   "e:s" => \$error_file);
 my ($dir) = $ENV{'BAK_CONFIGMAP'};
 require "$dir/clientlib.pl";
 my ($start_time) = xtime();
@@ -46,6 +47,7 @@ if ($sync_count > 0) {
 }
 
 my ($tmp_sync_file_base) = (defined($sync_file) && $sync_file ne '') ? "${sync_file}-tmp" : undef;
+my ($tmp_error_file) = (defined($error_file) && $error_file ne '') ? "${error_file}-tmp" : undef;
 
 my (@tmp_sync_files) = map { "${tmp_sync_file_base}-$_" } (1..$expected_clients);
 
@@ -108,6 +110,10 @@ if ($sync_count == 0) {
     sleep($postdelay);
 } else {
     while ($sync_count < 0 || $sync_count-- > 0) {
+	if (-e $tmp_error_file) {
+	    timestamp1("Job failed, exiting");
+	    exit(1);
+	}
 	my ($tmp_sync_file) = undef;
 	# Ensure that all of the accepted connections get closed by exiting
 	# a child process.  This way we don't have to keep track of all of the
@@ -149,6 +155,17 @@ if ($sync_count == 0) {
 		    open TMP, ">", "$tmp_sync_file" || die("Can't open sync file $tmp_sync_file: $!\n");
 		    print TMP "$tbuf\n";
 		    close TMP || die "Can't close sync file: $!\n";
+		} elsif ($tbuf =~ /^[-[:digit:]T:.]* FAIL:/ && defined $tmp_error_file) {
+		    timestamp("Detected failure!");
+		    open TMP, ">", "$tmp_error_file" || die("Can't open error file $tmp_error_file: $!\n");
+		    print TMP "$tbuf\n";
+		    close TMP || die "Can't close error file: $!\n";
+		    link($tmp_error_file, $error_file) || die "Can't link $tmp_error_file to $error_file: $!\n";
+		    timestamp("Waiting for error file $error_file to be removed");
+		    while (-f $error_file) {
+			sleep(5);
+		    }
+		    POSIX::_exit(1);
 		}
 		$expected_clients--;
 	    }
@@ -195,6 +212,10 @@ if ($sync_count == 0) {
     }
 }
 
+if (-e $tmp_error_file) {
+    timestamp1("Job failed, exiting!");
+    POSIX::_exit(1);
+}
 my (%result);
 $result{'controller_timing'} = $controller_timestamp_data;
 my (@data);
@@ -212,7 +233,6 @@ if (@tmp_sync_files) {
 	    push @data, {};
 	}
     }
-    timestamp1("there @tmp_sync_files");
 } elsif ($original_sync_count == 0) {
     @data = map { {} } (1..$expected_clients);
     timestamp1("here");

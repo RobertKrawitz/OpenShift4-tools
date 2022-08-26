@@ -13,6 +13,7 @@ require "$dir/clientlib.pl";
 my ($namespace, $container, $basetime, $baseoffset, $crtime, $exit_at_end, $synchost, $syncport, $loghost, $logport, $srvhost, $connect_port, $data_rate, $bytes, $bytes_max, $msg_size, $xfertime, $xfertime_max) = @ARGV;
 my ($start_time, $data_start_time, $data_end_time, $elapsed_time, $end_time, $user, $sys, $cuser, $csys);
 $start_time = xtime();
+my ($processes) = 1;
 
 $SIG{TERM} = sub { POSIX::_exit(0); };
 $basetime += $baseoffset;
@@ -77,74 +78,98 @@ sub stats() {
 			     $data_end_time, $elapsed_time, $user, $sys, \%extra);
 }
 
-while (($bytes > 0 && $data_sent < $bytes) ||
-       ($xfertime > 0 && xtime() - $data_start_time < $xfertime)) {
-    my $nwrite;
-    my $nleft = $bufsize;
-    $rtt_start = xtime();
-    while ($nleft > 0 && ($nwrite = syswrite($conn, $buffer, $nleft)) > 0) {
-	$nleft -= $nwrite;
-	$data_sent += $nwrite;
-    }
-    if ($nwrite == 0) {
-	exit 0;
-    } elsif ($nwrite < 0) {
-	die "Write failed: $!\n";
-    }
-    $nleft = $bufsize;
-    while ($nleft > 0 && ($nread = sysread($conn, $tbuf, $nleft)) > 0) {
-	$nleft -= $nread;
-    }
-    $en = xtime() - $rtt_start - $time_overhead;
-    $ex += $en;
-    $ex2 += $en * $en;
-    if ($en > $max_latency) {
-	$max_latency = $en;
-    }
-    if ($nread < 0) {
-	die "Read failed: $!\n";
-    }
-    if ($ENV{"VERBOSE"} > 0) {
-	timestamp(sprintf("Write/Read %d %.6f", $bufsize, $en));
-    }
-    my $curtime = xtime();
-    if ($data_rate > 0) {
-	$starttime += $bufsize / $data_rate;
-	if ($curtime < $starttime) {
-	    if ($ENV{"VERBOSE"} > 0) {
-		timestamp(sprintf("Sleeping %8.6f", $starttime - $curtime));
-	    }
-	    usleep(($starttime - $curtime) * 1000000);
-	} else {
-	    if ($ENV{"VERBOSE"} > 0) {
-		timestamp("Not sleeping");
+sub runit() {
+    while (($bytes > 0 && $data_sent < $bytes) ||
+	   ($xfertime > 0 && xtime() - $data_start_time < $xfertime)) {
+	my $nwrite;
+	my $nleft = $bufsize;
+	$rtt_start = xtime();
+	while ($nleft > 0 && ($nwrite = syswrite($conn, $buffer, $nleft)) > 0) {
+	    $nleft -= $nwrite;
+	    $data_sent += $nwrite;
+	}
+	if ($nwrite == 0) {
+	    exit 0;
+	} elsif ($nwrite < 0) {
+	    die "Write failed: $!\n";
+	}
+	$nleft = $bufsize;
+	while ($nleft > 0 && ($nread = sysread($conn, $tbuf, $nleft)) > 0) {
+	    $nleft -= $nread;
+	}
+	$en = xtime() - $rtt_start - $time_overhead;
+	$ex += $en;
+	$ex2 += $en * $en;
+	if ($en > $max_latency) {
+	    $max_latency = $en;
+	}
+	if ($nread < 0) {
+	    die "Read failed: $!\n";
+	}
+	if ($ENV{"VERBOSE"} > 0) {
+	    timestamp(sprintf("Write/Read %d %.6f", $bufsize, $en));
+	}
+	my $curtime = xtime();
+	if ($data_rate > 0) {
+	    $starttime += $bufsize / $data_rate;
+	    if ($curtime < $starttime) {
+		if ($ENV{"VERBOSE"} > 0) {
+		    timestamp(sprintf("Sleeping %8.6f", $starttime - $curtime));
+		}
+		usleep(($starttime - $curtime) * 1000000);
+	    } else {
+		if ($ENV{"VERBOSE"} > 0) {
+		    timestamp("Not sleeping");
+		}
 	    }
 	}
+	$pass++;
     }
-    $pass++;
-}
-$data_end_time = xtime();
-if ($pass > 0) {
-    $mean_latency = ($ex / $pass);
-    if ($pass > 1) {
-	$stdev_latency = sqrt(($ex2 - ($ex * $ex / $pass)) / ($pass - 1));
+    $data_end_time = xtime();
+    if ($pass > 0) {
+	$mean_latency = ($ex / $pass);
+	if ($pass > 1) {
+	    $stdev_latency = sqrt(($ex2 - ($ex * $ex / $pass)) / ($pass - 1));
+	}
     }
-}
-($user, $sys, $cuser, $csys) = times;
-$elapsed_time = $data_end_time - $data_start_time;
-if ($elapsed_time <= 0) {
-    $elapsed_time = 0.00000001;
-}
+    ($user, $sys, $cuser, $csys) = times;
+    $elapsed_time = $data_end_time - $data_start_time;
+    if ($elapsed_time <= 0) {
+	$elapsed_time = 0.00000001;
+    }
 
-timestamp("Done");
-my ($results) = stats();
-print STDERR "$results\n";
-print STDERR "FINIS\n";
-if ($syncport) {
-    do_sync($synchost, $syncport, $results);
+    timestamp("Done");
+    my ($results) = stats();
+    print STDERR "$results\n";
+    print STDERR "FINIS\n";
+    if ($syncport) {
+	do_sync($synchost, $syncport, $results);
+    }
+    if ($logport > 0) {
+	do_sync($loghost, $logport, $results);
+    }
 }
-if ($logport > 0) {
-    do_sync($loghost, $logport, $results);
+my (%pids) = ();
+for (my $i = 0; $i < $processes; $i++) {
+    my $child;
+    if (($child = fork()) == 0) {
+	runit();
+	exit(0);
+    } else {
+	$pids{$child} = 1;
+    }
+}
+while (%pids) {
+    my ($child) = wait();
+    if ($child == -1) {
+	finish($exit_at_end);
+    } elsif (defined $pids{$child}) {
+	if ($?) {
+	    timestamp("Pid $child returned status $?!");
+	    finish($exit_at_end, $?, $namespace, $pod, $container, $synchost, $syncport, $child);
+	}
+	delete $pids{$child};
+    }
 }
 
 finish($exit_at_end);

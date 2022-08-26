@@ -11,7 +11,7 @@ use File::Basename;
 my ($dir) = $ENV{'BAK_CONFIGMAP'};
 require "$dir/clientlib.pl";
 
-our ($namespace, $container, $basetime, $baseoffset, $crtime, $exit_at_end, $synchost, $syncport, $loghost, $logport, $processes, $rundir, $runtime, $sysbench_generic_args, $sysbench_cmd, $sysbench_fileio_args, $sysbench_modes) = @ARGV;
+my ($namespace, $container, $basetime, $baseoffset, $crtime, $exit_at_end, $synchost, $syncport, $loghost, $logport, $processes, $rundir, $runtime, $sysbench_generic_args, $sysbench_cmd, $sysbench_fileio_args, $sysbench_modes) = @ARGV;
 my ($start_time) = xtime();
 
 $SIG{TERM} = sub() { docleanup() };
@@ -187,30 +187,26 @@ sub runit() {
     }
 }
 my (%pids) = ();
-if ($processes > 1) {
-    for (my $i = 0; $i < $processes; $i++) {
-	my $child;
-        if (($child = fork()) == 0) {
-            runit();
-            exit(0);
-        } else {
-	    $pids{$child} = 1;
-	}
+for (my $i = 0; $i < $processes; $i++) {
+    my $child;
+    if (($child = fork()) == 0) {
+	runit();
+	exit(0);
+    } else {
+	$pids{$child} = 1;
     }
-    while (%pids) {
-	my ($child) = wait();
-	if ($child == -1) {
-	    finish($exit_at_end);
-	} elsif (defined $pids{$child}) {
-	    if ($?) {
-		timestamp("Pid $child returned status $?!");
-		finish($exit_at_end, $?)
-	    }
-	    delete $pids{$child};
+}
+while (%pids) {
+    my ($child) = wait();
+    if ($child == -1) {
+	finish($exit_at_end);
+    } elsif (defined $pids{$child}) {
+	if ($?) {
+	    timestamp("Pid $child returned status $?!");
+	    finish($exit_at_end, $?, $namespace, $pod, $container, $synchost, $syncport, $child);
 	}
+	delete $pids{$child};
     }
-} else {
-    runit();
 }
 
 finish($exit_at_end);

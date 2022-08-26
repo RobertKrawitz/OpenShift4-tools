@@ -12,7 +12,7 @@ use JSON;
 my ($dir) = $ENV{'BAK_CONFIGMAP'};
 require "$dir/clientlib.pl";
 
-our ($namespace, $container, $basetime, $baseoffset, $crtime, $exit_at_end, $sync_host, $sync_port, $log_host, $log_port, $dirs, $files_per_dir, $blocksize, $block_count, $processes, $direct, $drop_cache_service, $drop_cache_port, @dirs) = @ARGV;
+our ($namespace, $container, $basetime, $baseoffset, $crtime, $exit_at_end, $synchost, $syncport, $log_host, $log_port, $dirs, $files_per_dir, $blocksize, $block_count, $processes, $direct, $drop_cache_service, $drop_cache_port, @dirs) = @ARGV;
 my ($start_time, $elapsed_time, $end_time, $user, $sys, $cuser, $csys);
 $start_time = xtime();
 
@@ -22,7 +22,7 @@ $crtime += $baseoffset;
 my ($bufalign) = 8192;
 
 my ($pod) = hostname;
-initialize_timing($basetime, $crtime, $sync_host, $sync_port, "$namespace:$pod:$container", xtime());
+initialize_timing($basetime, $crtime, $synchost, $syncport, "$namespace:$pod:$container", xtime());
 $start_time = get_timing_parameter('start_time');
 
 if ($#dirs < 0) {
@@ -138,9 +138,9 @@ sub removethem($;$) {
 }
 
 sub run_one_operation($$$$$$$$) {
-    my ($op_name0, $op_name1, $op_name2, $op_func, $sync_host, $sync_port, $process, $data_start_time) = @_;
+    my ($op_name0, $op_name1, $op_name2, $op_func, $synchost, $syncport, $process, $data_start_time) = @_;
 
-    do_sync($sync_host, $sync_port);
+    do_sync($synchost, $syncport);
     timestamp("$op_name0 files...");
     drop_cache($drop_cache_service, $drop_cache_port);
     my ($ucpu0, $scpu0) = cputime();
@@ -173,7 +173,7 @@ sub run_one_operation($$$$$$$$) {
 	$answer{'data_rate'} = $answer{'data_size'} / $op_elapsed_time_0;
     }
     timestamp("$op_name1 files...");
-    do_sync($sync_host, $sync_port);
+    do_sync($synchost, $syncport);
     return (\%answer, $op_start_time, $op_end_time, $ucpu1, $scpu1);
 }
 
@@ -190,7 +190,7 @@ sub runit($) {
 
     my ($answer_create, $create_start_time, $create_end_time, $create_ucpu, $create_scpu) =
 	run_one_operation('Creating', 'Created', 'create', \&makethem,
-			  $sync_host, $sync_port, $process, $data_start_time);
+			  $synchost, $syncport, $process, $data_start_time);
     $extras{'create'} = $answer_create;
     my ($create_et) = $create_end_time - $create_start_time;
 
@@ -199,7 +199,7 @@ sub runit($) {
     timestamp("Back from sleep");
     my ($answer_read, $read_start_time, $read_end_time, $read_ucpu, $read_scpu) =
 	run_one_operation('Reading', 'Read', 'read', \&readthem,
-			  $sync_host, $sync_port, $process, $data_start_time);
+			  $synchost, $syncport, $process, $data_start_time);
     $extras{'read'} = $answer_read;
 
     timestamp("Sleeping for 60 seconds");
@@ -207,7 +207,7 @@ sub runit($) {
     timestamp("Back from sleep");
     my ($answer_remove, $remove_start_time, $remove_end_time, $remove_ucpu, $remove_scpu) =
 	run_one_operation('Creating', 'Removed', 'remove', \&removethem,
-			  $sync_host, $sync_port, $process, $data_start_time);
+			  $synchost, $syncport, $process, $data_start_time);
     $extras{'remove'} = $answer_remove;
     my ($remove_et) = $remove_end_time - $remove_start_time;
     my ($data_start_time) = $create_start_time;
@@ -231,7 +231,7 @@ sub runit($) {
 				     $data_elapsed_time,
 				     $user_cpu, $system_cpu, \%extras);
     
-    do_sync($sync_host, $sync_port, "$answer");
+    do_sync($synchost, $syncport, "$answer");
     if ($log_port > 0) {
 	do_sync($log_host, $log_port, "$answer");
     }
@@ -239,29 +239,26 @@ sub runit($) {
 
 timestamp("Filebuster client starting");
 my (%pids) = ();
-if ($processes > 1) {
-    for (my $i = 0; $i < $processes; $i++) {
-	my $child;
-        if (($child = fork()) == 0) {
-            runit($i);
-            exit(0);
-        } else {
-	    $pids{$child} = 1;
-	}
+for (my $i = 0; $i < $processes; $i++) {
+    my $child;
+    if (($child = fork()) == 0) {
+	runit($i);
+	exit(0);
+    } else {
+	$pids{$child} = 1;
     }
-    while (%pids) {
-	my ($child) = wait();
-	if ($child == -1) {
-	    finish($exit_at_end);
-	} elsif (defined $pids{$child}) {
-	    if ($?) {
-		timestamp("Pid $child returned status $?!");
-		finish($exit_at_end, $?)
-	    }
-	    delete $pids{$child};
-	}
-    }
-} else {
-    runit(0);
 }
+while (%pids) {
+    my ($child) = wait();
+    if ($child == -1) {
+	finish($exit_at_end);
+    } elsif (defined $pids{$child}) {
+	if ($?) {
+	    timestamp("Pid $child returned status $?!");
+	    finish($exit_at_end, $?, $namespace, $pod, $container, $synchost, $syncport, $child);
+	}
+	delete $pids{$child};
+    }
+}
+
 finish($exit_at_end);

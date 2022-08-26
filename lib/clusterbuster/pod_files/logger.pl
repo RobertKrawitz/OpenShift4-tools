@@ -56,7 +56,7 @@ while ($processes-- > 0) {
 
 while ((my $child = wait()) >= 0) {
     if ($? > 0) {
-	timestamp("Logger failed!")
+	timestamp("Logger failed!");
 	exit(1);
     }
 }

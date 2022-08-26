@@ -63,7 +63,7 @@ sub prepare_data_file($) {
     timestamp("File created");
 }
 
-sub runit(;$) {
+sub runone(;$) {
     my ($jobfile) = @_;
     my ($firsttime) = 1;
     my ($avgcpu) = 0;
@@ -187,7 +187,7 @@ sub get_jobfiles($$$) {
     return @nfiles;
 }
 
-sub runall() {
+sub runit() {
     my ($localid) = $idname . ":$$";
     $localid =~ s/:/_/g;
     $localrundir = "$rundir/$localid";
@@ -206,39 +206,34 @@ sub runall() {
     my (@jobfiles) = get_jobfiles($jobfiles_dir, $tmp_jobfilesdir, $localid);
     if ($#jobfiles >= 0) {
 	foreach my $file (@jobfiles) {
-	    runit($file);
+	    runone($file);
 	}
     } else {
-        runit();
+        runone();
     }
     removeRundir();
 }
-
 my (%pids) = ();
-if ($processes > 1) {
-    for (my $i = 0; $i < $processes; $i++) {
-	my $child;
-        if (($child = fork()) == 0) {
-            runall();
-            exit(0);
-        } else {
-	    $pids{$child} = 1;
-	}
+for (my $i = 0; $i < $processes; $i++) {
+    my $child;
+    if (($child = fork()) == 0) {
+	runit();
+	exit(0);
+    } else {
+	$pids{$child} = 1;
     }
-    while (%pids) {
-	my ($child) = wait();
-	if ($child == -1) {
-	    finish($exit_at_end);
-	} elsif (defined $pids{$child}) {
-	    if ($?) {
-		timestamp("Pid $child returned status $?!");
-		finish($exit_at_end, $?)
-	    }
-	    delete $pids{$child};
+}
+while (%pids) {
+    my ($child) = wait();
+    if ($child == -1) {
+	finish($exit_at_end);
+    } elsif (defined $pids{$child}) {
+	if ($?) {
+	    timestamp("Pid $child returned status $?!");
+	    finish($exit_at_end, $?, $namespace, $pod, $container, $synchost, $syncport, $child);
 	}
+	delete $pids{$child};
     }
-} else {
-    runall();
 }
 
 finish($exit_at_end);
