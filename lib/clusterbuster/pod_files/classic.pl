@@ -14,40 +14,66 @@ my ($namespace, $container, $basetime, $baseoffset,
     $crtime, $exit_at_end, $synchost, $syncport, $loghost, $logport, $sleep_time) = @ARGV;
 my ($start_time, $data_start_time, $data_end_time, $elapsed_time, $end_time, $user, $sys, $cuser, $csys);
 my ($start_time) = xtime();
+my ($processes) = 1;
+my ($pod) = hostname;
 
 $SIG{TERM} = sub { POSIX::_exit(0); };
 $basetime += $baseoffset;
 $crtime += $baseoffset;
 
-my $pass = 0;
-my $ex = 0;
-my $ex2 = 0;
-my ($cfail) = 0;
-my ($refused) = 0;
-my $time_overhead = 0;
-my ($pod) = hostname;
-initialize_timing($basetime, $crtime, $synchost, $syncport,
-		  "$namespace:$pod:$container", $start_time);
-$start_time = get_timing_parameter('start_time');
+sub runit() {
+    my $pass = 0;
+    my $ex = 0;
+    my $ex2 = 0;
+    my ($cfail) = 0;
+    my ($refused) = 0;
+    my $time_overhead = 0;
+    initialize_timing($basetime, $crtime, $synchost, $syncport,
+		      "$namespace:$pod:$container", $start_time);
+    $start_time = get_timing_parameter('start_time');
 
-timestamp("Clusterbuster pod starting");
-my ($data_start_time) = xtime();
-if ($sleep_time > 0) {
-    usleep($sleep_time * 1000000);
+    timestamp("Clusterbuster pod starting");
+    my ($data_start_time) = xtime();
+    if ($sleep_time > 0) {
+	usleep($sleep_time * 1000000);
+    }
+
+    my ($data_end_time) = xtime();
+    my ($elapsed_time) = $data_end_time - $data_start_time;
+    my ($user, $sys, $cuser, $csys) = times;
+    my ($results) = print_json_report($namespace, $pod, $container, $$,
+				      $data_start_time, $data_end_time,
+				      $data_end_time - $data_start_time,
+				      $user, $sys);
+    timestamp("RESULTS $results");
+    if ($syncport) {
+	do_sync($synchost, $syncport, $results);
+    }
+    if ($logport > 0) {
+	do_sync($loghost, $logport, $results);
+    }
+}
+my (%pids) = ();
+for (my $i = 0; $i < $processes; $i++) {
+    my $child;
+    if (($child = fork()) == 0) {
+	runit();
+	exit(0);
+    } else {
+	$pids{$child} = 1;
+    }
+}
+while (%pids) {
+    my ($child) = wait();
+    if ($child == -1) {
+	finish($exit_at_end);
+    } elsif (defined $pids{$child}) {
+	if ($?) {
+	    timestamp("Pid $child returned status $?!");
+	    finish($exit_at_end, $?, $namespace, $pod, $container, $synchost, $syncport, $child);
+	}
+	delete $pids{$child};
+    }
 }
 
-my ($data_end_time) = xtime();
-my ($elapsed_time) = $data_end_time - $data_start_time;
-my ($user, $sys, $cuser, $csys) = times;
-my ($results) = print_json_report($namespace, $pod, $container, $$,
-				  $data_start_time, $data_end_time,
-				  $data_end_time - $data_start_time,
-				  $user, $sys);
-timestamp("RESULTS $results");
-if ($syncport) {
-    do_sync($synchost, $syncport, $results);
-}
-if ($logport > 0) {
-    do_sync($loghost, $logport, $results);
-}
 finish($exit_at_end);

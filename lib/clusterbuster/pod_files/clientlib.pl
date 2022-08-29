@@ -259,23 +259,34 @@ sub do_sync($$;$) {
     return $answer;
 }
 
-sub run_cmd_to_stderr(@) {
+sub run_cmd(@) {
+    my ($answer);
     my (@cmd) = @_;
     timestamp("@cmd output");
     if (open(my $fh, "-|", @cmd)) {
 	while (<$fh>) {
-	    print STDERR "$cmd[0] $_";
+	    $answer .= "$cmd[0] $_";
 	}
 	close($fh)
     } else {
 	timestamp("Can't run $cmd[0]");
     }
+    return $answer;
 }
 
-sub finish($) {
-    my ($exit_at_end) = @_;
-    run_cmd_to_stderr("lscpu");
-    run_cmd_to_stderr("dmesg");
+sub finish($;$$$$$$$) {
+    my ($exit_at_end, $status, $namespace, $pod, $container, $synchost, $syncport, $pid) = @_;
+    my ($answer) = run_cmd("lscpu");
+    $answer .= run_cmd("dmesg");
+    timestamp($answer);
+    if (defined $status && $status != 0) {
+	print STDERR "FAIL!\n";
+	my ($buf) = sprintf("FAIL: %s/%s/%s%s\n%s", $namespace, $pod, $container, (defined $pid ? " pid: $pid" : ""), $answer);
+	do_sync($synchost, $syncport, $buf);
+	if ($exit_at_end) {
+	    POSIX::_exit($status);
+	}
+    }
     if ($exit_at_end) {
 	timestamp("About to exit");
 	while (wait() > 0) {}

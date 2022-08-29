@@ -157,6 +157,7 @@ declare -i liveness_probe_sleep_time=0
 declare pod_prefix=
 
 declare -r sync_flag_file="/tmp/syncfile";
+declare -r sync_error_file="/tmp/syncerror";
 declare -r controller_timestamp_file="/tmp/timing.json";
 # shellcheck disable=2155
 declare uuid=$(uuidgen -r)
@@ -1238,7 +1239,50 @@ function run_logger() {
     fi
 }
 
+# Use a separate flag file for errors to simplify the logic.
+# This way we can send correct output to stdout, but handle
+# errors in a separate subprocess.
+function _fail_helper()  {
+    trap exit TERM
+    local faildata
+    while : ; do
+	local podstatus
+	podstatus=$("$OC" get pod -ojsonpath='{.status.phase}' "$@" 2>/dev/null)
+	case "$podstatus" in
+	    Succeeded|Terminated)
+		return
+		;;
+	    Running)
+		# Need to produce periodic output to stderr to prevent oc exec connection from prematurely terminating
+		faildata="$("$OC" exec --stdin=false "$@" -- sh -c "while [[ ! -f '$sync_error_file' ]] ; do sleep 5; echo KEEPALIVE 1>&2; done; cat '$sync_error_file'" 2>/dev/null)"
+		if [[ -n "$faildata" ]] ; then
+		    "$OC" exec --stdin=false "$@" -- sh -c "rm -f '$sync_error_file'"
+		    echo "Run failed:" 1>&2
+		    echo "${faildata:-}" 1>&2
+		    killthemall "Run failed, exiting!"
+		fi
+		;;
+	    *)
+		sleep 1;
+		;;
+	esac
+    done
+}
+
 function _log_helper() {
+    local OPTIND=0
+    local OPTARG
+    local fail_helper=
+    while getopts 'e:' opt "$@" ; do
+	case "$opt" in
+	    e) fail_helper=$OPTARG ;;
+	    *)			   ;;
+	esac
+    done
+    shift $((OPTIND-1))
+    if [[ -n "${fail_helper:-}" ]] ; then
+	"$fail_helper" "$@" &
+    fi
     if [[ -n "${injected_errors[timeout]:-}" ]] ; then
 	echo "*** Injecting forced timeout error"
 	sleep infinity
@@ -1293,13 +1337,12 @@ function _get_logs_poll() {
 	    esac
 	done
 	# shellcheck disable=SC2086
-	local cleanup_command="; sleep 1; rm -f '$sync_flag_file'"
 	local mypid=$BASHPID
 	monitor_pods -- -l "${basename}-worker=$uuid" &
 	# shellcheck disable=SC2086
 	if supports_api -w "$requested_workload" supports_reporting ; then
 	    # Ensure that if there's a lot of output that we don't remove the sync file before it has all been flushed out
-	    run_logger -p "$mypid" -- _log_helper $pod &
+	    run_logger -p "$mypid" -- _log_helper -e _fail_helper -- $pod &
 	fi
 	trap 'kill $(jobs -p) 2>/dev/null 1>&2 && wait' USR2
 	wait
@@ -2503,6 +2546,8 @@ function create_container_sync() {
 $(indent 2 bootstrap_command_yaml sync.pl)
   - "-f"
   - "$sync_flag_file"
+  - "-e"
+  - "$sync_error_file"
   - "-t"
   - "$controller_timestamp_file"
   - "-d"
