@@ -12,7 +12,7 @@ use JSON;
 my ($dir) = $ENV{'BAK_CONFIGMAP'};
 require "$dir/clientlib.pl";
 
-our ($namespace, $container, $basetime, $baseoffset, $crtime, $exit_at_end, $synchost, $syncport, $log_host, $log_port, $dirs, $files_per_dir, $blocksize, $block_count, $processes, $direct, $drop_cache_service, $drop_cache_port, @dirs) = @ARGV;
+our ($namespace, $container, $basetime, $baseoffset, $crtime, $exit_at_end, $synchost, $syncport, $dirs, $files_per_dir, $blocksize, $block_count, $processes, $direct, $drop_cache_service, $drop_cache_port, @dirs) = @ARGV;
 my ($start_time, $elapsed_time, $end_time, $user, $sys, $cuser, $csys);
 $start_time = xtime();
 
@@ -232,9 +232,6 @@ sub runit($) {
 				     $user_cpu, $system_cpu, \%extras);
     
     do_sync($synchost, $syncport, "$answer");
-    if ($log_port > 0) {
-	do_sync($log_host, $log_port, "$answer");
-    }
 }
 
 timestamp("Filebuster client starting");

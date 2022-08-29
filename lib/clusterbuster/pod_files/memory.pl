@@ -10,7 +10,7 @@ use File::Basename;
 my ($dir) = $ENV{'BAK_CONFIGMAP'};
 require "$dir/clientlib.pl";
 
-my ($namespace, $container, $basetime, $baseoffset, $crtime, $exit_at_end, $synchost, $syncport, $loghost, $logport, $processes, $memory, $runtime) = @ARGV;
+my ($namespace, $container, $basetime, $baseoffset, $crtime, $exit_at_end, $synchost, $syncport, $processes, $memory, $runtime) = @ARGV;
 my ($start_time) = xtime();
 $SIG{TERM} = sub { kill 'KILL', -1; POSIX::_exit(0); };
 $basetime += $baseoffset;
@@ -75,9 +75,6 @@ sub runit() {
     my ($answer) = print_json_report($namespace, $pod, $container, $$, $data_start_time,
 				     $data_end_time, $elapsed_time, $ucpu1, $scpu1);
     do_sync($synchost, $syncport, $answer);
-    if ($logport > 0) {
-	do_sync($loghost, $logport, $answer);
-    }
 }
 my (%pids) = ();
 for (my $i = 0; $i < $processes; $i++) {

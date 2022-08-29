@@ -68,8 +68,6 @@ declare -i objs_item_count=0
 declare -i port=7777
 declare -i sync_port=7778
 declare -i drop_cache_port=7779
-declare log_host=
-declare -i log_port=0
 declare sync_host=
 declare -i affinity=0
 declare -A pin_nodes=()
@@ -110,7 +108,6 @@ declare -A volume_scoped_names=()
 declare common_workdir=
 declare -i report=0
 declare report_format=summary
-declare log_strategy=poll
 declare -i precleanup=1
 declare -i cleanup=0
 declare -i timeout=0
@@ -478,18 +475,6 @@ Advanced options (generally not required):
                         This normally should not be needed, as
                         ClusterBuster can correct for clock skew
                         itself.
-       --log-strategy={poll,listen}
-                        Use the desired logging strategy to retrieve logs.
-                        - Poll indicates that sync pods should be polled
-                          for logs.
-                        - Listen indicates that pods should report log
-                          data directly to this tool, which will listen
-                          for the data.
-                        The default strategy is polling, which should work
-                        in all cases.  The older listen strategy will not
-                        work if pods cannot connect to the host from which
-                        this tool is run.  Polling should be used unless
-                        there is reason to believe it is not functioning.
        --podsleep=N     Time for pod to sleep before exit
        --inject_error=<opt>
                         For testing purposes, inject the specified error
@@ -639,7 +624,6 @@ function process_option() {
 	forceabort*)		    set -e					;;
 	# Reporting
 	artifactdir)		    artifactdir="$optvalue"			;;
-	logstrategy)		    log_strategy=$optvalue			;;
 	metrics|metricsfile)	    set_metrics_file "$optvalue"		;;
 	metricsepoch)		    metrics_epoch=$optvalue			;;
 	reportformat)		    report_format=$optvalue			;;
@@ -1371,10 +1355,6 @@ function get_logs_poll() {
     return $status
 }
 
-function get_logs_listen() {
-    "${__libdir__}/get_logs" "$@"
-}
-
 function __report_one_volume() {
     local volname=$1
 	cat <<EOF
@@ -1580,9 +1560,6 @@ function get_logs() {
     local log_cmd
     if supports_api -w "$requested_workload" supports_reporting ; then
 	log_cmd=get_logs_poll
-	if [[ ${log_strategy,,} = 'listen'* ]] ; then
-	    log_cmd=get_logs_listen
-	fi
     else
 	log_cmd=true
     fi
@@ -1715,7 +1692,7 @@ function standard_yaml_args() {
     local namespace=$1
     local container=$2
     mk_yaml_args "$namespace" "c$container" "$basetime" "$baseoffset" "$(ts)" \
-		 "$exit_at_end" "$sync_service" "$sync_port_num" "$log_host" "$log_port"
+		 "$exit_at_end" "$sync_service" "$sync_port_num"
 }
 
 function create_standard_containers() {
@@ -2896,23 +2873,16 @@ function do_logging() {
     ((logs_expected > 0)) || return 0
     trap 'wait; return 1' TERM
 
-    if [[ $log_strategy = poll ]] ; then
-	local -a sync_pods=()
-	local namespace
-	local pod
-	local ignore
-	while read -r namespace pod ignore ; do
-	    if [[ -n "$namespace" && -n "$pod" ]] ; then
-		sync_pods+=("-n $namespace $pod")
-	    fi
-	done <<< "$(oc get pod -A --no-headers -l "${basename}-sync=${uuid}")"
-	get_logs "${sync_pods[@]}" &
-    else
-	log_host=$(hostname -f)
-	log_port=$("${__libdir__}/find_free_port")
-	(( log_port )) || killthemall "Can't get port to listen for logs on!"
-	get_logs -p "$log_port" -c "$logs_expected" &
-    fi
+    local -a sync_pods=()
+    local namespace
+    local pod
+    local ignore
+    while read -r namespace pod ignore ; do
+	if [[ -n "$namespace" && -n "$pod" ]] ; then
+	    sync_pods+=("-n $namespace $pod")
+	fi
+    done <<< "$(oc get pod -A --no-headers -l "${basename}-sync=${uuid}")"
+    get_logs "${sync_pods[@]}" &
     local -i get_logs_pid=$!
     if ((timeout > 0)) ; then
 	local -i itimeout=$timeout
@@ -3166,11 +3136,6 @@ fi
 
 if [[ -n "$pbench_controller_address" && $pbench_controller_port -eq 0 ]] ; then
     fatal "Both pbench_controller_address and pbench_controller_port must be specified"
-fi
-
-log_strategy=${log_strategy,,}
-if [[ $log_strategy != poll && $log_strategy != listen ]] ; then
-    fatal "Unknown --log_strategy (must be 'poll' or 'listen')"
 fi
 
 resource_validation_failed=0

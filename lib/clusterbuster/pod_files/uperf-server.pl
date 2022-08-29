@@ -11,7 +11,7 @@ require "$dir/clientlib.pl";
 
 $SIG{TERM} = sub { POSIX::_exit(0); };
 my ($namespace, $container, $basetime, $baseoffset, $crtime,
-    $exit_at_end, $synchost, $syncport, $loghost, $logport, $listen_port) = @ARGV;
+    $exit_at_end, $synchost, $syncport, $listen_port) = @ARGV;
 $basetime += $baseoffset;
 my ($pod) = hostname;
 my ($processes) = 1;

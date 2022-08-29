@@ -11,7 +11,7 @@ use File::Basename;
 my ($dir) = $ENV{'BAK_CONFIGMAP'};
 require "$dir/clientlib.pl";
 
-my ($namespace, $container, $basetime, $baseoffset, $crtime, $exit_at_end, $synchost, $syncport, $loghost, $logport, $processes, $rundir, $runtime, $sysbench_generic_args, $sysbench_cmd, $sysbench_fileio_args, $sysbench_modes) = @ARGV;
+my ($namespace, $container, $basetime, $baseoffset, $crtime, $exit_at_end, $synchost, $syncport, $processes, $rundir, $runtime, $sysbench_generic_args, $sysbench_cmd, $sysbench_fileio_args, $sysbench_modes) = @ARGV;
 my ($start_time) = xtime();
 
 $SIG{TERM} = sub() { docleanup() };
@@ -182,9 +182,6 @@ sub runit() {
 				     $data_end_time, $elapsed_time, $user, $sys, \%extras);
     print STDERR "$answer\n";
     do_sync($synchost, $syncport, $answer);
-    if ($logport > 0) {
-	do_sync($loghost, $logport, $answer);
-    }
 }
 my (%pids) = ();
 for (my $i = 0; $i < $processes; $i++) {
