@@ -24,11 +24,10 @@ declare -g ___synctest_cluster_count=1
 declare -g ___synctest_sleep=0
 
 function synctest_create_containers_yaml() {
-    "$mk_args_func" "$___synctest_count" "$___synctest_cluster_count" "$___synctest_sleep"
+    mk_yaml_args "$___synctest_count" "$___synctest_cluster_count" "$___synctest_sleep"
 }
 
 function synctest_create_deployment() {
-    local mk_args_func="$1"; shift
     local namespace=$1
     local count=${2:-1}
     local secret_count=${3:-1}

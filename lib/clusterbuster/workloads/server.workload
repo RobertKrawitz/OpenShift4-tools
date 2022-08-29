@@ -21,21 +21,19 @@
 declare -ig ___msg_size=32768
 
 function server_server_arglist() {
-    local mk_args_func="$1"; shift
     local replicas=$4
-    "$mk_args_func" "$port" "$___msg_size" "$(ts)" "$((containers_per_pod * replicas))"
+    mk_yaml_args "$port" "$___msg_size" "$(ts)" "$((containers_per_pod * replicas))"
 }
 
 function server_client_arglist() {
-    local mk_args_func="$1"; shift
     local namespace=$1
     local instance=$2
     if [[ $target_data_rate != 0 && $target_data_rate != '' && $workload_run_time_max -eq 0 && bytes_transfer_max -eq 0 ]] ; then
 	bytes_transfer=$default_bytes_transfer
 	bytes_transfer_max=$default_bytes_transfer
     fi
-    "$mk_args_func" "svc-${namespace}-server-server-$instance" "$port" "$target_data_rate" "$bytes_transfer" \
-		    "$bytes_transfer_max" "$___msg_size" "$workload_run_time" "$workload_run_time_max"
+    mk_yaml_args "svc-${namespace}-server-server-$instance" "$port" "$target_data_rate" "$bytes_transfer" \
+		 "$bytes_transfer_max" "$___msg_size" "$workload_run_time" "$workload_run_time_max"
 }
 
 function server_create_deployment() {
