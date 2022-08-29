@@ -12,7 +12,7 @@ use JSON;
 my ($dir) = $ENV{'BAK_CONFIGMAP'};
 require "$dir/clientlib.pl";
 
-our ($namespace, $container, $basetime, $baseoffset, $crtime, $exit_at_end, $synchost, $syncport, $loghost, $logport,
+our ($namespace, $container, $basetime, $baseoffset, $crtime, $exit_at_end, $synchost, $syncport,
      $processes, $rundir, $runtime, $jobfiles_dir, $drop_cache_service, $drop_cache_port, $fio_blocksizes, $fio_patterns,
      $fio_iodepths, $fio_fdatasyncs, $fio_directs, $fio_ioengines, $fio_generic_args) = @ARGV;
 my ($start_time) = xtime();
@@ -150,9 +150,6 @@ sub runone(;$) {
 					 $data_end_time, $elapsed_time, $ucpu1, $scpu1, \%extras);
 
 	do_sync($synchost, $syncport, $answer);
-	if ($logport > 0) {
-	    do_sync($loghost, $logport, $answer);
-	}
     }
 }
 

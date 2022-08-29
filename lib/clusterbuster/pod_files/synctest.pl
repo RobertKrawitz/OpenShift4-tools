@@ -11,7 +11,7 @@ use File::Basename;
 my ($dir) = $ENV{'BAK_CONFIGMAP'};
 require "$dir/clientlib.pl";
 
-my ($namespace, $container, $basetime, $baseoffset, $crtime, $processes, $exit_at_end, $synchost, $syncport, $loghost, $logport, $sync_count, $sync_cluster_count, $sync_sleep) = @ARGV;
+my ($namespace, $container, $basetime, $baseoffset, $crtime, $processes, $exit_at_end, $synchost, $syncport, $sync_count, $sync_cluster_count, $sync_sleep) = @ARGV;
 my ($start_time) = xtime();
 
 $SIG{TERM} = sub() { docleanup() };
@@ -42,9 +42,6 @@ sub runit() {
 				     $ucpu1, $scpu1);
     if ($syncport) {
 	do_sync($synchost, $syncport, $results);
-    }
-    if ($logport > 0) {
-	do_sync($loghost, $logport, $results);
     }
 }
 my (%pids) = ();

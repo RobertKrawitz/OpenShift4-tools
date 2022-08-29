@@ -11,7 +11,7 @@ my ($dir) = $ENV{'BAK_CONFIGMAP'};
 require "$dir/clientlib.pl";
 
 my ($namespace, $container, $basetime, $baseoffset, $crtime,
-    $exit_at_end, $synchost, $syncport, $loghost, $logport, $runtime, $ramp_time,
+    $exit_at_end, $synchost, $syncport, $runtime, $ramp_time,
     $srvhost, $connect_port, @tests) = @ARGV;
 my ($start_time, $data_start_time, $data_end_time, $elapsed_time, $end_time, $user, $sys, $cuser, $csys);
 $start_time = xtime();
@@ -262,9 +262,6 @@ sub runit() {
     timestamp("Done");
     if ($syncport) {
 	do_sync($synchost, $syncport, $results);
-    }
-    if ($logport > 0) {
-	do_sync($loghost, $logport, $results);
     }
 }
 

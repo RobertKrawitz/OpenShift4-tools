@@ -10,7 +10,7 @@ use File::Basename;
 my ($dir) = $ENV{'BAK_CONFIGMAP'};
 require "$dir/clientlib.pl";
 
-my ($namespace, $container, $basetime, $baseoffset, $crtime, $exit_at_end, $synchost, $syncport, $loghost, $logport, $srvhost, $connect_port, $data_rate, $bytes, $bytes_max, $msg_size, $xfertime, $xfertime_max) = @ARGV;
+my ($namespace, $container, $basetime, $baseoffset, $crtime, $exit_at_end, $synchost, $syncport, $srvhost, $connect_port, $data_rate, $bytes, $bytes_max, $msg_size, $xfertime, $xfertime_max) = @ARGV;
 my ($start_time, $data_start_time, $data_end_time, $elapsed_time, $end_time, $user, $sys, $cuser, $csys);
 $start_time = xtime();
 my ($processes) = 1;
@@ -144,9 +144,6 @@ sub runit() {
     print STDERR "FINIS\n";
     if ($syncport) {
 	do_sync($synchost, $syncport, $results);
-    }
-    if ($logport > 0) {
-	do_sync($loghost, $logport, $results);
     }
 }
 my (%pids) = ();
