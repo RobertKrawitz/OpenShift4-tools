@@ -832,17 +832,17 @@ function generate_workload_metadata() {
 ################################################################
 
 function __OC() {
+    if [[ -n "$debug" && $doit -ne 0 ]] ; then
+	echo "$OC" "${@@Q}" | timestamp 1>&2
+    fi
     if ((! doit)) ; then
-	echo "$OC" "$@" 1>&2
+	echo "$OC" "${@@Q}" 1>&2
     elif [[ $1 = exec || $1 = rsh ]] ; then
 	# Capture error output
 	(set -o pipefail; "$OC" "$@" 2>&1 1>&3 |sed -e "s/^/${*//\//\\/}: /" |timestamp 1>&2) 3>&1
     elif [[ $1 = describe || $1 = get || $1 = status || $1 = logs ]] ; then
 	"$OC" "$@"
     elif ((report_object_creation)) ; then
-	if [[ -n "$debug" ]] ; then
-	    echo "$OC" "$@" 1>&2
-	fi
 	"$OC" "$@" 2>&1
     else
 	"$OC" "$@" 2>&1 |grep -v -E '(^No resources found|deleted|created|labeled|condition met)$'
@@ -1188,9 +1188,13 @@ function _monitor_pods() {
 		    if ((timestamp > pod_progress_timeout)) ; then
 			killthemall "No progress with pods after 1 minute, ${#starting_pods[@]} pods still pending."
 		    fi
-		    local seconds=seconds
-		    if ((pod_progress_timeout-timestamp == 1)) ; then seconds='second' ; fi
-		    echo "${#starting_pods[@]} pods pending (will retry $((pod_progress_timeout-timestamp)) $seconds)" | echo_if_desired 1>&2
+		    if ((pod_progress_timeout-timestamp <= 30)) ; then
+			local p_seconds=seconds
+			local p_pods=pods
+			if ((pod_progress_timeout-timestamp == 1)) ; then p_seconds=second; fi
+			if ((${#starting_pods[@]} == 1)) ; then p_pods=pod; fi
+			echo "${#starting_pods[@]} $p_pods pending (will retry $((pod_progress_timeout-timestamp)) $p_seconds)" | echo_if_desired 1>&2
+		    fi
 		fi
 	    fi
 	    if ((timeout > 0 && timestamp > timeout)) ; then
