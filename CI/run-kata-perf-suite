@@ -601,7 +601,7 @@ function xruntimeclass() {
 }
 
 function doit() {
-    echo "$*"
+    echo "${@@Q}"
     if ((! debugonly)) ; then
 	exec "$@" &
 	job_pid=$!
