@@ -57,10 +57,10 @@ my (%options) = (
     'runtime' => 1,
 );
 
-process_file("$dir/uperf-mini.xml", "/tmp/fio-test.xml", %options);
+process_file("$dir/uperf-mini.xml", "/tmp/uperf-test.xml", %options);
 # Ensure that uperf server is running before we try to do anything.
 timestamp("Waiting for uperf server $srvhost:$connect_port to come online...");
-system("bash", "-c", "until uperf -P $connect_port -m /tmp/fio-test.xml >/dev/null; do sleep 1; done");
+system("bash", "-c", "until uperf -P $connect_port -m /tmp/uperf-test.xml; do sleep 1; done");
 timestamp("Connected to uperf server");
 
 my ($counter) = 1;
@@ -101,7 +101,7 @@ sub runit() {
 	    'nthr' => $nthr,
 	    );
 	my ($test_template) = "$dir/uperf-${test_type}.xml";
-	my ($testfile) = "/tmp/fio-test.xml";
+	my ($testfile) = "/tmp/uperf-test.xml";
 	process_file($test_template, $testfile, %options);
 	my ($test_name) = sprintf('%04i-%s', $counter, $base_test_name);
 	my (%metadata) = (
@@ -114,12 +114,12 @@ sub runit() {
 	my ($failed) = 0;
 	do_sync($synchost, $syncport, "$namespace:$pod:$container:$$:$test_name");
 	timestamp("Running test $test_name");
-	system("cat /tmp/fio-test.xml 1>&2");
+	system("cat /tmp/uperf-test.xml 1>&2");
 	my ($job_start_time) = xtime();
 	if (! defined $data_start_time) {
 	    $data_start_time = $job_start_time;
 	}
-	open(RUN, "-|", "uperf", "-f", "-P", "$connect_port", '-m', '/tmp/fio-test.xml', '-R', '-a', '-i', '1', '-Tf') || die "Can't run uperf: $!\n";
+	open(RUN, "-|", "uperf", "-f", "-P", "$connect_port", '-m', '/tmp/uperf-test.xml', '-R', '-a', '-i', '1', '-Tf') || die "Can't run uperf: $!\n";
 	my ($start_time) = 0;
 	my ($last_time) = 0;
 	my ($last_nbytes) = 0;
@@ -191,7 +191,10 @@ sub runit() {
 		push @failed_cases, $test_name;
 	    }
 	}
-	close(RUN);
+	if (! close(RUN)) {
+	    timestamp("Uperf failed: $! $?");
+	    exit(1);
+	}
 	$data_end_time = xtime();
 	$summary{'raw_elapsed_time'} = $last_time - $start_time;
 	$summary{'raw_nbytes'} = $last_nbytes;

@@ -114,7 +114,10 @@ sub runone(;$) {
 				timestamp($_);
 				$answer0 .= "$_";
 			    }
-			    close(RUN);
+			    if (!close(RUN)) {
+				timestamp("fio failed: $! $?");
+				exit(1);
+			    }
 			    timestamp("Done job $jobfile $jobname");
 			    my ($jtime1) = xtime();
 			    my ($jucpu1, $jscpu1) = cputime();
