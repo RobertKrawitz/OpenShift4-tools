@@ -39,26 +39,18 @@ function register_debug_condition() {
     warn "*** Registering debug condition '$condition' = '${debug_conditions[$condition]}'"
 }
 
+function test_debug() {
+    local condition=${1:-}
+    [[ -n "$condition" && (-n "${debug_conditions[$condition]:-}" || -n "${debug_conditions[all]:-}") ]]
+}
+
 function debug() {
-    local OPTIND=0
-    local arg
-    local verbose=1
-    while getopts 'qv' opt "$@" ; do
-	case "$opt" in
-	    q) verbose=0 ;;
-	    v) verbose=1 ;;
-	esac
-    done
-    shift $((OPTIND-1))
     local condition=${1:-}
     shift
-    if [[ -n "$condition" && (-n "${debug_conditions[$condition]:-}" || -n "${debug_conditions[all]:-}") ]] ; then
-	if ((verbose)) ; then
-	    echo "*** DEBUG $condition:" "${@@Q}" |timestamp 1>&2
-	fi
-	return 0
+    if test_debug "$condition" ; then
+	echo "*** DEBUG $condition:" "${@@Q}" |timestamp 1>&2
     fi
-    return 1
+    return 0
 }
 
 function bool() {
@@ -329,4 +321,84 @@ function get_workload() {
     else
 	return 1
     fi
+}
+
+# The big red button if something goes wrong.
+
+function childrenof() {
+    IFS=' '
+    function is_descendent() {
+	local -i child=$1
+	local ancestor=$2
+	if ((child == ancestor)) ; then
+	    true
+	else
+	    parent=${ps_parents[$child]:-1}
+	    case "$parent" in
+		1)           false ;;
+		"$ancestor") true  ;;
+		*)           is_descendent "$parent" "$ancestor" ;;
+	    esac
+	fi
+    }
+    local -A exclude=()
+    local OPTIND=0
+    while getopts 'e:' opt "$@" ; do
+	case "$opt" in
+	    e) exclude[$OPTARG]=1 ;;
+	    *)                    ;;
+	esac
+    done
+    shift $((OPTIND-1))
+    local target=$1
+    local -A ps_parents=()
+    local -A ps_commands=()
+    local ppid
+    local pid
+    local command
+    local ignore
+    while read -r pid ppid command ignore; do
+	ps_parents["$pid"]=$ppid
+	ps_commands["$pid"]=$command
+    done <<< "$(ps -axo pid,ppid,command | tail -n +2)"
+    for pid in "${!ps_parents[@]}" ; do
+	# Don't kill loggers and the report generator; we still want
+	# output even if there's a failure.
+	if [[ -z "${!exclude[$pid]:-}" && "${ps_commands[$pid]}" != 'tee'* && "${ps_commands[$pid]}" != *'clusterbuster-report'* ]] ; then
+	    if is_descendent "$pid" "$target" ; then
+		echo "$pid"
+	    fi
+	fi
+    done
+}
+
+function killthemall() {
+    echo "FATAL: ${*:-Exiting!}" 1>&2
+    # Selectively kill all processes.  We don't want to kill
+    # processes between us and the root, or processes that
+    # aren't actually clusterbuster (e. g. reporting)
+    # Also, RHEL 8 doesn't support kill -<pgrp> syntax
+    local -a pids_to_kill=()
+    readarray -t pids_to_kill <<< "$(childrenof -e "$BASHPID" $$)"
+    # killthemall can livelock under the wrong circumstances.
+    # Make sure that that doesn't happen; we want to control
+    # our own exit.
+    trap : TERM
+    if [[ -n "${pids_to_kill[*]}" ]] ; then
+	/bin/kill -TERM "${pids_to_kill[@]}" >/dev/null 2>&1
+	if (( $$ == BASHPID )) ; then
+	    wait
+	    local -i tstart
+	    tstart=$(date +%s)
+	    until [[ -z "$(ps -o pid "${pids_to_kill[@]}" | awk '{print $1}' | grep -v "^${$}$" | tail -n +2)" ]] ; do
+		sleep 1
+		if (( $(date +%s) - tstart > 60 )) ; then
+		    warn "Unable to terminate all processes!"
+		    ps "${pids_to_kill[@]}" 1>&2
+		    break
+		fi
+	    done
+	fi
+    fi
+    exit 1
 }

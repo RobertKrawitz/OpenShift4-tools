@@ -414,6 +414,14 @@ $(print_workloads_supporting_reporting '                        - ')
                         Arrange for the liveness probe to sleep for specified
                         time.
 
+    Virtualization Options:
+       --virtiofsd-writeback=[0,1]
+                        Use writeback caching for virtiofsd (default $virtiofsd_writeback).
+       --virtiofsd-direct=[0,1]
+                        Allow use of direct I/O for virtiofsd (default $virtiofsd_direct).
+       --virtiofsd-threadpoolsize=n
+                        Use the specified thread pool size for virtiofsd (default 1).
+
     Tuning object creation (short equivalents):
        --scale-ns=[0,1] Scale up the number of namespaces vs.
                         create new ones (default 0).
@@ -427,8 +435,6 @@ $(print_workloads_supporting_reporting '                        - ')
                         Index number of first secret to be created
        --first_namespace=N
                         Index number of first namespace to be created
-       --first_deployment=N
-                        Index number of first pod to be created
        --pod-prefix=prefix
                         Prefix all created pods with this prefix.
        --sleep=N        Number of seconds between object creations
@@ -863,86 +869,6 @@ function ___OC() {
     if ! __OC "$@" ; then
 	fatal "$OC $* failed!"
     fi
-}
-
-# The big red button if something goes wrong.
-
-function childrenof() {
-    IFS=' '
-    function is_descendent() {
-	local -i child=$1
-	local ancestor=$2
-	if ((child == ancestor)) ; then
-	    true
-	else
-	    parent=${ps_parents[$child]:-1}
-	    case "$parent" in
-		1)           false ;;
-		"$ancestor") true  ;;
-		*)           is_descendent "$parent" "$ancestor" ;;
-	    esac
-	fi
-    }
-    local -A exclude=()
-    local OPTIND=0
-    while getopts 'e:' opt "$@" ; do
-	case "$opt" in
-	    e) exclude[$OPTARG]=1 ;;
-	    *)                    ;;
-	esac
-    done
-    shift $((OPTIND-1))
-    local target=$1
-    local -A ps_parents=()
-    local -A ps_commands=()
-    local ppid
-    local pid
-    local command
-    local ignore
-    while read -r pid ppid command ignore; do
-	ps_parents["$pid"]=$ppid
-	ps_commands["$pid"]=$command
-    done <<< "$(ps -axo pid,ppid,command | tail -n +2)"
-    for pid in "${!ps_parents[@]}" ; do
-	# Don't kill loggers and the report generator; we still want
-	# output even if there's a failure.
-	if [[ -z "${!exclude[$pid]:-}" && "${ps_commands[$pid]}" != 'tee'* && "${ps_commands[$pid]}" != *'clusterbuster-report'* ]] ; then
-	    if is_descendent "$pid" "$target" ; then
-		echo "$pid"
-	    fi
-	fi
-    done
-}
-
-function killthemall() {
-    echo "FATAL: ${*:-Exiting!}" 1>&2
-    # Selectively kill all processes.  We don't want to kill
-    # processes between us and the root, or processes that
-    # aren't actually clusterbuster (e. g. reporting)
-    # Also, RHEL 8 doesn't support kill -<pgrp> syntax
-    local -a pids_to_kill=()
-    readarray -t pids_to_kill <<< "$(childrenof -e "$BASHPID" $$)"
-    # killthemall can livelock under the wrong circumstances.
-    # Make sure that that doesn't happen; we want to control
-    # our own exit.
-    trap : TERM
-    if [[ -n "${pids_to_kill[*]}" ]] ; then
-	/bin/kill -TERM "${pids_to_kill[@]}" >/dev/null 2>&1
-	if (( $$ == BASHPID )) ; then
-	    wait
-	    local -i tstart
-	    tstart=$(date +%s)
-	    until [[ -z "$(ps -o pid "${pids_to_kill[@]}" | awk '{print $1}' | grep -v "^${$}$" | tail -n +2)" ]] ; do
-		sleep 1
-		if (( $(date +%s) - tstart > 60 )) ; then
-		    warn "Unable to terminate all processes!"
-		    ps "${pids_to_kill[@]}" 1>&2
-		    break
-		fi
-	    done
-	fi
-    fi
-    exit 1
 }
 
 ################################################################

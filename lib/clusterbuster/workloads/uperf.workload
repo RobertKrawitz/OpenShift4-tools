@@ -89,8 +89,6 @@ function uperf_calculate_logs_required() {
 function uperf_help_options() {
     cat <<'EOF'
     Uperf Options:
-       --workload-runtime
-                       How many seconds to run each test for.
        --pin_node=server=<node>
                        Specify node to which the server is bound.
      The following options take a comma-separated list of each
