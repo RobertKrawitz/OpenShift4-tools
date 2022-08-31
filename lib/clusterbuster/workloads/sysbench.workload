@@ -62,8 +62,6 @@ function sysbench_calculate_logs_required() {
 function sysbench_help_options() {
     cat <<'EOF'
     Sysbench General Options:
-       --sysbench-general-options=<options>
-                        Space or comma separated general Sysbench options
        --sysbench-generic-options=<options>
                         Space or comma separated generic Sysbench options
        --sysbench-fileio-tests=<modes>
@@ -92,7 +90,6 @@ function sysbench_process_options() {
 	read -r noptname1 noptname optvalue <<< "$(parse_option "$opt")"
 	case "$noptname1" in
 	# Sysbench options
-	    sysbenchgeneraloptions)     ___sysbench_generic_options+=(${optvalue//,/ })	;;
 	    sysbenchgenericoptions)     ___sysbench_generic_options+=(${optvalue//,/ })	;;
 	    sysbenchfileiooptions)      ___sysbench_fileio_options+=(${optvalue//,/ })	;;
 	    sysbenchfileiotests)	___sysbench_fileio_test_string=$optvalue	;;
@@ -113,8 +110,7 @@ function sysbench_supports_reporting() {
 
 function sysbench_report_options() {
     cat <<EOF
-"sysbench_general_options": [$(quote_list "${___sysbench_general_options[@]}")],
-"sysbench_Generic_options": [$(quote_list "${___sysbench_generic_options[@]}")],
+"sysbench_generic_options": [$(quote_list "${___sysbench_generic_options[@]}")],
 "sysbench_fileio_options": [$(quote_list "${___sysbench_fileio_options[@]}")],
 "sysbench_fileio_tests": [$(quote_list ${___sysbench_fileio_test_string//,/ })]
 EOF
