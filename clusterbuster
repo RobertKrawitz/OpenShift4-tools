@@ -137,7 +137,6 @@ declare metrics_file=
 declare job_name=
 # shellcheck disable=2155
 declare -i job_start_time=$(date +%s)
-declare debug=
 declare global_sync_service=
 declare -i predelay=0
 declare -i postdelay=0
@@ -476,6 +475,9 @@ Advanced options (generally not required):
                         ClusterBuster can correct for clock skew
                         itself.
        --podsleep=N     Time for pod to sleep before exit
+       --debug=<opt>
+                        For testing purposes, print debugging information.
+                        Options documented only in code.
        --inject_error=<opt>
                         For testing purposes, inject the specified error
                         condition (documented only in code).
@@ -735,6 +737,7 @@ function process_option() {
 	    ;;
 	# Testing
 	injecterror)		    inject_error "$optvalue"			;;
+	debug*)			    register_debug_condition "$optvalue"	;;
 	# Force delete everything after oc delete times out.
 	# This is dangerous and hence not documented.
 	# See https://access.redhat.com/solutions/4165791
@@ -832,8 +835,8 @@ function generate_workload_metadata() {
 ################################################################
 
 function __OC() {
-    if [[ -n "$debug" && $doit -ne 0 ]] ; then
-	echo "$OC" "${@@Q}" | timestamp 1>&2
+    if ((doit)) ; then
+	debug kubectl "$OC" "$@"
     fi
     if ((! doit)) ; then
 	echo "$OC" "${@@Q}" 1>&2
@@ -912,7 +915,7 @@ function childrenof() {
 }
 
 function killthemall() {
-    echo "${*:-Exiting!}" 1>&2
+    echo "FATAL: ${*:-Exiting!}" 1>&2
     # Selectively kill all processes.  We don't want to kill
     # processes between us and the root, or processes that
     # aren't actually clusterbuster (e. g. reporting)
@@ -1088,12 +1091,6 @@ function ts() {
     echo "${sec}.${ns:0:6}"
 }
 
-function timestamp() {
-    while IFS= read -r 'LINE' ; do
-	printf "%s %s\n" "$(TZ=GMT-0 date '+%Y-%m-%dT%T.%N' | cut -c1-26)" "$LINE"
-    done
-}
-
 function run_status_monitor() {
     (while : ; do sleep 1; printf '++Mark++ ++Mark+ %(%s)T%s' -1 $'\n'; done &); oc get pod "$@" -w -o jsonpath='{.metadata.namespace} {.metadata.name} {.status.phase}{"\n"}'
 }
@@ -1138,6 +1135,7 @@ function _monitor_pods() {
 	    lstatus="${status,,}"
 	    # No guarantee that we won't get a repeated status
 	    if [[ $lstatus = "${pod_status[$name]:-}" ]] ; then continue; fi
+	    debug monitor "$pod" "${pod_status[$pod]:-}" '=>' "$lstatus"
 	    # Ignore status of any leftover pods from earlier runs
 	    if [[ ($lstatus = completed || $lstatus = succeeded || $lstatus = 'terminat'* || $lstatus = error || $lstatus = failed) && -z "${pod_status[$pod]:-}" ]] ; then continue; fi
 	    pod_status["$pod"]=$lstatus

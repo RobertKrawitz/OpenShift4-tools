@@ -22,6 +22,44 @@
 
 declare -Ag __registered_workloads__=()
 declare -Ag __workload_aliases__=()
+declare -Ag debug_conditions=()
+
+function timestamp() {
+    while IFS= read -r 'LINE' ; do
+	printf "%s %s\n" "$(TZ=GMT-0 date '+%Y-%m-%dT%T.%N' | cut -c1-26)" "$LINE"
+    done
+}
+
+function register_debug_condition() {
+    local error="$1"
+    local condition
+    local options
+    IFS='=' read -r condition options <<< "$error"
+    debug_conditions["$condition"]=${options:-SET}
+    warn "*** Registering debug condition '$condition' = '${debug_conditions[$condition]}'"
+}
+
+function debug() {
+    local OPTIND=0
+    local arg
+    local verbose=1
+    while getopts 'qv' opt "$@" ; do
+	case "$opt" in
+	    q) verbose=0 ;;
+	    v) verbose=1 ;;
+	esac
+    done
+    shift $((OPTIND-1))
+    local condition=${1:-}
+    shift
+    if [[ -n "$condition" && (-n "${debug_conditions[$condition]:-}" || -n "${debug_conditions[all]:-}") ]] ; then
+	if ((verbose)) ; then
+	    echo "*** DEBUG $condition:" "${@@Q}" |timestamp 1>&2
+	fi
+	return 0
+    fi
+    return 1
+}
 
 function bool() {
     local OPTIND=0
@@ -225,7 +263,7 @@ function workloads_supporting_api() {
     done <<< "$(print_workloads '')"
 }
 
-function call_api() {
+function _call_api() {
     (( $# < 1 )) && fatal "call_api [-w workload|-a] [-A] API args..."
     local workload
     local -a workloads=()
@@ -266,6 +304,14 @@ function call_api() {
 	fi
     done
     return $status
+}
+
+function call_api() {
+    debug call_api "$@"
+    _call_api "$@"
+    local _status=$?
+    debug call_api "$@" "< $_status"
+    return $_status
 }
 
 function print_workloads() {
