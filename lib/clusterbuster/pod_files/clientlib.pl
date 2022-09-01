@@ -13,6 +13,8 @@ use Scalar::Util qw(looks_like_number);
 my %timing_parameters = ();
 my ($last_sync_time) = -10;
 
+our ($namespace, $container, $basetime, $baseoffset, $crtime, $exit_at_end, $synchost, $syncport, $start_time, $pod);
+
 sub cputime() {
     my (@times) = times();
     my ($usercpu) = $times[0] + $times[2];
@@ -35,6 +37,7 @@ sub ts() {
     my (@now) = POSIX::modf(xtime(1) - $timing_parameters{'local_offset_from_sync'});
     return sprintf("%s.%06d", gmtime($now[1])->strftime("%Y-%m-%dT%T"), $now[0] * 1000000);
 }
+
 sub timestamp($) {
     my ($str) = @_;
     printf STDERR "%7d %s %s\n", $$, ts(), $str;
@@ -63,15 +66,42 @@ sub drop_cache($$) {
     close($sock);
 }
 
-sub initialize_timing($$$$$;$) {
-    my ($basetime, $crtime, $sync_host, $sync_port, $name, $start_time) = @_;
+sub podname() {
+    return $pod;
+}
+
+sub container() {
+    return $container;
+}
+
+sub namespace() {
+    return $namespace;
+}
+
+sub idname(;@) {
+    my (@extra_components) = @_;
+    return join(':', $namespace, $pod, $container, $$, @extra_components);
+}
+
+sub parse_command_line(@) {
+    my (@argv) = @_;
+    my (@rest);
+    ($namespace, $container, $basetime, $baseoffset, $crtime, $exit_at_end, $synchost, $syncport, @rest) = @argv;
+    $start_time = xtime();
+    $pod = hostname;
+    return @rest;
+}
+
+sub initialize_timing(;@) {
+    my (@name_components) = @_;
     if (! defined $start_time) {
 	($start_time) = xtime();
     }
+    my ($name) = join(':', $namespace, $pod, $container, @name_components);
     my ($presync) = "timestamp: %s $name";
     timestamp("About to sync");
     my ($local_sync_start, $remote_sync_start, $absolute_sync_start,
-	$remote_sync_base, $remote_sync, $sync_base_start_time) = split(/ +/, do_sync($sync_host, $sync_port, $presync));
+	$remote_sync_base, $remote_sync, $sync_base_start_time) = split(/ +/, do_sync($presync));
     timestamp("Done sync");
     my ($local_sync) = xtime();
     my ($local_sync_rtt) = $local_sync - $local_sync_start;
@@ -110,6 +140,8 @@ sub initialize_timing($$$$$;$) {
 	);
     timestamp("Timing parameters:");
     map { timestamp(sprintf("%-32s %.6f", $_, $timing_parameters{$_})) } (sort keys %timing_parameters);
+    $basetime += $baseoffset;
+    $crtime += $baseoffset;
 }
 
 sub print_timing_parameters() {
@@ -174,15 +206,14 @@ sub to_json_safe($) {
     return to_json(clean_numbers($ref));
 }
 
-sub print_json_report($$$$$$$;$) {
-    my ($namespace, $pod, $container, $process_id, $data_start_time, $data_end_time,
-	$data_elapsed_time, $user_cpu, $sys_cpu, $extra) = @_;
+sub print_json_report($$$;$) {
+    my ($data_start_time, $data_end_time, $data_elapsed_time, $user_cpu, $sys_cpu, $extra) = @_;
     my (%hash) = (
 	'application' => 'clusterbuster-json',
 	'namespace' => $namespace,
 	'pod' => $pod,
 	'container' => $container,
-	'process_id' => $process_id,
+	'process_id' => $$,
 	'pod_create_time' => get_timing_parameter('controller_crtime') - get_timing_parameter('controller_basetime'),
 	'pod_start_time' => get_timing_parameter('start_time'),
 	'data_start_time' => $data_start_time,
@@ -239,9 +270,9 @@ sub do_sync_internal($$$) {
     }
 }
 
-sub do_sync($$;$) {
-    my ($addr, $port, $token) = @_;
-    if (not $addr) { return; }
+sub do_sync($) {
+    my ($token) = @_;
+    my ($addr) = $synchost;
     my ($fh) = undef;
     my ($file) = undef;
     if ($addr eq '-') {
@@ -255,7 +286,7 @@ sub do_sync($$;$) {
     } elsif (substr($token, 0, 10) ne 'timestamp:') {
 	$token = ts() . " $token";
     }
-    my ($answer) = do_sync_internal($addr, $port, $token);
+    my ($answer) = do_sync_internal($addr, $syncport, $token);
     return $answer;
 }
 
@@ -274,15 +305,15 @@ sub run_cmd(@) {
     return $answer;
 }
 
-sub finish($;$$$$$$$) {
-    my ($exit_at_end, $status, $namespace, $pod, $container, $synchost, $syncport, $pid) = @_;
+sub finish(;$$) {
+    my ($status, $pid) = @_;
     my ($answer) = run_cmd("lscpu");
     $answer .= run_cmd("dmesg");
     timestamp($answer);
     if (defined $status && $status != 0) {
 	print STDERR "FAIL!\n";
 	my ($buf) = sprintf("FAIL: %s/%s/%s%s\n%s", $namespace, $pod, $container, (defined $pid ? " pid: $pid" : ""), $answer);
-	do_sync($synchost, $syncport, $buf);
+	do_sync($buf);
 	if ($exit_at_end) {
 	    POSIX::_exit($status);
 	}
@@ -297,6 +328,33 @@ sub finish($;$$$$$$$) {
 	timestamp("Waiting forever");
 	pause();
     }
+}
+
+sub run_workload($$;@) {
+    my ($processes, $run_func, @args) = @_;
+    my (%pids) = ();
+    for (my $i = 0; $i < $processes; $i++) {
+	my $child;
+	if (($child = fork()) == 0) {
+	    &$run_func($i, @args);
+	    exit(0);
+	} else {
+	    $pids{$child} = 1;
+	}
+    }
+    while (%pids) {
+	my ($child) = wait();
+	if ($child == -1) {
+	    finish();
+	} elsif (defined $pids{$child}) {
+	    if ($?) {
+		timestamp("Pid $child returned status $?!");
+		finish($?, $child);
+	    }
+	    delete $pids{$child};
+	}
+    }
+    finish();
 }
 
 1;

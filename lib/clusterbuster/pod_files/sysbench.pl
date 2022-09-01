@@ -1,26 +1,17 @@
 #!/usr/bin/perl
 
-use Socket;
 use POSIX;
 use strict;
-use Time::Piece;
-use Time::HiRes qw(gettimeofday usleep);
-use File::Path qw(make_path remove_tree);
-use Sys::Hostname;
-use File::Basename;
+use File::Path qw(make_path);
 my ($dir) = $ENV{'BAK_CONFIGMAP'};
 require "$dir/clientlib.pl";
 
-my ($namespace, $container, $basetime, $baseoffset, $crtime, $exit_at_end, $synchost, $syncport, $processes, $rundir, $runtime, $sysbench_generic_args, $sysbench_cmd, $sysbench_fileio_args, $sysbench_modes) = @ARGV;
-my ($start_time) = xtime();
+my ($processes, $rundir, $runtime, $sysbench_generic_args, $sysbench_cmd, $sysbench_fileio_args, $sysbench_modes) = parse_command_line(@ARGV);
 
 $SIG{TERM} = sub() { docleanup() };
-$basetime += $baseoffset;
-$crtime += $baseoffset;
 
-my ($pod) = hostname;
-initialize_timing($basetime, $crtime, $synchost, $syncport, "$namespace:$pod:$container", $start_time);
-my ($localrundir) = "$rundir/$pod/$$";
+initialize_timing();
+my ($localrundir) = sprintf('%s/%s/%d', $rundir, podname(), $$);
 
 sub removeRundir() {
     if (-d "$localrundir") {
@@ -82,7 +73,7 @@ sub runit() {
 
     my ($base0_user, $base0_sys) = cputime();
     foreach my $mode (@known_sysbench_fileio_modes) {
-	do_sync($synchost, $syncport, "$namespace:$pod:$container:$$:$mode+prepare");
+	do_sync(idname("$mode+prepare"));
 	timestamp("Preparing...");
 	timestamp("sysbench --time=$runtime $sysbench_generic_args $sysbench_cmd prepare --file-test-mode=$mode $sysbench_fileio_args");
 	open(PREPARE, "-|", "sysbench --time=$runtime $sysbench_generic_args $sysbench_cmd prepare --file-test-mode=$mode $sysbench_fileio_args") || die "Can't run sysbench: $!\n";
@@ -102,7 +93,7 @@ sub runit() {
 	}
 	close PREPARE;
 
-	do_sync($synchost, $syncport, "$namespace:$pod:$container:$$:$mode+start");
+	do_sync(idname("$mode+start"));
 	my ($op0_user, $op0_sys) = cputime();
 	timestamp("Running...");
 	timestamp("sysbench --time=$runtime $sysbench_generic_args $sysbench_cmd run --file-test-mode=$mode $sysbench_fileio_args");
@@ -157,7 +148,7 @@ sub runit() {
 	my ($op1_user, $op1_sys) = cputime();
 	$op_answer{'user_cpu_time'} = $op1_user - $op0_user;
 	$op_answer{'sys_cpu_time'} = $op1_sys - $op0_sys;
-	do_sync($synchost, $syncport, "$namespace:$pod:$container:$$:$mode+finish");
+	do_sync(idname("$mode+finish"));
 	timestamp("Cleanup...");
 	timestamp("sysbench --time=$runtime $sysbench_generic_args $sysbench_cmd cleanup --file-test-mode=$mode $sysbench_fileio_args");
 	open(CLEANUP, "-|", "sysbench --time=$runtime $sysbench_generic_args $sysbench_cmd cleanup --file-test-mode=$mode $sysbench_fileio_args") || die "Can't run sysbench: $!\n";
@@ -178,32 +169,9 @@ sub runit() {
     my (%extras) = (
 	'workloads' => \%op_answers
 	);
-    my ($answer) = print_json_report($namespace, $pod, $container, $$, $data_start_time,
-				     $data_end_time, $elapsed_time, $user, $sys, \%extras);
+    my ($answer) = print_json_report($data_start_time, $data_end_time, $elapsed_time, $user, $sys, \%extras);
     print STDERR "$answer\n";
-    do_sync($synchost, $syncport, $answer);
-}
-my (%pids) = ();
-for (my $i = 0; $i < $processes; $i++) {
-    my $child;
-    if (($child = fork()) == 0) {
-	runit();
-	exit(0);
-    } else {
-	$pids{$child} = 1;
-    }
-}
-while (%pids) {
-    my ($child) = wait();
-    if ($child == -1) {
-	finish($exit_at_end);
-    } elsif (defined $pids{$child}) {
-	if ($?) {
-	    timestamp("Pid $child returned status $?!");
-	    finish($exit_at_end, $?, $namespace, $pod, $container, $synchost, $syncport, $child);
-	}
-	delete $pids{$child};
-    }
+    do_sync($answer);
 }
 
-finish($exit_at_end);
+run_workload($processes, \&runit);

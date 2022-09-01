@@ -1,25 +1,13 @@
 #!/usr/bin/perl
 
-use Socket;
 use POSIX;
 use strict;
-use Time::HiRes qw(gettimeofday usleep);
-use Time::Piece;
-use Sys::Hostname;
-use File::Basename;
 my ($dir) = $ENV{'BAK_CONFIGMAP'};
 require "$dir/clientlib.pl";
 
-my ($namespace, $container, $basetime, $baseoffset,
-    $crtime, $exit_at_end, $synchost, $syncport, $sleep_time) = @ARGV;
-my ($start_time, $data_start_time, $data_end_time, $elapsed_time, $end_time, $user, $sys, $cuser, $csys);
-my ($start_time) = xtime();
-my ($processes) = 1;
-my ($pod) = hostname;
+my ($sleep_time) = parse_command_line(@ARGV);
 
 $SIG{TERM} = sub { POSIX::_exit(0); };
-$basetime += $baseoffset;
-$crtime += $baseoffset;
 
 sub runit() {
     my $pass = 0;
@@ -28,9 +16,7 @@ sub runit() {
     my ($cfail) = 0;
     my ($refused) = 0;
     my $time_overhead = 0;
-    initialize_timing($basetime, $crtime, $synchost, $syncport,
-		      "$namespace:$pod:$container", $start_time);
-    $start_time = get_timing_parameter('start_time');
+    initialize_timing();
 
     timestamp("Clusterbuster pod starting");
     my ($data_start_time) = xtime();
@@ -41,36 +27,10 @@ sub runit() {
     my ($data_end_time) = xtime();
     my ($elapsed_time) = $data_end_time - $data_start_time;
     my ($user, $sys, $cuser, $csys) = times;
-    my ($results) = print_json_report($namespace, $pod, $container, $$,
-				      $data_start_time, $data_end_time,
+    my ($results) = print_json_report($data_start_time, $data_end_time,
 				      $data_end_time - $data_start_time,
 				      $user, $sys);
     timestamp("RESULTS $results");
-    if ($syncport) {
-	do_sync($synchost, $syncport, $results);
-    }
+    do_sync($results);
 }
-my (%pids) = ();
-for (my $i = 0; $i < $processes; $i++) {
-    my $child;
-    if (($child = fork()) == 0) {
-	runit();
-	exit(0);
-    } else {
-	$pids{$child} = 1;
-    }
-}
-while (%pids) {
-    my ($child) = wait();
-    if ($child == -1) {
-	finish($exit_at_end);
-    } elsif (defined $pids{$child}) {
-	if ($?) {
-	    timestamp("Pid $child returned status $?!");
-	    finish($exit_at_end, $?, $namespace, $pod, $container, $synchost, $syncport, $child);
-	}
-	delete $pids{$child};
-    }
-}
-
-finish($exit_at_end);
+run_workload(1, \&runit);

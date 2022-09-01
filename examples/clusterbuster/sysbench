@@ -1,5 +1,5 @@
 # Run as
-# clusterbuster -f clusterbuster-sysbench-jobfile
+# clusterbuster -f sysbench
 
 workload=sysbench
 precleanup

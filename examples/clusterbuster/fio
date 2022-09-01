@@ -1,5 +1,5 @@
 # Run as
-# clusterbuster -f clusterbuster-fio-jobfile
+# clusterbuster -f fio
 
 cleanup
 workloadruntime=10

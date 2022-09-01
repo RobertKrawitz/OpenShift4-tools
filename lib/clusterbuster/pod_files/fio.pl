@@ -1,30 +1,18 @@
 #!/usr/bin/perl
 
-use Socket;
 use POSIX;
 use strict;
-use Time::Piece;
-use Time::HiRes qw(gettimeofday usleep);
 use File::Path qw(make_path remove_tree);
-use Sys::Hostname;
-use File::Basename;
 use JSON;
 my ($dir) = $ENV{'BAK_CONFIGMAP'};
 require "$dir/clientlib.pl";
 
-our ($namespace, $container, $basetime, $baseoffset, $crtime, $exit_at_end, $synchost, $syncport,
-     $processes, $rundir, $runtime, $jobfiles_dir, $drop_cache_service, $drop_cache_port, $fio_blocksizes, $fio_patterns,
-     $fio_iodepths, $fio_fdatasyncs, $fio_directs, $fio_ioengines, $fio_generic_args) = @ARGV;
-my ($start_time) = xtime();
+our ($processes, $rundir, $runtime, $jobfiles_dir, $drop_cache_service, $drop_cache_port, $fio_blocksizes, $fio_patterns,
+     $fio_iodepths, $fio_fdatasyncs, $fio_directs, $fio_ioengines, $fio_generic_args) = parse_command_line(@ARGV);
 
 $SIG{TERM} = sub() { removeRundir() };
-$basetime += $baseoffset;
-$crtime += $baseoffset;
 
-my ($pod) = hostname;
-my ($idname) = "$namespace:$pod:$container";
-
-initialize_timing($basetime, $crtime, $synchost, $syncport, $idname, $start_time);
+initialize_timing();
 
 my ($localrundir);
 
@@ -100,7 +88,7 @@ sub runone(;$) {
 			foreach my $ioengine (@ioengines) {
 			    my ($jobname) = sprintf("%04d-%s-%d-%d-%d-%d-%s", $jobidx, $pattern, $size, $iodepth, $fdatasync, $direct, $ioengine);
 			    drop_cache($drop_cache_service, $drop_cache_port);
-			    do_sync($synchost, $syncport, "$namespace:$pod:$container:$$:$jobname");
+			    do_sync($$, $jobname);
 			    if ($jobidx == 1) {
 				timestamp("Running...");
 				$data_start_time = xtime();
@@ -149,10 +137,9 @@ sub runone(;$) {
 	'results' => \%all_results
 	);
     if (! ($jobfile =~ /-IGNORE-/)) {
-	my ($answer) = print_json_report($namespace, $pod, $container, $$, $data_start_time,
-					 $data_end_time, $elapsed_time, $ucpu1, $scpu1, \%extras);
+	my ($answer) = print_json_report($data_start_time, $data_end_time, $elapsed_time, $ucpu1, $scpu1, \%extras);
 
-	do_sync($synchost, $syncport, $answer);
+	do_sync($answer);
     }
 }
 
@@ -188,8 +175,7 @@ sub get_jobfiles($$$) {
 }
 
 sub runit() {
-    my ($localid) = $idname . ":$$";
-    $localid =~ s/:/_/g;
+    my ($localid) = join('_', namespace(), podname(), container(), $$);
     $localrundir = "$rundir/$localid";
     my ($tmp_jobfilesdir) = "/tmp/fio-${localid}.job";
     mkdir "$tmp_jobfilesdir" || die "Can't create job directory $tmp_jobfilesdir: $!\n";
@@ -213,27 +199,5 @@ sub runit() {
     }
     removeRundir();
 }
-my (%pids) = ();
-for (my $i = 0; $i < $processes; $i++) {
-    my $child;
-    if (($child = fork()) == 0) {
-	runit();
-	exit(0);
-    } else {
-	$pids{$child} = 1;
-    }
-}
-while (%pids) {
-    my ($child) = wait();
-    if ($child == -1) {
-	finish($exit_at_end);
-    } elsif (defined $pids{$child}) {
-	if ($?) {
-	    timestamp("Pid $child returned status $?!");
-	    finish($exit_at_end, $?, $namespace, $pod, $container, $synchost, $syncport, $child);
-	}
-	delete $pids{$child};
-    }
-}
 
-finish($exit_at_end);
+run_workload($processes, \&runit);
