@@ -45,11 +45,6 @@ sub clean_numbers($) {
     }
 }
 
-sub to_json_safe($) {
-    my ($ref) = @_;
-    return to_json(clean_numbers($ref));
-}
-
 my ($start_time) = xtime();
 my ($base_start_time) = $start_time;
 
@@ -177,16 +172,21 @@ if ($sync_count == 0) {
 		}
 		timestamp("Accepted connection from $peeraddr on $port, token $tbuf");
 		push @clients_protect_against_gc, $client;
-		if (substr($tbuf, 0, 10) eq 'timestamp:')  {
+		warn($tbuf);
+		my ($command) = lc substr($tbuf, 0, 4);
+		$tbuf =~ s/^....\s+//;
+		if ($command eq 'time')  {
 		    my ($ignore, $ts, $ignore) = split(/ +/, $tbuf);
 		    push @clients, [$client, "$ts " . ytime()];
-		} elsif ($tbuf =~ /clusterbuster-json/ && defined $tmp_sync_file_base) {
-		    $tmp_sync_file = sprintf("%s-%d", $tmp_sync_file_base, $expected_clients);
-		    chomp $tbuf;
-		    open TMP, ">", "$tmp_sync_file" || die("Can't open sync file $tmp_sync_file: $!\n");
-		    print TMP "$tbuf\n";
-		    close TMP || die "Can't close sync file: $!\n";
-		} elsif ($tbuf =~ /^[-[:digit:]T:.]* FAIL:/ && defined $tmp_error_file) {
+		} elsif ($command eq 'rslt') {
+		    if (defined $tmp_sync_file_base) {
+			$tmp_sync_file = sprintf("%s-%d", $tmp_sync_file_base, $expected_clients);
+			chomp $tbuf;
+			open TMP, ">", "$tmp_sync_file" || die("Can't open sync file $tmp_sync_file: $!\n");
+			print TMP "$tbuf\n";
+			close TMP || die "Can't close sync file: $!\n";
+		    }
+		} elsif ($command eq 'fail' && defined $tmp_error_file) {
 		    timestamp("Detected failure!");
 		    open TMP, ">", "$tmp_error_file" || die("Can't open error file $tmp_error_file: $!\n");
 		    print TMP "$tbuf\n";
@@ -197,6 +197,9 @@ if ($sync_count == 0) {
 			sleep(5);
 		    }
 		    POSIX::_exit(1);
+		} elsif ($command eq 'sync') {
+		} else {
+		    timestamp("Unknown command from $peeraddr: '$command'");
 		}
 		$expected_clients--;
 	    }
@@ -274,7 +277,7 @@ if (@tmp_sync_files) {
 $result{'worker_results'} = \@data;
 
 open (TMP, ">", $tmp_sync_file_base) || die "Can't open sync file $tmp_sync_file_base: $!\n";
-print TMP to_json_safe(\%result);
+print TMP to_json(clean_numbers(\%result));
 close TMP || die "Can't close temporary sync file: $!\n";
 rename($tmp_sync_file_base, $sync_file) || die "Can't rename $tmp_sync_file_base to $sync_file: $!\n";
 timestamp("Waiting for sync file $sync_file to be removed");

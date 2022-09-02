@@ -101,7 +101,7 @@ sub initialize_timing(;@) {
     my ($presync) = "timestamp: %s $name";
     timestamp("About to sync");
     my ($local_sync_start, $remote_sync_start, $absolute_sync_start,
-	$remote_sync_base, $remote_sync, $sync_base_start_time) = split(/ +/, do_sync($presync));
+	$remote_sync_base, $remote_sync, $sync_base_start_time) = split(/ +/, do_sync_command('TIME', $presync));
     timestamp("Done sync");
     my ($local_sync) = xtime();
     my ($local_sync_rtt) = $local_sync - $local_sync_start;
@@ -181,55 +181,7 @@ sub connect_to($$) {
     return ($sock);
 }
 
-sub clean_numbers($) {
-    # Perl to_json encodes innfinity as inf and NaN as nan.
-    # This results in invalid JSON.  It's our responsibility to sanitize
-    # this up front.
-    my ($ref) = @_;
-    if (ref $ref eq 'HASH') {
-	my (%answer);
-	map { $answer{$_} = clean_numbers($$ref{$_})} keys %$ref;
-	return \%answer;
-    } elsif (ref $ref eq 'ARRAY') {
-	my (@answer) = map {clean_numbers($_)} @$ref;;
-	return \@answer;
-    } elsif (ref $ref eq '' && looks_like_number($ref) && $ref != 0 &&
-	     (! defined ($ref <=> 0) || ((1 / $ref) == 0))) {
-	return undef;
-    } else {
-	return $ref
-    }
-}
-
-sub to_json_safe($) {
-    my ($ref) = @_;
-    return to_json(clean_numbers($ref));
-}
-
-sub print_json_report($$$;$) {
-    my ($data_start_time, $data_end_time, $data_elapsed_time, $user_cpu, $sys_cpu, $extra) = @_;
-    my (%hash) = (
-	'application' => 'clusterbuster-json',
-	'namespace' => $namespace,
-	'pod' => $pod,
-	'container' => $container,
-	'process_id' => $$,
-	'pod_create_time' => get_timing_parameter('controller_crtime') - get_timing_parameter('controller_basetime'),
-	'pod_start_time' => get_timing_parameter('start_time'),
-	'data_start_time' => $data_start_time,
-	'data_end_time' => $data_end_time,
-	'data_elapsed_time' => $data_elapsed_time,
-	'user_cpu_time' => $user_cpu,
-	'system_cpu_time' => $sys_cpu,
-	'cpu_time' => $user_cpu + $sys_cpu,
-	'timing_parameters' => \%timing_parameters
-	);
-    
-    map { $hash{$_} = $$extra{$_} } keys %$extra;
-    return to_json_safe(\%hash);
-}
-
-sub do_sync_internal($$$) {
+sub do_sync_command_internal($$$) {
     my ($addr, $port, $token) = @_;
     while (1) {
 	timestamp("sync on $addr:$port");
@@ -270,8 +222,8 @@ sub do_sync_internal($$$) {
     }
 }
 
-sub do_sync($) {
-    my ($token) = @_;
+sub do_sync_command($$) {
+    my ($command, $token) = @_;
     my ($addr) = $synchost;
     my ($fh) = undef;
     my ($file) = undef;
@@ -279,14 +231,14 @@ sub do_sync($) {
 	$addr=`ip route get 1 |awk '{print \$(NF-2); exit}'`;
 	chomp $addr;
     }
-    if ($token && $token =~ /clusterbuster-json/) {
+    if (lc $command eq 'rslt') {
 	$token =~ s,\n *,,g;
+    } elsif (lc $command eq 'time') {
+	$token = ts() . " $token";
     } elsif (not $token) {
         $token = sprintf('%s %s-%d', ts(), hostname(), rand() * 999999999);
-    } elsif (substr($token, 0, 10) ne 'timestamp:') {
-	$token = ts() . " $token";
     }
-    my ($answer) = do_sync_internal($addr, $syncport, $token);
+    my ($answer) = do_sync_command_internal($addr, $syncport, "$command $token");
     return $answer;
 }
 
@@ -313,7 +265,7 @@ sub finish(;$$) {
     if (defined $status && $status != 0) {
 	print STDERR "FAIL!\n";
 	my ($buf) = sprintf("FAIL: %s/%s/%s%s\n%s", $namespace, $pod, $container, (defined $pid ? " pid: $pid" : ""), $answer);
-	do_sync($buf);
+	do_sync_command('FAIL', $buf);
 	if ($exit_at_end) {
 	    POSIX::_exit($status);
 	}
@@ -355,6 +307,56 @@ sub run_workload($$;@) {
 	}
     }
     finish();
+}
+
+sub clean_numbers($) {
+    # Perl to_json encodes innfinity as inf and NaN as nan.
+    # This results in invalid JSON.  It's our responsibility to sanitize
+    # this up front.
+    my ($ref) = @_;
+    if (ref $ref eq 'HASH') {
+	my (%answer);
+	map { $answer{$_} = clean_numbers($$ref{$_})} keys %$ref;
+	return \%answer;
+    } elsif (ref $ref eq 'ARRAY') {
+	my (@answer) = map {clean_numbers($_)} @$ref;;
+	return \@answer;
+    } elsif (ref $ref eq '' && looks_like_number($ref) && $ref != 0 &&
+	     (! defined ($ref <=> 0) || ((1 / $ref) == 0))) {
+	return undef;
+    } else {
+	return $ref
+    }
+}
+
+sub report_results($$$;$) {
+    my ($data_start_time, $data_end_time, $data_elapsed_time, $user_cpu, $sys_cpu, $extra) = @_;
+    my (%hash) = (
+	'application' => 'clusterbuster-json',
+	'namespace' => $namespace,
+	'pod' => $pod,
+	'container' => $container,
+	'process_id' => $$,
+	'pod_create_time' => get_timing_parameter('controller_crtime') - get_timing_parameter('controller_basetime'),
+	'pod_start_time' => get_timing_parameter('start_time'),
+	'data_start_time' => $data_start_time,
+	'data_end_time' => $data_end_time,
+	'data_elapsed_time' => $data_elapsed_time,
+	'user_cpu_time' => $user_cpu,
+	'system_cpu_time' => $sys_cpu,
+	'cpu_time' => $user_cpu + $sys_cpu,
+	'timing_parameters' => \%timing_parameters
+	);
+    
+    map { $hash{$_} = $$extra{$_} } keys %$extra;
+    my ($json) = to_json(clean_numbers(\%hash));
+    do_sync_command('RSLT', $json);
+    return $json;
+}
+
+sub sync_to_controller(;$) {
+    my ($token) = @_;
+    do_sync_command('SYNC', $token);
 }
 
 1;

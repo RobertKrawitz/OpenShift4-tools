@@ -13,7 +13,7 @@ sub runit() {
     my ($ucpu0, $scpu0) = cputime();
     foreach my $i (1..$sync_count) {
 	foreach my $j (1..$sync_cluster_count) {
-	    do_sync(idname($$, $i, $j));
+	    sync_to_controller(idname($$, $i, $j));
 	}
 	if ($sync_sleep > 1) {
 	    usleep($sync_sleep * 1000000);
@@ -24,8 +24,7 @@ sub runit() {
     $scpu1 -= $scpu0;
 
     my ($data_end_time) = xtime();
-    my ($results) = print_json_report($data_start_time, $data_end_time, $data_end_time - $data_start_time, $ucpu1, $scpu1);
-    do_sync($results);
+    report_results($data_start_time, $data_end_time, $data_end_time - $data_start_time, $ucpu1, $scpu1);
 }
 
 run_workload(1, \&runit);

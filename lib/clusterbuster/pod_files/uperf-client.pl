@@ -96,7 +96,7 @@ sub runit() {
 	    'test_name' => $test_name
 	    );
 	my ($failed) = 0;
-	do_sync(idname($test_name));
+	sync_to_controller(idname($test_name));
 	timestamp("Running test $test_name");
 	system("cat /tmp/uperf-test.xml 1>&2");
 	my ($job_start_time) = xtime();
@@ -244,9 +244,7 @@ sub runit() {
     $ucpu1 -= $ucpu0;
     $scpu1 -= $scpu0;
 
-    my ($results) = print_json_report($data_start_time, $data_end_time, $elapsed_time, $ucpu1, $scpu1, \%results);
-    timestamp("Done");
-    do_sync($results);
+    report_results($data_start_time, $data_end_time, $elapsed_time, $ucpu1, $scpu1, \%results);
 }
 
 run_workload(1, \&runit);

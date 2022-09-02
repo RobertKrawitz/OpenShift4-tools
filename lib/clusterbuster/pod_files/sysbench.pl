@@ -73,7 +73,7 @@ sub runit() {
 
     my ($base0_user, $base0_sys) = cputime();
     foreach my $mode (@known_sysbench_fileio_modes) {
-	do_sync(idname("$mode+prepare"));
+	sync_to_controller(idname("$mode+prepare"));
 	timestamp("Preparing...");
 	timestamp("sysbench --time=$runtime $sysbench_generic_args $sysbench_cmd prepare --file-test-mode=$mode $sysbench_fileio_args");
 	open(PREPARE, "-|", "sysbench --time=$runtime $sysbench_generic_args $sysbench_cmd prepare --file-test-mode=$mode $sysbench_fileio_args") || die "Can't run sysbench: $!\n";
@@ -93,7 +93,7 @@ sub runit() {
 	}
 	close PREPARE;
 
-	do_sync(idname("$mode+start"));
+	sync_to_controller(idname("$mode+start"));
 	my ($op0_user, $op0_sys) = cputime();
 	timestamp("Running...");
 	timestamp("sysbench --time=$runtime $sysbench_generic_args $sysbench_cmd run --file-test-mode=$mode $sysbench_fileio_args");
@@ -148,7 +148,7 @@ sub runit() {
 	my ($op1_user, $op1_sys) = cputime();
 	$op_answer{'user_cpu_time'} = $op1_user - $op0_user;
 	$op_answer{'sys_cpu_time'} = $op1_sys - $op0_sys;
-	do_sync(idname("$mode+finish"));
+	sync_to_controller(idname("$mode+finish"));
 	timestamp("Cleanup...");
 	timestamp("sysbench --time=$runtime $sysbench_generic_args $sysbench_cmd cleanup --file-test-mode=$mode $sysbench_fileio_args");
 	open(CLEANUP, "-|", "sysbench --time=$runtime $sysbench_generic_args $sysbench_cmd cleanup --file-test-mode=$mode $sysbench_fileio_args") || die "Can't run sysbench: $!\n";
@@ -169,9 +169,7 @@ sub runit() {
     my (%extras) = (
 	'workloads' => \%op_answers
 	);
-    my ($answer) = print_json_report($data_start_time, $data_end_time, $elapsed_time, $user, $sys, \%extras);
-    print STDERR "$answer\n";
-    do_sync($answer);
+    report_results($data_start_time, $data_end_time, $elapsed_time, $user, $sys, \%extras);
 }
 
 run_workload($processes, \&runit);

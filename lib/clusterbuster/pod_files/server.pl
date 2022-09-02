@@ -7,22 +7,22 @@ my ($dir) = $ENV{'BAK_CONFIGMAP'};
 require "$dir/clientlib.pl";
 
 $SIG{TERM} = sub { POSIX::_exit(0); };
-my ($listen_port, $msg_size, $ts, $expected_clients) = parse_command_line(@ARGV);
-
-timestamp("Clusterbuster server starting");
-my $sockaddr = "S n a4 x8";
-socket(SOCK, AF_INET, SOCK_STREAM, getprotobyname('tcp')) || die "socket: $!";
-$SIG{TERM} = sub { close SOCK; kill 'KILL', -1; POSIX::_exit(0); };
-setsockopt(SOCK,SOL_SOCKET, SO_REUSEADDR, pack("l",1)) || die "setsockopt reuseaddr: $!\n";
-setsockopt(SOCK,SOL_SOCKET, SO_KEEPALIVE, pack("l",1)) || die "setsockopt keepalive: $!\n";
-bind(SOCK, pack($sockaddr, AF_INET, $listen_port, "\0\0\0\0")) || die "bind: $!\n";
-listen(SOCK, 5) || die "listen: $!";
-my $mysockaddr = getsockname(SOCK);
-my ($junk, $port, $addr) = unpack($sockaddr, $mysockaddr);
-die "can't get port $port: $!\n" if ($port ne $listen_port);
-timestamp("Listening on port $listen_port");
 
 sub runit() {
+    my ($listen_port, $msg_size, $ts, $expected_clients) = parse_command_line(@ARGV);
+
+    timestamp("Clusterbuster server starting");
+    my $sockaddr = "S n a4 x8";
+    socket(SOCK, AF_INET, SOCK_STREAM, getprotobyname('tcp')) || die "socket: $!";
+    $SIG{TERM} = sub { close SOCK; kill 'KILL', -1; POSIX::_exit(0); };
+    setsockopt(SOCK,SOL_SOCKET, SO_REUSEADDR, pack("l",1)) || die "setsockopt reuseaddr: $!\n";
+    setsockopt(SOCK,SOL_SOCKET, SO_KEEPALIVE, pack("l",1)) || die "setsockopt keepalive: $!\n";
+    bind(SOCK, pack($sockaddr, AF_INET, $listen_port, "\0\0\0\0")) || die "bind: $!\n";
+    listen(SOCK, 5) || die "listen: $!";
+    my $mysockaddr = getsockname(SOCK);
+    my ($junk, $port, $addr) = unpack($sockaddr, $mysockaddr);
+    die "can't get port $port: $!\n" if ($port ne $listen_port);
+    timestamp("Listening on port $listen_port");
     print STDERR "Expect $expected_clients clients\n";
     while ($expected_clients != 0) {
 	accept(CLIENT, SOCK) || next;

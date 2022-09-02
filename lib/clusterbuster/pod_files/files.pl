@@ -132,7 +132,7 @@ sub removethem($;$) {
 sub run_one_operation($$$$$$) {
     my ($op_name0, $op_name1, $op_name2, $op_func, $process, $data_start_time) = @_;
 
-    do_sync();
+    sync_to_controller(idname($process, "start $op_name2"));
     timestamp("$op_name0 files...");
     drop_cache($drop_cache_service, $drop_cache_port);
     my ($ucpu0, $scpu0) = cputime();
@@ -165,7 +165,7 @@ sub run_one_operation($$$$$$) {
 	$answer{'data_rate'} = $answer{'data_size'} / $op_elapsed_time_0;
     }
     timestamp("$op_name1 files...");
-    do_sync();
+    sync_to_controller(idname($process, "end $op_name2"));
     return (\%answer, $op_start_time, $op_end_time, $ucpu1, $scpu1);
 }
 
@@ -215,11 +215,8 @@ sub runit($) {
     $summary{'filesize'} = $blocksize * $block_count;
     $summary{'data_size'} = $summary{'filesize'} * $summary{'total_files'};
     $extras{'summary'} = \%summary;
-    my ($answer) = print_json_report($data_start_time, $data_end_time,
-				     $data_elapsed_time,
-				     $user_cpu, $system_cpu, \%extras);
-    
-    do_sync("$answer");
+    report_results($data_start_time, $data_end_time, $data_elapsed_time,
+		   $user_cpu, $system_cpu, \%extras);
 }
 
 run_workload($processes, \&runit);

@@ -64,7 +64,6 @@ sub runit() {
     my ($ucpu1, $scpu1) = cputime();
     $ucpu1 -= $ucpu0;
     $scpu1 -= $scpu0;
-    my ($answer) = print_json_report($data_start_time, $data_end_time, $elapsed_time, $ucpu1, $scpu1);
-    do_sync($answer);
+    report_results($data_start_time, $data_end_time, $elapsed_time, $ucpu1, $scpu1);
 }
 run_workload($processes, \&runit);

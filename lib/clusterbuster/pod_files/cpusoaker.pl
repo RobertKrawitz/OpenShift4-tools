@@ -6,11 +6,10 @@ my ($dir) = $ENV{'BAK_CONFIGMAP'};
 require "$dir/clientlib.pl";
 
 our ($processes, $runtime) = parse_command_line(@ARGV);
-$SIG{TERM} = sub { kill 'KILL', -1; POSIX::_exit(0); };
 
 sub runit() {
-    warn("runit $$\n");
     initialize_timing($$);
+    $SIG{TERM} = sub { kill 'KILL', -1; POSIX::_exit(0); };
     my ($iterations) = 0;
     my ($loops_per_iteration) = 10000;
     my ($firsttime) = 1;
@@ -60,8 +59,7 @@ sub runit() {
 	'work_iterations' => $iterations
 	);
     my ($elapsed_time) = $data_end_time - $data_start_time;
-    my ($answer) = print_json_report($data_start_time, $data_end_time, $elapsed_time, $user, $sys, \%extra);
-    do_sync($answer);
+    report_results($data_start_time, $data_end_time, $elapsed_time, $user, $sys, \%extra);
 }
 
 run_workload($processes, \&runit);

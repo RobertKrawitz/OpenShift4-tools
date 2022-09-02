@@ -88,7 +88,7 @@ sub runone(;$) {
 			foreach my $ioengine (@ioengines) {
 			    my ($jobname) = sprintf("%04d-%s-%d-%d-%d-%d-%s", $jobidx, $pattern, $size, $iodepth, $fdatasync, $direct, $ioengine);
 			    drop_cache($drop_cache_service, $drop_cache_port);
-			    do_sync($$, $jobname);
+			    sync_to_controller($$, $jobname);
 			    if ($jobidx == 1) {
 				timestamp("Running...");
 				$data_start_time = xtime();
@@ -137,9 +137,7 @@ sub runone(;$) {
 	'results' => \%all_results
 	);
     if (! ($jobfile =~ /-IGNORE-/)) {
-	my ($answer) = print_json_report($data_start_time, $data_end_time, $elapsed_time, $ucpu1, $scpu1, \%extras);
-
-	do_sync($answer);
+	report_results($data_start_time, $data_end_time, $elapsed_time, $ucpu1, $scpu1, \%extras);
     }
 }
 
