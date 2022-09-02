@@ -1,37 +1,21 @@
 #!/usr/bin/perl
 
-use Socket;
 use POSIX;
 use strict;
-use Time::HiRes qw(gettimeofday usleep);
-use Time::Piece;
-use Sys::Hostname;
-use File::Basename;
 my ($dir) = $ENV{'BAK_CONFIGMAP'};
 require "$dir/clientlib.pl";
 
-my ($namespace, $container, $basetime, $baseoffset, $crtime,
-    $exit_at_end, $synchost, $syncport, $runtime, $ramp_time,
-    $srvhost, $connect_port, @tests) = @ARGV;
-my ($start_time, $data_start_time, $data_end_time, $elapsed_time, $end_time, $user, $sys, $cuser, $csys);
-$start_time = xtime();
-my ($processes) = 1;		# Not using multi-process here
+my ($runtime, $ramp_time, $srvhost, $connect_port, @tests) = parse_command_line(@ARGV);
+my ($data_start_time, $data_end_time, $elapsed_time, $end_time, $user, $sys, $cuser, $csys);
 
 $SIG{TERM} = sub { POSIX::_exit(0); };
-$basetime += $baseoffset;
-$crtime += $baseoffset;
-
-my ($data_sent);
-my ($mean_latency, $max_latency, $stdev_latency);
 
 my $pass = 0;
 my $ex = 0;
 my $ex2 = 0;
 my ($cfail) = 0;
 my ($refused) = 0;
-my ($pod) = hostname;
-initialize_timing($basetime, $crtime, $synchost, $syncport, "$namespace:$pod:$container", $start_time);
-$start_time = get_timing_parameter('start_time');
+initialize_timing();
 
 $SIG{TERM} = sub { POSIX::_exit(0); };
 timestamp("Clusterbuster uperf client starting");
@@ -60,7 +44,7 @@ my (%options) = (
 process_file("$dir/uperf-mini.xml", "/tmp/uperf-test.xml", %options);
 # Ensure that uperf server is running before we try to do anything.
 timestamp("Waiting for uperf server $srvhost:$connect_port to come online...");
-system("bash", "-c", "until uperf -P $connect_port -m /tmp/uperf-test.xml; do sleep 1; done");
+system("bash", "-c", "until uperf -P \"$connect_port\" -m /tmp/uperf-test.xml; do sleep 1; done");
 timestamp("Connected to uperf server");
 
 my ($counter) = 1;
@@ -112,7 +96,7 @@ sub runit() {
 	    'test_name' => $test_name
 	    );
 	my ($failed) = 0;
-	do_sync($synchost, $syncport, "$namespace:$pod:$container:$$:$test_name");
+	sync_to_controller(idname($test_name));
 	timestamp("Running test $test_name");
 	system("cat /tmp/uperf-test.xml 1>&2");
 	my ($job_start_time) = xtime();
@@ -120,7 +104,7 @@ sub runit() {
 	    $data_start_time = $job_start_time;
 	}
 	open(RUN, "-|", "uperf", "-f", "-P", "$connect_port", '-m', '/tmp/uperf-test.xml', '-R', '-a', '-i', '1', '-Tf') || die "Can't run uperf: $!\n";
-	my ($start_time) = 0;
+	my ($first_time) = 0;
 	my ($last_time) = 0;
 	my ($last_nbytes) = 0;
 	my ($last_nops) = 0;
@@ -146,12 +130,12 @@ sub runit() {
 		# We only care about Txn2 and threads; the other transactions are start
 		# and finish, and we want to ignore those
 		if ($name eq 'Txn2') {
-		    if ($start_time == 0) {
-			$start_time = $ts;
+		    if ($first_time == 0) {
+			$first_time = $ts;
 			$last_time = $ts;
 		    } else {
 			my (%row) = (
-			    'time' => $ts - $start_time,
+			    'time' => $ts - $first_time,
 			    'timedelta' => $ts - $last_time,
 			    'bytes' => $nbytes - $last_nbytes,
 			    'nops' => $nops - $last_nops,
@@ -163,7 +147,7 @@ sub runit() {
 		    }
 		} elsif ($name =~ /^Thr([[:digit:]])+/) {
 		    my (%row) = (
-			'time' => $ts - $start_time,
+			'time' => $ts - $first_time,
 			'bytes' => $nbytes,
 			'nops' => $nops,
 			);
@@ -196,7 +180,7 @@ sub runit() {
 	    exit(1);
 	}
 	$data_end_time = xtime();
-	$summary{'raw_elapsed_time'} = $last_time - $start_time;
+	$summary{'raw_elapsed_time'} = $last_time - $first_time;
 	$summary{'raw_nbytes'} = $last_nbytes;
 	$summary{'raw_nops'} = $last_nops;
 	if ($summary{'raw_elapsed_time'} > 0) {
@@ -260,35 +244,7 @@ sub runit() {
     $ucpu1 -= $ucpu0;
     $scpu1 -= $scpu0;
 
-    my ($results) = print_json_report($namespace, $pod, $container, $$, $data_start_time,
-				      $data_end_time, $elapsed_time, $ucpu1, $scpu1, \%results);
-    timestamp("Done");
-    if ($syncport) {
-	do_sync($synchost, $syncport, $results);
-    }
+    report_results($data_start_time, $data_end_time, $elapsed_time, $ucpu1, $scpu1, \%results);
 }
 
-my (%pids) = ();
-for (my $i = 0; $i < $processes; $i++) {
-    my $child;
-    if (($child = fork()) == 0) {
-	runit();
-	exit(0);
-    } else {
-	$pids{$child} = 1;
-    }
-}
-while (%pids) {
-    my ($child) = wait();
-    if ($child == -1) {
-	finish($exit_at_end);
-    } elsif (defined $pids{$child}) {
-	if ($?) {
-	    timestamp("Pid $child returned status $?!");
-	    finish($exit_at_end, $?, $namespace, $pod, $container, $synchost, $syncport, $child);
-	}
-	delete $pids{$child};
-    }
-}
-
-finish($exit_at_end);
+run_workload(1, \&runit);

@@ -1,36 +1,28 @@
 #!/usr/bin/perl
+
 use Socket;
 use POSIX;
 use strict;
-use Time::Piece;
-use Time::HiRes qw(gettimeofday usleep);
-use Sys::Hostname;
-use File::Basename;
 my ($dir) = $ENV{'BAK_CONFIGMAP'};
 require "$dir/clientlib.pl";
 
 $SIG{TERM} = sub { POSIX::_exit(0); };
-my ($namespace, $container, $basetime, $baseoffset, $crtime,
-    $exit_at_end, $synchost, $syncport, $listen_port,
-    $msgSize, $ts, $expected_clients) = @ARGV;
-$basetime += $baseoffset;
-my ($pod) = hostname;
-my ($processes) = 1;
-
-timestamp("Clusterbuster server starting");
-my $sockaddr = "S n a4 x8";
-socket(SOCK, AF_INET, SOCK_STREAM, getprotobyname('tcp')) || die "socket: $!";
-$SIG{TERM} = sub { close SOCK; kill 'KILL', -1; POSIX::_exit(0); };
-setsockopt(SOCK,SOL_SOCKET, SO_REUSEADDR, pack("l",1)) || die "setsockopt reuseaddr: $!\n";
-setsockopt(SOCK,SOL_SOCKET, SO_KEEPALIVE, pack("l",1)) || die "setsockopt keepalive: $!\n";
-bind(SOCK, pack($sockaddr, AF_INET, $listen_port, "\0\0\0\0")) || die "bind: $!\n";
-listen(SOCK, 5) || die "listen: $!";
-my $mysockaddr = getsockname(SOCK);
-my ($junk, $port, $addr) = unpack($sockaddr, $mysockaddr);
-die "can't get port $port: $!\n" if ($port ne $listen_port);
-timestamp("Listening on port $listen_port");
 
 sub runit() {
+    my ($listen_port, $msg_size, $ts, $expected_clients) = parse_command_line(@ARGV);
+
+    timestamp("Clusterbuster server starting");
+    my $sockaddr = "S n a4 x8";
+    socket(SOCK, AF_INET, SOCK_STREAM, getprotobyname('tcp')) || die "socket: $!";
+    $SIG{TERM} = sub { close SOCK; kill 'KILL', -1; POSIX::_exit(0); };
+    setsockopt(SOCK,SOL_SOCKET, SO_REUSEADDR, pack("l",1)) || die "setsockopt reuseaddr: $!\n";
+    setsockopt(SOCK,SOL_SOCKET, SO_KEEPALIVE, pack("l",1)) || die "setsockopt keepalive: $!\n";
+    bind(SOCK, pack($sockaddr, AF_INET, $listen_port, "\0\0\0\0")) || die "bind: $!\n";
+    listen(SOCK, 5) || die "listen: $!";
+    my $mysockaddr = getsockname(SOCK);
+    my ($junk, $port, $addr) = unpack($sockaddr, $mysockaddr);
+    die "can't get port $port: $!\n" if ($port ne $listen_port);
+    timestamp("Listening on port $listen_port");
     print STDERR "Expect $expected_clients clients\n";
     while ($expected_clients != 0) {
 	accept(CLIENT, SOCK) || next;
@@ -48,7 +40,7 @@ sub runit() {
 	    my $ntotal = 0;
 	    my $nwrite;
 	    while (1) {
-		while ($ntotal < $msgSize && ($nread = sysread(CLIENT, $buffer, $msgSize, $ntotal)) > 0) {
+		while ($ntotal < $msg_size && ($nread = sysread(CLIENT, $buffer, $msg_size, $ntotal)) > 0) {
 		    $ntotal += $nread;
 		    $consec_empty=0;
 		}
@@ -85,27 +77,4 @@ sub runit() {
     timestamp("Done!");
     POSIX::exit($status);
 }
-my (%pids) = ();
-for (my $i = 0; $i < $processes; $i++) {
-    my $child;
-    if (($child = fork()) == 0) {
-	runit();
-	exit(0);
-    } else {
-	$pids{$child} = 1;
-    }
-}
-while (%pids) {
-    my ($child) = wait();
-    if ($child == -1) {
-	finish($exit_at_end);
-    } elsif (defined $pids{$child}) {
-	if ($?) {
-	    timestamp("Pid $child returned status $?!");
-	    finish($exit_at_end, $?, $namespace, $pod, $container, $synchost, $syncport, $child);
-	}
-	delete $pids{$child};
-    }
-}
-
-finish($exit_at_end);
+run_workload(1, \&runit);

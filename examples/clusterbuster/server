@@ -1,5 +1,5 @@
 # Run as
-# clusterbuster -f clusterbuster-server-jobfile
+# clusterbuster -f server
 
 cleanup
 workload=server

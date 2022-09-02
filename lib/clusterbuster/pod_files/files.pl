@@ -1,29 +1,18 @@
 #!/usr/bin/perl
 
-use Socket;
 use POSIX;
 use strict;
-use Time::Piece;
-use Time::HiRes qw(gettimeofday usleep);
-use Sys::Hostname;
-use File::Basename;
 use Fcntl qw(:DEFAULT O_DIRECT);
 use JSON;
 my ($dir) = $ENV{'BAK_CONFIGMAP'};
 require "$dir/clientlib.pl";
 
-our ($namespace, $container, $basetime, $baseoffset, $crtime, $exit_at_end, $synchost, $syncport, $dirs, $files_per_dir, $blocksize, $block_count, $processes, $direct, $drop_cache_service, $drop_cache_port, @dirs) = @ARGV;
-my ($start_time, $elapsed_time, $end_time, $user, $sys, $cuser, $csys);
-$start_time = xtime();
+our ($dirs, $files_per_dir, $blocksize, $block_count, $processes, $direct, $drop_cache_service, $drop_cache_port, @dirs) = parse_command_line(@ARGV);
 
 $SIG{TERM} = sub { POSIX::_exit(0); };
-$basetime += $baseoffset;
-$crtime += $baseoffset;
 my ($bufalign) = 8192;
 
-my ($pod) = hostname;
-initialize_timing($basetime, $crtime, $synchost, $syncport, "$namespace:$pod:$container", xtime());
-$start_time = get_timing_parameter('start_time');
+initialize_timing($$);
 
 if ($#dirs < 0) {
     @dirs=("/tmp");
@@ -48,6 +37,7 @@ sub makethem($) {
     my ($offset) = unpack('J', pack('p', $buffer)) % $bufalign;
     $offset = $bufalign - $offset;
     my ($fileargs) = O_WRONLY|O_CREAT | ($direct ? O_DIRECT : 0);
+    my ($container) = container();
     foreach my $bdir (@dirs) {
 	my ($pdir)="$bdir/p$process";
 	mkdir("$pdir") || die("Can't create directory $pdir: $!\n");
@@ -83,6 +73,7 @@ sub readthem($;$) {
     my ($offset) = unpack('J', pack('p', $buffer)) % $bufalign;
     $offset = $bufalign - $offset;
     my ($fileargs) = O_RDONLY | ($direct ? O_DIRECT : 0);
+    my ($container) = container();
     foreach my $bdir (@dirs) {
 	my ($pdir)="$bdir/p$process";
 	next if ($oktofail && ! -d $pdir);
@@ -112,6 +103,7 @@ sub readthem($;$) {
 sub removethem($;$) {
     my ($process, $oktofail) = @_;
     my ($ops) = 0;
+    my ($container) = container();
     foreach my $bdir (@dirs) {
 	my ($pdir)="$bdir/p$process";
 	next if ($oktofail && ! -d $pdir);
@@ -137,10 +129,10 @@ sub removethem($;$) {
     return $ops;
 }
 
-sub run_one_operation($$$$$$$$) {
-    my ($op_name0, $op_name1, $op_name2, $op_func, $synchost, $syncport, $process, $data_start_time) = @_;
+sub run_one_operation($$$$$$) {
+    my ($op_name0, $op_name1, $op_name2, $op_func, $process, $data_start_time) = @_;
 
-    do_sync($synchost, $syncport);
+    sync_to_controller(idname($process, "start $op_name2"));
     timestamp("$op_name0 files...");
     drop_cache($drop_cache_service, $drop_cache_port);
     my ($ucpu0, $scpu0) = cputime();
@@ -173,7 +165,7 @@ sub run_one_operation($$$$$$$$) {
 	$answer{'data_rate'} = $answer{'data_size'} / $op_elapsed_time_0;
     }
     timestamp("$op_name1 files...");
-    do_sync($synchost, $syncport);
+    sync_to_controller(idname($process, "end $op_name2"));
     return (\%answer, $op_start_time, $op_end_time, $ucpu1, $scpu1);
 }
 
@@ -189,8 +181,7 @@ sub runit($) {
     my (%extras);
 
     my ($answer_create, $create_start_time, $create_end_time, $create_ucpu, $create_scpu) =
-	run_one_operation('Creating', 'Created', 'create', \&makethem,
-			  $synchost, $syncport, $process, $data_start_time);
+	run_one_operation('Creating', 'Created', 'create', \&makethem, $process, $data_start_time);
     $extras{'create'} = $answer_create;
     my ($create_et) = $create_end_time - $create_start_time;
 
@@ -198,16 +189,14 @@ sub runit($) {
     sleep(60);
     timestamp("Back from sleep");
     my ($answer_read, $read_start_time, $read_end_time, $read_ucpu, $read_scpu) =
-	run_one_operation('Reading', 'Read', 'read', \&readthem,
-			  $synchost, $syncport, $process, $data_start_time);
+	run_one_operation('Reading', 'Read', 'read', \&readthem, $process, $data_start_time);
     $extras{'read'} = $answer_read;
 
     timestamp("Sleeping for 60 seconds");
     sleep(60);
     timestamp("Back from sleep");
     my ($answer_remove, $remove_start_time, $remove_end_time, $remove_ucpu, $remove_scpu) =
-	run_one_operation('Creating', 'Removed', 'remove', \&removethem,
-			  $synchost, $syncport, $process, $data_start_time);
+	run_one_operation('Creating', 'Removed', 'remove', \&removethem, $process, $data_start_time);
     $extras{'remove'} = $answer_remove;
     my ($remove_et) = $remove_end_time - $remove_start_time;
     my ($data_start_time) = $create_start_time;
@@ -226,36 +215,8 @@ sub runit($) {
     $summary{'filesize'} = $blocksize * $block_count;
     $summary{'data_size'} = $summary{'filesize'} * $summary{'total_files'};
     $extras{'summary'} = \%summary;
-    my ($answer) = print_json_report($namespace, $pod, $container, $$,
-				     $data_start_time, $data_end_time,
-				     $data_elapsed_time,
-				     $user_cpu, $system_cpu, \%extras);
-    
-    do_sync($synchost, $syncport, "$answer");
+    report_results($data_start_time, $data_end_time, $data_elapsed_time,
+		   $user_cpu, $system_cpu, \%extras);
 }
 
-timestamp("Filebuster client starting");
-my (%pids) = ();
-for (my $i = 0; $i < $processes; $i++) {
-    my $child;
-    if (($child = fork()) == 0) {
-	runit($i);
-	exit(0);
-    } else {
-	$pids{$child} = 1;
-    }
-}
-while (%pids) {
-    my ($child) = wait();
-    if ($child == -1) {
-	finish($exit_at_end);
-    } elsif (defined $pids{$child}) {
-	if ($?) {
-	    timestamp("Pid $child returned status $?!");
-	    finish($exit_at_end, $?, $namespace, $pod, $container, $synchost, $syncport, $child);
-	}
-	delete $pids{$child};
-    }
-}
-
-finish($exit_at_end);
+run_workload($processes, \&runit);

@@ -13,6 +13,8 @@ use Scalar::Util qw(looks_like_number);
 my %timing_parameters = ();
 my ($last_sync_time) = -10;
 
+our ($namespace, $container, $basetime, $baseoffset, $crtime, $exit_at_end, $synchost, $syncport, $start_time, $pod);
+
 sub cputime() {
     my (@times) = times();
     my ($usercpu) = $times[0] + $times[2];
@@ -35,6 +37,7 @@ sub ts() {
     my (@now) = POSIX::modf(xtime(1) - $timing_parameters{'local_offset_from_sync'});
     return sprintf("%s.%06d", gmtime($now[1])->strftime("%Y-%m-%dT%T"), $now[0] * 1000000);
 }
+
 sub timestamp($) {
     my ($str) = @_;
     printf STDERR "%7d %s %s\n", $$, ts(), $str;
@@ -63,15 +66,42 @@ sub drop_cache($$) {
     close($sock);
 }
 
-sub initialize_timing($$$$$;$) {
-    my ($basetime, $crtime, $sync_host, $sync_port, $name, $start_time) = @_;
+sub podname() {
+    return $pod;
+}
+
+sub container() {
+    return $container;
+}
+
+sub namespace() {
+    return $namespace;
+}
+
+sub idname(;@) {
+    my (@extra_components) = @_;
+    return join(':', $namespace, $pod, $container, $$, @extra_components);
+}
+
+sub parse_command_line(@) {
+    my (@argv) = @_;
+    my (@rest);
+    ($namespace, $container, $basetime, $baseoffset, $crtime, $exit_at_end, $synchost, $syncport, @rest) = @argv;
+    $start_time = xtime();
+    $pod = hostname;
+    return @rest;
+}
+
+sub initialize_timing(;@) {
+    my (@name_components) = @_;
     if (! defined $start_time) {
 	($start_time) = xtime();
     }
+    my ($name) = join(':', $namespace, $pod, $container, @name_components);
     my ($presync) = "timestamp: %s $name";
     timestamp("About to sync");
     my ($local_sync_start, $remote_sync_start, $absolute_sync_start,
-	$remote_sync_base, $remote_sync, $sync_base_start_time) = split(/ +/, do_sync($sync_host, $sync_port, $presync));
+	$remote_sync_base, $remote_sync, $sync_base_start_time) = split(/ +/, do_sync_command('TIME', $presync));
     timestamp("Done sync");
     my ($local_sync) = xtime();
     my ($local_sync_rtt) = $local_sync - $local_sync_start;
@@ -110,6 +140,8 @@ sub initialize_timing($$$$$;$) {
 	);
     timestamp("Timing parameters:");
     map { timestamp(sprintf("%-32s %.6f", $_, $timing_parameters{$_})) } (sort keys %timing_parameters);
+    $basetime += $baseoffset;
+    $crtime += $baseoffset;
 }
 
 sub print_timing_parameters() {
@@ -149,56 +181,7 @@ sub connect_to($$) {
     return ($sock);
 }
 
-sub clean_numbers($) {
-    # Perl to_json encodes innfinity as inf and NaN as nan.
-    # This results in invalid JSON.  It's our responsibility to sanitize
-    # this up front.
-    my ($ref) = @_;
-    if (ref $ref eq 'HASH') {
-	my (%answer);
-	map { $answer{$_} = clean_numbers($$ref{$_})} keys %$ref;
-	return \%answer;
-    } elsif (ref $ref eq 'ARRAY') {
-	my (@answer) = map {clean_numbers($_)} @$ref;;
-	return \@answer;
-    } elsif (ref $ref eq '' && looks_like_number($ref) && $ref != 0 &&
-	     (! defined ($ref <=> 0) || ((1 / $ref) == 0))) {
-	return undef;
-    } else {
-	return $ref
-    }
-}
-
-sub to_json_safe($) {
-    my ($ref) = @_;
-    return to_json(clean_numbers($ref));
-}
-
-sub print_json_report($$$$$$$;$) {
-    my ($namespace, $pod, $container, $process_id, $data_start_time, $data_end_time,
-	$data_elapsed_time, $user_cpu, $sys_cpu, $extra) = @_;
-    my (%hash) = (
-	'application' => 'clusterbuster-json',
-	'namespace' => $namespace,
-	'pod' => $pod,
-	'container' => $container,
-	'process_id' => $process_id,
-	'pod_create_time' => get_timing_parameter('controller_crtime') - get_timing_parameter('controller_basetime'),
-	'pod_start_time' => get_timing_parameter('start_time'),
-	'data_start_time' => $data_start_time,
-	'data_end_time' => $data_end_time,
-	'data_elapsed_time' => $data_elapsed_time,
-	'user_cpu_time' => $user_cpu,
-	'system_cpu_time' => $sys_cpu,
-	'cpu_time' => $user_cpu + $sys_cpu,
-	'timing_parameters' => \%timing_parameters
-	);
-    
-    map { $hash{$_} = $$extra{$_} } keys %$extra;
-    return to_json_safe(\%hash);
-}
-
-sub do_sync_internal($$$) {
+sub do_sync_command_internal($$$) {
     my ($addr, $port, $token) = @_;
     while (1) {
 	timestamp("sync on $addr:$port");
@@ -239,23 +222,23 @@ sub do_sync_internal($$$) {
     }
 }
 
-sub do_sync($$;$) {
-    my ($addr, $port, $token) = @_;
-    if (not $addr) { return; }
+sub do_sync_command($$) {
+    my ($command, $token) = @_;
+    my ($addr) = $synchost;
     my ($fh) = undef;
     my ($file) = undef;
     if ($addr eq '-') {
 	$addr=`ip route get 1 |awk '{print \$(NF-2); exit}'`;
 	chomp $addr;
     }
-    if ($token && $token =~ /clusterbuster-json/) {
+    if (lc $command eq 'rslt') {
 	$token =~ s,\n *,,g;
+    } elsif (lc $command eq 'time') {
+	$token = ts() . " $token";
     } elsif (not $token) {
         $token = sprintf('%s %s-%d', ts(), hostname(), rand() * 999999999);
-    } elsif (substr($token, 0, 10) ne 'timestamp:') {
-	$token = ts() . " $token";
     }
-    my ($answer) = do_sync_internal($addr, $port, $token);
+    my ($answer) = do_sync_command_internal($addr, $syncport, "$command $token");
     return $answer;
 }
 
@@ -274,15 +257,15 @@ sub run_cmd(@) {
     return $answer;
 }
 
-sub finish($;$$$$$$$) {
-    my ($exit_at_end, $status, $namespace, $pod, $container, $synchost, $syncport, $pid) = @_;
+sub finish(;$$) {
+    my ($status, $pid) = @_;
     my ($answer) = run_cmd("lscpu");
     $answer .= run_cmd("dmesg");
     timestamp($answer);
     if (defined $status && $status != 0) {
 	print STDERR "FAIL!\n";
 	my ($buf) = sprintf("FAIL: %s/%s/%s%s\n%s", $namespace, $pod, $container, (defined $pid ? " pid: $pid" : ""), $answer);
-	do_sync($synchost, $syncport, $buf);
+	do_sync_command('FAIL', $buf);
 	if ($exit_at_end) {
 	    POSIX::_exit($status);
 	}
@@ -297,6 +280,83 @@ sub finish($;$$$$$$$) {
 	timestamp("Waiting forever");
 	pause();
     }
+}
+
+sub run_workload($$;@) {
+    my ($processes, $run_func, @args) = @_;
+    my (%pids) = ();
+    for (my $i = 0; $i < $processes; $i++) {
+	my $child;
+	if (($child = fork()) == 0) {
+	    &$run_func($i, @args);
+	    exit(0);
+	} else {
+	    $pids{$child} = 1;
+	}
+    }
+    while (%pids) {
+	my ($child) = wait();
+	if ($child == -1) {
+	    finish();
+	} elsif (defined $pids{$child}) {
+	    if ($?) {
+		timestamp("Pid $child returned status $?!");
+		finish($?, $child);
+	    }
+	    delete $pids{$child};
+	}
+    }
+    finish();
+}
+
+sub clean_numbers($) {
+    # Perl to_json encodes innfinity as inf and NaN as nan.
+    # This results in invalid JSON.  It's our responsibility to sanitize
+    # this up front.
+    my ($ref) = @_;
+    if (ref $ref eq 'HASH') {
+	my (%answer);
+	map { $answer{$_} = clean_numbers($$ref{$_})} keys %$ref;
+	return \%answer;
+    } elsif (ref $ref eq 'ARRAY') {
+	my (@answer) = map {clean_numbers($_)} @$ref;;
+	return \@answer;
+    } elsif (ref $ref eq '' && looks_like_number($ref) && $ref != 0 &&
+	     (! defined ($ref <=> 0) || ((1 / $ref) == 0))) {
+	return undef;
+    } else {
+	return $ref
+    }
+}
+
+sub report_results($$$;$) {
+    my ($data_start_time, $data_end_time, $data_elapsed_time, $user_cpu, $sys_cpu, $extra) = @_;
+    my (%hash) = (
+	'application' => 'clusterbuster-json',
+	'namespace' => $namespace,
+	'pod' => $pod,
+	'container' => $container,
+	'process_id' => $$,
+	'pod_create_time' => get_timing_parameter('controller_crtime') - get_timing_parameter('controller_basetime'),
+	'pod_start_time' => get_timing_parameter('start_time'),
+	'data_start_time' => $data_start_time,
+	'data_end_time' => $data_end_time,
+	'data_elapsed_time' => $data_elapsed_time,
+	'user_cpu_time' => $user_cpu,
+	'system_cpu_time' => $sys_cpu,
+	'cpu_time' => $user_cpu + $sys_cpu,
+	'timing_parameters' => \%timing_parameters
+	);
+    
+    map { $hash{$_} = $$extra{$_} } keys %$extra;
+    my ($json) = to_json(clean_numbers(\%hash));
+    do_sync_command('RSLT', $json);
+    return $json;
+}
+
+sub sync_to_controller(;$) {
+    my ($token) = @_;
+    do_sync_command('SYNC', $token);
 }
 
 1;
