@@ -176,7 +176,7 @@ if ($sync_count == 0) {
 		my ($command) = lc substr($tbuf, 0, 4);
 		$tbuf =~ s/^....\s+//;
 		if ($command eq 'time')  {
-		    my ($ignore, $ts, $ignore) = split(/ +/, $tbuf);
+		    my ($ignore, $ignore, $ts, $ignore) = split(/ +/, $tbuf);
 		    push @clients, [$client, "$ts " . ytime()];
 		} elsif ($command eq 'rslt') {
 		    if (defined $tmp_sync_file_base) {
