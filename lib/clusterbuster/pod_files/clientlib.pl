@@ -264,7 +264,7 @@ sub finish(;$$) {
     timestamp($answer);
     if (defined $status && $status != 0) {
 	print STDERR "FAIL!\n";
-	my ($buf) = sprintf("FAIL: %s/%s/%s%s\n%s", $namespace, $pod, $container, (defined $pid ? " pid: $pid" : ""), $answer);
+	my ($buf) = sprintf("Namespace/pod/container: %s/%s/%s%s\n%s", $namespace, $pod, $container, (defined $pid ? " pid: $pid" : ""), $answer);
 	do_sync_command('FAIL', $buf);
 	if ($exit_at_end) {
 	    POSIX::_exit($status);

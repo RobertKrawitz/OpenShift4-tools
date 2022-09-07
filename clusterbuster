@@ -947,7 +947,7 @@ function get_pod_and_local_timestamps() {
 	    Error|Failed)
 		echo "Sync pod failed to start:" 1>&2
 		__OC logs "$@" | tail -10 1>&2
-		exit 1
+		killthemall "Sync pod failed"
 		;;
 	    *)  ;;
 	esac
