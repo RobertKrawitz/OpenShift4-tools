@@ -21,8 +21,7 @@
 declare -ig ___msg_size=32768
 
 function server_server_arglist() {
-    local replicas=$4
-    mk_yaml_args "$port" "$___msg_size" "$(ts)" "$((containers_per_pod * replicas))"
+    mk_yaml_args "$port" "$___msg_size" "$(ts)" "$((containers_per_pod * replicas_per_server))"
 }
 
 function server_client_arglist() {
@@ -42,15 +41,16 @@ function server_create_deployment() {
     local secret_count=${3:-1}
     local replicas=${4:-1}
     local containers_per_pod=${5:-1}
+    local replicas_per_server=$replicas
     local -i instance
     create_sync_service_if_needed "$namespace" 2 "$((containers_per_pod * replicas * count))"
 
     for instance in $(seq $first_deployment $((count + first_deployment - 1))) ; do
 	create_service "$namespace" "${namespace}-server-server-${instance}" "$port"
-	create_standard_deployment -w server-server -p -c server -d single_pod -e server.pl \
+	create_standard_deployment -w server-server -p -c server -e server.pl \
 				   -A "$(create_affinity_yaml ${namespace}-server-client-${instance})" \
 				   -a server_server_arglist \
-				   "$namespace" "$instance" "$secret_count" "$replicas" 1
+				   "$namespace" "$instance" "$secret_count" 1 1
 	create_standard_deployment -w server-client -e client.pl \
 				   -A "$(create_affinity_yaml ${namespace}-server-server-${instance})" \
 				   -a server_client_arglist \
