@@ -2313,26 +2313,6 @@ $(indent 2 volumes_yaml "$namespace" "$instance" "$secret_count")
 EOF
 }
 
-function create_single_pod_deployment() {
-    local namespace=$1
-    local instance=$2
-    local name="${namespace}-${workload}-${instance}"
-    create_object -n "$namespace" "$name" <<EOF
-apiVersion: v1
-kind: Pod
-metadata:
-  name: $(mkpodname "$name")
-$(indent 2 standard_all_metadata_yaml "$namespace" client)
-  selector:
-    matchLabels:
-      app: $name
-$(indent 2 standard_labels_yaml -l "$workload" "$namespace" "${instance}")
-$(create_spec ${affinity_yaml:+-A "$affinity_yaml"} ${node_class:+-c "$node_class"} "$@")
-${security_context:+$(indent 2 <<< "$security_context")}
-  restartPolicy: Never
-EOF
-}
-
 function create_pod_deployment() {
     local namespace=$1
     local instance=$2
@@ -2421,9 +2401,6 @@ function create_standard_deployment() {
     fi
     
     case "${deployment_type,,}" in
-	single_pod)
-	    create_single_pod_deployment "$@"
-	    ;;
 	pod)
 	    create_pod_deployment "$@"
 	    ;;

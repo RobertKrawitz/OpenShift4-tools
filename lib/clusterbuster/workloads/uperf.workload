@@ -56,7 +56,7 @@ function uperf_create_deployment() {
 
     for instance in $(seq "$first_deployment" $((count + first_deployment - 1))) ; do
 	create_service "$namespace" "${namespace}-uperf-server-${instance}" $(seq "$___uperf_port" $((___uperf_port + ___uperf_port_addrs)))
-	create_standard_deployment -w uperf-server -p -c server -d single_pod -e uperf-server.pl \
+	create_standard_deployment -w uperf-server -p -c server -e uperf-server.pl \
 				   -A "$(create_affinity_yaml "${namespace}-uperf-client-${instance}")" \
 				   -a uperf_server_arglist \
 				   "$namespace" "$instance" "$secret_count" 1 1
