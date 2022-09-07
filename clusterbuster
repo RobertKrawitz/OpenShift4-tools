@@ -990,7 +990,7 @@ function get_pod_and_local_timestamps() {
     first_local_ts=$(date +%s.%N)
     remote_ts=$(__OC exec "$@" -- /bin/sh -c "date +%s.%N" </dev/null) || killthemall "Unable to retrieve sync pod timestamp"
     second_local_ts=$(date +%s.%N)
-    _OC exec --stdin=true "$@" -- /bin/sh -c "cat > '$controller_timestamp_file'" <<EOF
+    _OC exec --stdin=true "$@" -- /bin/sh -c "cat > '${controller_timestamp_file}.tmp' && mv '${controller_timestamp_file}.tmp' '${controller_timestamp_file}'" <<EOF
 {
   "first_controller_ts": $first_local_ts,
   "sync_ts": $remote_ts,
