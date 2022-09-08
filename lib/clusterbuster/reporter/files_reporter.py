@@ -42,8 +42,8 @@ class files_reporter(ClusterBusterReporter):
             dest[cop]['Operations/CPU sec'] = self._safe_div(sop['operations'], sop['cpu_time'], 0)
             if op == 'read':
                 dest[cop]['Total Files'] = sop['total_files']
-                dest[cop]['Total Data'] = self._prettyprint(sop['data_size'], base=1000, suffix="B", precision=3)
-                dest[cop]['IO Throughput'] = self._prettyprint(sop['data_rate'], precision=3, base=1000, suffix="B/sec");
+                dest[cop]['Total Data'] = self._prettyprint(sop['data_size'], base=1024, suffix="B", precision=3)
+                dest[cop]['IO Throughput'] = self._prettyprint(sop['data_rate'], precision=3, base=1024, suffix="B/sec");
 
     def _generate_summary(self, results: dict):
         # I'd like to do this, but if the nodes are out of sync time-wise, this will not
@@ -52,7 +52,7 @@ class files_reporter(ClusterBusterReporter):
         self.__update_report(results, self._summary)
         results['Total Files'] = self._summary['summary']['total_files']
         results['Total Dirs'] = self._summary['summary']['total_dirs']
-        results['Total Data'] = self._prettyprint(self._summary['summary']['data_size'], base=1000, suffix="B", precision=3)
+        results['Total Data'] = self._prettyprint(self._summary['summary']['data_size'], base=1024, suffix="B", precision=3)
 
     def _generate_row(self, results: dict, row: dict):
         ClusterBusterReporter._generate_row(self, results, row)

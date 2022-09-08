@@ -13,34 +13,48 @@ use Scalar::Util qw(looks_like_number);
 my %timing_parameters = ();
 my ($last_sync_time) = -10;
 
-our ($namespace, $container, $basetime, $baseoffset, $crtime, $exit_at_end, $synchost, $syncport, $start_time, $pod);
+my ($namespace, $container, $basetime, $baseoffset, $crtime, $exit_at_end, $synchost, $syncport, $start_time, $pod);
 
-sub cputime() {
-    my (@times) = times();
-    my ($usercpu) = $times[0] + $times[2];
-    my ($syscpu) = $times[1] + $times[3];
-    return ($usercpu, $syscpu);
+sub _xtime() {
+    my (@now) = gettimeofday();
+    return $now[0] + ($now[1] / 1000000.0);
 }
 
-sub xtime(;$) {
-    my ($nocorrect) = @_;
-    my (@now) = gettimeofday();
-    my ($t) = $now[0] + ($now[1] / 1000000.0);
-    if ((!defined $nocorrect || !$nocorrect) && defined $timing_parameters{'xtime_adjustment'}) {
-	return $t - $timing_parameters{'xtime_adjustment'};
+sub _run_cmd(@) {
+    my (@cmd) = @_;
+    if (open(my $fh, "-|", @cmd)) {
+	return get_timestamp(sprintf("%s output:\n%s", join(" ", @cmd), do { local $/; <$fh>; }));
     } else {
-	return $t;
+	timestamp("Can't run $cmd[0]");
     }
 }
 
-sub ts() {
-    my (@now) = POSIX::modf(xtime(1) - $timing_parameters{'local_offset_from_sync'});
-    return sprintf("%s.%06d", gmtime($now[1])->strftime("%Y-%m-%dT%T"), $now[0] * 1000000);
+sub _clean_numbers($) {
+    # Perl to_json encodes innfinity as inf and NaN as nan.
+    # This results in invalid JSON.  It's our responsibility to sanitize
+    # this up front.
+    # Discussion: https://perlmaven.com/parsing-nan-in-json
+    # Python has similar issues:
+    # https://docs.python.org/3.8/library/json.html#infinite-and-nan-number-values
+    my ($ref) = @_;
+    if (ref $ref eq 'HASH') {
+	my (%answer);
+	map { $answer{$_} = _clean_numbers($$ref{$_})} keys %$ref;
+	return \%answer;
+    } elsif (ref $ref eq 'ARRAY') {
+	my (@answer) = map {_clean_numbers($_)} @$ref;;
+	return \@answer;
+    } elsif (ref $ref eq '' && looks_like_number($ref) && $ref != 0 &&
+	     (! defined ($ref <=> 0) || ((1 / $ref) == 0))) {
+	return undef;
+    } else {
+	return $ref
+    }
 }
 
-sub timestamp($) {
-    my ($str) = @_;
-    printf STDERR "%7d %s %s\n", $$, ts(), $str;
+sub _ts() {
+    my (@now) = POSIX::modf(_xtime() - $timing_parameters{'local_offset_from_sync'});
+    return sprintf("%s.%06d", gmtime($now[1])->strftime("%Y-%m-%dT%T"), $now[0] * 1000000);
 }
 
 sub calibrate_time() {
@@ -53,16 +67,43 @@ sub calibrate_time() {
     return $time_overhead / 1000;
 }
 
+sub cputime() {
+    my (@times) = times();
+    my ($usercpu) = $times[0] + $times[2];
+    my ($syscpu) = $times[1] + $times[3];
+    return ($usercpu, $syscpu);
+}
+
+sub xtime() {
+    my ($t) = _xtime();
+    if (defined $timing_parameters{'xtime_adjustment'}) {
+	return $t - $timing_parameters{'xtime_adjustment'};
+    } else {
+	return $t;
+    }
+}
+
+sub get_timestamp($) {
+    my ($str) = @_;
+    $str =~ s/\n(.*\S.*)/\n            $1/g;
+    sprintf("%7d %s %s\n", $$, _ts(), $str);
+}
+
+sub timestamp($) {
+    my ($str) = @_;
+    print STDERR get_timestamp($str);
+}
+
 sub drop_cache($$) {
     my ($service, $port) = @_;
     timestamp("Dropping local cache");
     system('sync');
-    timestamp("Dropping host cache");
+    timestamp("Dropping host cache:");
     my ($sock) = connect_to($service, $port);
-    timestamp("Connected to $service:$port");
+    timestamp("    Connected to $service:$port");
     my ($sbuf);
     my ($answer) = sysread($sock, $sbuf, 1024);
-    timestamp("Got confirmation");
+    timestamp("    Confirmed");
     close($sock);
 }
 
@@ -80,7 +121,12 @@ sub namespace() {
 
 sub idname(;@) {
     my (@extra_components) = @_;
-    return join(':', $namespace, $pod, $container, $$, @extra_components);
+    my ($sep) = ':';
+    if ($extra_components[0] eq '-d') {
+	$sep = '-';
+	shift @extra_components;
+    }
+    return join($sep, $namespace, $pod, $container, $$, @extra_components);
 }
 
 sub parse_command_line(@) {
@@ -97,11 +143,11 @@ sub initialize_timing(;@) {
     if (! defined $start_time) {
 	($start_time) = xtime();
     }
-    my ($name) = join(':', $namespace, $pod, $container, @name_components);
+    my ($name) = join(':', $namespace, $pod, $container, $$, @name_components);
     my ($presync) = "timestamp: %s $name";
     timestamp("About to sync");
     my ($local_sync_start, $remote_sync_start, $absolute_sync_start,
-	$remote_sync_base, $remote_sync, $sync_base_start_time) = split(/ +/, do_sync_command('TIME', $presync));
+	$remote_sync_base, $remote_sync, $sync_base_start_time) = split(/ +/, _do_sync_command('TIME', $presync));
     timestamp("Done sync");
     my ($local_sync) = xtime();
     my ($local_sync_rtt) = $local_sync - $local_sync_start;
@@ -144,16 +190,6 @@ sub initialize_timing(;@) {
     $crtime += $baseoffset;
 }
 
-sub print_timing_parameters() {
-    my ($answer) = join(",\n", map { "    \"$_\": $timing_parameters{$_}" } (sort keys %timing_parameters));
-    return "{\n    $answer\n}";
-}
-
-sub get_timing_parameter($) {
-    my ($parameter) = @_;
-    return $timing_parameters{$parameter};
-}
-
 sub connect_to($$) {
     my ($addr, $port) = @_;
     my ($connected) = 0;
@@ -181,26 +217,28 @@ sub connect_to($$) {
     return ($sock);
 }
 
-sub do_sync_command_internal($$$) {
-    my ($addr, $port, $token) = @_;
+sub _do_sync_command($$) {
+    my ($command, $token) = @_;
+    if (lc $command eq 'sync' && not $token) {
+        $token = sprintf('%s %s-%d', _ts(), hostname(), rand() * 999999999);
+    }
+    $token = "$command $token";
     while (1) {
-	timestamp("sync on $addr:$port");
-	my ($sync_conn) = connect_to($addr, $port);
-	my ($sbuf);
-	my ($ntoken) = $token;
-	if ($ntoken =~ /%s/) {
+	timestamp("sync on $synchost:$syncport");
+	my ($sync_conn) = connect_to($synchost, $syncport);
+	if ($token =~ /%s/) {
 	    my ($time) = xtime();
-	    $ntoken =~ s/%s/$time/;
+	    $token =~ s/%s/$time/;
 	}
-	my ($token_length) = sprintf('0x%08x', length $ntoken);
-	my ($tbuf) = "$token_length$ntoken";
+	my ($token_length) = sprintf('0x%08x', length $token);
+	my ($tbuf) = "$token_length$token";
 	my ($bytes_to_write) = length $tbuf;
 	my ($offset) = 0;
 	my ($answer);
 	while ($bytes_to_write > 0) {
 	    $answer = syswrite($sync_conn, $tbuf, length $tbuf, $offset);
 	    if (length $tbuf > 128) {
-		timestamp(sprintf("Writing %d bytes to sync", length $ntoken));
+		timestamp(sprintf("Writing %s bytes to sync", $token_length));
 	    } else {
 		timestamp("Writing token $tbuf to sync");
 	    }
@@ -212,6 +250,7 @@ sub do_sync_command_internal($$$) {
 		$offset += $answer;
 	    }
 	}
+	my ($sbuf);
 	$answer = sysread($sync_conn, $sbuf, 1024);
 	if ($!) {
 	    timestamp('sync failed, retrying');
@@ -222,50 +261,17 @@ sub do_sync_command_internal($$$) {
     }
 }
 
-sub do_sync_command($$) {
-    my ($command, $token) = @_;
-    my ($addr) = $synchost;
-    my ($fh) = undef;
-    my ($file) = undef;
-    if ($addr eq '-') {
-	$addr=`ip route get 1 |awk '{print \$(NF-2); exit}'`;
-	chomp $addr;
-    }
-    if (lc $command eq 'rslt') {
-	$token =~ s,\n *,,g;
-    } elsif (lc $command eq 'time') {
-	$token = ts() . " $token";
-    } elsif (not $token) {
-        $token = sprintf('%s %s-%d', ts(), hostname(), rand() * 999999999);
-    }
-    my ($answer) = do_sync_command_internal($addr, $syncport, "$command $token");
-    return $answer;
-}
-
-sub run_cmd(@) {
-    my ($answer);
-    my (@cmd) = @_;
-    timestamp("@cmd output");
-    if (open(my $fh, "-|", @cmd)) {
-	while (<$fh>) {
-	    $answer .= "$cmd[0] $_";
-	}
-	close($fh)
-    } else {
-	timestamp("Can't run $cmd[0]");
-    }
-    return $answer;
-}
-
 sub finish(;$$) {
     my ($status, $pid) = @_;
-    my ($answer) = run_cmd("lscpu");
-    $answer .= run_cmd("dmesg");
-    timestamp($answer);
+    my ($answer) = _run_cmd("lscpu");
+    $answer .= _run_cmd("dmesg");
+    print STDERR $answer;
+    
     if (defined $status && $status != 0) {
 	print STDERR "FAIL!\n";
-	my ($buf) = sprintf("Namespace/pod/container: %s/%s/%s%s\n%s", $namespace, $pod, $container, (defined $pid ? " pid: $pid" : ""), $answer);
-	do_sync_command('FAIL', $buf);
+	my ($buf) = sprintf("Namespace/pod/container: %s/%s/%s%s\n%s\n", $namespace, $pod, $container, (defined $pid ? " pid: $pid" : ""), $answer);
+	$buf .= sprintf("Run oc logs -n '%s' '%s' -c '%s'\n", $namespace, $pod, $container);
+	_do_sync_command('FAIL', $buf);
 	if ($exit_at_end) {
 	    POSIX::_exit($status);
 	}
@@ -309,26 +315,6 @@ sub run_workload($$;@) {
     finish();
 }
 
-sub clean_numbers($) {
-    # Perl to_json encodes innfinity as inf and NaN as nan.
-    # This results in invalid JSON.  It's our responsibility to sanitize
-    # this up front.
-    my ($ref) = @_;
-    if (ref $ref eq 'HASH') {
-	my (%answer);
-	map { $answer{$_} = clean_numbers($$ref{$_})} keys %$ref;
-	return \%answer;
-    } elsif (ref $ref eq 'ARRAY') {
-	my (@answer) = map {clean_numbers($_)} @$ref;;
-	return \@answer;
-    } elsif (ref $ref eq '' && looks_like_number($ref) && $ref != 0 &&
-	     (! defined ($ref <=> 0) || ((1 / $ref) == 0))) {
-	return undef;
-    } else {
-	return $ref
-    }
-}
-
 sub report_results($$$;$) {
     my ($data_start_time, $data_end_time, $data_elapsed_time, $user_cpu, $sys_cpu, $extra) = @_;
     my (%hash) = (
@@ -337,8 +323,8 @@ sub report_results($$$;$) {
 	'pod' => $pod,
 	'container' => $container,
 	'process_id' => $$,
-	'pod_create_time' => get_timing_parameter('controller_crtime') - get_timing_parameter('controller_basetime'),
-	'pod_start_time' => get_timing_parameter('start_time'),
+	'pod_create_time' => $timing_parameters{'controller_crtime'} - $timing_parameters{'controller_basetime'},
+	'pod_start_time' => $timing_parameters{'start_time'},
 	'data_start_time' => $data_start_time,
 	'data_end_time' => $data_end_time,
 	'data_elapsed_time' => $data_elapsed_time,
@@ -349,14 +335,14 @@ sub report_results($$$;$) {
 	);
     
     map { $hash{$_} = $$extra{$_} } keys %$extra;
-    my ($json) = to_json(clean_numbers(\%hash));
-    do_sync_command('RSLT', $json);
+    my ($json) = to_json(_clean_numbers(\%hash));
+    _do_sync_command('RSLT', $json);
     return $json;
 }
 
 sub sync_to_controller(;$) {
     my ($token) = @_;
-    do_sync_command('SYNC', $token);
+    _do_sync_command('SYNC', $token);
 }
 
 1;

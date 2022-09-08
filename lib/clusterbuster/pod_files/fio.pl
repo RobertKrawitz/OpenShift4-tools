@@ -7,8 +7,8 @@ use JSON;
 my ($dir) = $ENV{'BAK_CONFIGMAP'};
 require "$dir/clientlib.pl";
 
-our ($processes, $rundir, $runtime, $jobfiles_dir, $drop_cache_service, $drop_cache_port, $fio_blocksizes, $fio_patterns,
-     $fio_iodepths, $fio_fdatasyncs, $fio_directs, $fio_ioengines, $fio_generic_args) = parse_command_line(@ARGV);
+my ($processes, $rundir, $runtime, $jobfiles_dir, $drop_cache_service, $drop_cache_port, $fio_blocksizes, $fio_patterns,
+    $fio_iodepths, $fio_fdatasyncs, $fio_directs, $fio_ioengines, $fio_generic_args) = parse_command_line(@ARGV);
 
 $SIG{TERM} = sub() { removeRundir() };
 
@@ -173,7 +173,7 @@ sub get_jobfiles($$$) {
 }
 
 sub runit() {
-    my ($localid) = join('_', namespace(), podname(), container(), $$);
+    my ($localid) = idname('-s', $$);
     $localrundir = "$rundir/$localid";
     my ($tmp_jobfilesdir) = "/tmp/fio-${localid}.job";
     mkdir "$tmp_jobfilesdir" || die "Can't create job directory $tmp_jobfilesdir: $!\n";

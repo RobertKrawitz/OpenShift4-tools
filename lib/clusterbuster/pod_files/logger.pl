@@ -11,7 +11,7 @@ my ($dir) = $ENV{'BAK_CONFIGMAP'};
 require "$dir/clientlib.pl";
 
 $SIG{TERM} = sub { POSIX::_exit(0); };
-our ($namespace, $container, $bytes_per_line, $bytes_per_io, $xfer_count, $processes, $delay_usecs, $xfer_time, $exit_at_end) = @ARGV;
+my ($namespace, $container, $bytes_per_line, $bytes_per_io, $xfer_count, $processes, $delay_usecs, $xfer_time, $exit_at_end) = @ARGV;
 
 while ($processes-- > 0) {
     if ((my $child = fork()) == 0) {
