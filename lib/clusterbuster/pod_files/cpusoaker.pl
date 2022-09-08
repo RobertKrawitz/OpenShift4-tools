@@ -1,24 +1,15 @@
 #!/usr/bin/perl
 
-use Socket;
 use POSIX;
 use strict;
-use Time::Piece;
-use Time::HiRes qw(gettimeofday usleep);
-use Sys::Hostname;
-use File::Basename;
 my ($dir) = $ENV{'BAK_CONFIGMAP'};
 require "$dir/clientlib.pl";
 
-our ($namespace, $container, $basetime, $baseoffset, $crtime, $exit_at_end, $synchost, $syncport, $loghost, $logport, $processes, $runtime) = @ARGV;
-my ($start_time) = xtime();
-$SIG{TERM} = sub { kill 'KILL', -1; POSIX::_exit(0); };
-$basetime += $baseoffset;
-$crtime += $baseoffset;
+my ($processes, $runtime) = parse_command_line(@ARGV);
 
 sub runit() {
-    my ($pod) = hostname;
-    initialize_timing($basetime, $crtime, $synchost, $syncport, "$namespace:$pod:$container:$$", $start_time);
+    initialize_timing();
+    $SIG{TERM} = sub { kill 'KILL', -1; POSIX::_exit(0); };
     my ($iterations) = 0;
     my ($loops_per_iteration) = 10000;
     my ($firsttime) = 1;
@@ -68,23 +59,7 @@ sub runit() {
 	'work_iterations' => $iterations
 	);
     my ($elapsed_time) = $data_end_time - $data_start_time;
-    my ($answer) = print_json_report($namespace, $pod, $container, $$, $data_start_time,
-				     $data_end_time, $elapsed_time, $user, $sys, \%extra);
-    do_sync($synchost, $syncport, $answer);
-    if ($logport > 0) {
-	do_sync($loghost, $logport, $answer);
-    }
-}
-$SIG{CHLD} = 'IGNORE';
-if ($processes > 1) {
-    for (my $i = 0; $i < $processes; $i++) {
-        if ((my $child = fork()) == 0) {
-            runit();
-            exit(0);
-        }
-    }
-} else {
-    runit();
+    report_results($data_start_time, $data_end_time, $elapsed_time, $user, $sys, \%extra);
 }
 
-finish($exit_at_end);
+run_workload($processes, \&runit);

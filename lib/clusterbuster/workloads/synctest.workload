@@ -23,7 +23,7 @@ declare -g ___synctest_count=5
 declare -g ___synctest_cluster_count=1
 declare -g ___synctest_sleep=0
 
-function synctest_create_containers_yaml() {
+function synctest_arglist() {
     mk_yaml_args "$___synctest_count" "$___synctest_cluster_count" "$___synctest_sleep"
 }
 

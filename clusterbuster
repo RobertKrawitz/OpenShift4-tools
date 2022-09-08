@@ -68,8 +68,6 @@ declare -i objs_item_count=0
 declare -i port=7777
 declare -i sync_port=7778
 declare -i drop_cache_port=7779
-declare log_host=
-declare -i log_port=0
 declare sync_host=
 declare -i affinity=0
 declare -A pin_nodes=()
@@ -110,7 +108,6 @@ declare -A volume_scoped_names=()
 declare common_workdir=
 declare -i report=0
 declare report_format=summary
-declare log_strategy=poll
 declare -i precleanup=1
 declare -i cleanup=0
 declare -i timeout=0
@@ -140,7 +137,6 @@ declare metrics_file=
 declare job_name=
 # shellcheck disable=2155
 declare -i job_start_time=$(date +%s)
-declare debug=
 declare global_sync_service=
 declare -i predelay=0
 declare -i postdelay=0
@@ -157,6 +153,7 @@ declare -i liveness_probe_sleep_time=0
 declare pod_prefix=
 
 declare -r sync_flag_file="/tmp/syncfile";
+declare -r sync_error_file="/tmp/syncerror";
 declare -r controller_timestamp_file="/tmp/timing.json";
 # shellcheck disable=2155
 declare uuid=$(uuidgen -r)
@@ -417,6 +414,14 @@ $(print_workloads_supporting_reporting '                        - ')
                         Arrange for the liveness probe to sleep for specified
                         time.
 
+    Virtualization Options:
+       --virtiofsd-writeback=[0,1]
+                        Use writeback caching for virtiofsd (default $virtiofsd_writeback).
+       --virtiofsd-direct=[0,1]
+                        Allow use of direct I/O for virtiofsd (default $virtiofsd_direct).
+       --virtiofsd-threadpoolsize=n
+                        Use the specified thread pool size for virtiofsd (default 1).
+
     Tuning object creation (short equivalents):
        --scale-ns=[0,1] Scale up the number of namespaces vs.
                         create new ones (default 0).
@@ -430,8 +435,6 @@ $(print_workloads_supporting_reporting '                        - ')
                         Index number of first secret to be created
        --first_namespace=N
                         Index number of first namespace to be created
-       --first_deployment=N
-                        Index number of first pod to be created
        --pod-prefix=prefix
                         Prefix all created pods with this prefix.
        --sleep=N        Number of seconds between object creations
@@ -477,19 +480,10 @@ Advanced options (generally not required):
                         This normally should not be needed, as
                         ClusterBuster can correct for clock skew
                         itself.
-       --log-strategy={poll,listen}
-                        Use the desired logging strategy to retrieve logs.
-                        - Poll indicates that sync pods should be polled
-                          for logs.
-                        - Listen indicates that pods should report log
-                          data directly to this tool, which will listen
-                          for the data.
-                        The default strategy is polling, which should work
-                        in all cases.  The older listen strategy will not
-                        work if pods cannot connect to the host from which
-                        this tool is run.  Polling should be used unless
-                        there is reason to believe it is not functioning.
        --podsleep=N     Time for pod to sleep before exit
+       --debug=<opt>
+                        For testing purposes, print debugging information.
+                        Options documented only in code.
        --inject_error=<opt>
                         For testing purposes, inject the specified error
                         condition (documented only in code).
@@ -638,7 +632,6 @@ function process_option() {
 	forceabort*)		    set -e					;;
 	# Reporting
 	artifactdir)		    artifactdir="$optvalue"			;;
-	logstrategy)		    log_strategy=$optvalue			;;
 	metrics|metricsfile)	    set_metrics_file "$optvalue"		;;
 	metricsepoch)		    metrics_epoch=$optvalue			;;
 	reportformat)		    report_format=$optvalue			;;
@@ -709,7 +702,7 @@ function process_option() {
 	    esac
 	    ;;
 	# Object creation
-	objspercall)		    objs_per_call=$optvalue			;;
+	obj*spercall)		    objs_per_call=$optvalue			;;
 	parallel)		    parallel=$optvalue				;;
 	sleep)			    sleeptime=$optvalue				;;
 	podprefix)		    pod_prefix=${optvalue:+$optvalue-}		;;
@@ -718,10 +711,10 @@ function process_option() {
 	parallelsecrets)	    parallel_secrets=$optvalue			;;
 	parallelnamespaces)	    parallel_namespaces=$optvalue		;;
 	paralleldeployments)	    parallel_deployments=$optvalue		;;
-	objspercallconfigmaps)	    objs_per_call_configmaps=$optvalue		;;
-	objspercallsecrets)	    objs_per_call_secrets=$optvalue		;;
-	objspercallnamespaces)	    objs_per_call_namespaces=$optvalue		;;
-	objspercalldeployments)	    objs_per_call_deployments=$optvalue		;;
+	obj*spercallconfigmaps)	    objs_per_call_configmaps=$optvalue		;;
+	obj*spercallsecrets)	    objs_per_call_secrets=$optvalue		;;
+	obj*spercallnamespaces)	    objs_per_call_namespaces=$optvalue		;;
+	obj*spercalldeployments)    objs_per_call_deployments=$optvalue		;;
 	sleepbetweenconfigmaps)	    sleep_between_configmaps=$optvalue		;;
 	sleepbetweensecrets)	    sleep_between_secrets=$optvalue		;;
 	sleepbetweennamespaces)	    sleep_between_namespaces=$optvalue		;;
@@ -750,6 +743,7 @@ function process_option() {
 	    ;;
 	# Testing
 	injecterror)		    inject_error "$optvalue"			;;
+	debug*)			    register_debug_condition "$optvalue"	;;
 	# Force delete everything after oc delete times out.
 	# This is dangerous and hence not documented.
 	# See https://access.redhat.com/solutions/4165791
@@ -847,17 +841,17 @@ function generate_workload_metadata() {
 ################################################################
 
 function __OC() {
+    if ((doit)) ; then
+	debug kubectl "$OC" "$@"
+    fi
     if ((! doit)) ; then
-	echo "$OC" "$@" 1>&2
+	echo "$OC" "${@@Q}" 1>&2
     elif [[ $1 = exec || $1 = rsh ]] ; then
 	# Capture error output
 	(set -o pipefail; "$OC" "$@" 2>&1 1>&3 |sed -e "s/^/${*//\//\\/}: /" |timestamp 1>&2) 3>&1
     elif [[ $1 = describe || $1 = get || $1 = status || $1 = logs ]] ; then
 	"$OC" "$@"
     elif ((report_object_creation)) ; then
-	if [[ -n "$debug" ]] ; then
-	    echo "$OC" "$@" 1>&2
-	fi
 	"$OC" "$@" 2>&1
     else
 	"$OC" "$@" 2>&1 |grep -v -E '(^No resources found|deleted|created|labeled|condition met)$'
@@ -875,86 +869,6 @@ function ___OC() {
     if ! __OC "$@" ; then
 	fatal "$OC $* failed!"
     fi
-}
-
-# The big red button if something goes wrong.
-
-function childrenof() {
-    IFS=' '
-    function is_descendent() {
-	local -i child=$1
-	local ancestor=$2
-	if ((child == ancestor)) ; then
-	    true
-	else
-	    parent=${ps_parents[$child]:-1}
-	    case "$parent" in
-		1)           false ;;
-		"$ancestor") true  ;;
-		*)           is_descendent "$parent" "$ancestor" ;;
-	    esac
-	fi
-    }
-    local -A exclude=()
-    local OPTIND=0
-    while getopts 'e:' opt "$@" ; do
-	case "$opt" in
-	    e) exclude[$OPTARG]=1 ;;
-	    *)                    ;;
-	esac
-    done
-    shift $((OPTIND-1))
-    local target=$1
-    local -A ps_parents=()
-    local -A ps_commands=()
-    local ppid
-    local pid
-    local command
-    local ignore
-    while read -r pid ppid command ignore; do
-	ps_parents["$pid"]=$ppid
-	ps_commands["$pid"]=$command
-    done <<< "$(ps -axo pid,ppid,command | tail -n +2)"
-    for pid in "${!ps_parents[@]}" ; do
-	# Don't kill loggers and the report generator; we still want
-	# output even if there's a failure.
-	if [[ -z "${!exclude[$pid]:-}" && "${ps_commands[$pid]}" != 'tee'* && "${ps_commands[$pid]}" != *'clusterbuster-report'* ]] ; then
-	    if is_descendent "$pid" "$target" ; then
-		echo "$pid"
-	    fi
-	fi
-    done
-}
-
-function killthemall() {
-    echo "${*:-Exiting!}" 1>&2
-    # Selectively kill all processes.  We don't want to kill
-    # processes between us and the root, or processes that
-    # aren't actually clusterbuster (e. g. reporting)
-    # Also, RHEL 8 doesn't support kill -<pgrp> syntax
-    local -a pids_to_kill=()
-    readarray -t pids_to_kill <<< "$(childrenof -e "$BASHPID" $$)"
-    # killthemall can livelock under the wrong circumstances.
-    # Make sure that that doesn't happen; we want to control
-    # our own exit.
-    trap : TERM
-    if [[ -n "${pids_to_kill[*]}" ]] ; then
-	/bin/kill -TERM "${pids_to_kill[@]}" >/dev/null 2>&1
-	if (( $$ == BASHPID )) ; then
-	    wait
-	    local -i tstart
-	    tstart=$(date +%s)
-	    until [[ -z "$(ps -o pid "${pids_to_kill[@]}" | awk '{print $1}' | grep -v "^${$}$" | tail -n +2)" ]] ; do
-		sleep 1
-		if (( $(date +%s) - tstart > 60 )) ; then
-		    warn "Unable to terminate all processes!"
-		    ps "${pids_to_kill[@]}" 1>&2
-		    break
-		fi
-	    done
-	fi
-    fi
-    exit 1
 }
 
 ################################################################
@@ -1033,7 +947,7 @@ function get_pod_and_local_timestamps() {
 	    Error|Failed)
 		echo "Sync pod failed to start:" 1>&2
 		__OC logs "$@" | tail -10 1>&2
-		exit 1
+		killthemall "Sync pod failed"
 		;;
 	    *)  ;;
 	esac
@@ -1045,7 +959,7 @@ function get_pod_and_local_timestamps() {
     first_local_ts=$(date +%s.%N)
     remote_ts=$(__OC exec "$@" -- /bin/sh -c "date +%s.%N" </dev/null) || killthemall "Unable to retrieve sync pod timestamp"
     second_local_ts=$(date +%s.%N)
-    _OC exec --stdin=true "$@" -- /bin/sh -c "cat > '$controller_timestamp_file'" <<EOF
+    _OC exec --stdin=true "$@" -- /bin/sh -c "cat > '${controller_timestamp_file}.tmp' && mv '${controller_timestamp_file}.tmp' '${controller_timestamp_file}'" <<EOF
 {
   "first_controller_ts": $first_local_ts,
   "sync_ts": $remote_ts,
@@ -1103,120 +1017,120 @@ function ts() {
     echo "${sec}.${ns:0:6}"
 }
 
-function timestamp() {
-    while IFS= read -r 'LINE' ; do
-	printf "%s %s\n" "$(TZ=GMT-0 date '+%Y-%m-%dT%T.%N' | cut -c1-26)" "$LINE"
-    done
+function run_status_monitor() {
+    (while : ; do sleep 1; printf '++Mark++ ++Mark+ %(%s)T%s' -1 $'\n'; done &); oc get pod "$@" -w -o jsonpath='{.metadata.namespace} {.metadata.name} {.status.phase}{"\n"}'
 }
 
-function monitor_pods() {
-    exec 0</dev/null 1>/dev/null
-    local arg
-    local -i timeout=-1
-    local -i ppid=0
-    local OPTIND=0
-    while getopts "t:" arg "$@" ; do
-	case "$arg" in
-	    t) timeout="$OPTARG" ;;
-	    *)                   ;;
-	esac
-    done
-    shift $((OPTIND - 1))
+function _monitor_pods() {
     if ((timeout > 0)) ; then
 	timeout=$(($(date +%s) + timeout))
     fi
     local pods_pending=''
-    local -i pods_pending_retry=12
-    local -i pods_unchanged_countdown=$pods_pending_retry
+    local -i pod_progress_timeout=0
     if [[ -n "${injected_errors[timeout]:-}" ]] ; then
 	warn "*** Injecting forced timeout error"
     fi
-    while : ; do
-	# Stop work as soon as we know we're done.
-	if [[ -z "${injected_errors[timeout]:-}" && -n "$cb_tempdir" && -f "$cb_tempdir/___run_complete" ]] ; then
-	    return 0
-	fi
-	# shellcheck disable=2034
-	local -a pending_pods=()
-	local -i running_pod_count=0
-	local -i finished_pod_count=0
-	local -i other_pod_count=0
-	while read -r namespace name rdy status rest ; do
-	    if [[ -z "${injected_errors[timeout]:-}" && -n "$cb_tempdir" && -f "$cb_tempdir/___run_complete" ]] ; then
-		# Don't exit out of this, which will leave the oc get pods process around
-		continue
+    # shellcheck disable=2034
+    local -i running_pod_count=0
+    local -i finished_pod_count=0
+    local -i other_pod_count=0
+    local -A pod_status=()
+    local -A running_pods=()
+    local -A starting_pods=()
+    local pod
+    local name
+    local namespace
+    local status
+    local lstatus
+    if [[ -n "${injected_errors[pending]:-}" ]] ; then
+	warn "*** Injecting pending error"
+	starting_pods["TEST/TEST"]=1
+    fi
+    while read -r namespace name status ; do
+	if [[ -n "${cb_tempdir:-}" && -f "$cb_tempdir/___run_complete" ]] ; then
+	    if [[ -z "${injected_errors[timeout]:-}" ]] ; then
+		return 0
+	    else
+		sleep infinity
 	    fi
-	    case "${status,,}" in
+	fi
+	if [[ $namespace != ++Mark++ ]] ; then
+	    # This definitely shouldn't happen, but being defensive doesn't hurt.
+	    if [[ -z "$status" || -z "$namespace" || -z "$name" ]] ; then continue; fi
+	    pod="${namespace,,}/${name,,}"
+	    lstatus="${status,,}"
+	    # No guarantee that we won't get a repeated status
+	    if [[ $lstatus = "${pod_status[$name]:-}" ]] ; then continue; fi
+	    debug monitor "$pod" "${pod_status[$pod]:-}" '=>' "$lstatus"
+	    # Ignore status of any leftover pods from earlier runs
+	    if [[ ($lstatus = completed || $lstatus = succeeded || $lstatus = 'terminat'* || $lstatus = error || $lstatus = failed) && -z "${pod_status[$pod]:-}" ]] ; then continue; fi
+	    pod_status["$pod"]=$lstatus
+	    unset starting_pods["$pod"]
+	    unset running_pods["$pod"]
+	    case "$lstatus" in
 		error|failed)
 		    echo "Pod -n $namespace $name $status!" 1>&2
 		    echo "Tail end of logs:" 1>&2
+		    # TODO: Need to get logs from each container
 		    oc logs -n "$namespace" "$name" |tail -20 1>&2
-		    killthemall
+		    killthemall "Pod -n $namespace $name failed"
+		    return 1
 		    ;;
 		pending|containercreating)
-		    other_pod_count=$((other_pod_count+1))
-		    pending_pods+=("$namespace/$name")
+		    starting_pods["$namespace/$name"]=1
 		    ;;
 		running)
-		    running_pod_count=$((running_pod_count+1))
+		    other_pod_count=$((other_pod_count-1))
+		    running_pods["$namespace/$name"]=1
 		    ;;
-		completed|terminated)
-		    if supports_api -w "$requested_workload" supports_reporting ; then
-			if ! __OC exec --stdin=false -n "${basename}-sync" "$(mkpodname "${basename}-sync")" -- test -f /tmp/clusterbuster-finished ; then
-			    echo "Sync pod exited prematurely!" 1>&2
-			    echo "Tail end of logs:" 1>&2
-			    oc logs -n "${basename}-sync" "${basename}-sync" |tail -20 1>&2
-			    killthemall "Unexpected termination of sync pod"
-			fi
-		    fi
+		completed|terminat*|succeeded)
+		    unset pod_status["$pod"]
+		    other_pod_count=$((other_pod_count-1))
 		    finished_pod_count=$((finished_pod_count+1))
 		    ;;
 		*)
 		    other_pod_count=$((other_pod_count+1))
 		    ;;
 	    esac
-	done <<< "$(__OC get pods -A --no-headers "$@" 2>/dev/null)"
-	if [[ -z "${injected_errors[timeout]:-}" && -n "$cb_tempdir" && -f "$cb_tempdir/___run_complete" ]] ; then
-	    return 0
-	fi
-	if [[ -z "${injected_errors[timeout]:-}" ]] && ! supports_api -w "$requested_workload" supports_reporting ; then
-	    if (( running_pod_count + finished_pod_count > 0 && other_pod_count == 0 )) ; then
-		sleep "$workload_run_time"
-		return
-	    fi
-	fi
-
-	if [[ -n "${injected_errors[pending]:-}" ]] ; then
-	    warn "*** Injecting pending error"
-	    pending_pods+=("TEST/TEST")
-	fi
-
-	if [[ -n "${pending_pods[*]}" ]] ; then
-	    pods_now_pending=$(IFS=$'\n'; echo "${pending_pods[*]}" | sort)
-	    if [[ "$pods_now_pending" != "$pods_pending" ]] ; then
-		pods_unchanged_countdown=$pods_pending_retry
-		pods_pending="$pods_now_pending"
-	    else
-		if ((pods_unchanged_countdown <= 0)) ; then
-		    killthemall "No progress with pods after 10 retries, ${#pending_pods[@]} pods still pending."
+	else
+	    # Timestamp
+	    local timestamp=$status
+	    # If 
+	    if [[ -z "${injected_errors[timeout]:-}" ]] && ! supports_api -w "$requested_workload" supports_reporting ; then
+		if (( ${#running_pods[@]} + finished_pod_count > 0 && other_pod_count == 0 )) ; then
+		    sleep "$workload_run_time"
+		    return
 		fi
-		local times=times
-		if ((pods_unchanged_countdown == 1)) ; then times='time' ; fi
-		echo "${#pending_pods[@]} pods pending (will retry $pods_unchanged_countdown $times)" | echo_if_desired 1>&2
-		pods_unchanged_countdown=$((pods_unchanged_countdown-1))
+	    fi
+
+	    if [[ -n "${starting_pods[*]}" ]] ; then
+		pods_now_pending=$(IFS=$'\n'; echo "${!starting_pods[*]}" | sort)
+		if [[ "$pods_now_pending" != "$pods_pending" ]] ; then
+		    pod_progress_timeout=$((timestamp+60))
+		    pods_pending="$pods_now_pending"
+		else
+		    if ((timestamp > pod_progress_timeout)) ; then
+			killthemall "No progress with pods after 1 minute, ${#starting_pods[@]} pods still pending."
+		    fi
+		    if ((pod_progress_timeout-timestamp <= 30)) ; then
+			local p_seconds=seconds
+			local p_pods=pods
+			if ((pod_progress_timeout-timestamp == 1)) ; then p_seconds=second; fi
+			if ((${#starting_pods[@]} == 1)) ; then p_pods=pod; fi
+			echo "${#starting_pods[@]} $p_pods pending (will retry $((pod_progress_timeout-timestamp)) $p_seconds)" | echo_if_desired 1>&2
+		    fi
+		fi
+	    fi
+	    if ((timeout > 0 && timestamp > timeout)) ; then
+		killthemall "Monitor pods timeout!"
 	    fi
 	fi
-	if ((timeout > 0 && $(date +%s) > timeout)) ; then
-	    killthemall "Monitor pods timeout!"
-	fi
-	local -i i
-	for i in {1..5} ; do
-	    if [[ -z "${injected_errors[timeout]:-}" && -n "$cb_tempdir" && -f "$cb_tempdir/___run_complete" ]] ; then
-		return 0
-	    fi
-	    sleep 1
-	done
     done
+}
+
+function monitor_pods() {
+    exec 0</dev/null 1>/dev/null
+    run_status_monitor "$@" | _monitor_pods "$timeout"
 }
 
 function run_logger() {
@@ -1238,7 +1152,50 @@ function run_logger() {
     fi
 }
 
+# Use a separate flag file for errors to simplify the logic.
+# This way we can send correct output to stdout, but handle
+# errors in a separate subprocess.
+function _fail_helper()  {
+    trap exit TERM
+    local faildata
+    while : ; do
+	local podstatus
+	podstatus=$("$OC" get pod -ojsonpath='{.status.phase}' "$@" 2>/dev/null)
+	case "$podstatus" in
+	    Succeeded|Terminated)
+		return
+		;;
+	    Running)
+		# Need to produce periodic output to stderr to prevent oc exec connection from prematurely terminating
+		faildata="$("$OC" exec --stdin=false "$@" -- sh -c "while [[ ! -f '$sync_error_file' ]] ; do sleep 5; echo KEEPALIVE 1>&2; done; cat '$sync_error_file'" 2>/dev/null)"
+		if [[ -n "$faildata" ]] ; then
+		    "$OC" exec --stdin=false "$@" -- sh -c "rm -f '$sync_error_file'"
+		    echo "Run failed:" 1>&2
+		    echo "${faildata:-}" 1>&2
+		    killthemall "Run failed, exiting!"
+		fi
+		;;
+	    *)
+		sleep 1;
+		;;
+	esac
+    done
+}
+
 function _log_helper() {
+    local OPTIND=0
+    local OPTARG
+    local fail_helper=
+    while getopts 'e:' opt "$@" ; do
+	case "$opt" in
+	    e) fail_helper=$OPTARG ;;
+	    *)			   ;;
+	esac
+    done
+    shift $((OPTIND-1))
+    if [[ -n "${fail_helper:-}" ]] ; then
+	"$fail_helper" "$@" &
+    fi
     if [[ -n "${injected_errors[timeout]:-}" ]] ; then
 	echo "*** Injecting forced timeout error"
 	sleep infinity
@@ -1249,7 +1206,7 @@ function _log_helper() {
 	sleep 5
     done
     # Tell the pod monitor to stop.
-    if [[ -n "$cb_tempdir" ]] ; then
+    if [[ -n "${cb_tempdir:-}" ]] ; then
 	touch "$cb_tempdir/___run_complete"
     fi
     "$OC" exec --stdin=false "$@" -- sh -c "rm -f '$sync_flag_file'" || killthemall "Can't terminate sync"
@@ -1293,13 +1250,12 @@ function _get_logs_poll() {
 	    esac
 	done
 	# shellcheck disable=SC2086
-	local cleanup_command="; sleep 1; rm -f '$sync_flag_file'"
 	local mypid=$BASHPID
-	monitor_pods -- -l "${basename}-worker=$uuid" &
+	monitor_pods -A -l "${basename}-worker=$uuid" &
 	# shellcheck disable=SC2086
 	if supports_api -w "$requested_workload" supports_reporting ; then
 	    # Ensure that if there's a lot of output that we don't remove the sync file before it has all been flushed out
-	    run_logger -p "$mypid" -- _log_helper $pod &
+	    run_logger -p "$mypid" -- _log_helper -e _fail_helper -- $pod &
 	fi
 	trap 'kill $(jobs -p) 2>/dev/null 1>&2 && wait' USR2
 	wait
@@ -1326,10 +1282,6 @@ function get_logs_poll() {
     fi
     unset tfile
     return $status
-}
-
-function get_logs_listen() {
-    "${__libdir__}/get_logs" "$@"
 }
 
 function __report_one_volume() {
@@ -1537,9 +1489,6 @@ function get_logs() {
     local log_cmd
     if supports_api -w "$requested_workload" supports_reporting ; then
 	log_cmd=get_logs_poll
-	if [[ ${log_strategy,,} = 'listen'* ]] ; then
-	    log_cmd=get_logs_listen
-	fi
     else
 	log_cmd=true
     fi
@@ -1585,7 +1534,8 @@ function indent() {
 }
 
 function mkpodname() {
-    local podname="${pod_prefix}$(IFS=-; echo "$*")"
+    local podname
+    podname="${pod_prefix}$(IFS=-; echo "$*")"
     echo "${podname//_/-}"
 }
 
@@ -1672,7 +1622,7 @@ function standard_yaml_args() {
     local namespace=$1
     local container=$2
     mk_yaml_args "$namespace" "c$container" "$basetime" "$baseoffset" "$(ts)" \
-		 "$exit_at_end" "$sync_service" "$sync_port_num" "$log_host" "$log_port"
+		 "$exit_at_end" "$sync_service" "$sync_port_num"
 }
 
 function create_standard_containers() {
@@ -1695,7 +1645,8 @@ function create_standard_containers() {
     local -i container
     local sync_service=
     local sync_port_num=
-    local yaml_args="$(mk_yaml_args)"
+    local yaml_args
+    yaml_args="$(mk_yaml_args)"
     IFS=: read -r sync_service sync_port_num <<< "$(get_sync)"
     for container in $(seq 0 $((containers - 1))) ; do
 	cat <<EOF
@@ -1778,26 +1729,27 @@ function standard_labels_yaml() {
     local instance=${3:-}
     local replica=${4:-}
     # Different versions of bash expand quotes inside the ${logger:+...} differently.
+    # true and "true" are interpreted differently.
     local true='"true"'
     cat <<EOF
 labels:
   ${basename}-uuid: "$uuid"
   ${basename}-id: "$uuid"
-${workload:+  ${basename}-${workload}: "$uuid"}
   ${basename}: "true"
   clusterbusterbase: "true"
   ${basename}base: "true"
-  ${objtype:+${basename}-${objtype}: "$uuid"}
+${objtype:+  ${basename}-${objtype}: "$uuid"}
+${logger:+  ${basename}-logger: $true}
 EOF
     if [[ -n "$workload" ]] ; then
 	cat <<EOF
+  ${basename}-${workload}: "$uuid"
   name: "${namespace}${workload:+-$workload}${instance:+-$instance}${suffix:+-$suffix}"
   app: "${namespace}${workload:+-$workload}${suffix:+-$suffix}"
   k8s-app: "${namespace}${workload:+-$workload}${suffix:+-$suffix}"
   instance: "${namespace}${workload:+-$workload}${instance:+-$instance}${suffix:+-$suffix}"
   replica: "${namespace}${workload:+-$workload}${instance:+-$instance}${replica:+-$replica}${suffix:+-$suffix}"
   ${workload}: "true"
-${logger:+  ${basename}-logger: $true}
 EOF
     fi
 }
@@ -1944,11 +1896,6 @@ function standard_pod_metadata_yaml() {
     annotations_yaml "$class"
 }
 
-function standard_all_metadata_yaml() {
-    standard_deployment_metadata_yaml "$@"
-    standard_pod_metadata_yaml "$@"
-}
-
 function expand_volume() {
     local scoped_name=$1
     local namespace=${2:+-$2}
@@ -2066,15 +2013,14 @@ function _really_create_objects() {
 	    echo "$accumulateddata" 1>&2
 	    killthemall "Failed to create objects"
 	}
-	accumulateddata=
-	objs_item_count=0
     fi
 }
 
 function really_create_objects() {
-    _really_create_objects "$@" | timestamp 1>&2
+    _really_create_objects | timestamp 1>&2
     accumulateddata=
     objs_item_count=0
+    return "${PIPESTATUS[0]}"
 }
 
 function create_object() {
@@ -2363,26 +2309,6 @@ $(indent 2 volumes_yaml "$namespace" "$instance" "$secret_count")
 EOF
 }
 
-function create_single_pod_deployment() {
-    local namespace=$1
-    local instance=$2
-    local name="${namespace}-${workload}-${instance}"
-    create_object -n "$namespace" "$name" <<EOF
-apiVersion: v1
-kind: Pod
-metadata:
-  name: $(mkpodname "$name")
-$(indent 2 standard_all_metadata_yaml "$namespace" client)
-  selector:
-    matchLabels:
-      app: $name
-$(indent 2 standard_labels_yaml -l "$workload" "$namespace" "${instance}")
-$(create_spec ${affinity_yaml:+-A "$affinity_yaml"} ${node_class:+-c "$node_class"} "$@")
-${security_context:+$(indent 2 <<< "$security_context")}
-  restartPolicy: Never
-EOF
-}
-
 function create_pod_deployment() {
     local namespace=$1
     local instance=$2
@@ -2396,12 +2322,13 @@ apiVersion: v1
 kind: Pod
 metadata:
   name: $(mkpodname "$name")
-$(indent 2 standard_all_metadata_yaml "$namespace" client)
+$(indent 2 standard_deployment_metadata_yaml "$namespace" client)
+$(indent 2 standard_pod_metadata_yaml "$namespace" client)
   selector:
     matchLabels:
       app: $name
 $(indent 2 standard_labels_yaml -l "$workload" "$namespace" "${instance}" "${replica}")
-$(create_spec ${affinity_yaml:+-A "$affinity_yaml"} ${node_class:+-c "$node_class"} "$@" "$replica")
+$(create_spec -A "$affinity_yaml" -c "$node_class" "$@" "$replica")
 ${security_context:+$(indent 2 <<< "$security_context")}
   restartPolicy: Never
 EOF
@@ -2431,7 +2358,7 @@ spec:
     metadata:
 $(indent 6 standard_labels_yaml -l "$workload" "$namespace" "$instance")
 $(indent 6 standard_pod_metadata_yaml "$namespace" client)
-$(indent 4 create_spec ${affinity_yaml:+-A "$affinity_yaml"} ${node_class:+-c "$node_class"} "$@" "x")
+$(indent 4 create_spec -A "$affinity_yaml" -c "$node_class" "$@")
 ${security_context:+$(indent 6 <<< "$security_context")}
 EOF
 }
@@ -2471,9 +2398,6 @@ function create_standard_deployment() {
     fi
     
     case "${deployment_type,,}" in
-	single_pod)
-	    create_single_pod_deployment "$@"
-	    ;;
 	pod)
 	    create_pod_deployment "$@"
 	    ;;
@@ -2503,6 +2427,8 @@ function create_container_sync() {
 $(indent 2 bootstrap_command_yaml sync.pl)
   - "-f"
   - "$sync_flag_file"
+  - "-e"
+  - "$sync_error_file"
   - "-t"
   - "$controller_timestamp_file"
   - "-d"
@@ -2524,11 +2450,12 @@ apiVersion: v1
 kind: Pod
 metadata:
   name: $(mkpodname "${namespace}")
-$(indent 2 standard_all_metadata_yaml "$namespace" sync)
+$(indent 2 standard_pod_metadata_yaml "$namespace" sync)
+$(indent 2 standard_deployment_metadata_yaml "$namespace" sync)
+$(indent 2 standard_labels_yaml 'sync' "$namespace")
   selector:
     matchLabels:
       app: ${namespace}
-$(indent 2 standard_labels_yaml 'sync' "$namespace")
 $(create_container_function=create_container_sync create_spec -P -c sync -r '' "$namespace" 0 0 "$sync_count" "$@")
   restartPolicy: Never
 EOF
@@ -2566,7 +2493,8 @@ apiVersion: v1
 kind: Pod
 metadata:
   name: $(mkpodname "$name")
-$(indent 2 standard_all_metadata_yaml "$namespace" drop_cache)
+$(indent 2 standard_pod_metadata_yaml "$namespace" drop_cache)
+$(indent 2 standard_deployment_metadata_yaml "$namespace" drop_cache)
 $(indent 2 standard_labels_yaml -s dc "$workload" "$namespace" "$instance" "$replica")
   selector:
     matchLabels:
@@ -2851,23 +2779,16 @@ function do_logging() {
     ((logs_expected > 0)) || return 0
     trap 'wait; return 1' TERM
 
-    if [[ $log_strategy = poll ]] ; then
-	local -a sync_pods=()
-	local namespace
-	local pod
-	local ignore
-	while read -r namespace pod ignore ; do
-	    if [[ -n "$namespace" && -n "$pod" ]] ; then
-		sync_pods+=("-n $namespace $pod")
-	    fi
-	done <<< "$(oc get pod -A --no-headers -l "${basename}-sync=${uuid}")"
-	get_logs "${sync_pods[@]}" &
-    else
-	log_host=$(hostname -f)
-	log_port=$("${__libdir__}/find_free_port")
-	(( log_port )) || killthemall "Can't get port to listen for logs on!"
-	get_logs -p "$log_port" -c "$logs_expected" &
-    fi
+    local -a sync_pods=()
+    local namespace
+    local pod
+    local ignore
+    while read -r namespace pod ignore ; do
+	if [[ -n "$namespace" && -n "$pod" ]] ; then
+	    sync_pods+=("-n $namespace $pod")
+	fi
+    done <<< "$(oc get pod -A --no-headers -l "${basename}-sync=${uuid}")"
+    get_logs "${sync_pods[@]}" &
     local -i get_logs_pid=$!
     if ((timeout > 0)) ; then
 	local -i itimeout=$timeout
@@ -3121,11 +3042,6 @@ fi
 
 if [[ -n "$pbench_controller_address" && $pbench_controller_port -eq 0 ]] ; then
     fatal "Both pbench_controller_address and pbench_controller_port must be specified"
-fi
-
-log_strategy=${log_strategy,,}
-if [[ $log_strategy != poll && $log_strategy != listen ]] ; then
-    fatal "Unknown --log_strategy (must be 'poll' or 'listen')"
 fi
 
 resource_validation_failed=0

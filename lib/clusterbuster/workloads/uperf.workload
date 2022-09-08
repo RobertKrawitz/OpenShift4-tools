@@ -56,7 +56,7 @@ function uperf_create_deployment() {
 
     for instance in $(seq "$first_deployment" $((count + first_deployment - 1))) ; do
 	create_service "$namespace" "${namespace}-uperf-server-${instance}" $(seq "$___uperf_port" $((___uperf_port + ___uperf_port_addrs)))
-	create_standard_deployment -w uperf-server -p -c server -d single_pod -e uperf-server.pl \
+	create_standard_deployment -w uperf-server -p -c server -e uperf-server.pl \
 				   -A "$(create_affinity_yaml "${namespace}-uperf-client-${instance}")" \
 				   -a uperf_server_arglist \
 				   "$namespace" "$instance" "$secret_count" 1 1
@@ -89,8 +89,6 @@ function uperf_calculate_logs_required() {
 function uperf_help_options() {
     cat <<'EOF'
     Uperf Options:
-       --workload-runtime
-                       How many seconds to run each test for.
        --pin_node=server=<node>
                        Specify node to which the server is bound.
      The following options take a comma-separated list of each

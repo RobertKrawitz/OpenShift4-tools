@@ -58,7 +58,6 @@ declare -i use_python_venv=1
 declare python_venv=
 declare analyze_results=
 declare -i debugonly=0
-declare force_cleanup_timeout=
 declare -i take_prometheus_snapshot=0
 declare unique_job_prefix=
 declare snapshot_date_format='%Y_%m_%dT%H_%M_%S%z'
@@ -66,12 +65,12 @@ declare prometheus_snapshot_start_ts=
 
 declare -a runtimeclasses=('' 'kata')
 declare -a extra_clusterbuster_args=()
+declare -A known_clusterbuster_options=()
 
 declare -i fail=0
 declare -i interrupted=0
 declare -i timedout=0
 declare -i counter=0
-declare -i global_counter=0
 declare -i hard_fail_on_error=0
 declare -i restart=0
 declare -i started_prom_capture=0
@@ -241,6 +240,7 @@ function finis() {
 	starting_timestamp=
 	report_ci_results -s "$status" -t "$saved_starting_timestamp" -e "$ending_timestamp"
 	if [[ -n "$analyze_results" ]] ; then
+	    # shellcheck disable=SC2086
 	    "$__analyze__" ${analysis_format:-r "$analysis_format"} -o "$analyze_results" "$artifactdir"
 	fi
 	if [[ -n "$python_venv" && -d "$python_venv" ]] ; then
@@ -469,6 +469,7 @@ EOF
 function set_pin_node() {
     local setting="${1:-}"
     if [[ $setting = *'='* ]] ; then
+	# shellcheck disable=SC2206
 	local -a vals=(${setting/=/ })
 	case "${vals[0]}" in
 	    server) server_pin_node="${vals[1]}" ;;
@@ -481,6 +482,17 @@ function set_pin_node() {
 	client_pin_node=$setting
 	sync_pin_node=$setting
     fi
+}
+
+function check_clusterbuster_option() {
+    local option=$1
+    if [[ -z "${known_clusterbuster_options[*]}" ]] ; then
+	local arg
+	while read -r arg ; do
+	    known_clusterbuster_options[$arg]=1
+	done <<< "$("$__clusterbuster__" -h 2>&1 |grep -oEe '^[ \t]*--[-_[:lower:]]+' |sed -e 's/[ \t]//g' -e 's/[-_]//g' |sort |uniq)"
+    fi
+    [[ -n "${known_clusterbuster_options[$option]:-}" ]]
 }
 
 function process_option() {
@@ -518,7 +530,11 @@ function process_option() {
 	# Unknown option -- can we delegate?
 	*)
 	    if ! call_api -A -a process_option "$option" ; then
-		extra_clusterbuster_args+=("--$option")
+		if check_clusterbuster_option "$noptname1" ; then
+		    extra_clusterbuster_args+=("--$option")
+		else
+		    fatal "Unknown option $option"
+		fi
 	    fi
 	    ;;
     esac
@@ -601,7 +617,7 @@ function xruntimeclass() {
 }
 
 function doit() {
-    echo "$*"
+    echo "${@@Q}"
     if ((! debugonly)) ; then
 	exec "$@" &
 	job_pid=$!
@@ -712,7 +728,7 @@ function run_clusterbuster() {
 }
 
 if [[ -z "${workloads[*]}" ]] ; then
-    workloads=($(print_workloads))
+    readarray -t workloads <<< "$(print_workloads)"
 fi
 
 bad_workload=0

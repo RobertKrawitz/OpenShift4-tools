@@ -240,7 +240,7 @@ class ClusterBusterReporter:
                                                                precision=3, suffix='sec')
             self._summary['relative_sync_error'] = self._summary['overlap_error']
             results['Relative sync error'] = self._prettyprint(self._summary['overlap_error'],
-                                                               precision=4, base=100, suffix='%')
+                                                               precision=3, base=100, suffix='%')
             results['Sync max RTT delta'] = self._prettyprint(self._summary['timing_parameters']['max_sync_rtt_delta'],
                                                               precision=3, suffix='sec')
             results['Sync avg RTT delta'] = self._prettyprint(self._summary['timing_parameters']['avg_sync_rtt_delta'],
@@ -255,8 +255,7 @@ class ClusterBusterReporter:
             results['Sync offset from host'] = self._prettyprint(timing['sync_ts'] - timing['second_controller_ts'],
                                                                  precision=3, suffix='sec')
             offset_error = timing['second_controller_ts'] - timing['first_controller_ts']
-            results['Possible controller-sync offset error'] = self._prettyprint(offset_error,
-                                                                                 precision=3, suffix='sec')
+            results['Max sync offset error'] = self._prettyprint(offset_error, precision=3, suffix='sec')
 
     def _generate_row(self, results, row: dict):
         """
@@ -514,7 +513,7 @@ class ClusterBusterReporter:
         elif base > 0 and abs(num) >= base ** 1:
             return f'{self._fformat(num / base, precision=precision)} K{infix}{suffix}'
         elif abs(num) >= 1 or num == 0:
-            if integer != 0 or num == 0:
+            if integer != 0:
                 precision = 0
             return f'{self._fformat(num, precision=precision)} {suffix}'
         elif abs(num) >= 10 ** -3:

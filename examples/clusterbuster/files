@@ -1,5 +1,5 @@
 # Run as
-# clusterbuster -f clusterbuster-files-jobfile
+# clusterbuster -f files
 
 cleanup
 workload=files

@@ -1,5 +1,5 @@
 # Run as
-# clusterbuster -f clusterbuster-classic-jobfile
+# clusterbuster -f pausepod
 
 precleanup
 workload=pausepod
