@@ -41,7 +41,7 @@ sub clean_numbers($) {
 	map { $answer{$_} = clean_numbers($$ref{$_})} keys %$ref;
 	return \%answer;
     } elsif (ref $ref eq 'ARRAY') {
-	my (@answer) = map {clean_numbers($_)} @$ref;;
+	my (@answer) = map {clean_numbers($_)} @$ref;
 	return \@answer;
     } elsif (ref $ref eq '' && looks_like_number($ref) && $ref != 0 &&
 	     (! defined ($ref <=> 0) || ((1 / $ref) == 0))) {
@@ -149,8 +149,24 @@ sub handle_rslt($$$) {
     }
 }
 
-sub sync_one($$$$$$) {
-    my ($sock, $tmp_sync_file_base, $tmp_error_file, $first_pass, $start_time, $base_start_time) = @_;
+sub reply_timestamp($$\@) {
+    my ($start_time, $base_start_time, $ts_clients) = @_;
+    my ($start) = ytime();
+    timestamp("Returning client sync start time, sync start time, sync sent time");
+    foreach my $client (@$ts_clients) {
+	my ($time) = ytime();
+	my ($client_fd, $client_ts) = @$client;
+	my ($tbuf) = "$client_ts $start_time $start $time $base_start_time";
+	syswrite($client_fd, $tbuf, length $tbuf);
+	close($client_fd);
+    }
+    my ($end) = ytime();
+    my ($et) = $end - $start;
+    timestamp("Sending sync time took $et seconds");
+}
+
+sub sync_one($$$$$) {
+    my ($sock, $tmp_sync_file_base, $tmp_error_file, $start_time, $base_start_time) = @_;
     timestamp("Listening on port $listen_port");
     listen($sock, 5) || die "listen: $!";
     printf STDERR "Expect $expected_clients client%s\n", $expected_clients == 1 ? '' : 's';
@@ -165,8 +181,8 @@ sub sync_one($$$$$$) {
     while ($expected_clients > 0) {
 	my ($client);
 	accept($client, $sock) || next;
-	my $peeraddr = getpeername($client);
-	my ($port, $addr) = sockaddr_in($peeraddr);
+	my $peer = getpeername($client);
+	my ($port, $addr) = sockaddr_in($peer);
 	# Reverse hostname lookup adds significant overhead
 	# when using sync to establish the timebase.
 	#my $peerhost = gethostbyaddr($addr, AF_INET);
@@ -180,7 +196,7 @@ sub sync_one($$$$$$) {
 	my ($command) = lc substr($tbuf, 0, 4);
 	$tbuf =~ s/^....\s+//;
 	if ($command eq 'time')  {
-	    my ($ignore, $ignore, $ts, $ignore) = split(/ +/, $tbuf);
+	    my ($ignore, $ts, $ignore) = split(/ +/, $tbuf);
 	    push @ts_clients, [$client, "$ts " . ytime()];
 	} elsif ($command eq 'rslt') {
 	    handle_rslt($tmp_sync_file_base, $expected_clients, $tbuf);
@@ -193,7 +209,7 @@ sub sync_one($$$$$$) {
 		link($tmp_error_file, $error_file) || die "Can't link $tmp_error_file to $error_file: $!\n";
 		timestamp("Waiting for error file $error_file to be removed");
 		while (-f $error_file) {
-		    sleep(5);
+		    sleep(1);
 		}
 	    } else {
 		timestamp("Message: $tbuf");
@@ -206,36 +222,9 @@ sub sync_one($$$$$$) {
 	}
 	$expected_clients--;
     }
-    timestamp("Done!");
-    if ($first_pass) {
-	touch("/tmp/clusterbuster-started");
-	if ($predelay > 0) {
-	    timestamp("Waiting $predelay seconds before start");
-	    sleep($predelay);
-	}
-    } elsif ($sync_count == 0) {
-	touch("/tmp/clusterbuster-finished");
-	if ($postdelay > 0) {
-	    timestamp("Waiting $postdelay seconds before end");
-	    sleep($postdelay);
-	}
-    }
-    my ($first_time, $last_time);
-    my ($start) = ytime();
     # Only reply to clients who provided a timestamp
-    my (@ts_msgs) = ();
     if (@ts_clients) {
-	timestamp("Returning client sync start time, sync start time, sync sent time");
-	foreach my $client (@ts_clients) {
-	    my ($time) = ytime();
-	    my ($client_fd, $client_ts) = @$client;
-	    my ($tbuf) = "$client_ts $start_time $start $time $base_start_time";
-	    syswrite($client_fd, $tbuf, length $tbuf);
-	    close($client_fd);
-	}
-	my ($end) = ytime();
-	my ($et) = $end - $start;
-	timestamp("Sending sync time took $et seconds");
+	reply_timestamp($start_time, $base_start_time, @ts_clients);
     }
     timestamp("Sync complete");
     POSIX::_exit(0);
@@ -256,7 +245,6 @@ my ($tmp_error_file) = (defined($error_file) && $error_file ne '') ? "${error_fi
 
 my (@tmp_sync_files) = map { "${tmp_sync_file_base}-$_" } (1..$expected_clients);
 
-my ($first_pass) = 1;
 my ($controller_timestamp_data) = get_controller_timing($controller_timestamp_file);
 timestamp("About to adjust timestamp");
 timestamp(sprintf("Max timebase error %f" , $$controller_timestamp_data{'offset_from_controller'}));
@@ -267,6 +255,7 @@ if ($sync_count == 0) {
     timestamp("No synchronization requested; sleeping $postdelay seconds");
     sleep($postdelay);
 } else {
+    my ($first_pass) = 1;
     while ($sync_count < 0 || $sync_count-- > 0) {
 	if (-e $tmp_error_file) {
 	    timestamp("Job failed, exiting");
@@ -278,14 +267,26 @@ if ($sync_count == 0) {
 	# clients and close them manually.
 	my $child = fork();
 	if ($child == 0) {
-	    sync_one($sock, $tmp_sync_file_base, $tmp_error_file, $first_pass, $start_time, $base_start_time);
+	    sync_one($sock, $tmp_sync_file_base, $tmp_error_file, $start_time, $base_start_time);
 	} elsif ($child < 1) {
 	    timestamp("Fork failed: $!");
 	    POSIX::_exit(1);
 	} else {
 	    wait();
 	}
-	$first_pass = 0;
+	if ($first_pass) {
+	    touch("/tmp/clusterbuster-started");
+	    if ($predelay > 0) {
+		timestamp("Waiting $predelay seconds before start");
+		sleep($predelay);
+	    }
+	    $first_pass = 0;
+	}
+    }
+    touch("/tmp/clusterbuster-finished");
+    if ($postdelay > 0) {
+	timestamp("Waiting $postdelay seconds before end");
+	sleep($postdelay);
     }
 }
 
@@ -325,7 +326,7 @@ close TMP || die "Can't close temporary sync file: $!\n";
 rename($tmp_sync_file_base, $sync_file) || die "Can't rename $tmp_sync_file_base to $sync_file: $!\n";
 timestamp("Waiting for sync file $sync_file to be removed");
 while (-f $sync_file) {
-    sleep(5);
+    sleep(1);
 }
 timestamp("Sync file $sync_file removed, exiting");
 

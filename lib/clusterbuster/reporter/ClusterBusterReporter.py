@@ -255,8 +255,7 @@ class ClusterBusterReporter:
             results['Sync offset from host'] = self._prettyprint(timing['sync_ts'] - timing['second_controller_ts'],
                                                                  precision=3, suffix='sec')
             offset_error = timing['second_controller_ts'] - timing['first_controller_ts']
-            results['Possible controller-sync offset error'] = self._prettyprint(offset_error,
-                                                                                 precision=3, suffix='sec')
+            results['Max sync offset error'] = self._prettyprint(offset_error, precision=3, suffix='sec')
 
     def _generate_row(self, results, row: dict):
         """
@@ -514,7 +513,7 @@ class ClusterBusterReporter:
         elif base > 0 and abs(num) >= base ** 1:
             return f'{self._fformat(num / base, precision=precision)} K{infix}{suffix}'
         elif abs(num) >= 1 or num == 0:
-            if integer != 0 or num == 0:
+            if integer != 0:
                 precision = 0
             return f'{self._fformat(num, precision=precision)} {suffix}'
         elif abs(num) >= 10 ** -3:

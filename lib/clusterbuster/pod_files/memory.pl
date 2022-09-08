@@ -10,7 +10,7 @@ my ($processes, $memory, $runtime) = parse_command_line(@ARGV);
 $SIG{TERM} = sub { kill 'KILL', -1; POSIX::_exit(0); };
 
 sub runit() {
-    initialize_timing($$);
+    initialize_timing();
     my ($mib_blk) = '';
     my ($kib_blk) = '';
     my ($leftover_blk) = '';

@@ -7,12 +7,12 @@ use JSON;
 my ($dir) = $ENV{'BAK_CONFIGMAP'};
 require "$dir/clientlib.pl";
 
-our ($dirs, $files_per_dir, $blocksize, $block_count, $processes, $direct, $drop_cache_service, $drop_cache_port, @dirs) = parse_command_line(@ARGV);
+my ($dirs, $files_per_dir, $blocksize, $block_count, $processes, $direct, $drop_cache_service, $drop_cache_port, @dirs) = parse_command_line(@ARGV);
 
 $SIG{TERM} = sub { POSIX::_exit(0); };
 my ($bufalign) = 8192;
 
-initialize_timing($$);
+initialize_timing();
 
 if ($#dirs < 0) {
     @dirs=("/tmp");

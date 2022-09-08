@@ -27,25 +27,28 @@ class cpusoaker_reporter(ClusterBusterReporter):
         # I'd like to do this, but if the nodes are out of sync time-wise, this will not
         # function correctly.
         ClusterBusterReporter._generate_summary(self, results)
-        results['Iterations'] = self._prettyprint(self._summary['work_iterations'], integer=1, precision=3)
+        results['Iterations'] = self._prettyprint(self._summary['work_iterations'],
+                                                  integer=1, precision=3, base=1000, suffix=' it')
         self._summary['work_iterations_sec'] = self._safe_div(self._summary['work_iterations'],
                                                               self._summary['data_run_interval'], number_only=True)
         results['Iterations/sec'] = self._prettyprint(self._safe_div(self._summary['work_iterations'],
                                                                      self._summary['data_run_interval']),
-                                                      precision=3)
+                                                      precision=3, base=1000, suffix=' it/sec')
         self._summary['work_iterations_cpu_sec'] = self._safe_div(self._summary['work_iterations'],
                                                                   self._summary['cpu_time'], number_only=True)
         results['Iterations/CPU sec'] = self._prettyprint(self._safe_div(self._summary['work_iterations'],
                                                                          self._summary['cpu_time']),
-                                                          precision=3)
+                                                          precision=3, base=1000, suffix=' it/sec')
 
     def _generate_row(self, results: dict, row: dict):
         ClusterBusterReporter._generate_row(self, results, row)
         result = {}
         result['Elapsed Time'] = self._fformat(row['data_elapsed_time'], 3)
-        result['Iterations'] = self._prettyprint(row['work_iterations'], integer=1, precision=3)
+        result['Iterations'] = self._prettyprint(row['work_iterations'], integer=1, precision=3, base=1000, suffix=' it')
         row['work_iterations_sec'] = self._safe_div(row['work_iterations'], row['data_elapsed_time'], number_only=True)
-        result['Iterations/sec'] = self._prettyprint(self._safe_div(row['work_iterations'], row['data_elapsed_time']), precision=3)
+        result['Iterations/sec'] = self._prettyprint(self._safe_div(row['work_iterations'], row['data_elapsed_time']),
+                                                     precision=3, base=1000, suffix=' it/sec')
         row['work_iterations_cpu_sec'] = self._safe_div(row['work_iterations'], row['cpu_time'], number_only=True)
-        result['Iterations/CPU sec'] = self._prettyprint(self._safe_div(row['work_iterations'], row['cpu_time']), precision=3)
+        result['Iterations/CPU sec'] = self._prettyprint(self._safe_div(row['work_iterations'], row['cpu_time']),
+                                                         precision=3, base=1000, suffix=' it/sec')
         self._insert_into(results, [row['namespace'], row['pod'], row['container']], result)
