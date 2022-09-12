@@ -14,4 +14,4 @@ sub runit() {
     timestamp("Done!");
 }
 
-run_workload(1, \&runit);
+run_workload(\&runit);

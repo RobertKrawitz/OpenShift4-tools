@@ -66,4 +66,4 @@ sub runit() {
     $scpu1 -= $scpu0;
     report_results($data_start_time, $data_end_time, $elapsed_time, $ucpu1, $scpu1);
 }
-run_workload($processes, \&runit);
+run_workload(\&runit, $processes);

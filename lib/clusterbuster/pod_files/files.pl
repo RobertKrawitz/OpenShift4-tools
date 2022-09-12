@@ -219,4 +219,4 @@ sub runit($) {
 		   $user_cpu, $system_cpu, \%extras);
 }
 
-run_workload($processes, \&runit);
+run_workload(\&runit, $processes);

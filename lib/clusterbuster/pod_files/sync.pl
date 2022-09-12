@@ -188,12 +188,14 @@ sub sync_one($$$$$) {
 	#my $peerhost = gethostbyaddr($addr, AF_INET);
 	my $peeraddr = inet_ntoa($addr);
 	my ($tbuf) = read_token($client);
+	timestamp("|$tbuf|");
 	if (! defined $tbuf) {
 	    timestamp("Read token from $peeraddr failed: $!");
 	}
-	timestamp("Accepted connection from $peeraddr on $port");
 	push @clients_protect_against_gc, $client;
 	my ($command) = lc substr($tbuf, 0, 4);
+	my ($payload_bytes) = length $tbuf - 4;
+	timestamp("Accepted connection from $peeraddr on $port, command $command, payload $payload_bytes");
 	$tbuf =~ s/^....\s+//;
 	if ($command eq 'time')  {
 	    my ($ignore, $ts, $ignore) = split(/ +/, $tbuf);
