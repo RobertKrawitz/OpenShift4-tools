@@ -31,14 +31,14 @@ function classic_create_deployment() {
     local -i instance
     create_sync_service_if_needed "$namespace" 2 "$((containers_per_pod * replicas * count))"
     for instance in $(seq $first_deployment $((count + first_deployment - 1))) ; do
-	create_standard_deployment -a classic_arglist -e classic.pl \
+	create_standard_deployment -a classic_arglist -e classic.py \
 				   "$namespace" "$instance" "$secret_count" "$replicas" "$containers_per_pod"
     done
 }
 
 function classic_list_configmaps() {
     cat <<EOF
-${__podfile_dir__}/classic.pl
+${__podfile_dir__}/classic.py
 EOF
 }
 

@@ -36,14 +36,14 @@ function synctest_create_deployment() {
     local -i instance
     create_sync_service_if_needed "$namespace" "$(((___synctest_count * ___synctest_cluster_count) + 2))" "$((containers_per_pod * replicas * processes_per_pod * count))"
     for instance in $(seq $first_deployment $((count + first_deployment - 1))) ; do
-	create_standard_deployment -a synctest_arglist -e synctest.pl \
+	create_standard_deployment -a synctest_arglist -e synctest.py \
 				   "$namespace" "$instance" "$secret_count" "$replicas" "$containers_per_pod"
     done
 }
 
 function synctest_list_configmaps() {
     cat <<EOF
-${__podfile_dir__}/synctest.pl
+${__podfile_dir__}/synctest.py
 EOF
 }
 

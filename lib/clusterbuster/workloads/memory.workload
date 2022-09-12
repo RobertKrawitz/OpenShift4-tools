@@ -33,14 +33,14 @@ function memory_create_deployment() {
     local -i instance
     create_sync_service_if_needed "$namespace" 2 "$((containers_per_pod * replicas * processes_per_pod * count))"
     for instance in $(seq $first_deployment $((count + first_deployment - 1))) ; do
-	create_standard_deployment -a memory_arglist -e memory.pl \
+	create_standard_deployment -a memory_arglist -e memory.py \
 				   "$namespace" "$instance" "$secret_count" "$replicas" "$containers_per_pod"
     done
 }
 
 function memory_list_configmaps() {
     cat <<EOF
-${__podfile_dir__}/memory.pl
+${__podfile_dir__}/memory.py
 EOF
 }
 
