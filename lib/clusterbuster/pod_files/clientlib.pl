@@ -2,16 +2,14 @@
 
 use Time::HiRes qw(gettimeofday usleep);
 use Time::Piece;
-use File::Temp qw(tempfile);
 use Socket;
 use Sys::Hostname;
-use strict;
 use JSON;
 use POSIX;
 use Scalar::Util qw(looks_like_number);
+use strict;
 
 my %timing_parameters = ();
-my ($last_sync_time) = -10;
 
 my ($namespace, $container, $basetime, $baseoffset, $crtime, $exit_at_end, $synchost, $syncport, $start_time, $pod);
 
@@ -288,8 +286,11 @@ sub finish(;$$) {
     }
 }
 
-sub run_workload($$;@) {
-    my ($processes, $run_func, @args) = @_;
+sub run_workload($;$@) {
+    my ($run_func, $processes, @args) = @_;
+    if ($processes < 1) {
+	$processes = 1;
+    }
     my (%pids) = ();
     for (my $i = 0; $i < $processes; $i++) {
 	my $child;
@@ -315,7 +316,7 @@ sub run_workload($$;@) {
     finish();
 }
 
-sub report_results($$$;$) {
+sub report_results($$$$$;$) {
     my ($data_start_time, $data_end_time, $data_elapsed_time, $user_cpu, $sys_cpu, $extra) = @_;
     my (%hash) = (
 	'application' => 'clusterbuster-json',

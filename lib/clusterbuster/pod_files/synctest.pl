@@ -27,4 +27,4 @@ sub runit() {
     report_results($data_start_time, $data_end_time, $data_end_time - $data_start_time, $ucpu1, $scpu1);
 }
 
-run_workload(1, \&runit);
+run_workload(\&runit);

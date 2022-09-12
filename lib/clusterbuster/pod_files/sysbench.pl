@@ -172,4 +172,4 @@ sub runit() {
     report_results($data_start_time, $data_end_time, $elapsed_time, $user, $sys, \%extras);
 }
 
-run_workload($processes, \&runit);
+run_workload(\&runit, $processes);

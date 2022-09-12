@@ -198,4 +198,4 @@ sub runit() {
     removeRundir();
 }
 
-run_workload($processes, \&runit);
+run_workload(\&runit, $processes);

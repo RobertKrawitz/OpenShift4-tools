@@ -77,4 +77,4 @@ sub runit() {
     timestamp("Done!");
     POSIX::exit($status);
 }
-run_workload(1, \&runit);
+run_workload(\&runit);

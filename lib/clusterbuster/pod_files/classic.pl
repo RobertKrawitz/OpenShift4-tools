@@ -30,4 +30,4 @@ sub runit() {
 		   $data_end_time - $data_start_time,
 		   $user, $sys);
 }
-run_workload(1, \&runit);
+run_workload(\&runit);

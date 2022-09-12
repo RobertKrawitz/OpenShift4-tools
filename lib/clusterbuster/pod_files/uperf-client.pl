@@ -247,4 +247,4 @@ sub runit() {
     report_results($data_start_time, $data_end_time, $elapsed_time, $ucpu1, $scpu1, \%results);
 }
 
-run_workload(1, \&runit);
+run_workload(\&runit);
