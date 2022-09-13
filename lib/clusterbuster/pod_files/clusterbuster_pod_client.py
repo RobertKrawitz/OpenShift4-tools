@@ -44,6 +44,29 @@ class clusterbuster_pod_client:
         self.__extra_args = argv[9:]
         self.__timing_parameters = {}
 
+    def toBool(arg, defval: bool = None):
+        if isinstance(arg, bool):
+            return arg
+        if isinstance(arg, (int, float)):
+            return arg != 0
+        if isinstance(arg, str):
+            arg = arg.lower()
+            if arg == 'true' or arg == 'yes':
+                return True
+            elif arg == 'false' or arg == 'no':
+                return False
+            try:
+                arg1 = int(arg)
+                return arg1 != 0
+            except Exception:
+                pass
+        if defval is not None:
+            return defval
+        raise Exception(f'Cannot parse {arg} as a boolean value')
+
+    def verbose(self):
+        return clusterbuster_pod_client.toBool(os.environ.get('VERBOSE', 0))
+
     def _run_cmd(self, cmd):
         try:
             answer = subprocess.run(cmd, stdout=subprocess.PIPE)
@@ -192,30 +215,40 @@ class clusterbuster_pod_client:
         while True:
             try:
                 try:
-                    sock = socket.socket()
+                    sock = socket.socket(family=socket.AF_INET, type=socket.SOCK_STREAM)
                 except Exception as err:
                     self.timestamp(f"Cannot create socket: {err}")
                     os._exit(1)
                 # We call gethostbyname() each time through the loop because
                 # the remote hostname might not exist immediately.
-                straddr = socket.gethostbyname(addr)
-                sock.connect((straddr, port))
+                sock.connect((addr, port))
                 return sock
             except Exception as err:
                 self.timestamp(f"Cannot connect to {addr} on port {port}: {err}")
                 time.sleep(1)
+            sock.close()
+
+    def listen(self, addr: str = None, port: int = None, backlog=5):
+        if addr is None:
+            addr = ''
+        try:
+            sock = socket.socket()
+            sock.bind(('', port))
+            sock.listen(backlog)
+            return sock
+        except Exception as err:
+            self.timestamp(f"Cannot create listener: {err}")
+            os._exit(1)
 
     def _do_sync_command(self, command: str, token: str = ''):
         lcommand = command.lower()
         if lcommand == 'sync' and (token is None or token == ''):
             token = f'{self._ts()} {self.__pod()}-{random.randrange(1000000000)}'
-        token = f'{command} {token}'
+        token = f'{command} {token}'.replace('%s', str(time.time()))
+        token = ('0x%08x%s' % (len(token), token)).encode()
         while True:
             self.timestamp(f'sync on {self.__synchost}:{self.__syncport}')
             sync_conn = self.connect_to()
-            ltime = str(time.time())
-            token = token.replace('%s', ltime)
-            token = ('0x%08x%s' % (len(token), token)).encode()
             while len(token) > 0:
                 if len(token) > 128:
                     self.timestamp(f'Writing {command}, {len(token)} bytes to sync')
@@ -232,6 +265,7 @@ class clusterbuster_pod_client:
                     os._exit(1)
             try:
                 answer = sync_conn.recv(1024)
+                sync_conn.close()
                 self.timestamp(f'sync complete, response {answer}')
                 return answer
             except Exception as err:
@@ -245,7 +279,8 @@ class clusterbuster_pod_client:
             buf = f'''
 Namespace/pod/container: {self.namespace()}/{self.podname()}/{self.container()} pid: {pid}
 {answer}
-Run oc logs -n '{self.namespace()}' '{self.podname()}' -c '{self.container()}'
+Run:
+oc logs -n '{self.namespace()}' '{self.podname()}' -c '{self.container()}'
 '''
             self._do_sync_command('FAIL', buf)
             if self.__exit_at_end:
@@ -279,13 +314,9 @@ Run oc logs -n '{self.namespace()}' '{self.podname()}' -c '{self.container()}'
             try:
                 child = os.fork()
                 if child == 0:  # Child
-                    try:
-                        run_func()
-                        self.timestamp(f"{os.getpid()} exiting")
-                        os._exit(0)
-                    except Exception as exc:
-                        self.timestamp(f"run_func failed: {exc}")
-                    os._exit(1)
+                    status = run_func()
+                    self.timestamp(f"{os.getpid()} exiting, status {status}")
+                    os._exit(status)
                 else:
                     pid_count = pid_count + 1
             except Exception as err:
@@ -325,6 +356,7 @@ Run oc logs -n '{self.namespace()}' '{self.podname()}' -c '{self.container()}'
         if isinstance(extra, dict):
             for key, val in extra.items():
                 answer[key] = val
+        self.timestamp(f"Report results: {self.namespace()}, {self.podname()}, {self.container()}, {os.getpid()}")
         self._do_sync_command('RSLT', json.dumps(self._clean_numbers(answer)))
 
     def sync_to_controller(self, token: str = None):

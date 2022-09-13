@@ -47,11 +47,11 @@ function server_create_deployment() {
 
     for instance in $(seq $first_deployment $((count + first_deployment - 1))) ; do
 	create_service "$namespace" "${namespace}-server-server-${instance}" "$port"
-	create_standard_deployment -w server-server -p -c server -e server.pl \
+	create_standard_deployment -w server-server -p -c server -e server.py \
 				   -A "$(create_affinity_yaml ${namespace}-server-client-${instance})" \
 				   -a server_server_arglist \
 				   "$namespace" "$instance" "$secret_count" 1 1
-	create_standard_deployment -w server-client -e client.pl \
+	create_standard_deployment -w server-client -e client.py \
 				   -A "$(create_affinity_yaml ${namespace}-server-server-${instance})" \
 				   -a server_client_arglist \
 				   "$namespace" "$instance" "$secret_count" "$replicas" "$containers_per_pod"
@@ -60,8 +60,8 @@ function server_create_deployment() {
 
 function server_list_configmaps() {
     cat <<EOF
-${__podfile_dir__}/client.pl
-${__podfile_dir__}/server.pl
+${__podfile_dir__}/client.py
+${__podfile_dir__}/server.py
 EOF
 }
 

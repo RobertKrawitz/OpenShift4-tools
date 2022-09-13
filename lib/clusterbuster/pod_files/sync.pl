@@ -168,7 +168,7 @@ sub reply_timestamp($$\@) {
 sub sync_one($$$$$) {
     my ($sock, $tmp_sync_file_base, $tmp_error_file, $start_time, $base_start_time) = @_;
     timestamp("Listening on port $listen_port");
-    listen($sock, 5) || die "listen: $!";
+    listen($sock, $expected_clients) || die "listen: $!";
     printf STDERR "Expect $expected_clients client%s\n", $expected_clients == 1 ? '' : 's';
     my (@ts_clients);
     # Ensure that the client file descriptors do not get gc'ed,
@@ -188,7 +188,6 @@ sub sync_one($$$$$) {
 	#my $peerhost = gethostbyaddr($addr, AF_INET);
 	my $peeraddr = inet_ntoa($addr);
 	my ($tbuf) = read_token($client);
-	timestamp("|$tbuf|");
 	if (! defined $tbuf) {
 	    timestamp("Read token from $peeraddr failed: $!");
 	}

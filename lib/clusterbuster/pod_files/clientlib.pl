@@ -268,7 +268,7 @@ sub finish(;$$) {
     if (defined $status && $status != 0) {
 	print STDERR "FAIL!\n";
 	my ($buf) = sprintf("Namespace/pod/container: %s/%s/%s%s\n%s\n", $namespace, $pod, $container, (defined $pid ? " pid: $pid" : ""), $answer);
-	$buf .= sprintf("Run oc logs -n '%s' '%s' -c '%s'\n", $namespace, $pod, $container);
+	$buf .= sprintf("Run:\noc logs -n '%s' '%s' -c '%s'\n", $namespace, $pod, $container);
 	_do_sync_command('FAIL', $buf);
 	if ($exit_at_end) {
 	    POSIX::_exit($status);
