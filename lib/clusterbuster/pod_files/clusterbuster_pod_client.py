@@ -30,6 +30,9 @@ from resource import getrusage, RUSAGE_SELF, RUSAGE_CHILDREN
 
 class clusterbuster_pod_client:
     def __init__(self, argv: list = sys.argv):
+        if len(argv) < 9:
+            print("clusterbuster_pod_client: incomplete argument list", file=sys.stderr)
+            os._exit(1)
         print(f"clusterbuster_pod_client {argv}", file=sys.stderr)
         self.__namespace = argv[1]
         self.__container = argv[2]
