@@ -46,6 +46,8 @@ class clusterbuster_pod_client:
         self.__pod = socket.gethostname()
         self.__extra_args = argv[9:]
         self.__timing_parameters = {}
+        self.__timing_initialized = False
+        self.__child_idx = None
 
     def toBool(arg, defval: bool = None):
         if isinstance(arg, bool):
@@ -125,8 +127,8 @@ class clusterbuster_pod_client:
         string = re.sub(r'\n(.*\S.*)', r'\n            \1', string)
         return '%7d %s %s\n' % (os.getpid(), self._ts(), string)
 
-    def timestamp(self, string: str):
-        print(self.get_timestamp(string), file=sys.stderr, end='')
+    def timestamp(self, string):
+        print(self.get_timestamp(str(string)), file=sys.stderr, end='')
 
     def drop_cache(self, service: str, port: int):
         self.timestamp("Dropping local cache")
@@ -163,6 +165,8 @@ class clusterbuster_pod_client:
         return [float(s) for s in string.split()]
 
     def initialize_timing(self, name_components: list = None):
+        if self.__timing_initialized:
+            return
         name = self.idname(name_components)
         self.timestamp("About to sync")
         data = self._do_sync_command('TIME', f'timestamp: %s {name}')
@@ -209,6 +213,7 @@ class clusterbuster_pod_client:
             self.timestamp('%-32s %.6f' % (key, val))
             self.__basetime += self.__baseoffset
             self.__crtime += self.__baseoffset
+        self.__timing_initialized = True
 
     def connect_to(self, addr: str = None, port: int = None):
         if addr is None:
@@ -309,28 +314,36 @@ oc logs -n '{self.namespace()}' '{self.podname()}' -c '{self.container()}'
             self.timestamp('Waiting forever')
             signal.pause()
 
-    def run_workload(self, run_func, processes: int = 1, args: list = None):
+    def run_workload(self, run_func, processes: int = 1, initialize_timing_if_needed: bool = True, *args):
         if processes < 1:
             processes = 1
         pid_count = 0
         for i in range(processes):
             try:
-                child = os.fork()
+                try:
+                    child = os.fork()
+                except Exception as err:
+                    self.timestamp(f"Fork failed: {err}")
+                    os._exit(1)
                 if child == 0:  # Child
-                    status = run_func()
+                    self.__child_idx = i
+                    if initialize_timing_if_needed and not self.__timing_initialized:
+                        self.initialize_timing()
+                    self.timestamp(f"About to run subprocess {i}")
+                    status = run_func(self, i, *args)
                     self.timestamp(f"{os.getpid()} exiting, status {status}")
                     os._exit(status)
                 else:
                     pid_count = pid_count + 1
             except Exception as err:
-                self.timestamp(f"Fork failed: {err}")
+                self.timestamp(f"Subprocess {i} failed: {err}")
                 os._exit(1)
         while pid_count > 0:
             try:
                 pid, status = os.wait()
+                status = int((status / 256)) | (status & 255)
                 self.timestamp(f"waited for {pid} => {status}")
                 if status != 0:
-                    status = int((status / 256)) | (status & 255)
                     self._finish(status, pid)
                 pid_count = pid_count - 1
             except Exception as err:

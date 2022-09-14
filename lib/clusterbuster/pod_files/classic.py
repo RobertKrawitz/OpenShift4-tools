@@ -11,10 +11,8 @@ from clusterbuster_pod_client import clusterbuster_pod_client
 client = clusterbuster_pod_client()
 sleep_time = float(client.command_line()[0])
 
-def runit():
+def runit(client: clusterbuster_pod_client, process: int, *args):
     client.timestamp(f"runit")
-    client.initialize_timing()
-    client.timestamp("Initialized timing")
     data_start_time = client.adjusted_time()
     client.timestamp(f"Got adjusted start time {data_start_time}")
     if sleep_time > 0:
@@ -22,7 +20,7 @@ def runit():
     client.timestamp(f"Slept {sleep_time}")
     data_end_time = client.adjusted_time()
     client.timestamp(f"Got adjusted end time {data_start_time}")
-    user, sys = client.cputime()
+    user, sys = client.cputimes()
     client.timestamp(f"User, system CPU time {user} {sys}")
     client.report_results(data_start_time, data_end_time, data_end_time - data_start_time, user, sys)
 

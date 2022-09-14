@@ -15,8 +15,7 @@ sync_cluster_count = int(sync_cluster_count)
 sync_sleep = float(sync_sleep)
 
 
-def runit():
-    client.initialize_timing()
+def runit(client: clusterbuster_pod_client, process: int, *args):
     user, system = client.cputimes()
     data_start_time = client.adjusted_time()
     for i in range(sync_count):

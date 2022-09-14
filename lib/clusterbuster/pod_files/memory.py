@@ -16,8 +16,7 @@ memory = int(memory)
 runtime = float(runtime)
 
 
-def runit():
-    client.initialize_timing()
+def runit(client: clusterbuster_pod_client, process: int, *args):
 
     user, system = client.cputimes()
     data_start_time = client.adjusted_time()

@@ -13,9 +13,7 @@ processes = int(processes)
 runtime = float(runtime)
 
 
-def runit():
-    client.initialize_timing()
-    client.timestamp("Initialized timing")
+def runit(client: clusterbuster_pod_client, processes: int, *args):
     iterations = 0
     loops_per_iteration = 10000
     firsttime = True

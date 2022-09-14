@@ -44,8 +44,8 @@ def run_one_server(conn):
             ntotal -= answer
 
 
-def runit():
-    global client, expected_clients
+def runit(client: clusterbuster_pod_client, process: int, *args):
+    global expected_clients
     sock = client.listen(port=listen_port, backlog=expected_clients)
 
     pid_count = 0
@@ -82,4 +82,4 @@ def runit():
     return 0
 
 
-client.run_workload(runit)
+client.run_workload(runit, initialize_timing_if_needed = False)

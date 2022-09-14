@@ -47,7 +47,7 @@ function files_create_deployment() {
     create_sync_service_if_needed "$namespace" 8 "$((containers_per_pod * processes_per_pod * replicas * count))"
     for instance in $(seq $first_deployment $((count + first_deployment - 1))) ; do
 	create_drop_cache_deployment "$namespace" "$workload" "$instance" "$replicas"
-	create_standard_deployment -e files.pl -a files_arglist -p \
+	create_standard_deployment -e files.py -a files_arglist -p \
 				   "$namespace" "$instance" "$secret_count" "$replicas" "$containers_per_pod"
     done
 }
@@ -62,6 +62,7 @@ function files_calculate_logs_required() {
 
 function files_list_configmaps() {
     cat <<EOF
+${__podfile_dir__}/files.py
 ${__podfile_dir__}/files.pl
 ${__podfile_dir__}/drop_cache.pl
 EOF

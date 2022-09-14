@@ -23,8 +23,7 @@ verbose = client.verbose()
 verbose = True
 
 
-def runit():
-    client.initialize_timing()
+def runit(client: clusterbuster_pod_client, process: int, *args):
 
     npass = 0
     ex = 0
