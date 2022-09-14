@@ -7,10 +7,10 @@ my ($dir) = $ENV{'BAK_CONFIGMAP'};
 require "$dir/clientlib.pl";
 
 my ($processes, $memory, $runtime) = parse_command_line(@ARGV);
+initialize_timing();
 $SIG{TERM} = sub { kill 'KILL', -1; POSIX::_exit(0); };
 
 sub runit() {
-    initialize_timing();
     my ($mib_blk) = '';
     my ($kib_blk) = '';
     my ($leftover_blk) = '';

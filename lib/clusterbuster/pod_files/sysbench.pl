@@ -7,15 +7,13 @@ my ($dir) = $ENV{'BAK_CONFIGMAP'};
 require "$dir/clientlib.pl";
 
 my ($processes, $rundir, $runtime, $sysbench_generic_args, $sysbench_cmd, $sysbench_fileio_args, $sysbench_modes) = parse_command_line(@ARGV);
-
-$SIG{TERM} = sub() { docleanup() };
+my ($localrundir);
 
 initialize_timing();
-my ($localrundir) = sprintf('%s/%s/%d', $rundir, podname(), $$);
 
 sub removeRundir() {
-    if (-d "$localrundir") {
-	open(CLEANUP, "-|", "rm -rf '$localrundir'");
+    if (-d $localrundir) {
+	open(CLEANUP, "-|", "rm", "-rf", $localrundir);
 	while (<CLEANUP>) {
 	    1;
 	}
@@ -42,6 +40,7 @@ my (%units_multiplier) = (
     );
 
 sub runit() {
+    $SIG{TERM} = sub() { docleanup() };
     my ($files) = 0;
     my ($totalbytes) = 0;
     my ($seconds) = 0;
@@ -49,6 +48,7 @@ sub runit() {
     my ($et) = 0;
     my (@known_sysbench_fileio_modes) = qw(seqwr seqrewr seqrd rndrd rndwr rndrw);
     my ($iterations) = 0;
+    $localrundir = sprintf('%s/%s/%d', $rundir, podname(), $$);
     my ($loops_per_iteration) = 10000;
     if ($sysbench_modes) {
         @known_sysbench_fileio_modes = split(/ +/, $sysbench_modes);

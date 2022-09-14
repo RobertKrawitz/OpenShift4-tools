@@ -893,11 +893,12 @@ function create_sync_service_if_needed() {
     local namespace=$1
     local sync_count=${2:-0}
     local sync_clients=${3:-0}
+    local initial_sync_clients=${4:-$sync_clients}
     if ((sync_count <= 0)) ; then return; fi
     if get_sync -q ; then
 	if [[ $namespace = "${namespaces_to_create[0]:-}" ]] ; then
 	    create_service -h "$sync_namespace" "${sync_namespace}-sync" "$sync_port"
-	    create_sync_deployment "$sync_namespace" "$sync_count" $((sync_clients * ${#namespaces_to_create[@]}))
+	    create_sync_deployment "$sync_namespace" "$sync_count" "$((sync_clients * ${#namespaces_to_create[@]}))" "$((initial_sync_clients * ${#namespaces_to_create[@]}))"
 	fi
 	create_external_service "$namespace" "${namespace}-sync" "$sync_port" "$global_sync_service"
     fi
@@ -2421,6 +2422,7 @@ function create_container_sync() {
     local namespace=$1
     local sync_count=${4:-1}
     local expected_clients=$5
+    local initial_expected_clients=$6
     cat <<EOF
 - name: ${namespace}
   image_pull_policy: $image_pull_policy
@@ -2440,6 +2442,7 @@ $(indent 2 bootstrap_command_yaml sync.pl)
   - "$postdelay"
   - "$sync_port"
   - "$expected_clients"
+  - "$initial_expected_clients"
   - "$sync_count"
 $(indent 2 volume_mounts_yaml "$namespace" 0 0)
 EOF
