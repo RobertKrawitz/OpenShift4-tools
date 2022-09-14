@@ -110,6 +110,7 @@ declare -i report=0
 declare report_format=summary
 declare -i precleanup=1
 declare -i cleanup=0
+declare -i cleanup_always=0
 declare -i timeout=0
 declare pathdir=${0%/*}
 declare -a unknown_opts=()
@@ -266,7 +267,8 @@ EOF
                         Process job file (-f)
        --sync           Synchronize start of workload instances (default yes)
        --precleanup     Clean up any prior objects
-       --cleanup        Clean up generated objects
+       --cleanup        Clean up generated objects unless there's a failure
+       --cleanup-always Clean up generated objects even if there is a failure
        --predelay=N     Delay for the specified time after workload
                         starts before it starts running.
        --postdelay=N    Delay for the specified time after workload
@@ -724,6 +726,7 @@ function process_option() {
 	scaledeployments)   	    scale_deployments=$(bool "$optvalue")	;;
 	precleanup)		    precleanup=$(bool "$optvalue")		;;
 	cleanup)		    cleanup=$(bool "$optvalue")			;;
+	cleanupalways)		    cleanup_always=$(bool "$optvalue")		;;
 	baseoffset)		    baseoffset=$optvalue			;;
 	# Synchronization
 	sync|syncstart)		    sync_start=$((1-sync_start))		;;
@@ -2878,7 +2881,7 @@ function run_clusterbuster_2() {
     if (( precleanup && doit )) ; then
 	do_cleanup -p 1>&2 || return 1
     fi
-    if ((cleanup)) ; then
+    if ((cleanup_always)) ; then
 	trap 'killthemall "Cleaning up"; wait; remove_tmpdir; doit=1; do_cleanup -f; exit 1' TERM INT HUP
     else
 	trap 'killthemall "Not cleaning up"; wait; remove_tmpdir; exit 1' TERM HUP INT
@@ -2935,7 +2938,7 @@ function run_clusterbuster_1() {
     local -i status=0
     run_clusterbuster_2
     status=$?
-    if ((cleanup && doit)) ; then
+    if (( (cleanup_always || (cleanup && status == 0)) && doit)) ; then
 	do_cleanup || {
 	    if ((status == 0)) ; then
 		status=1
