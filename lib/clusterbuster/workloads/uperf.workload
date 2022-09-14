@@ -56,7 +56,7 @@ function uperf_create_deployment() {
 
     for instance in $(seq "$first_deployment" $((count + first_deployment - 1))) ; do
 	create_service "$namespace" "${namespace}-uperf-server-${instance}" $(seq "$___uperf_port" $((___uperf_port + ___uperf_port_addrs)))
-	create_standard_deployment -w uperf-server -p -c server -e uperf-server.pl \
+	create_standard_deployment -w uperf-server -p -c server -e uperf-server.py \
 				   -A "$(create_affinity_yaml "${namespace}-uperf-client-${instance}")" \
 				   -a uperf_server_arglist \
 				   "$namespace" "$instance" "$secret_count" 1 1
@@ -71,7 +71,7 @@ function uperf_create_deployment() {
 function uperf_list_configmaps() {
     cat <<EOF
 ${__podfile_dir__}/uperf-client.pl
-${__podfile_dir__}/uperf-server.pl
+${__podfile_dir__}/uperf-server.py
 ${__podfile_dir__}/uperf-mini.xml
 ${__podfile_dir__}/uperf-rr.xml
 ${__podfile_dir__}/uperf-stream.xml
