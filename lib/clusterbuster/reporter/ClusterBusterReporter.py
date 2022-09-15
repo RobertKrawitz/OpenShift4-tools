@@ -575,10 +575,11 @@ class ClusterBusterReporter:
 
         results1 = results
         while len(path) > 1:
-            key = path.pop(0)
+            key = str(path.pop(0))
             if key not in results1:
                 results1[key] = {}
             results1 = results1[key]
+        key = str(path.pop())
         results1[key] = value
 
     def _copy_formatted_value(self, var: str, dest: dict, source: dict):
