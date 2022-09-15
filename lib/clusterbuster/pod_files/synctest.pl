@@ -5,10 +5,10 @@ use strict;
 my ($dir) = $ENV{'BAK_CONFIGMAP'};
 require "$dir/clientlib.pl";
 
-my ($sync_count, $sync_cluster_count, $sync_sleep) = parse_command_line(@ARGV);
+my ($sync_count, $sync_cluster_count, $sync_sleep, $processes) = parse_command_line(@ARGV);
+initialize_timing();
 
 sub runit() {
-    initialize_timing();
     my ($data_start_time) = xtime();
     my ($ucpu0, $scpu0) = cputime();
     foreach my $i (1..$sync_count) {
@@ -27,4 +27,4 @@ sub runit() {
     report_results($data_start_time, $data_end_time, $data_end_time - $data_start_time, $ucpu1, $scpu1);
 }
 
-run_workload(\&runit);
+run_workload(\&runit, $processes);

@@ -5,7 +5,8 @@ use strict;
 my ($dir) = $ENV{'BAK_CONFIGMAP'};
 require "$dir/clientlib.pl";
 
-my ($sleep_time) = parse_command_line(@ARGV);
+my ($sleep_time, $processes) = parse_command_line(@ARGV);
+initialize_timing();
 
 sub runit() {
     my $pass = 0;
@@ -14,7 +15,6 @@ sub runit() {
     my ($cfail) = 0;
     my ($refused) = 0;
     my $time_overhead = 0;
-    initialize_timing();
     $SIG{TERM} = sub { POSIX::_exit(0); };
 
     timestamp("Clusterbuster pod starting");
@@ -30,4 +30,4 @@ sub runit() {
 		   $data_end_time - $data_start_time,
 		   $user, $sys);
 }
-run_workload(\&runit);
+run_workload(\&runit, $processes);

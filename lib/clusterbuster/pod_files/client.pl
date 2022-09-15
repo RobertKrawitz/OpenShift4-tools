@@ -7,6 +7,7 @@ my ($dir) = $ENV{'BAK_CONFIGMAP'};
 require "$dir/clientlib.pl";
 
 my ($srvhost, $connect_port, $data_rate, $bytes, $bytes_max, $msg_size, $xfertime, $xfertime_max) = parse_command_line(@ARGV);
+initialize_timing();
 
 sub runit() {
     my ($data_start_time, $data_end_time, $elapsed_time, $end_time, $user, $sys, $cuser, $csys);
@@ -22,7 +23,6 @@ sub runit() {
     my $ex2 = 0;
     my ($cfail) = 0;
     my ($refused) = 0;
-    initialize_timing();
 
     $SIG{TERM} = sub { POSIX::_exit(0); };
     timestamp("Clusterbuster client starting");
