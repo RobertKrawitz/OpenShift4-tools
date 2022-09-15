@@ -20,10 +20,14 @@ GetOptions("v!"  => \$verbose,
 	   "f:s" => \$sync_file,
 	   "e:s" => \$error_file);
 
-my ($listen_port, $expected_clients, $sync_count) = @ARGV;
+my ($listen_port, $expected_clients, $initial_expected_clients, $sync_count) = @ARGV;
 if ($sync_count < 1 || $expected_clients < 1) {
     timestamp("Sync requested with no clients or no syncs");
     POSIX::exit(0);
+}
+
+if ($initial_expected_clients <= 0) {
+    $initial_expected_clients = $expected_clients;
 }
 
 sub xtime() {
@@ -165,8 +169,8 @@ sub reply_timestamp($$\@) {
     timestamp("Sending sync time took $et seconds");
 }
 
-sub sync_one($$$$$) {
-    my ($sock, $tmp_sync_file_base, $tmp_error_file, $start_time, $base_start_time) = @_;
+sub sync_one($$$$$$) {
+    my ($sock, $tmp_sync_file_base, $tmp_error_file, $start_time, $base_start_time, $expected_clients) = @_;
     timestamp("Listening on port $listen_port");
     listen($sock, $expected_clients) || die "listen: $!";
     printf STDERR "Expect $expected_clients client%s\n", $expected_clients == 1 ? '' : 's';
@@ -268,7 +272,7 @@ if ($sync_count == 0) {
 	# clients and close them manually.
 	my $child = fork();
 	if ($child == 0) {
-	    sync_one($sock, $tmp_sync_file_base, $tmp_error_file, $start_time, $base_start_time);
+	    sync_one($sock, $tmp_sync_file_base, $tmp_error_file, $start_time, $base_start_time, $first_pass ? $initial_expected_clients : $expected_clients);
 	} elsif ($child < 1) {
 	    timestamp("Fork failed: $!");
 	    POSIX::_exit(1);

@@ -6,9 +6,9 @@ my ($dir) = $ENV{'BAK_CONFIGMAP'};
 require "$dir/clientlib.pl";
 
 my ($processes, $runtime) = parse_command_line(@ARGV);
+initialize_timing();
 
 sub runit() {
-    initialize_timing();
     $SIG{TERM} = sub { kill 'KILL', -1; POSIX::_exit(0); };
     my ($iterations) = 0;
     my ($loops_per_iteration) = 10000;

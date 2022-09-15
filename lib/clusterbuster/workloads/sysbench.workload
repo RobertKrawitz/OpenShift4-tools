@@ -38,7 +38,9 @@ function sysbench_create_deployment() {
     local replicas=${4:-1}
     local containers_per_pod=${5:-1}
     local -i instance
-    create_sync_service_if_needed "$namespace" "$(( (${#___sysbench_fileio_tests[@]} * 3) + 2))" "$((containers_per_pod * replicas * count))"
+    create_sync_service_if_needed "$namespace" "$(( (${#___sysbench_fileio_tests[@]} * 3) + 2))" \
+				  "$((containers_per_pod * processes_per_pod * replicas * count))" \
+				  "$((containers_per_pod * replicas * count))"
     for instance in $(seq $first_deployment $((count + first_deployment - 1))) ; do
 	create_standard_deployment -a sysbench_arglist -e sysbench.pl \
 				   "$namespace" "$instance" "$secret_count" "$replicas" "$containers_per_pod"
