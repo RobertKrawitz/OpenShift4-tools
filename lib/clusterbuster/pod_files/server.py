@@ -2,14 +2,13 @@
 
 import sys
 import os
-import socket
 
 
 if 'BAK_CONFIGMAP' in os.environ:
     sys.path.insert(0, os.environ['BAK_CONFIGMAP'])
 from clusterbuster_pod_client import clusterbuster_pod_client
 
-client = clusterbuster_pod_client()
+client = clusterbuster_pod_client(initialize_timing_if_needed=False)
 listen_port, msg_size, ts, expected_clients = client.command_line()
 listen_port = int(listen_port)
 msg_size = int(msg_size)
@@ -82,4 +81,4 @@ def runit(client: clusterbuster_pod_client, process: int, *args):
     return 0
 
 
-client.run_workload(runit, initialize_timing_if_needed = False)
+client.run_workload(runit)

@@ -9,10 +9,11 @@ if 'BAK_CONFIGMAP' in os.environ:
 from clusterbuster_pod_client import clusterbuster_pod_client
 
 client = clusterbuster_pod_client()
-sync_count, sync_cluster_count, sync_sleep = client.command_line()
+sync_count, sync_cluster_count, sync_sleep, processes = client.command_line()
 sync_count = int(sync_count)
 sync_cluster_count = int(sync_cluster_count)
 sync_sleep = float(sync_sleep)
+processes = int(processes)
 
 
 def runit(client: clusterbuster_pod_client, process: int, *args):
@@ -20,9 +21,9 @@ def runit(client: clusterbuster_pod_client, process: int, *args):
     data_start_time = client.adjusted_time()
     for i in range(sync_count):
         for j in range(sync_cluster_count):
-            client.sync_to_controller(client.idname([os.getpid(), i, j]))
+            client.sync_to_controller(client.idname([i, j]))
         if sync_sleep > 0:
-            time.sleep(sync_sleep * 1000000)
+            time.sleep(sync_sleep)
     user1, system1 = client.cputimes()
     data_end_time = client.adjusted_time()
     user1 -= user
@@ -30,4 +31,4 @@ def runit(client: clusterbuster_pod_client, process: int, *args):
     client.report_results(data_start_time, data_end_time, data_end_time - data_start_time, user, system)
 
 
-client.run_workload(runit)
+client.run_workload(runit, processes)

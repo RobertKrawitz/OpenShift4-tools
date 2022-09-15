@@ -29,7 +29,7 @@ from resource import getrusage, RUSAGE_SELF, RUSAGE_CHILDREN
 
 
 class clusterbuster_pod_client:
-    def __init__(self, argv: list = sys.argv):
+    def __init__(self, initialize_timing_if_needed: bool = True, argv: list = sys.argv):
         if len(argv) < 9:
             print("clusterbuster_pod_client: incomplete argument list", file=sys.stderr)
             os._exit(1)
@@ -47,6 +47,8 @@ class clusterbuster_pod_client:
         self.__extra_args = argv[9:]
         self.__timing_parameters = {}
         self.__timing_initialized = False
+        if initialize_timing_if_needed:
+            self._initialize_timing()
         self.__child_idx = None
 
     def toBool(arg, defval: bool = None):
@@ -164,10 +166,10 @@ class clusterbuster_pod_client:
     def _fsplit(self, string: str):
         return [float(s) for s in string.split()]
 
-    def initialize_timing(self, name_components: list = None):
+    def _initialize_timing(self):
         if self.__timing_initialized:
             return
-        name = self.idname(name_components)
+        name = self.idname()
         self.timestamp("About to sync")
         data = self._do_sync_command('TIME', f'timestamp: %s {name}')
         try:
@@ -261,7 +263,7 @@ class clusterbuster_pod_client:
                 if len(token) > 128:
                     self.timestamp(f'Writing {command}, {len(token)} bytes to sync')
                 else:
-                    self.timestamp(f'Writing token {token} to sync')
+                    self.timestamp(f'Writing token {token.decode("utf-8")} to sync')
                 try:
                     answer = sync_conn.send(token)
                     if answer <= 0:
@@ -274,7 +276,7 @@ class clusterbuster_pod_client:
             try:
                 answer = sync_conn.recv(1024)
                 sync_conn.close()
-                self.timestamp(f'sync complete, response {answer}')
+                self.timestamp(f'sync complete, response {answer.decode("utf-8")}')
                 return answer
             except Exception as err:
                 self.timestamp(f'sync failed {err}, retrying')
@@ -314,7 +316,7 @@ oc logs -n '{self.namespace()}' '{self.podname()}' -c '{self.container()}'
             self.timestamp('Waiting forever')
             signal.pause()
 
-    def run_workload(self, run_func, processes: int = 1, initialize_timing_if_needed: bool = True, *args):
+    def run_workload(self, run_func, processes: int = 1, *args):
         if processes < 1:
             processes = 1
         pid_count = 0
@@ -327,10 +329,10 @@ oc logs -n '{self.namespace()}' '{self.podname()}' -c '{self.container()}'
                     os._exit(1)
                 if child == 0:  # Child
                     self.__child_idx = i
-                    if initialize_timing_if_needed and not self.__timing_initialized:
-                        self.initialize_timing()
                     self.timestamp(f"About to run subprocess {i}")
                     status = run_func(self, i, *args)
+                    if status is None:
+                        status = 0
                     self.timestamp(f"{os.getpid()} exiting, status {status}")
                     os._exit(status)
                 else:
