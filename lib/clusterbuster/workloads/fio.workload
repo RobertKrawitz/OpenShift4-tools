@@ -53,7 +53,8 @@ function fio_create_deployment() {
     local containers_per_pod=${5:-1}
     local -i instance
     local -i syncs_needed=$((2 + (${#___fio_patterns[@]} * ${#___fio_blocksizes[@]} * ${#___fio_iodepths[@]} * ${#___fio_directs[@]} * ${#___fio_fdatasyncs[@]} * ${#___fio_ioengines[@]}) ))
-    create_sync_service_if_needed "$namespace" "$syncs_needed" "$((containers_per_pod * replicas * count))"
+    create_sync_service_if_needed "$namespace" "$syncs_needed" "$((containers_per_pod * processes_per_pod * replicas * count))" \
+				  "$((containers_per_pod * replicas * count))"
     for instance in $(seq "$first_deployment" $((count + first_deployment - 1))) ; do
 	create_drop_cache_deployment "$namespace" "$workload" "$instance" "$replicas"
 	create_standard_deployment  -a fio_arglist -e fio.pl -p \

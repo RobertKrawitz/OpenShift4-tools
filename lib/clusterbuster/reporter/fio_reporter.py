@@ -38,7 +38,7 @@ class fio_reporter(ClusterBusterReporter):
             accumulators.append('results.{job}.job_results.jobs.sync.lat_ns.max')
             accumulators.append('results.{job}.job_results.jobs.sync.lat_ns.mean')
         self._add_accumulators(accumulators)
-        self._set_header_components(['namespace', 'pod', 'container', 'job', 'operation'])
+        self._set_header_components(['namespace', 'pod', 'container', 'process_id'])
 
     def __update_report(self, dest: dict, source: dict, max_key: str, rows: int = 1):
         for job in self._job_names:
@@ -49,7 +49,7 @@ class fio_reporter(ClusterBusterReporter):
                 pop = f'operation: {op}'
                 source1 = source[job]['job_results'][op]
                 if source1['io_kbytes'] > 0:
-                    if op not in dest:
+                    if pop not in dest:
                         dest[pjob][pop] = {}
                     dest1 = dest[pjob][pop]
                     ios = source1['total_ios']
@@ -99,4 +99,4 @@ class fio_reporter(ClusterBusterReporter):
         ClusterBusterReporter._generate_row(self, results, row)
         result = {}
         self.__update_report(result, row['results'], 'max')
-        self._insert_into(results, [row['namespace'], row['pod'], row['container']], result)
+        self._insert_into(results, [row['namespace'], row['pod'], row['container'], str(row['process_id'])], result)
