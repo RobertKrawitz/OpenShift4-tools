@@ -173,7 +173,7 @@ sub get_jobfiles($$$) {
 }
 
 sub runit() {
-    my ($localid) = idname('-s', $$);
+    my ($localid) = idname('-d', $$);
     $localrundir = "$rundir/$localid";
     my ($tmp_jobfilesdir) = "/tmp/fio-${localid}.job";
     mkdir "$tmp_jobfilesdir" || die "Can't create job directory $tmp_jobfilesdir: $!\n";
