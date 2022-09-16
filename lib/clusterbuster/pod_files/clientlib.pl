@@ -122,6 +122,21 @@ sub get_timing_parameter($) {
     return $timing_parameters{$parameter};
 }
 
+sub resolve_host($) {
+    my ($host) = @_;
+    while (1) {
+        my ($fname,$faliases,$ftype,$flen,$faddr) = gethostbyname($host);
+	if (length($faddr) < 4) {
+	    timestamp("gethostbyname $host FAILED!");
+	    sleep(1);
+	} else {
+	    my ($dqhost) = inet_ntoa($faddr);
+	    timestamp("gethostbyname $host -> $dqhost");
+	    return $dqhost;
+	}
+    }
+}
+
 sub connect_to($$) {
     my ($addr, $port) = @_;
     my ($connected) = 0;
