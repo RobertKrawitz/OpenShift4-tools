@@ -36,6 +36,10 @@ sub process_file($$%) {
     close OUT || die "Can't close $outfile: $!\n";
 }
 
+my ($orig_srvhost) = $srvhost;
+$srvhost = resolve_host($orig_srvhost);
+timestamp("srvhost $orig_srvhost resolves to $srvhost");
+
 my (%options) = (
     'srvhost' => $srvhost,
     'runtime' => 1,
@@ -175,7 +179,7 @@ sub runit() {
 		push @failed_cases, $test_name;
 	    }
 	}
-	if (! close(RUN)) {
+	if (! close(RUN) || $failed) {
 	    timestamp("Uperf failed: $! $?");
 	    exit(1);
 	}
