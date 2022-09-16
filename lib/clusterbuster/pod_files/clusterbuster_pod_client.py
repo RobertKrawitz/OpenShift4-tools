@@ -217,6 +217,14 @@ class clusterbuster_pod_client:
             self.__crtime += self.__baseoffset
         self.__timing_initialized = True
 
+    def resolve_host(self, hostname: str):
+        while True:
+            try:
+                return socket.gethostbyname(hostname)
+            except socket.gaierror as err:
+                self.timestamp(f"gethostbyname({hostname}) failed: {err}")
+                time.sleep(1)
+
     def connect_to(self, addr: str = None, port: int = None):
         if addr is None:
             addr = self.__synchost
