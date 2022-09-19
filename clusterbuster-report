@@ -21,8 +21,8 @@ from lib.clusterbuster.reporter.ClusterBusterReporter import ClusterBusterReport
 parser = argparse.ArgumentParser(description='Generate ClusterBuster report')
 report_formats = ClusterBusterReporter.list_report_formats()
 
-parser.add_argument('-o', '--format', '--output_format', '--output', default='summary', type=str,
-                    choices=report_formats)
+parser.add_argument('-o', '--format', '--output_format', '--output', default='summary', metavar='format', type=str,
+                    choices=report_formats, help=f'Report format: one of {", ".join(report_formats)}')
 parser.add_argument('--list_formats', action='store_true', help='List available report formats')
 parser.add_argument("files", metavar='file', type=str, nargs='*', help='Files to process')
 

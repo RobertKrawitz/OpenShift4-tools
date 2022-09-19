@@ -53,8 +53,6 @@ class ClusterBusterAnalyzeSummaryGeneric(ClusterBusterAnalyzeOne):
     def __report_one_dimension(self, accumulator: dict):
         answer = dict()
         for variable in self._variables:
-            min_ratio = None
-            max_ratio = None
             if variable not in accumulator:
                 continue
             if variable not in answer:
@@ -77,7 +75,7 @@ class ClusterBusterAnalyzeSummaryGeneric(ClusterBusterAnalyzeOne):
                 min_ratio = None
                 max_ratio = None
                 for i in range(len(value['runc']['values'])):
-                    if 'kata' not in value or i not in value['kata']['values'] or i not in value['runc']['values']:
+                    if 'kata' not in value or i >= len(value['kata']['values']):
                         continue
                     ratio = value['kata']['values'][i] / value['runc']['values'][i]
                     if min_ratio is None or ratio < min_ratio:

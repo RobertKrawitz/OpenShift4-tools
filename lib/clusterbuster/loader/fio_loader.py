@@ -51,4 +51,3 @@ class fio_loader(LoadOneReport):
                         root['total']['iops'] = 0
                     root[op]['iops'] = result[op]['io_rate']
                     root['total']['iops'] += result[op]['io_rate']
-        print(self._answer, file=sys.stderr)
