@@ -44,9 +44,7 @@ def runit(client: clusterbuster_pod_client, processes: int, *args):
                 prevtime = ntime
                 prevcpu = cpu
     data_end_time = client.adjusted_time()
-    user1, system1 = client.cputimes()
-    user = user1 - user
-    system = system1 - system
+    user, system = client.cputimes(user, system)
     extra = {
         'work_iterations': iterations
         }

@@ -135,7 +135,7 @@ sub run_one_operation($$$$$$) {
     sync_to_controller(idname($process, "start $op_name2"));
     timestamp("$op_name0 files...");
     drop_cache($drop_cache_service, $drop_cache_port);
-    my ($ucpu0, $scpu0) = cputime();
+    my ($ucpu, $scpu) = cputimes();
     my ($op_start_time) = xtime() - $data_start_time;
     my ($ops) = &$op_func($process);
     my ($op_end_time_0) = xtime() - $data_start_time;
@@ -143,9 +143,7 @@ sub run_one_operation($$$$$$) {
     my ($op_end_time) = xtime() - $data_start_time;
     my ($op_elapsed_time) = $op_end_time - $op_start_time;
     my ($op_elapsed_time_0) = $op_end_time_0 - $op_start_time;
-    my ($ucpu1, $scpu1) = cputime();
-    $ucpu1 -= $ucpu0;
-    $scpu1 -= $scpu0;
+    my ($ucpu, $scpu) = cputimes($ucpu, $scpu);
     my (%answer) = (
 	'operation_elapsed_time' => $op_elapsed_time,
 	'user_cpu_time' => $ucpu1,
@@ -166,13 +164,11 @@ sub run_one_operation($$$$$$) {
     }
     timestamp("$op_name1 files...");
     sync_to_controller(idname($process, "end $op_name2"));
-    return (\%answer, $op_start_time, $op_end_time, $ucpu1, $scpu1);
+    return (\%answer, $op_start_time, $op_end_time, $ucpu, $scpu);
 }
 
 sub runit($) {
     my ($process) = @_;
-    my ($basecpu) = cputime();
-    my ($prevcpu) = $basecpu;
     my ($iterations) = 1;
     my ($data_start_time) = xtime();
     # Make sure everything is cleared out first...but don't count the time here.

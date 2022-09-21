@@ -37,7 +37,7 @@ sub runit() {
 	}
     }
     my ($ptr) = 0;
-    my ($ucpu0, $scpu0) = cputime();
+    my ($ucpu, $scpu) = cputimes();
     my ($data_start_time) = xtime();
     if ($bigblocks) {
 	foreach my $i (0..$bigblocks - 1) {
@@ -61,9 +61,7 @@ sub runit() {
     }
     my ($data_end_time) = xtime();
     my ($elapsed_time) = $data_end_time - $data_start_time;
-    my ($ucpu1, $scpu1) = cputime();
-    $ucpu1 -= $ucpu0;
-    $scpu1 -= $scpu0;
-    report_results($data_start_time, $data_end_time, $elapsed_time, $ucpu1, $scpu1);
+    my ($ucpu, $scpu) = cputimes($ucpu, $scpu);
+    report_results($data_start_time, $data_end_time, $elapsed_time, $ucpu, $scpu);
 }
 run_workload(\&runit, $processes);

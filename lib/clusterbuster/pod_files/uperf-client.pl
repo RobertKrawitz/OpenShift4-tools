@@ -76,7 +76,7 @@ my (%cases);
 my (@failed_cases) = ();
 
 sub runit() {
-    my ($ucpu0, $scpu0) = cputime();
+    my ($ucpu, $scpu) = cputimes();
     foreach my $test (@tests) {
 	my ($test_type, $proto, $size, $nthr) = split(/, */, $test);
 	my ($base_test_name) = "${proto}-${test_type}-${size}B-${nthr}i";
@@ -244,11 +244,9 @@ sub runit() {
     $results{'results'} = \%cases;
     $results{'failed'} = \@failed_cases;
 
-    my ($ucpu1, $scpu1) = cputime();
-    $ucpu1 -= $ucpu0;
-    $scpu1 -= $scpu0;
+    my ($ucpu, $scpu) = cputimes($ucpu, $scpu);
 
-    report_results($data_start_time, $data_end_time, $elapsed_time, $ucpu1, $scpu1, \%results);
+    report_results($data_start_time, $data_end_time, $elapsed_time, $ucpu, $scpu, \%results);
 }
 
 run_workload(\&runit);

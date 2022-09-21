@@ -24,10 +24,8 @@ def runit(client: clusterbuster_pod_client, process: int, *args):
             client.sync_to_controller(client.idname([i, j]))
         if sync_sleep > 0:
             time.sleep(sync_sleep)
-    user1, system1 = client.cputimes()
+    user, system = client.cputimes(user, system)
     data_end_time = client.adjusted_time()
-    user1 -= user
-    system1 -= system
     client.report_results(data_start_time, data_end_time, data_end_time - data_start_time, user, system)
 
 

@@ -145,7 +145,7 @@ def removethem(client: clusterbuster_pod_client, pid: int, oktofail: bool = Fals
 def run_one_operation(client: clusterbuster_pod_client, op_name0: str, op_name1: str, op_name2: str, op_func, pid: int, data_start_time: float):
     client.sync_to_controller(client.idname([pid, f"start {op_name2}"]))
     client.drop_cache(drop_cache_service, drop_cache_port)
-    ucpu0, scpu0 = client.cputimes()
+    ucpu, scpu = client.cputimes()
     op_start_time = client.adjusted_time() - data_start_time
     ops = op_func(client, pid)
     op_end_time_0 = client.adjusted_time() - data_start_time
@@ -153,14 +153,12 @@ def run_one_operation(client: clusterbuster_pod_client, op_name0: str, op_name1:
     op_end_time = client.adjusted_time() - data_start_time
     op_elapsed_time = op_end_time - op_start_time
     op_elapsed_time_0 = op_end_time_0 - op_start_time
-    ucpu1, scpu1 = client.cputimes()
-    ucpu1 -= ucpu0
-    scpu1 -= scpu0
+    ucpu, scpu = client.cputimes(ucpu, scpu)
     answer = {
         'operation_elapsed_time': op_elapsed_time,
-        'user_cpu_time': ucpu1,
-        'system_cpu_time': scpu1,
-        'cpu_time': ucpu1 + scpu1,
+        'user_cpu_time': ucpu,
+        'system_cpu_time': scpu,
+        'cpu_time': ucpu + scpu,
         'operation_start': op_start_time,
         'operation_end': op_end_time,
         'operations': ops,

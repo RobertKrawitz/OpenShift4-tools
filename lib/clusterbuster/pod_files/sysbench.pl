@@ -71,7 +71,7 @@ sub runit() {
     my ($interval) = 5;
     my $data_start_time = xtime();
 
-    my ($base0_user, $base0_sys) = cputime();
+    my ($user, $sys) = cputimes();
     foreach my $mode (@known_sysbench_fileio_modes) {
 	sync_to_controller(idname("$mode+prepare"));
 	timestamp("Preparing...");
@@ -94,7 +94,7 @@ sub runit() {
 	close PREPARE;
 
 	sync_to_controller(idname("$mode+start"));
-	my ($op0_user, $op0_sys) = cputime();
+	my ($op_user, $op_sys) = cputimes();
 	timestamp("Running...");
 	timestamp("sysbench --time=$runtime $sysbench_generic_args $sysbench_cmd run --file-test-mode=$mode $sysbench_fileio_args");
 	open(RUN, "-|", "sysbench --time=$runtime $sysbench_generic_args $sysbench_cmd run --file-test-mode=$mode $sysbench_fileio_args") || die "Can't run sysbench: $!\n";
@@ -145,9 +145,9 @@ sub runit() {
 	}
 	close RUN;
 	wait();
-	my ($op1_user, $op1_sys) = cputime();
-	$op_answer{'user_cpu_time'} = $op1_user - $op0_user;
-	$op_answer{'sys_cpu_time'} = $op1_sys - $op0_sys;
+	my ($op_user, $op_sys) = cputimes($op_user, $op_sys);
+	$op_answer{'user_cpu_time'} = $op_user;
+	$op_answer{'sys_cpu_time'} = $op_sys;
 	sync_to_controller(idname("$mode+finish"));
 	timestamp("Cleanup...");
 	timestamp("sysbench --time=$runtime $sysbench_generic_args $sysbench_cmd cleanup --file-test-mode=$mode $sysbench_fileio_args");
@@ -163,9 +163,7 @@ sub runit() {
     }
     my $data_end_time = xtime();
     my ($elapsed_time) = $data_end_time - $data_start_time;
-    my ($base1_user, $base1_sys) = cputime();
-    my ($user) = $base1_user - $base0_user;
-    my ($sys) = $base1_sys - $base0_sys;
+    my ($user, $sys) = cputimes($user, $sys);
     my (%extras) = (
 	'workloads' => \%op_answers
 	);

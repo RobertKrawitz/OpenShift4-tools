@@ -19,8 +19,8 @@ sub runit() {
     my ($interval) = 5;
 
     my ($data_start_time) = xtime();
-    my ($suser, $ssys, $scuser, $scsys) = times;
-    my ($scputime) = cputime();
+    my ($user, $sys) = cputimes();
+    my ($scputime) = $user + $sys;
     my ($basecpu) = $scputime;
     my ($prevcpu) = $basecpu;
     my ($prevtime) = $data_start_time;
@@ -34,7 +34,6 @@ sub runit() {
 	    my ($ntime) = xtime();
 	    if ($ntime - $prevtime >= $interval) {
 		my (@times) = times();
-		my ($user, $system, $cuser, $csystem) = times();
 		my ($etime) = $ntime - $data_start_time;
 		my ($cpu) = cputime();
 		my ($cputime) = $cpu - $basecpu;
@@ -51,10 +50,7 @@ sub runit() {
         }
     }
     my ($data_end_time) = xtime();
-    my ($cputime) = cputime() - $scputime;
-    my ($euser, $esys, $ecuser, $ecsys) = times;
-    my ($user) = $euser - $suser;
-    my ($sys) = $esys - $ssys;
+    my ($user, $sys) = cputimes($user, $sys);
     my (%extra) = (
 	'work_iterations' => $iterations
 	);

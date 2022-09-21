@@ -65,11 +65,22 @@ sub calibrate_time() {
     return $time_overhead / 1000;
 }
 
-sub cputime() {
+sub cputimes(;$$) {
+    my ($olduser, $oldsys) = @_;
+    $olduser = 0 if ! defined $olduser;
+    $oldsys = 0 if ! defined $oldsys;
     my (@times) = times();
     my ($usercpu) = $times[0] + $times[2];
     my ($syscpu) = $times[1] + $times[3];
-    return ($usercpu, $syscpu);
+    return ($usercpu - $olduser, $syscpu - $oldsys);
+}
+
+sub cputime(;$) {
+    my ($old) = @_;
+    my (@times) = times();
+    my ($usercpu) = $times[0] + $times[2];
+    my ($syscpu) = $times[1] + $times[3];
+    return ($usercpu + $syscpu - $old);
 }
 
 sub xtime() {

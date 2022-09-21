@@ -106,9 +106,7 @@ def runit(client: clusterbuster_pod_client, process: int, *args):
         if npass > 1:
             stdev_latency = math.sqrt((ex2 - (ex * ex / npass)) / (npass - 1))
 
-    user1, system1 = client.cputimes()
-    user1 -= user
-    system1 -= system
+    user, system = client.cputimes(user, system)
     elapsed_time = data_end_time - data_start_time
     if elapsed_time <= 0:
         elapsed_time = 0.00000001

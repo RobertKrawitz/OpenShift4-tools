@@ -68,7 +68,7 @@ sub runone(;$) {
     my (@fdatasyncs) = split(/ +/, $fio_fdatasyncs);
     my (@directs) = split(/ +/, $fio_directs);
     my (@ioengines) = split(/ +/, $fio_ioengines);
-    my ($ucpu0, $scpu0) = cputime();
+    my ($ucpu, $scpu) = cputimes();
     my ($jobidx) = 1;
     my ($elapsed_time) = 0;
     timestamp("Sizes:       " . join(" ", @sizes));
@@ -95,8 +95,8 @@ sub runone(;$) {
 			    }
 			    my ($answer0) = '';
 			    timestamp("fio --rw=$pattern --runtime=$runtime --bs=$size --iodepth=$iodepth --fdatasync=$fdatasync --direct=$direct --ioengine=$ioengine $fio_generic_args --output-format=json+ $jobfile");
-			    my ($jtime0) = xtime();
-			    my ($jucpu0, $jscpu0) = cputime();
+			    my ($jtime) = xtime();
+			    my ($jucpu, $jscpu) = cputimes();
 			    open(RUN, "-|", "fio --rw=$pattern --runtime=$runtime --bs=$size --iodepth=$iodepth --fdatasync=$fdatasync --direct=$direct --ioengine=$ioengine $fio_generic_args --output-format=json+ $jobfile | jq -c .") || die "Can't run fio: $!\n";
 			    while (<RUN>) {
 				timestamp($_);
@@ -107,18 +107,15 @@ sub runone(;$) {
 				exit(1);
 			    }
 			    timestamp("Done job $jobfile $jobname");
-			    my ($jtime1) = xtime();
-			    my ($jucpu1, $jscpu1) = cputime();
+			    $jtime = xtime($jtime);
+			    my ($jucpu, $jscpu) = cputimes($jucpu, $jscpu);
 			    my ($result) = from_json($answer0);
-			    $jtime1 -= $jtime0;
-			    $jucpu1 -= $jucpu0;
-			    $jscpu1 -= $jscpu0;
-			    $elapsed_time += $jtime1;
+			    $elapsed_time += $jtime;
 			    my (%job_result) = (
-				'job_elapsed_time' => $jtime1,
-				'job_user_cpu_time' => $jucpu1,
-				'job_system_cpu_time' => $jscpu1,
-				'job_cpu_time' => $jscpu1 + $jucpu1,
+				'job_elapsed_time' => $jtime,
+				'job_user_cpu_time' => $jucpu,
+				'job_system_cpu_time' => $jscpu,
+				'job_cpu_time' => $jscpu + $jucp1,
 				'job_results' => $result
 				);
 			    $all_results{$jobname} = \%job_result;
@@ -130,14 +127,12 @@ sub runone(;$) {
 	}
     }
     my ($data_end_time) = xtime();
-    my ($ucpu1, $scpu1) = cputime();
-    $ucpu1 -= $ucpu0;
-    $scpu1 -= $scpu0;
+    my ($ucpu, $scpu) = cputimes($ucpu, $scpu)
     my (%extras) = (
 	'results' => \%all_results
 	);
     if (! ($jobfile =~ /-IGNORE-/)) {
-	report_results($data_start_time, $data_end_time, $elapsed_time, $ucpu1, $scpu1, \%extras);
+	report_results($data_start_time, $data_end_time, $elapsed_time, $ucpu, $scpu, \%extras);
     }
 }
 

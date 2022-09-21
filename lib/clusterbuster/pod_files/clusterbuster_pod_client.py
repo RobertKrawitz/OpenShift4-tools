@@ -102,23 +102,23 @@ class clusterbuster_pod_client:
             time_overhead += end - start
         return time_overhead / 1000
 
-    def cputimes(self):
+    def cputimes(self, olduser: float = 0, oldsys: float = 0):
         """
         Return the user and system CPU times, including self and children
         :return: system and user times, in seconds
         """
         r_self = getrusage(RUSAGE_SELF)
         r_children = getrusage(RUSAGE_CHILDREN)
-        return (r_self.ru_utime + r_children.ru_utime, r_self.ru_stime + r_children.ru_stime)
+        return (r_self.ru_utime + r_children.ru_utime - olduser, r_self.ru_stime + r_children.ru_stime - oldsys)
 
-    def cputime(self):
+    def cputime(self, old: float = 0):
         """
         Return the total CPU, including self and children
         :return: total CPU time, in seconds
         """
         r_self = getrusage(RUSAGE_SELF)
         r_children = getrusage(RUSAGE_CHILDREN)
-        return r_self.ru_utime + r_children.ru_utime + r_self.ru_stime + r_children.ru_stime
+        return r_self.ru_utime + r_children.ru_utime + r_self.ru_stime + r_children.ru_stime - old
 
     def adjusted_time(self):
         """
