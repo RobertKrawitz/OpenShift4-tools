@@ -51,7 +51,7 @@ class ClusterBusterAnalyzeOne:
         Base -1:   Only print units for <1
         :param num:
         :param precision:
-        :param base: 0, 1000, 1024, or -1
+        :param base: 0, 100, 1000, 1024, or -1
         :param integer: print as integer
         :param suffix: trailing suffix (e. g. "B/sec")
         """
@@ -61,7 +61,7 @@ class ClusterBusterAnalyzeOne:
             num = float(num)
         except Exception:
             return str(num)
-        if integer != 0 or num == 0:
+        if integer or num == 0:
             return str(int(num))
         elif base == 0:
             if suffix and suffix != '':
@@ -89,7 +89,7 @@ class ClusterBusterAnalyzeOne:
         elif base > 0 and abs(num) >= base ** 1:
             return f'{self._fformat(num / base, precision=precision)} K{infix}{suffix}'
         elif abs(num) >= 1 or num == 0:
-            if integer != 0 or num == 0:
+            if integer or num == 0:
                 precision = 0
             return f'{self._fformat(num, precision=precision)} {suffix}'
         elif abs(num) >= 10 ** -3:
@@ -100,64 +100,6 @@ class ClusterBusterAnalyzeOne:
             return f'{self._fformat(num * (1000 ** 3), precision=precision)} n{suffix}'
         else:
             return f'{self._fformat(num * (1000 ** 4), precision=precision)} p{suffix}'
-
-    def _analyze_variables(self, data, columns, header: str, divisor = 1.0, valfunc = None, integer: bool=True, ratio: bool=True, difference: bool=False):
-        if not isinstance(columns, list):
-            columns = [columns]
-        pcolumns = []
-        for c in columns:
-            if c is None:
-                pcolumns.append('')
-            else:
-                pcolumns.append(c)
-
-        column_separator = '\t\t'
-        columns_out_base = 'kata\trunc'
-        if ratio:
-            columns_out_base += '\tratio'
-            column_separator += '\t'
-        if difference:
-            columns_out_base += '\tdelta'
-            column_separator += '\t'
-        columns_out_1 = '# Pods\t' + column_separator.join(pcolumns)
-        columns_out_2 = '# Pods\t' + '\t'.join([columns_out_base for c in pcolumns])
-
-        answer = f"""
-{header}, N pods
-{columns_out_1}
-{columns_out_2}
-"""
-        rows = []
-        for pods, data1 in data.items():
-            row = [str(pods)]
-            for column in columns:
-                if valfunc is not None:
-                    runc_value = valfunc(data1, 'runc', column)
-                    kata_value = valfunc(data1, 'kata', column)
-                else:
-                    if 'runc' in data1:
-                        runc_value = data1['runc'][column] / divisor
-                    else:
-                        runc_value = None
-                    if 'kata' in data1:
-                        kata_value = data1['kata'][column] / divisor
-                    else:
-                        kata_value = None
-                if kata_value:
-                    row.append(self._prettyprint(kata_value, base=0, integer=integer))
-                else:
-                    row.append('')
-                if runc_value:
-                    row.append(self._prettyprint(runc_value, base=0, integer=integer))
-                else:
-                    row.append('')
-                if runc_value is not None and kata_value is not None:
-                    if ratio:
-                        row.append(self._prettyprint(kata_value / runc_value, base=0, precision=3))
-                    if difference:
-                        row.append(self._prettyprint(kata_value - runc_value, base=0, integer=integer, precision=3))
-            rows.append('\t'.join(row))
-        return answer + '\n'.join(rows) + '\n'
 
     def Analyze(self):
         pass
