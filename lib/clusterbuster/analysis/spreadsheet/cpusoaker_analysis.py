@@ -29,7 +29,7 @@ class cpusoaker_analysis(ClusterBusterAnalyzeOne):
 uuid: {self._metadata['uuid']}
 """
 
-        def pod_start_delta(data, runtime: str, col: str):
+        def pod_start_delta(data: dict, runtime: str, col: str):
             if runtime in data and 'first_pod_start' in data[runtime]:
                 return data[runtime]['last_pod_start'] - data[runtime]['first_pod_start']
 
@@ -39,3 +39,61 @@ uuid: {self._metadata['uuid']}
         answer += self._analyze_variables(self._data, 'memory_per_pod', 'Memory/pod (MiB)', divisor=1048576, integer=False, ratio=False, difference=True)
         answer += self._analyze_variables(self._data, None, 'Last N-1 Pod Start Interval', valfunc=pod_start_delta, integer=False, ratio=True, difference=True)
         return answer
+
+    def _analyze_variables(self, data: dict, columns, header: str, divisor = 1.0, valfunc = None, integer: bool=True, ratio: bool=True, difference: bool=False):
+        if not isinstance(columns, list):
+            columns = [columns]
+        pcolumns = []
+        for c in columns:
+            if c is None:
+                pcolumns.append('')
+            else:
+                pcolumns.append(c)
+
+        column_separator = '\t\t'
+        columns_out_base = 'kata\trunc'
+        if ratio:
+            columns_out_base += '\tratio'
+            column_separator += '\t'
+        if difference:
+            columns_out_base += '\tdelta'
+            column_separator += '\t'
+        columns_out_1 = '# Pods\t' + column_separator.join(pcolumns)
+        columns_out_2 = '# Pods\t' + '\t'.join([columns_out_base for c in pcolumns])
+
+        answer = f"""
+{header}, N pods
+{columns_out_1}
+{columns_out_2}
+"""
+        rows = []
+        for pods, data1 in data.items():
+            row = [str(pods)]
+            for column in columns:
+                if valfunc is not None:
+                    runc_value = valfunc(data1, 'runc', column)
+                    kata_value = valfunc(data1, 'kata', column)
+                else:
+                    if 'runc' in data1:
+                        runc_value = data1['runc'][column] / divisor
+                    else:
+                        runc_value = None
+                    if 'kata' in data1:
+                        kata_value = data1['kata'][column] / divisor
+                    else:
+                        kata_value = None
+                if kata_value:
+                    row.append(self._prettyprint(kata_value, base=0, integer=integer))
+                else:
+                    row.append('')
+                if runc_value:
+                    row.append(self._prettyprint(runc_value, base=0, integer=integer))
+                else:
+                    row.append('')
+                if runc_value is not None and kata_value is not None:
+                    if ratio:
+                        row.append(self._prettyprint(kata_value / runc_value, base=0, precision=3))
+                    if difference:
+                        row.append(self._prettyprint(kata_value - runc_value, base=0, integer=integer, precision=3))
+            rows.append('\t'.join(row))
+        return answer + '\n'.join(rows) + '\n'
