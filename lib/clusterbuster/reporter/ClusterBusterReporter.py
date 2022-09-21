@@ -147,9 +147,11 @@ class ClusterBusterReporter:
         self._jdata = deepcopy(jdata)
         self._format = report_format
         self._all_clients_are_on_the_same_node = self.__are_clients_all_on_same_node()
+        self._found_pods = {}
         self._summary = {'cpu_time': 0,
                          'runtime': 0,
-                         'total_instances': 0}
+                         'total_instances': 0,
+                         'total_pods': 0}
         self._rows = []
         self._timeline_vars = []
         self._accumulator_vars = []
@@ -190,15 +192,16 @@ class ClusterBusterReporter:
         :param results: Summary results that are updated
         """
         results['Total Clients'] = self._summary['total_instances']
+        results['Total Pods'] = self._summary['total_pods']
         if 'elapsed_time_average' in self._summary:
             results['Elapsed time average'] = self._prettyprint(self._summary['elapsed_time_average'],
                                                                 precision=3, suffix='sec')
             results['Pod creation interval'] = self._prettyprint(self._summary['pod_create_interval'],
                                                                  precision=3, suffix='sec')
-            self._summary['pod_creation_rate'] = self._safe_div(self._summary['total_instances'],
+            self._summary['pod_creation_rate'] = self._safe_div(self._summary['total_pods'],
                                                                 (self._summary['last_pod_create_time'] -
                                                                  self._summary['first_pod_create_time']), number_only=True)
-            results['Pod creation rate'] = self._prettyprint(self._safe_div(self._summary['total_instances'],
+            results['Pod creation rate'] = self._prettyprint(self._safe_div(self._summary['total_pods'],
                                                                             (self._summary['last_pod_create_time'] -
                                                                              self._summary['first_pod_create_time'])),
                                                              precision=3, suffix='pods/sec', base=0)
@@ -220,10 +223,10 @@ class ClusterBusterReporter:
                                                           precision=3, suffix='sec')
             results['Pod start interval'] = self._prettyprint(self._summary['pod_start_interval'],
                                                               precision=3, suffix='sec')
-            self._summary['pod_start_rate'] = self._safe_div(self._summary['total_instances'],
+            self._summary['pod_start_rate'] = self._safe_div(self._summary['total_pods'],
                                                              (self._summary['last_pod_start_time'] -
                                                               self._summary['first_pod_start_time']), number_only=True)
-            results['Pod start rate'] = self._prettyprint(self._safe_div(self._summary['total_instances'],
+            results['Pod start rate'] = self._prettyprint(self._safe_div(self._summary['total_pods'],
                                                                          (self._summary['last_pod_start_time'] -
                                                                           self._summary['first_pod_start_time'])),
                                                           precision=3, suffix='pods/sec', base=0)
@@ -281,6 +284,10 @@ class ClusterBusterReporter:
         rowhash = {}
         self._summary['total_instances'] += 1
         if 'namespace' in row:
+            pod_name=f'{row["namespace"]}/{row["pod"]}'
+            if pod_name not in self._found_pods:
+                self._summary['total_pods'] += 1
+                self._found_pods[pod_name] = 1
             rowhash['namespace'] = row['namespace']
             rowhash['pod'] = row['pod']
             rowhash['container'] = row['container']
