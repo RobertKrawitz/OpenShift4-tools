@@ -20,11 +20,17 @@ from lib.clusterbuster.analysis.ClusterBusterAnalysis import ClusterBusterAnalys
 from lib.clusterbuster.loader.ClusterBusterLoader import ClusterBusterLoader
 
 parser = argparse.ArgumentParser(description='Analyze ClusterBuster report')
+analysis_formats = ClusterBusterAnalysis.list_analysis_formats()
 
 parser.add_argument("-o", "--outfile", default=None, type=str, metavar='file', help='Output filename')
-parser.add_argument("-r", "--report-type", default=None, type=str, metavar='format', help='Analysis format')
+parser.add_argument('--list_formats', action='store_true', help='List available report formats')
+parser.add_argument("-r", "--report-type", default=None, type=str, metavar='format',
+                    choices=analysis_formats, help=f'Analysis format: one of {", ".join(analysis_formats)}')
 parser.add_argument("files", metavar='file', type=str, nargs='*', help='Files to process')
 args = parser.parse_args()
+if args.list_formats:
+    print('\n'.join(sorted(analysis_formats)))
+    sys.exit(1)
 
 
 def do_analyze_clusterbuster(f, data):

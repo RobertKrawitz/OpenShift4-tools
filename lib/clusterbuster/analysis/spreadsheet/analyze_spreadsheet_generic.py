@@ -41,7 +41,7 @@ class SpreadsheetAnalysis(ClusterBusterAnalyzeSummaryGeneric):
         answer = ""
         if dimension == 'Overall':
             answer += """Total
-Metric\tKata\trunc
+Metric\tKata\trunc\tratio
 """
             for v in self._sp_variables:
                 var = v['var']
@@ -49,7 +49,8 @@ Metric\tKata\trunc
                 multiplier = v.get('multiplier', 1)
                 answer += '\t'.join([name,
                                      self.print_safe(data[var], 'kata', True, multiplier),
-                                     self.print_safe(data[var], 'runc', True, multiplier)]) + "\n"
+                                     self.print_safe(data[var], 'runc', True, multiplier),
+                                     self.print_safe(data[var], 'ratio', True)]) + "\n"
             answer += """
 Total (Ratio)
 Metric\tMin ratio\tAvg ratio\tMax ratio
@@ -70,12 +71,13 @@ Metric\tMin ratio\tAvg ratio\tMax ratio
                 multiplier = v.get('multiplier', 1)
                 answer += f"""
 {name}{unit}
-{dimension.replace('By ', '')}\tKata\trunc
+{dimension.replace('By ', '')}\tKata\trunc\tratio
 """
                 for value in data[var]['kata'].keys():
                     answer += '\t'.join([str(value),
                                          self.print_safe(data[var], 'kata', value, multiplier),
-                                         self.print_safe(data[var], 'runc', value, multiplier)]) + "\n"
+                                         self.print_safe(data[var], 'runc', value, multiplier),
+                                         self.print_safe(data[var], 'ratio', value)]) + "\n"
             for v in self._sp_variables:
                 var = v['var']
                 name = v.get('name', var)

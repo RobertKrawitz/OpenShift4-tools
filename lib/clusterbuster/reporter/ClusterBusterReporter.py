@@ -462,7 +462,7 @@ class ClusterBusterReporter:
         Base -1:   Only print units for <1
         :param num:
         :param precision:
-        :param base: 0, 1000, 1024, or -1
+        :param base: 0, 100, 1000, 1024, or -1
         :param integer: print as integer
         :param suffix: trailing suffix (e. g. "B/sec")
         """
@@ -513,7 +513,7 @@ class ClusterBusterReporter:
         elif base > 0 and abs(num) >= base ** 1:
             return f'{self._fformat(num / base, precision=precision)} K{infix}{suffix}'
         elif abs(num) >= 1 or num == 0:
-            if integer != 0:
+            if integer:
                 precision = 0
             return f'{self._fformat(num, precision=precision)} {suffix}'
         elif abs(num) >= 10 ** -3:

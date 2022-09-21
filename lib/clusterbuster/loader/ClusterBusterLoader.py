@@ -95,20 +95,37 @@ class ClusterBusterLoader:
 
     def __init__(self, dirs_and_files: list):
         self.reports = ClusterBusterReporter.report(dirs_and_files, format="json-summary")
-        if len(dirs_and_files) == 1 and os.path.isfile(os.path.join(dirs_and_files[0], "clusterbuster-ci-results.json")):
-            with open(os.path.join(dirs_and_files[0], "clusterbuster-ci-results.json")) as f:
-                try:
-                    self.status = json.load(f)
-                    print(json.dumps(self.status['metadata'], indent=2), file=sys.stderr)
-                except Exception as exc:
-                    print(f"Warning: unable to load {dirs_and_files[0]}: {exc}", file=sys.stderr)
-                    self.status = {
-                        'metadata': {},
-                        'status': 'N/A'
-                        }
-        else:
+        dirs = []
+        self.status = {}
+        for d in dirs_and_files:
+            if d in dirs:
+                continue
+            if os.path.isdir(d):
+                dirs.append(d)
+                if  os.path.isfile(os.path.join(d, "clusterbuster-ci-results.json")):
+                    with open(os.path.join(d, "clusterbuster-ci-results.json")) as f:
+                        dir_status = json.load(f)
+                        if 'result' not in self.status or dir_status.get('result', 'FAIL') != 'PASS':
+                            self.status['result'] = dir_status['result']
+                        if 'job_start' not in self.status or dir_status['job_start'] < self.status['job_start']:
+                            self.status['job_start'] = dir_status['job_start']
+                        if 'job_end' not in self.status or dir_status['job_end'] > self.status['job_end']:
+                            self.status['job_end'] = dir_status['job_end']
+                        self.status['job_runtime'] = self.status.get('job_runtime', 0) + dir_status['job_runtime']
+                        if 'ran' not in self.status:
+                            self.status['ran'] = dir_status['ran']
+                        else:
+                            self.status['ran'].extend(dir_status['ran'])
+                        if 'failed' not in self.status:
+                            self.status['failed'] = dir_status['failed']
+                        else:
+                            self.status['failed'].extend(dir_status['failed'])
+                else:
+                    print(f'Summary {os.path.join(d, "clusterbuster-ci-results.json")} expected but not present', file=sys.stderr)
+            else:
+                print(f'{d}: not a directory')
+        if not self.status:
             print(f'Unable to load {dirs_and_files}', file=sys.stderr)
-            self.status = {}
 
     def Load(self):
         answer = dict()
