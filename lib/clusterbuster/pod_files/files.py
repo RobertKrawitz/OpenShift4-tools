@@ -20,9 +20,9 @@ files_per_dir = int(files_per_dir)
 blocksize = int(blocksize)
 block_count = int(block_count)
 processes = int(processes)
-p_direct = clusterbuster_pod_client.toBool(o_direct)
 drop_cache_port = int(drop_cache_port)
 container = client.container()
+o_direct = clusterbuster_pod_client.toBool(o_direct)
 
 flags = 0
 if o_direct:
@@ -80,13 +80,20 @@ def readthem(client: clusterbuster_pod_client, pid: int, oktofail: bool = False)
                 for fileidx in range(files_per_dir):
                     filename = f"{dirname}/{fileidx}"
                     try:
-                        fd = os.open(filename, flags | os.O_RDONLY)
-                        ops = ops + 1
-                        for block in range(block_count):
-                            with mmap.mmap(fd, blocksize, offset=block * blocksize, access=mmap.ACCESS_READ) as mm:
-                                mm.read(blocksize)
+                        if o_direct:
+                            fd = os.open(filename, flags | os.O_RDONLY)
                             ops = ops + 1
-                        os.close(fd)
+                            for block in range(block_count):
+                                with mmap.mmap(fd, blocksize, offset=block * blocksize, access=mmap.ACCESS_READ) as mm:
+                                    mm.read(blocksize)
+                                    ops = ops + 1
+                            os.close(fd)
+                        else:
+                            with open(filename) as file:
+                                ops = ops + 1
+                                for block in range(block_count):
+                                    file.read(blocksize)
+                                    ops = ops + 1
                     except Exception as exc:
                         if not oktofail:
                             raise exc
@@ -159,6 +166,7 @@ def run_one_operation(client: clusterbuster_pod_client, op_name0: str, op_name1:
         'user_cpu_time': ucpu,
         'system_cpu_time': scpu,
         'cpu_time': ucpu + scpu,
+        'cpu_utilization': (ucpu + scpu) / op_elapsed_time,
         'operation_start': op_start_time,
         'operation_end': op_end_time,
         'operations': ops,
@@ -190,7 +198,7 @@ def runit(client: clusterbuster_pod_client, process: int, *args):
     client.timestamp('Back from sleep')
     answer_remove = run_one_operation(client, 'Removing', 'Remove', 'remove', removethem, os.getpid(), data_start_time)
     create_et = answer_create['operation_end'] - answer_create['operation_start']
-    read_et = answer_read['operation_end'] - answer_read['operation_start']
+    # read_et = answer_read['operation_end'] - answer_read['operation_start']
     remove_et = answer_remove['operation_end'] - answer_remove['operation_start']
     data_start_time = answer_create['operation_start']
     data_end_time = answer_remove['operation_end']
