@@ -1,54 +1,54 @@
 #!/usr/bin/env python3
 
-import sys
-import os
-
-if 'BAK_CONFIGMAP' in os.environ:
-    sys.path.insert(0, os.environ['BAK_CONFIGMAP'])
 from clusterbuster_pod_client import clusterbuster_pod_client
 
-client = clusterbuster_pod_client()
-processes, runtime = client.command_line()
-processes = int(processes)
-runtime = float(runtime)
+
+class cpusoaker_client(clusterbuster_pod_client):
+    """
+    cpusoaker workload for clusterbuster
+    """
+
+    def __init__(self):
+        super().__init__()
+        self._set_processes(int(self._args[0]))
+        self._runtime = float(self._args[1])
+
+    def runit(self, process: int):
+        iterations = 0
+        loops_per_iteration = 10000
+        firsttime = True
+        weight = 0.25
+        interval = 5
+        data_start_time = self.adjusted_time()
+        user, system = self.cputimes()
+        scputime = user + system
+        basecpu = scputime
+        prevcpu = basecpu
+        prevtime = data_start_time
+        while self._runtime < 0 or self.adjusted_time() - data_start_time < self._runtime:
+            a = 1
+            for i in range(loops_per_iteration):
+                a = a + 1
+            iterations += loops_per_iteration
+            if self.verbose():
+                ntime = self.cputime()
+                if ntime - prevtime >= interval:
+                    cpu = self.cputime()
+                    cputime = cpu - basecpu
+                    icputime = cpu - prevcpu
+                    if firsttime:
+                        avgcpu = cputime
+                        firsttime = 0
+                    else:
+                        avgcpu = (icputime * weight) + (avgcpu - (1.0 - weight))
+                    prevtime = ntime
+                    prevcpu = cpu
+        data_end_time = self.adjusted_time()
+        user, system = self.cputimes(user, system)
+        extra = {
+            'work_iterations': iterations
+            }
+        self.report_results(data_start_time, data_end_time, data_end_time - data_start_time, user, system, extra)
 
 
-def runit(client: clusterbuster_pod_client, processes: int, *args):
-    iterations = 0
-    loops_per_iteration = 10000
-    firsttime = True
-    weight = 0.25
-    interval = 5
-    data_start_time = client.adjusted_time()
-    user, system = client.cputimes()
-    scputime = user + system
-    basecpu = scputime
-    prevcpu = basecpu
-    prevtime = data_start_time
-    while runtime < 0 or client.adjusted_time() - data_start_time < runtime:
-        a = 1
-        for i in range(loops_per_iteration):
-            a = a + 1
-        iterations += loops_per_iteration
-        if os.environ.get('VERBOSE', '0') != '0':
-            ntime = client.cputime()
-            if ntime - prevtime >= interval:
-                cpu = client.cputime()
-                cputime = cpu - basecpu
-                icputime = cpu - prevcpu
-                if firsttime:
-                    avgcpu = cputime
-                    firsttime = 0
-                else:
-                    avgcpu = (icputime * weight) + (avgcpu - (1.0 - weight))
-                prevtime = ntime
-                prevcpu = cpu
-    data_end_time = client.adjusted_time()
-    user, system = client.cputimes(user, system)
-    extra = {
-        'work_iterations': iterations
-        }
-    client.report_results(data_start_time, data_end_time, data_end_time - data_start_time, user, system, extra)
-
-
-client.run_workload(runit, processes)
+cpusoaker_client().run_workload()

@@ -48,12 +48,13 @@ class clusterbuster_pod_client:
         self.__syncport = int(argv[8])
         self.__start_time = float(time.time())
         self.__pod = socket.gethostname()
-        self.__extra_args = argv[9:]
+        self._args = argv[9:]
         self.__timing_parameters = {}
         self.__timing_initialized = False
         if initialize_timing_if_needed:
             self._initialize_timing()
         self.__child_idx = None
+        self.__processes = 1
 
     @staticmethod
     def toBool(arg, defval: bool = None):
@@ -82,6 +83,35 @@ class clusterbuster_pod_client:
         if defval is not None:
             return defval
         raise ValueError(f'Cannot parse {arg} as a boolean value')
+
+    @staticmethod
+    def toSize(arg: str):
+        if isinstance(arg, int) or isinstance(arg, float):
+            return int(arg)
+        m = re.match(r'(-?[0-9]+(\.[0-9]+)?)(([kmgt])([i]?)(b.*)?)?', arg.lower())
+        if m:
+            mantissa = float(m.group(1))
+            modifier = m.group(4)
+            binary = bool(m.group(5))
+            base = 0
+            if modifier == 'k':
+                base = 1
+            elif modifier == 'm':
+                base = 2
+            elif modifier == 'g':
+                base = 3
+            elif modifier == 't':
+                base = 4
+            if binary:
+                return int(mantissa * (1024 ** base))
+            else:
+                return int(mantissa * (1000 ** base))
+        else:
+            raise Exception(f"Unparseable number {arg}")
+
+    @staticmethod
+    def toSizes(*args):
+        return [clusterbuster_pod_client.toSize(size) for sublist in args for size in sublist.split(',')]
 
     def verbose(self):
         """
@@ -193,12 +223,6 @@ class clusterbuster_pod_client:
             components = components + [str(c) for c in args]
         return separator.join(components)
 
-    def command_line(self):
-        """
-        :return: Command line arguments not used by the client library
-        """
-        return self.__extra_args
-
     def resolve_host(self, hostname: str):
         """
         Resolve a host name to dotted quad IP address, retrying as needed
@@ -258,18 +282,16 @@ class clusterbuster_pod_client:
             self.timestamp(f"Cannot create listener: {err}")
             os._exit(1)
 
-    def run_workload(self, run_func, processes: int = 1, *args):
+    def run_workload(self):
         """
         Run a workload.  This procedure does not return.  The workload
-        is expected to take a clusterbuster_pod_client, process number,
-        and any other args desired
-        :param run_func: function to be run.
-        :param processes: number of worker processes to spawn
+        is expected to take a process number; all other options should
+        be members
         """
-        if processes < 1:
-            processes = 1
+        if self.__processes < 1:
+            self.__processes = 1
         pid_count = 0
-        for i in range(processes):
+        for i in range(self.__processes):
             try:
                 try:
                     child = os.fork()
@@ -279,7 +301,7 @@ class clusterbuster_pod_client:
                 if child == 0:  # Child
                     self.__child_idx = i
                     self.timestamp(f"About to run subprocess {i}")
-                    status = run_func(self, i, *args)
+                    status = self.runit(i)
                     if status is None:
                         status = 0
                     self.timestamp(f"{os.getpid()} exiting, status {status}")
@@ -376,10 +398,14 @@ class clusterbuster_pod_client:
             return ref
 
     def _ts(self):
-        return datetime.utcfromtimestamp(time.time() - self.__timing_parameters.get('local_offset_from_sync', 0)).strftime('%Y-%m-%dT%T.%f')
+        localoffset = self.__timing_parameters.get('local_offset_from_sync', 0)
+        return datetime.utcfromtimestamp(time.time() - localoffset).strftime('%Y-%m-%dT%T.%f')
 
     def _fsplit(self, string: str):
         return [float(s) for s in string.split()]
+
+    def _set_processes(self, processes: int = 1):
+        self.__processes = processes
 
     def _initialize_timing(self):
         if self.__timing_initialized:
@@ -388,7 +414,8 @@ class clusterbuster_pod_client:
         self.timestamp("About to sync")
         data = self._do_sync_command('TIME', f'timestamp: %s {name}')
         try:
-            local_sync_start, remote_sync_start, absolute_sync_start, remote_sync_base, remote_sync, sync_base_start_time = self._fsplit(data.decode('ascii'))
+            [local_sync_start, remote_sync_start, absolute_sync_start,
+             remote_sync_base, remote_sync, sync_base_start_time] = self._fsplit(data.decode('ascii'))
         except Exception as err:
             self.timestamp(f"Could not parse response from server: {data}: {err}")
             os._exit(1)

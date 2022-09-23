@@ -104,6 +104,8 @@ sub runit() {
 	    'rdwr_ratio' => 1.0,
 	    );
 	while (<RUN>) {
+	    chomp;
+	    timestamp($_);
 	    if      ($_ =~ m;^[[:space:]]*([[:digit:]]+) *files, *([[:digit:]]+)([KMGT]i?B);) {
 		$op_answer{'files'} = $1 + 0.0;
 		$op_answer{'filesize'} = $2 * (defined $units_multiplier{lc $3} ? $units_multiplier{lc $3} : 1);
@@ -139,7 +141,6 @@ sub runit() {
 		$op_answer{'p95_latency_sec'} = $1 / 1000.0;
 	    }
 	    if ($ENV{"VERBOSE"} > 0) {
-		chomp;
 		timestamp($_);
 	    }
 	}

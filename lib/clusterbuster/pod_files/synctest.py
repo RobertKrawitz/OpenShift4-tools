@@ -1,32 +1,32 @@
 #!/usr/bin/env python3
 
-import sys
-import os
 import time
-
-if 'BAK_CONFIGMAP' in os.environ:
-    sys.path.insert(0, os.environ['BAK_CONFIGMAP'])
 from clusterbuster_pod_client import clusterbuster_pod_client
 
-client = clusterbuster_pod_client()
-sync_count, sync_cluster_count, sync_sleep, processes = client.command_line()
-sync_count = int(sync_count)
-sync_cluster_count = int(sync_cluster_count)
-sync_sleep = float(sync_sleep)
-processes = int(processes)
+
+class synctest_client(clusterbuster_pod_client):
+    """
+    Sync test test for clusterbuster
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.sync_count = int(self._args[0])
+        self.sync_cluster_count = int(self._args[1])
+        self.sync_sleep = float(self._args[2])
+        self._set_processes(int(self._args[3]))
+
+    def runit(self, process: int):
+        user, system = self.cputimes()
+        data_start_time = self.adjusted_time()
+        for i in range(self.sync_count):
+            for j in range(self.sync_cluster_count):
+                self.sync_to_controller(self.idname([i, j]))
+            if self.sync_sleep > 0:
+                time.sleep(self.sync_sleep)
+        user, system = self.cputimes(user, system)
+        data_end_time = self.adjusted_time()
+        self.report_results(data_start_time, data_end_time, data_end_time - data_start_time, user, system)
 
 
-def runit(client: clusterbuster_pod_client, process: int, *args):
-    user, system = client.cputimes()
-    data_start_time = client.adjusted_time()
-    for i in range(sync_count):
-        for j in range(sync_cluster_count):
-            client.sync_to_controller(client.idname([i, j]))
-        if sync_sleep > 0:
-            time.sleep(sync_sleep)
-    user, system = client.cputimes(user, system)
-    data_end_time = client.adjusted_time()
-    client.report_results(data_start_time, data_end_time, data_end_time - data_start_time, user, system)
-
-
-client.run_workload(runit, processes)
+synctest_client().run_workload()
