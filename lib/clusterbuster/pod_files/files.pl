@@ -146,10 +146,10 @@ sub run_one_operation($$$$$$) {
     my ($ucpu, $scpu) = cputimes($ucpu, $scpu);
     my (%answer) = (
 	'operation_elapsed_time' => $op_elapsed_time,
-	'user_cpu_time' => $ucpu1,
-	'system_cpu_time' => $scpu1,
-	'cpu_time' => $ucpu1 + $scpu1,
-	'cpu_utilization' => ($ucpu1 + $scpu1) / $op_elapsed_time,
+	'user_cpu_time' => $ucpu,
+	'system_cpu_time' => $scpu,
+	'cpu_time' => $ucpu + $scpu,
+	'cpu_utilization' => ($ucpu + $scpu) / $op_elapsed_time,
 	'operation_start' => $op_start_time,
 	'operation_end' => $op_end_time,
 	'operations' => $ops,
