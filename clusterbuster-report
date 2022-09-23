@@ -17,6 +17,7 @@
 import sys
 import argparse
 from lib.clusterbuster.reporter.ClusterBusterReporter import ClusterBusterReporter
+import traceback
 
 parser = argparse.ArgumentParser(description='Generate ClusterBuster report')
 report_formats = ClusterBusterReporter.list_report_formats()
@@ -37,6 +38,6 @@ except KeyboardInterrupt:
     sys.exit(1)
 except BrokenPipeError:
     sys.exit(1)
-except Exception as exc:
-    print(f"Decoding JSON failed: {exc}", file=sys.stderr)
+except Exception:
+    print(f"Decoding JSON failed: {traceback.format_exc()}", file=sys.stderr)
     sys.exit(1)

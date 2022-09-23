@@ -24,6 +24,7 @@ import os
 import base64
 import importlib
 import inspect
+import traceback
 from .metrics.PrometheusMetrics import PrometheusMetrics
 
 
@@ -52,15 +53,12 @@ class ClusterBusterReporter:
                 jdata['metadata']['runtime_class'] = runtime_class
         try:
             imported_lib = importlib.import_module(f'..{workload}_reporter', __name__)
-        except Exception as exc:
-            print(f'Warning: no handler for workload {workload}, issuing generic summary report ({exc})', file=sys.stderr)
+        except Exception:
+            print(f'Warning: no handler for workload {workload}, issuing generic summary report ({traceback.format_exc()})', file=sys.stderr)
             return ClusterBusterReporter(jdata, format).create_report()
-        try:
-            for i in inspect.getmembers(imported_lib):
-                if i[0] == f'{workload}_reporter':
-                    return i[1](jdata, format).create_report(**kwargs)
-        except Exception as exc:
-            raise(exc)
+        for i in inspect.getmembers(imported_lib):
+            if i[0] == f'{workload}_reporter':
+                return i[1](jdata, format).create_report(**kwargs)
 
     @staticmethod
     def validate_dir(dirname: str):
@@ -100,7 +98,7 @@ class ClusterBusterReporter:
                 try:
                     answers.append(ClusterBusterReporter.report_one(json.load(f), format, **kwargs))
                 except Exception as exc:
-                    print(f'Unable to load {item}: {exc}', file=sys.stderr)
+                    print(f'Unable to load {item}: {traceback.format_exc()}', file=sys.stderr)
         for item in items:
             jdata = dict()
             if isinstance(item, str):
@@ -108,13 +106,13 @@ class ClusterBusterReporter:
             if isinstance(item, io.TextIOBase):
                 try:
                     jdata = json.load(item)
-                except Exception as exc:
-                    print(f'Unable to load {item}: {exc}', file=sys.stderr)
+                except Exception:
+                    print(f'Unable to load {item}: {traceback.format_exc()}', file=sys.stderr)
             elif item is None:
                 try:
                     jdata = json.load(sys.stdin)
-                except Exception as exc:
-                    print(f'Unable to load <stdin>: {exc}', file=sys.stderr)
+                except Exception:
+                    print(f'Unable to load <stdin>: {traceback.format_exc()}', file=sys.stderr)
             elif isinstance(item, dict):
                 jdata = item
             else:
@@ -293,12 +291,12 @@ class ClusterBusterReporter:
             rowhash['container'] = row['container']
             rowhash['node'] = self.__find_node_for_pod(namespace=row['namespace'], pod=row['pod'])
             rowhash['process_id'] = row['process_id']
+            for field_to_copy in self._fields_to_copy:
+                self.__copy_field(field_to_copy, row, self._summary, rowhash)
             for var in self._timeline_vars:
                 self.__update_timeline_val(var, row, self._summary)
             for accumulator in self._accumulator_vars:
                 self.__update_accumulator_val(accumulator, row, self._summary, rowhash)
-            for field_to_copy in self._fields_to_copy:
-                self.__copy_field(field_to_copy, row, self._summary, rowhash)
 
         self._rows.append(rowhash)
         return len(self._rows)-1
@@ -394,6 +392,8 @@ class ClusterBusterReporter:
         for var in vars_to_update:
             self._timeline_vars.append(f'{var}_start')
             self._timeline_vars.append(f'{var}_end')
+            self._fields_to_copy.append(f'{var}_start')
+            self._fields_to_copy.append(f'{var}_end')
             self._fields_to_copy.append(f'{var}_elapsed_time')
 
     def _add_accumulators(self, accumulators: list):
@@ -589,16 +589,23 @@ class ClusterBusterReporter:
         key = str(path.pop())
         results1[key] = value
 
-    def _copy_formatted_value(self, var: str, dest: dict, source: dict):
+    def _copy_formatted_value(self, var: str, dest: dict, source: dict, dont_overwrite: bool=False, orig_var=None):
         """
         Copy a value from source to dest, with optional formatting of the form
         var[:key1=val1:key2=val2...]
+        If the destination value already exists and is different from what would
+        be copied, throw an exception.
         :param var: path to copy
         :param dest: where to copy it to
         :param source: where to copy it from
+        :param dont_overwrite: don't attempt to overwrite an existing value
+        :param orig_var: full name of the variable
         """
         optstrings = var.split(':')
         rvar = optstrings.pop(0)
+        if dont_overwrite and rvar in dest:
+            return
+        val = source[rvar]
         if len(optstrings) > 0:
             args = {}
             for option in optstrings:
@@ -611,9 +618,12 @@ class ClusterBusterReporter:
                     args[name] = value
                 except Exception as exc:
                     raise Exception(f"Cannot parse option {option}: {exc}")
-            dest[rvar] = self._prettyprint(source[rvar], **args)
-        else:
-            dest[var] = source[var]
+            val = self._prettyprint(val, **args)
+        if rvar in dest and val != dest[rvar]:
+            if orig_var is None:
+                orig_var = var
+            raise Exception(f"Would overwrite {orig_var}, {dest[rvar]} => {source[rvar]}")
+        dest[rvar] = val
 
     def __are_clients_all_on_same_node(self):
         """
@@ -656,36 +666,39 @@ class ClusterBusterReporter:
         else:
             return ''
 
-    def __copy_field(self, var: str, row, summary, rowhash: dict):
+    def __copy_field(self, var: str, row, summary, rowhash: dict, orig_var: str = None):
         """
         Copy one field from an input row to an output row.  This recurses for deep copy.
         :param var: Name of variable to copy
         :param row: Input row from JSON
         :param rowhash: Output row
+        :param orig_var: Full name of variable to copy; default to var
         """
+        if orig_var is None:
+            orig_var = var
         components = var.split('.', 1)
         if len(components) > 1:
             if components[0] not in row:
                 return
             if (isinstance(row[components[0]], list)):
                 for element in row[components[0]]:
-                    self.__copy_field(components[1], element, summary, rowhash)
+                    self.__copy_field(components[1], element, summary, rowhash, orig_var = orig_var)
             else:
                 if components[0] not in rowhash:
                     rowhash[components[0]] = {}
                 if components[0] not in summary:
                     summary[components[0]] = {}
-                self.__copy_field(components[1], row[components[0]], summary[components[0]], rowhash[components[0]])
+                self.__copy_field(components[1], row[components[0]], summary[components[0]], rowhash[components[0]], orig_var = orig_var)
 
         if len(components) > 1:
             if components[0] not in rowhash:
                 [components[0]] = {}
             if components[0] not in summary:
                 summary[components[0]] = {}
-            self.__copy_field(components[1], row[components[0]], summary[components[0]], rowhash[components[0]])
+            self.__copy_field(components[1], row[components[0]], summary[components[0]], rowhash[components[0]], orig_var = orig_var)
         else:
-            self._copy_formatted_value(var, rowhash, row)
-            self._copy_formatted_value(var, summary, row)
+            self._copy_formatted_value(var, rowhash, row, orig_var = orig_var)
+            self._copy_formatted_value(var, summary, row, dont_overwrite=True, orig_var = orig_var)
 
     def __update_timeline_val(self, var: str, row, summary: dict):
         """
@@ -706,7 +719,7 @@ class ClusterBusterReporter:
                     summary[components[0]] = {}
                 self.__update_timeline_val(components[1], row[components[0]], summary[components[0]])
         else:
-            row_val = row[f'{var}']
+            row_val = row[var]
             mvar = None
             m = re.search(r'(.*)_(start|end)$', var)
             if m:
