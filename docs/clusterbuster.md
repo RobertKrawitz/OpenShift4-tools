@@ -37,7 +37,10 @@ run a variety of different workloads.
 Clusterbuster monitors workloads that are running, and for most
 workloads, will retrieve reporting data from them.  It can optionally
 monitor metrics from Prometheus during a run and also take a snapshot
-of the Prometheus database.  All of these outputs will be saved
+of the actual Prometheus database.  A snapshot contains the raw
+Prometheus database, while metrics only contain the specific
+information requested; the snapshot is much bigger and more difficult
+to use, but more complete.  All of these outputs will be saved
 locally; if you want to upload them to an Elasticsearch instance or
 other external location, you'll currently need to make your own
 arrangements.
@@ -77,7 +80,7 @@ tell clusterbuster how to deploy the workload.
 Most workloads require in addition a component to run on the worker
 nodes.  These components are written in perl, although I'm considering
 writing a python binding too.  The node components, which reside in
-`lib/clusterbuster/pod-files`, are responsible for initializing and
+`lib/clusterbuster/pod_files`, are responsible for initializing and
 running the workloads.  For most workloads, an additional
 synchronization/control service is used to ensure that all instances
 of the workload start simultaneously; the sync service also manages
@@ -138,7 +141,7 @@ The following APIs are supported:
 
   Return a list of files that must be provided to the worker object
   for the workload to run.  This consists of Perl files in
-  `lib/clusterbuster/pod-files` that are required to run the workload.
+  `lib/clusterbuster/pod_files` that are required to run the workload.
 
 * `<workload>_list_user_configmaps`
 
@@ -201,7 +204,7 @@ To create a new workload, you need to do the following:
    functions, as the file is sourced by clusterbuster.
 
 2. (Optional) Create one or more perl scripts, which go into
-   `lib/clusterbuster/pod-files`.  These scripts are written in Perl
+   `lib/clusterbuster/pod_files`.  These scripts are written in Perl
    (sorry!) and are responsible for running workloads.  Documenting
    them is Todo.
 
