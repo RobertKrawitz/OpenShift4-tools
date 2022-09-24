@@ -2,8 +2,7 @@
 
 use POSIX;
 use strict;
-my ($dir) = $ENV{'BAK_CONFIGMAP'};
-require "$dir/clientlib.pl";
+require "clientlib.pl";
 
 my ($runtime, $ramp_time, $srvhost, $connect_port, @tests) = parse_command_line(@ARGV);
 my ($data_start_time, $data_end_time, $elapsed_time, $end_time, $user, $sys, $cuser, $csys);
@@ -45,7 +44,7 @@ my (%options) = (
     'runtime' => 1,
 );
 
-process_file("$dir/uperf-mini.xml", "/tmp/uperf-test.xml", %options);
+process_file("$ENV{'PODFILE_DIR'}/uperf-mini.xml", "/tmp/uperf-test.xml", %options);
 # Ensure that uperf server is running before we try to do anything.
 timestamp("Waiting for uperf server $srvhost:$connect_port to come online...");
 system("bash", "-c", "until uperf -P \"$connect_port\" -m /tmp/uperf-test.xml; do sleep 1; done");
@@ -88,7 +87,7 @@ sub runit() {
 	    'runtime' => $runtime + (2 * $ramp_time),
 	    'nthr' => $nthr,
 	    );
-	my ($test_template) = "$dir/uperf-${test_type}.xml";
+	my ($test_template) = "$ENV{'PODFILE_DIR'}/uperf-${test_type}.xml";
 	my ($testfile) = "/tmp/uperf-test.xml";
 	process_file($test_template, $testfile, %options);
 	my ($test_name) = sprintf('%04i-%s', $counter, $base_test_name);

@@ -3,8 +3,7 @@
 use POSIX;
 use strict;
 use File::Basename;
-my ($dir) = $ENV{'BAK_CONFIGMAP'};
-require "$dir/clientlib.pl";
+require "clientlib.pl";
 
 my ($processes, $memory, $runtime) = parse_command_line(@ARGV);
 initialize_timing();

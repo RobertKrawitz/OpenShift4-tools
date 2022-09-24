@@ -4,8 +4,7 @@ use POSIX;
 use strict;
 use File::Path qw(make_path remove_tree);
 use JSON;
-my ($dir) = $ENV{'BAK_CONFIGMAP'};
-require "$dir/clientlib.pl";
+require "clientlib.pl";
 
 my ($processes, $rundir, $runtime, $jobfiles_dir, $drop_cache_service, $drop_cache_port, $fio_blocksizes, $fio_patterns,
     $fio_iodepths, $fio_fdatasyncs, $fio_directs, $fio_ioengines, $fio_generic_args) = parse_command_line(@ARGV);

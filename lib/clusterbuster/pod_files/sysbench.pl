@@ -3,8 +3,7 @@
 use POSIX;
 use strict;
 use File::Path qw(make_path);
-my ($dir) = $ENV{'BAK_CONFIGMAP'};
-require "$dir/clientlib.pl";
+require "clientlib.pl";
 
 my ($processes, $rundir, $runtime, $sysbench_generic_args, $sysbench_cmd, $sysbench_fileio_args, $sysbench_modes) = parse_command_line(@ARGV);
 my ($localrundir);

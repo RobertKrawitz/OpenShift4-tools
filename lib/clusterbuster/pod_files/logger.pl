@@ -7,8 +7,7 @@ use Time::Piece;
 use Time::HiRes qw(gettimeofday usleep);
 use Sys::Hostname;
 use File::Basename;
-my ($dir) = $ENV{'BAK_CONFIGMAP'};
-require "$dir/clientlib.pl";
+require "clientlib.pl";
 
 $SIG{TERM} = sub { POSIX::_exit(0); };
 my ($namespace, $container, $bytes_per_line, $bytes_per_io, $xfer_count, $processes, $delay_usecs, $xfer_time, $exit_at_end) = @ARGV;
