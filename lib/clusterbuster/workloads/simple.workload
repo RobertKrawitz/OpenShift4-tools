@@ -57,9 +57,7 @@ function simple-log_create_containers_yaml() {
   imagePullPolicy: $image_pull_policy
   image: "$container_image"
 $(indent 2 container_standard_auxiliary_yaml)
-  env:
-  - name: VERBOSE
-    value: "$verbose"
+$(indent 2 standard_environment)
 $(indent 2 bootstrap_command_yaml logger.pl)
   - "$namespace"
   - "c${container}"

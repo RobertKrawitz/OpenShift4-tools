@@ -3,8 +3,7 @@
 use Socket;
 use POSIX;
 use strict;
-my ($dir) = $ENV{'BAK_CONFIGMAP'};
-require "$dir/clientlib.pl";
+require "clientlib.pl";
 
 my ($srvhost, $connect_port, $data_rate, $bytes, $bytes_max, $msg_size, $xfertime, $xfertime_max) = parse_command_line(@ARGV);
 initialize_timing();

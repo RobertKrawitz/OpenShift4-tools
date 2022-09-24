@@ -2,8 +2,7 @@
 
 use POSIX;
 use strict;
-my ($dir) = $ENV{'BAK_CONFIGMAP'};
-require "$dir/clientlib.pl";
+require "clientlib.pl";
 
 $SIG{TERM} = sub { POSIX::_exit(0); };
 my ($listen_port) = parse_command_line(@ARGV);
