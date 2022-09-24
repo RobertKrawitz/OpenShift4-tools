@@ -3,8 +3,7 @@
 use Socket;
 use POSIX;
 use strict;
-my ($dir) = $ENV{'BAK_CONFIGMAP'};
-require "$dir/clientlib.pl";
+require "clientlib.pl";
 
 $SIG{TERM} = sub { POSIX::_exit(0); };
 

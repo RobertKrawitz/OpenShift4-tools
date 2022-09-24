@@ -4,8 +4,7 @@ use POSIX;
 use strict;
 use Fcntl qw(:DEFAULT O_DIRECT);
 use JSON;
-my ($dir) = $ENV{'BAK_CONFIGMAP'};
-require "$dir/clientlib.pl";
+require "clientlib.pl";
 
 my ($dirs, $files_per_dir, $blocksize, $block_count, $processes, $direct, $drop_cache_service, $drop_cache_port, @dirs) = parse_command_line(@ARGV);
 

@@ -2,8 +2,7 @@
 
 use POSIX;
 use strict;
-my ($dir) = $ENV{'BAK_CONFIGMAP'};
-require "$dir/clientlib.pl";
+require "clientlib.pl";
 
 my ($sleep_time, $processes) = parse_command_line(@ARGV);
 initialize_timing();

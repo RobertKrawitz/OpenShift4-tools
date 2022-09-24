@@ -9,8 +9,7 @@ use Sys::Hostname;
 use File::Basename;
 use JSON;
 $SIG{TERM} = sub { POSIX::_exit(0); };
-my ($dir) = $ENV{'BAK_CONFIGMAP'};
-require "$dir/clientlib.pl";
+require "clientlib.pl";
 
 my ($listen_port) = @ARGV;
 
