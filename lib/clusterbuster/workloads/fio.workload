@@ -57,7 +57,7 @@ function fio_create_deployment() {
 				  "$((containers_per_pod * replicas * count))"
     for instance in $(seq "$first_deployment" $((count + first_deployment - 1))) ; do
 	create_drop_cache_deployment "$namespace" "$workload" "$instance" "$replicas"
-	create_standard_deployment  -a fio_arglist -e fio.pl -p \
+	create_standard_deployment  -a fio_arglist -e fio.py -p \
 				    "$namespace" "$instance" "$secret_count" "$replicas" "$containers_per_pod"
     done
 }
@@ -72,7 +72,7 @@ function fio_calculate_logs_required() {
 
 function fio_list_configmaps() {
     cat <<EOF
-${__podfile_dir__}/fio.pl
+${__podfile_dir__}/fio.py
 ${__podfile_dir__}/drop_cache.pl
 EOF
 }
@@ -84,7 +84,7 @@ EOF
 }
 
 function fio_help_options() {
-    cat <<'EOF'
+    cat <<EOF
     Fio Options:
        --fio-patterns=<patterns>
                         Comma-separated list of patterns to use.
@@ -104,7 +104,7 @@ function fio_help_options() {
                         Name of fio job file to use (defaults to generic).
        --fio-ioengines=<engines>
                         Comma-separated list of names of ioengines to use
-                        (default ${___fio_ioenginse[*]})
+                        (default ${___fio_ioengines[*]})
        --fio-iodepth=<n>
                         Comma-separated list of names of I/O depths to use
                         I/O depth (default ${___fio_iodepths[*]})
@@ -112,7 +112,7 @@ function fio_help_options() {
                         Comma-separated list of whether to use direct I/O
                         (default ${___fio_directs[*]}), values are 0 or 1.
        --fio-ramptime=<ramp time>
-                        Ramp-up and down time (default $___fio_ramptime)
+                        Ramp-up and down time (default $___fio_ramp_time)
        --fio-fdatasync=<fdatasyncs>
                         Comma-separated list of whether to use fdatasync 
                         (default ${___fio_fdatasyncs[*]}), values are 0 or 1.

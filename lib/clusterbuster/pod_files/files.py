@@ -104,36 +104,22 @@ class files_client(clusterbuster_pod_client):
             os._exit(1)
 
     def removethem(self, pid: int, oktofail: bool = False):
-        def isdir(path: str):
-            try:
-                s = os.stat(path)
-                return os.S_ISDIR(s.st_mode)
-            except Exception:
-                return False
-
-        def isfile(path: str):
-            try:
-                s = os.stat(path)
-                return os.S_ISREG(s.st_mode)
-            except Exception:
-                return False
-
         ops = 0
         try:
             for bdir in self.dir_list:
                 pdir = f"{bdir}/p{pid}"
-                if oktofail and not isdir(pdir):
+                if oktofail and not self.isdir(pdir):
                     continue
                 direc = f"{pdir}/{self.container()}"
-                if oktofail and not isdir(bdir):
+                if oktofail and not self.isdir(bdir):
                     continue
                 for subdir in range(self.dirs):
                     dirname = f"{direc}/{subdir}"
-                    if oktofail and not isdir(subdir):
+                    if oktofail and not self.isdir(subdir):
                         continue
                     for fileidx in range(self.files_per_dir):
                         filename = f"{dirname}/{fileidx}"
-                        if oktofail and not isfile(filename):
+                        if oktofail and not self.isfile(filename):
                             continue
                         os.unlink(filename)
                         ops = ops + 1

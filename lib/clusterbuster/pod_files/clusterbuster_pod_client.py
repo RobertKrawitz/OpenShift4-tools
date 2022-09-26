@@ -25,6 +25,8 @@ import subprocess
 import signal
 import math
 import random
+import traceback
+import stat
 from resource import getrusage, RUSAGE_SELF, RUSAGE_CHILDREN
 
 
@@ -85,6 +87,10 @@ class clusterbuster_pod_client:
         raise ValueError(f'Cannot parse {arg} as a boolean value')
 
     @staticmethod
+    def toBools(*args):
+        return [clusterbuster_pod_client.toBool(item) for sublist in args for item in re.split(r'[,\s]+', sublist)]
+
+    @staticmethod
     def toSize(arg: str):
         if isinstance(arg, int) or isinstance(arg, float):
             return int(arg)
@@ -111,7 +117,7 @@ class clusterbuster_pod_client:
 
     @staticmethod
     def toSizes(*args):
-        return [clusterbuster_pod_client.toSize(size) for sublist in args for size in sublist.split(',')]
+        return [clusterbuster_pod_client.toSize(item) for sublist in args for item in re.split(r'[,\s]+', sublist)]
 
     def verbose(self):
         """
@@ -150,15 +156,15 @@ class clusterbuster_pod_client:
         r_children = getrusage(RUSAGE_CHILDREN)
         return r_self.ru_utime + r_children.ru_utime + r_self.ru_stime + r_children.ru_stime - old
 
-    def adjusted_time(self):
+    def adjusted_time(self, otime: float = 0):
         """
         Return system time normalized to the host time
         :return: System time, normalized to the host time
         """
         if 'xtime_adjustment' in self.__timing_parameters:
-            return time.time() - self.__timing_parameters['xtime_adjustment']
+            return time.time() - self.__timing_parameters['xtime_adjustment'] - otime
         else:
-            return time.time()
+            return time.time() - otime
 
     def get_timestamp(self, string: str):
         """
@@ -192,6 +198,20 @@ class clusterbuster_pod_client:
                 sock.recv(1)
                 self.timestamp("    Confirmed")
 
+    def isdir(self, path: str):
+        try:
+            s = os.stat(path)
+            return stat.S_ISDIR(s.st_mode)
+        except Exception:
+            return False
+
+    def isfile(self, path: str):
+        try:
+            s = os.stat(path)
+            return stat.S_ISREG(s.st_mode)
+        except Exception:
+            return False
+
     def podname(self):
         """
         :return: name of our pod
@@ -217,7 +237,6 @@ class clusterbuster_pod_client:
         :param extra_components: Any extra components to be appended to the id
         :return: Identification string
         """
-        self.timestamp(f"separator |{separator}| args |{args}")
         components = [self.namespace(), self.podname(), self.container(), str(os.getpid())]
         if args is not None:
             components = components + [str(c) for c in args]
@@ -301,7 +320,13 @@ class clusterbuster_pod_client:
                 if child == 0:  # Child
                     self.__child_idx = i
                     self.timestamp(f"About to run subprocess {i}")
-                    status = self.runit(i)
+                    try:
+                        status = self.runit(i)
+                    except Exception:
+                        # If something goes wrong with the workload that isn't caught,
+                        # a traceback will likely be useful
+                        self.timestamp(f"Run failed: {traceback.format_exc()}")
+                        status = 1
                     if status is None:
                         status = 0
                     self.timestamp(f"{os.getpid()} exiting, status {status}")
@@ -391,7 +416,7 @@ class clusterbuster_pod_client:
                 answer[key] = self._clean_numbers(val)
             return answer
         elif isinstance(ref, list):
-            return [self._clean_numbers[item] for item in ref]
+            return [self._clean_numbers(item) for item in ref]
         elif isinstance(ref, float) and (math.isnan(ref) or math.isinf(ref)):
             return None
         else:
