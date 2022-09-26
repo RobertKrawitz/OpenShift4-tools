@@ -114,7 +114,7 @@ sub runone(;$) {
 				'job_elapsed_time' => $jtime,
 				'job_user_cpu_time' => $jucpu,
 				'job_system_cpu_time' => $jscpu,
-				'job_cpu_time' => $jscpu + $jucp1,
+				'job_cpu_time' => $jscpu + $jucpu,
 				'job_results' => $result
 				);
 			    $all_results{$jobname} = \%job_result;
@@ -126,7 +126,7 @@ sub runone(;$) {
 	}
     }
     my ($data_end_time) = xtime();
-    my ($ucpu, $scpu) = cputimes($ucpu, $scpu)
+    my ($ucpu, $scpu) = cputimes($ucpu, $scpu);
     my (%extras) = (
 	'results' => \%all_results
 	);
