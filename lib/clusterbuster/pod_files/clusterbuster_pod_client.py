@@ -330,7 +330,7 @@ class clusterbuster_pod_client:
                     if status is None:
                         status = 0
                     self.timestamp(f"{os.getpid()} exiting, status {status}")
-                    os._exit(status)
+                    self._finish(status)
                 else:
                     pid_count = pid_count + 1
             except Exception as err:
@@ -380,7 +380,14 @@ class clusterbuster_pod_client:
             for key, val in extra.items():
                 answer[key] = val
         self.timestamp(f"Report results: {self.namespace()}, {self.podname()}, {self.container()}, {os.getpid()}")
-        self._do_sync_command('RSLT', json.dumps(self._clean_numbers(answer)))
+        try:
+            output = json.dumps(self._clean_numbers(answer))
+            self._do_sync_command('RSLT', json.dumps(self._clean_numbers(answer)))
+        except Exception as exc:
+            self.timestamp(f"Cannot convert results to JSON: {exc}")
+            self.timestamp(f"Data: {answer}")
+            self._do_sync_command('FAIL', "Unknown failure")
+            os._exit(1)
 
     def sync_to_controller(self, token: str = None):
         """
