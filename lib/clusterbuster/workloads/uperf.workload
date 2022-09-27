@@ -60,7 +60,7 @@ function uperf_create_deployment() {
 				   -A "$(create_affinity_yaml "${namespace}-uperf-client-${instance}")" \
 				   -a uperf_server_arglist \
 				   "$namespace" "$instance" "$secret_count" 1 1
-	create_standard_deployment -w uperf-client -e uperf-client.pl \
+	create_standard_deployment -w uperf-client -e uperf-client.py \
 				   -A "$(create_affinity_yaml "${namespace}-uperf-server-${instance}")" \
 				   -a uperf_client_arglist \
 				   -S "$(_uperf_create_security_context)" \
@@ -70,7 +70,7 @@ function uperf_create_deployment() {
 
 function uperf_list_configmaps() {
     cat <<EOF
-${__podfile_dir__}/uperf-client.pl
+${__podfile_dir__}/uperf-client.py
 ${__podfile_dir__}/uperf-server.py
 ${__podfile_dir__}/uperf-mini.xml
 ${__podfile_dir__}/uperf-rr.xml
