@@ -3,8 +3,6 @@
 import os
 import subprocess
 import re
-import json
-import traceback
 
 from clusterbuster_pod_client import clusterbuster_pod_client
 

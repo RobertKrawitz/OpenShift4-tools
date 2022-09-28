@@ -119,6 +119,13 @@ class clusterbuster_pod_client:
     def toSizes(*args):
         return [clusterbuster_pod_client.toSize(item) for sublist in args for item in re.split(r'[,\s]+', sublist)]
 
+    @staticmethod
+    def splitStr(regexp: str, arg: str):
+        if arg:
+            return re.split(regexp, str(arg))
+        else:
+            return []
+
     def verbose(self):
         """
         Should we be verbose?
