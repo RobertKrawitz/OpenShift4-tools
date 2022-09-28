@@ -4,6 +4,7 @@ import os
 import subprocess
 import re
 import json
+import shutil
 
 from clusterbuster_pod_client import clusterbuster_pod_client
 
@@ -34,9 +35,6 @@ class fio_client(clusterbuster_pod_client):
             self.fio_generic_args = re.split(r'\s+', self._args[12])
         else:
             self.fio_generic_args = []
-
-    def remove_rundir(self):
-        subprocess.run(['rm', '-rf', self.rundir])
 
     def get_token(self, pattern: str, string: str, token: int = 1):
         match = re.match(pattern, string)
@@ -166,7 +164,7 @@ I/O engines: {self._args[11]}""")
             return 1
         for jobfile in jobfiles:
             self.runone(jobfile)
-        self.remove_rundir()
+        shutil.rmtree(self.rundir, ignore_errors=True)
 
 
 fio_client().run_workload()

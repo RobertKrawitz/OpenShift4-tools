@@ -4,6 +4,7 @@ import os
 import time
 import subprocess
 import mmap
+import shutil
 
 from clusterbuster_pod_client import clusterbuster_pod_client
 
@@ -36,7 +37,7 @@ class files_client(clusterbuster_pod_client):
             os.rmdir(dirname)
         except Exception as err:
             if oktofail:
-                subprocess.run(['rm', '-rf', dirname])
+                shutil.rmtree(dirname, ignore_errors=True)
             else:
                 raise err
 
