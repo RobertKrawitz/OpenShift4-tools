@@ -85,7 +85,7 @@ I/O engines: {self._args[11]}""")
                         for direct in self.fio_directs:
                             for ioengine in self.fio_ioengines:
                                 jobname = '%04d-%s-%d-%d-%d-%d-%s' % (jobidx, pattern, size, iodepth, fdatasync, direct, ioengine)
-                                self.drop_cache()
+                                self.drop_cache(self.drop_cache_service, self.drop_cache_port)
                                 self.sync_to_controller(jobname)
                                 if jobidx == 1:
                                     self.timestamp("Running...")

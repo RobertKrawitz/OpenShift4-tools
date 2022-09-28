@@ -5,7 +5,7 @@ use strict;
 use File::Path qw(make_path);
 require "clientlib.pl";
 
-my ($processes, $rundir, $runtime, $sysbench_generic_args, $sysbench_cmd, $sysbench_fileio_args, $sysbench_modes) = parse_command_line(@ARGV);
+my ($processes, $rundir, $runtime, $drop_cache_service, $drop_cache_port, $sysbench_generic_args, $sysbench_cmd, $sysbench_fileio_args, $sysbench_modes) = parse_command_line(@ARGV);
 my ($localrundir);
 
 initialize_timing();
@@ -92,6 +92,7 @@ sub runit() {
 	}
 	close PREPARE;
 
+	drop_cache($drop_cache_service, $drop_cache_port);
 	sync_to_controller(idname("$mode+start"));
 	my ($op_user, $op_sys) = cputimes();
 	timestamp("Running...");

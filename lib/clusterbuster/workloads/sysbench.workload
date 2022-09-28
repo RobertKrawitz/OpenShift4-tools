@@ -27,6 +27,7 @@ declare -g ___sysbench_fileio_test_string='seqwr,seqrd,rndwr,rndrd'
 function sysbench_arglist() {
     local workdir=${common_workdir:-${emptydirs[0]:-/tmp}}
     mk_yaml_args "$processes_per_pod" "$workdir" "$workload_run_time" \
+		 "svc-${namespace}-sysbench-${instance}-${replica}-dc" "$drop_cache_port" \
 		 "${___sysbench_generic_options[*]:-}" "fileio" \
 		 "${___sysbench_fileio_options[*]:-}" "${!___sysbench_fileio_tests[*]}"
 }
@@ -42,6 +43,7 @@ function sysbench_create_deployment() {
 				  "$((containers_per_pod * processes_per_pod * replicas * count))" \
 				  "$((containers_per_pod * replicas * count))"
     for instance in $(seq $first_deployment $((count + first_deployment - 1))) ; do
+	create_drop_cache_deployment "$namespace" "$workload" "$instance" "$replicas"
 	create_standard_deployment -a sysbench_arglist -e sysbench.py \
 				   "$namespace" "$instance" "$secret_count" "$replicas" "$containers_per_pod"
     done
@@ -50,6 +52,7 @@ function sysbench_create_deployment() {
 function sysbench_list_configmaps() {
     cat <<EOF
 ${__podfile_dir__}/sysbench.py
+${__podfile_dir__}/drop_cache.pl
 EOF
 }
 

@@ -18,11 +18,13 @@ class sysbench_client(clusterbuster_pod_client):
         self.processes = int(self._args[0])
         self.rundir = self._args[1]
         self.runtime = int(self._args[2])
-        self.sysbench_generic_args = clusterbuster_pod_client.splitStr(r'\s+', self._args[3])
-        self.sysbench_cmd = self._args[4]
-        self.sysbench_fileio_args = clusterbuster_pod_client.splitStr(r'\s+', self._args[5])
-        if self._args[6]:
-            self.sysbench_modes = clusterbuster_pod_client.splitStr(r'\s+', self._args[6])
+        self.drop_cache_service = self._args[3]
+        self.drop_cache_port = int(self._args[4])
+        self.sysbench_generic_args = clusterbuster_pod_client.splitStr(r'\s+', self._args[5])
+        self.sysbench_cmd = self._args[6]
+        self.sysbench_fileio_args = clusterbuster_pod_client.splitStr(r'\s+', self._args[7])
+        if self._args[8]:
+            self.sysbench_modes = clusterbuster_pod_client.splitStr(r'\s+', self._args[8])
         else:
             self.sysbench_modes = ['seqwr', 'seqrewr', 'seqrd', 'rndrd', 'rndwr', 'rndrw']
 
@@ -79,6 +81,7 @@ class sysbench_client(clusterbuster_pod_client):
             self.timestamp(" ".join(args))
             subprocess.run(args, check=True)
 
+            self.drop_cache(self.drop_cache_service, self.drop_cache_port)
             self.sync_to_controller(f'{mode}+run')
             op_user, op_sys = self.cputimes()
             self.timestamp("Running...")
