@@ -340,7 +340,7 @@ class clusterbuster_pod_client:
             try:
                 pid, status = os.wait()
                 status = int((status / 256)) | (status & 255)
-                self.timestamp(f"waited for {pid} => {status}")
+                self.timestamp(f"waited for {pid} (status {status})")
                 if status != 0:
                     self._finish(status, pid)
                 pid_count = pid_count - 1
@@ -381,20 +381,34 @@ class clusterbuster_pod_client:
                 answer[key] = val
         self.timestamp(f"Report results: {self.namespace()}, {self.podname()}, {self.container()}, {os.getpid()}")
         try:
-            output = json.dumps(self._clean_numbers(answer))
-            self._do_sync_command('RSLT', json.dumps(self._clean_numbers(answer)))
+            answer = json.dumps(self._clean_numbers(answer))
         except Exception as exc:
             self.timestamp(f"Cannot convert results to JSON: {exc}")
-            self.timestamp(f"Data: {answer}")
-            self._do_sync_command('FAIL', "Unknown failure")
-            os._exit(1)
+            self._fail(f"Cannot convert results to JSON: {exc}")
+            self._wait_forever()
+        self._do_sync_command('RSLT', answer)
 
     def sync_to_controller(self, token: str = None):
         """
         Perform a sync to the controller
         :param token: Optional string to use for sync; None to generate one
         """
+        self.timestamp(f"do_sync_command {token}")
         self._do_sync_command('SYNC', token)
+
+    def _wait_forever(self):
+        self.timestamp('Waiting forever')
+        signal.pause()
+        sys.exit()
+
+    def _fail(self, msg: str):
+        msg = f'''{msg}
+Run:
+oc logs -n '{self.namespace()}' '{self.podname()}' -c '{self.container()}'
+'''
+        self._do_sync_command('FAIL', msg)
+        if self.__exit_at_end:
+            os._exit(1)
 
     def _run_cmd(self, cmd):
         """
@@ -414,20 +428,45 @@ class clusterbuster_pod_client:
         This results in invalid JSON.  It's our responsibility to sanitize
         this up front.
         https://docs.python.org/3.8/library/json.html#infinite-and-nan-number-values
+        Also, detect objects that can't be converted to JSON and fail fast
         :param ref: object to be cleaned
         :return: object cleaned of any NaN or infinity values
         """
-        if isinstance(ref, dict):
-            answer = dict()
-            for key, val in ref.items():
-                answer[key] = self._clean_numbers(val)
-            return answer
-        elif isinstance(ref, list):
-            return [self._clean_numbers(item) for item in ref]
-        elif isinstance(ref, float) and (math.isnan(ref) or math.isinf(ref)):
-            return None
+        def _clean_numbers_impl(ref, pathto: str = ''):
+            errors = []
+            warnings = []
+            if isinstance(ref, dict):
+                answer = dict()
+                for key, val in ref.items():
+                    a1, e1, w1 = _clean_numbers_impl(val, f'{pathto}.{key}')
+                    answer[key] = a1
+                    errors.extend(e1)
+                    warnings.extend(w1)
+                return answer, errors, warnings
+            elif isinstance(ref, list):
+                answer = []
+                for index in range(len(ref)):
+                    a1, e1, w1 = _clean_numbers_impl(ref[index], f'{pathto}[{index}]')
+                    answer.append(a1)
+                    errors.extend(e1)
+                    warnings.extend(w1)
+                return answer, errors, warnings
+            elif isinstance(ref, float) and (math.isnan(ref) or math.isinf(ref)):
+                warnings.append(f"Warning: illegal float value {ref} at {pathto} converted to None")
+                return None, errors, warnings
+            elif ref is None or isinstance(ref, float) or isinstance(ref, str) or isinstance(ref, int):
+                return ref, errors, warnings
+            else:
+                errors.append(f"    Object {pathto} ({ref}) cannot be serialized")
+                return ref, errors, warnings
+
+        [answer, errors, warnings] = _clean_numbers_impl(ref)
+        if warnings:
+            self.timestamp("\n".join(warnings))
+        if errors:
+            raise Exception('\n' + '\n'.join(errors))
         else:
-            return ref
+            return answer
 
     def _ts(self):
         localoffset = self.__timing_parameters.get('local_offset_from_sync', 0)
@@ -498,7 +537,7 @@ class clusterbuster_pod_client:
         token = f'{command} {token}'.replace('%s', str(time.time()))
         token = ('0x%08x%s' % (len(token), token)).encode()
         while True:
-            self.timestamp(f'sync on {self.__synchost}:{self.__syncport}')
+            self.timestamp(f'sync {lcommand} on {self.__synchost}:{self.__syncport}')
             sync_conn = self.connect_to()
             while len(token) > 0:
                 if len(token) > 128:
@@ -526,17 +565,14 @@ class clusterbuster_pod_client:
         answer = f'{self._run_cmd("lscpu")}{self._run_cmd("dmesg")}'
         print(answer, file=sys.stderr)
         if status != 0:
-            print("FAIL!", file=sys.stderr)
-            buf = f'''
-Namespace/pod/container: {self.namespace()}/{self.podname()}/{self.container()} pid: {pid}
-{answer}
-Run:
-oc logs -n '{self.namespace()}' '{self.podname()}' -c '{self.container()}'
-'''
-            self._do_sync_command('FAIL', buf)
+            self.timestamp("Run failed!")
+            self._fail(answer)
             if self.__exit_at_end:
                 os._exit(status)
-        pid_status = 0
+            else:
+                pid_status = status
+        else:
+            pid_status = 0
         if self.__exit_at_end:
             self.timestamp('About to exit')
             try:
@@ -554,5 +590,4 @@ oc logs -n '{self.namespace()}' '{self.podname()}' -c '{self.container()}'
             print('FINIS', file=sys.stderr)
             os._exit(pid_status)
         else:
-            self.timestamp('Waiting forever')
-            signal.pause()
+            self._wait_forever()
