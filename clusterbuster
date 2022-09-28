@@ -158,6 +158,7 @@ declare -r sync_error_file="/tmp/syncerror";
 declare -r controller_timestamp_file="/tmp/timing.json";
 # shellcheck disable=2155
 declare uuid=$(uuidgen -r)
+declare xuuid=$uuid
 
 declare kata_runtime_class=kata
 declare image_pull_policy=
@@ -1067,8 +1068,6 @@ function _monitor_pods() {
 	    # No guarantee that we won't get a repeated status
 	    if [[ $lstatus = "${pod_status[$name]:-}" ]] ; then continue; fi
 	    debug monitor "$pod" "${pod_status[$pod]:-}" '=>' "$lstatus"
-	    # Ignore status of any leftover pods from earlier runs
-	    if [[ ($lstatus = completed || $lstatus = succeeded || $lstatus = 'terminat'* || $lstatus = error || $lstatus = failed) && -z "${pod_status[$pod]:-}" ]] ; then continue; fi
 	    pod_status["$pod"]=$lstatus
 	    unset starting_pods["$pod"]
 	    unset running_pods["$pod"]
@@ -1256,7 +1255,7 @@ function _get_logs_poll() {
 	done
 	# shellcheck disable=SC2086
 	local mypid=$BASHPID
-	monitor_pods -A -l "${basename}-worker=$uuid" &
+	monitor_pods -A -l "${basename}-x-worker=$xuuid" &
 	# shellcheck disable=SC2086
 	if supports_api -w "$requested_workload" supports_reporting ; then
 	    # Ensure that if there's a lot of output that we don't remove the sync file before it has all been flushed out
@@ -1736,12 +1735,14 @@ function standard_labels_yaml() {
     local true='"true"'
     cat <<EOF
 labels:
+  ${basename}-xuuid: "$xuuid"
   ${basename}-uuid: "$uuid"
   ${basename}-id: "$uuid"
   ${basename}: "true"
   clusterbusterbase: "true"
   ${basename}base: "true"
 ${objtype:+  ${basename}-${objtype}: "$uuid"}
+${objtype:+  ${basename}-x-${objtype}: "$xuuid"}
 ${logger:+  ${basename}-logger: $true}
 EOF
     if [[ -n "$workload" ]] ; then
