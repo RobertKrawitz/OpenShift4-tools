@@ -2505,13 +2505,14 @@ function create_drop_cache_deployment() {
     local -i replicas=$4
     local -i replica=0
     while ((replica++ < replicas)) ; do
-	local name="${namespace}-${workload}-${instance}-${replica}-dc"
-	create_service -H -k replica "$namespace" "${name}" "$drop_cache_port"
+	local name="${namespace}-${workload}-${instance}-${replica}"
+	local dcname="${name}-dc"
+	create_service -H -k replica "$namespace" "${dcname}" "$drop_cache_port"
 	create_object -t Pod -n "$namespace" "${namespace}-${workload}-${instance}-${replica}-dc" <<EOF
 apiVersion: v1
 kind: Pod
 metadata:
-  name: $(mkpodname "$name")
+  name: $(mkpodname "$dcname")
 $(indent 2 standard_pod_metadata_yaml "$namespace" drop_cache)
 $(indent 2 standard_deployment_metadata_yaml "$namespace" drop_cache)
 $(indent 2 standard_labels_yaml -s dc "$workload" "$namespace" "$instance" "$replica")
