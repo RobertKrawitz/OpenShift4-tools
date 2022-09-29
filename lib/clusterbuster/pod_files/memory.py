@@ -15,8 +15,8 @@ class memory_client(clusterbuster_pod_client):
         try:
             super().__init__()
             self._set_processes(int(self._args[0]))
-            self.__runtime = int(self._args[1])
-            self.__memory = int(self._args[2])
+            self.__memory = int(self._args[1])
+            self.__runtime = int(self._args[2])
         except Exception as err:
             self.abort(f"Init failed! {err} {' '.join(self._args)}")
 
