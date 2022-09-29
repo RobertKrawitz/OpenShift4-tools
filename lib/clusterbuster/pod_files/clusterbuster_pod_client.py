@@ -364,7 +364,7 @@ class clusterbuster_pod_client:
                     if status is None:
                         status = 0
                     self.timestamp(f"{os.getpid()} exiting, status {status}")
-                    self._finish(status, usermsg=f"{os.getpid()} exiting, status {status}")
+                    self._finish(status, report_system = False)
                 else:
                     pid_count = pid_count + 1
             except Exception as err:
@@ -449,7 +449,7 @@ oc logs -n '{self.namespace()}' '{self.podname()}' -c '{self.container()}'
         :return: Timestamped stdout of the command
         """
         try:
-            answer = subprocess.run(cmd, stdout=subprocess.PIPE)
+            answer = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
             message = answer.stdout.decode("ascii")
             if message:
                 return f'{cmd} output:\n{message}'
@@ -597,13 +597,18 @@ oc logs -n '{self.namespace()}' '{self.podname()}' -c '{self.container()}'
             except Exception as err:
                 self.timestamp(f'sync failed {err}, retrying')
 
-    def _finish(self, status=0, pid=os.getpid(), usermsg: str = None):
-        message = self.get_timestamp(f'{self._run_cmd("lscpu")}\n{self._run_cmd("dmesg")}')
+    def _finish(self, status=0, pid=os.getpid(), usermsg: str = None, report_system: bool=True):
+        if report_system:
+            message = self.get_timestamp(f'{self._run_cmd("lscpu")}\n{self._run_cmd("dmesg")}')
+        else:
+            message = ''
         if usermsg:
+            if message:
+                message += '\n\n'
             if status:
-                message += f"\n\nERROR: {usermsg}"
+                message += f"ERROR: {usermsg}"
             else:
-                message += f"\n\n{usermsg}"
+                message += f"{usermsg}"
         print(message, file=sys.stderr)
         if status != 0:
             self.timestamp("Run failed!")
@@ -613,6 +618,7 @@ oc logs -n '{self.namespace()}' '{self.podname()}' -c '{self.container()}'
             else:
                 pid_status = status
         else:
+            self.timestamp("Run succeeded")
             pid_status = 0
         if self.__exit_at_end:
             self.timestamp('About to exit')
@@ -628,7 +634,6 @@ oc logs -n '{self.namespace()}' '{self.podname()}' -c '{self.container()}'
             except Exception as err:
                 self.timestamp(f"wait() failed: {err}")
             self.timestamp('Done waiting')
-            print('FINIS', file=sys.stderr)
             os._exit(pid_status)
         else:
             self._wait_forever()
