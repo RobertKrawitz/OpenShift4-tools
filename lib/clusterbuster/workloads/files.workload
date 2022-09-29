@@ -64,7 +64,6 @@ function files_calculate_logs_required() {
 function files_list_configmaps() {
     cat <<EOF
 ${__podfile_dir__}/files.py
-${__podfile_dir__}/files.pl
 ${__podfile_dir__}/drop_cache.pl
 EOF
 }
