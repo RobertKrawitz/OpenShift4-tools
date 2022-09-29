@@ -1659,7 +1659,7 @@ function create_standard_containers() {
   image: "$container_image"
 $(indent 2 container_standard_auxiliary_yaml)
 $(indent 2 standard_environment)
-$(indent 2 bootstrap_command_yaml "$node_executable")
+$(indent 2 bootstrap_command_yaml "${node_executable:-}")
 $(indent 2 standard_yaml_args "$namespace" "$container")
 $(if [[ -n "${arglist_function}" ]] ; then "${arglist_function}" "$@" "$container" | indent 2 ; fi)
 $(indent 2 volume_mounts_yaml "$namespace" "${instance}" "$secret_count")
@@ -1774,12 +1774,14 @@ EOF
 
 function bootstrap_command_yaml() {
     local command=$1
-    cat <<EOF
+    if [[ -n "${command:-}" ]] ; then
+	cat <<EOF
 command:
 - bootstrap.sh
 args:
 - "$system_configmap_mount_dir/$command"
 EOF
+    fi
 }
 
 function volume_mounts_yaml() {
@@ -2408,7 +2410,6 @@ function create_standard_deployment() {
 	esac
     done
     [[ -n "$(type -t "$create_container_function")" ]] || fatal "Cannot run create container function $create_container_function: command not found"
-    [[ -n "$node_executable" ]] || fatal "No node executable provided"
     [[ -z "$arglist_function" || -n "$(type -t "$arglist_function")" ]] || fatal "Cannot run arglist function $arglist_function: command not found"
     shift $((OPTIND-1))
     if (($# != 5)) ; then

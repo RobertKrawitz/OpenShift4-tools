@@ -1,0 +1,118 @@
+#!/bin/bash
+
+# Copyright 2019-2022 Robert Krawitz/Red Hat
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+################################################################
+# Simple workloads (pause pod, clusterbuster, logging)
+################################################################
+
+declare -ig ___log_bytes_per_line=1
+declare -ig ___log_lines_per_io=1
+declare -ig ___log_xfer_count=1
+declare -g ___log_delay=0
+
+function logger_arglist() {
+    mk_yaml_args "$processes_per_pod" "$workload_run_time" "$___log_bytes_per_line" "$___log_lines_per_io" "$___log_xfer_count" "$___log_delay"
+}
+
+function logger_create_deployment() {
+    local namespace=$1
+    local count=${2:-1}
+    local secret_count=${3:-1}
+    local replicas=${4:-1}
+    local containers_per_pod=${5:-1}
+    local -i instance
+    create_sync_service_if_needed "$namespace" 2 "$((containers_per_pod * replicas * processes_per_pod * count))" \
+				  "$((containers_per_pod * replicas * count))"
+    for instance in $(seq $first_deployment $((count + first_deployment - 1))) ; do
+	create_standard_deployment -a logger_arglist -e logger.py \
+				   "$namespace" "$instance" "$secret_count" "$replicas" "$containers_per_pod"
+    done
+}
+
+function logger_supports_reporting() {
+    :
+}
+
+function logger_workload_reporting_class() {
+    echo generic
+}
+
+function logger_list_configmaps() {
+    cat <<EOF
+${__podfile_dir__}/logger.py
+EOF
+}
+
+function logger_calculate_logs_required() {
+    local -i namespaces=$1
+    local -i deps_per_namespace=${2:-1}
+    local -i replicas=${3:-1}
+    local -i containers_per_pod=${4:-1}
+    echo $((namespaces * processes_per_pod * containers_per_pod * replicas * deps_per_namespace))
+}
+
+function logger_document() {
+    cat <<'EOF'
+* log: a pod that emits log messages at a controllable rate.
+EOF
+}
+
+function logger_help_options() {
+    cat <<EOF
+    Log Options:
+       --log-bytes-per-line=<bytes_per_line>
+                        Number of bytes per line to log.
+                        Default $___log_bytes_per_line.
+       --log-lines-per-io=<lines_per_io>
+                        Number of lines per message to log.  Default $___log_lines_per_io.
+       --log-xfer-count=<count>
+                        Number of messages to log (in I/Os)
+                        Default $___log_xfer_count.  If zero, log
+                        continuously (subject to log-xfertime).
+       --log-delay=<sec>
+                        Time in seconds (may be fractional to delay 
+                        between I/O.  Default $___log_delay.
+EOF
+}
+
+function logger_process_options() {
+    local opt
+    local -a unknown_opts=()
+    for opt in "$@" ; do
+	read -r noptname1 noptname optvalue <<< "$(parse_option "$opt")"
+	case "$noptname1" in
+	    logbytesperline)	___log_bytes_per_line=$optvalue	;;
+	    loglinesperio)	___log_lines_per_io=$optvalue	;;
+	    logxfercount)	___log_xfer_count=$optvalue	;;
+	    logdelay)		___log_delay=$optvalue		;;
+	    *) 			unknown_opts+=("$noptname ($noptname1)") ;;
+	esac
+    done
+    if [[ -n "${unknown_opts[*]:-}" ]] ; then
+	help "${unknown_opts[@]}"
+    fi
+}
+
+function logger_report_options() {
+    cat <<EOF
+"log_bytes_per_line": $___log_bytes_per_line,
+"log_lines_per_io": $___log_lines_per_io,
+"log_xfer_count": $___log_xfer_count,
+"log_delay": $___log_delay
+EOF
+}
+
+register_workload logger log simple-log logging
