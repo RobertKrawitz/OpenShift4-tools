@@ -169,8 +169,8 @@ sub reply_timestamp($$\@) {
     timestamp("Sending sync time took $et seconds");
 }
 
-sub sync_one($$$$$$) {
-    my ($sock, $tmp_sync_file_base, $tmp_error_file, $start_time, $base_start_time, $expected_clients) = @_;
+sub sync_one($$$$$$$) {
+    my ($sock, $tmp_sync_file_base, $tmp_error_file, $start_time, $base_start_time, $expected_clients, $first_pass) = @_;
     timestamp("Listening on port $listen_port");
     listen($sock, $expected_clients) || die "listen: $!";
     printf STDERR "Expect $expected_clients client%s\n", $expected_clients == 1 ? '' : 's';
@@ -202,6 +202,18 @@ sub sync_one($$$$$$) {
 	$tbuf =~ s/^....\s+//;
 	if ($command eq 'time')  {
 	    my ($ignore, $ts, $ignore) = split(/ +/, $tbuf);
+	    if (! $first_pass) {
+		timestamp("Unexpected request for time sync from $tbuf!");
+		open TMP, ">", "$tmp_error_file" || die ("Can't open error file $tmp_error_file: $!\n");
+		print TMP "Unexpected request for time sync from $tbuf!";
+		close TMP || die "Can't close error file: $!\n";
+		link($tmp_error_file, $error_file) || die "Can't link $tmp_error_file to $error_file: $!\n";
+		timestamp("Waiting for error file $error_file to be removed");
+		while (-f $error_file) {
+		    sleep(1);
+		}
+		POSIX::_exit(1)
+	    }
 	    push @ts_clients, [$client, "$ts " . ytime()];
 	} elsif ($command eq 'rslt') {
 	    handle_rslt($tmp_sync_file_base, $expected_clients, $tbuf);
@@ -272,7 +284,7 @@ if ($sync_count == 0) {
 	# clients and close them manually.
 	my $child = fork();
 	if ($child == 0) {
-	    sync_one($sock, $tmp_sync_file_base, $tmp_error_file, $start_time, $base_start_time, $first_pass ? $initial_expected_clients : $expected_clients);
+	    sync_one($sock, $tmp_sync_file_base, $tmp_error_file, $start_time, $base_start_time, $first_pass ? $initial_expected_clients : $expected_clients, $first_pass);
 	} elsif ($child < 1) {
 	    timestamp("Fork failed: $!");
 	    POSIX::_exit(1);
