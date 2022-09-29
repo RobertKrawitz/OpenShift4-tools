@@ -9,9 +9,12 @@ class cpusoaker_client(clusterbuster_pod_client):
     """
 
     def __init__(self):
-        super().__init__()
-        self._set_processes(int(self._args[0]))
-        self._runtime = float(self._args[1])
+        try:
+            super().__init__()
+            self._set_processes(int(self._args[0]))
+            self._runtime = float(self._args[1])
+        except Exception as err:
+            self.abort(f"Init failed! {err} {' '.join(self._args)}")
 
     def runit(self, process: int):
         iterations = 0

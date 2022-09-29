@@ -8,7 +8,7 @@ require "clientlib.pl";
 $SIG{TERM} = sub { POSIX::_exit(0); };
 
 sub runit() {
-    my ($listen_port, $msg_size, $ts, $expected_clients) = parse_command_line(@ARGV);
+    my ($listen_port, $msg_size, $expected_clients) = parse_command_line(@ARGV);
 
     timestamp("Clusterbuster server starting");
     my $sockaddr = "S n a4 x8";

@@ -10,8 +10,11 @@ class uperf_server_client(clusterbuster_pod_client):
     """
 
     def __init__(self):
-        super().__init__(initialize_timing_if_needed=False)
-        self.listen_port = self._args[0]
+        try:
+            super().__init__(initialize_timing_if_needed=False)
+            self.listen_port = self._args[0]
+        except Exception as err:
+            self.abort(f"Init failed! {err} {' '.join(self._args)}")
 
     def runit(self, process: int):
         self.timestamp(f"Starting uperf server on port {self.listen_port}")

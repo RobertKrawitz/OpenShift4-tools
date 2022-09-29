@@ -4,6 +4,7 @@ import os
 import subprocess
 import re
 import shutil
+import time
 
 from clusterbuster_pod_client import clusterbuster_pod_client
 
@@ -14,19 +15,22 @@ class sysbench_client(clusterbuster_pod_client):
     """
 
     def __init__(self):
-        super().__init__()
-        self.processes = int(self._args[0])
-        self.rundir = self._args[1]
-        self.runtime = int(self._args[2])
-        self.drop_cache_service = self._args[3]
-        self.drop_cache_port = int(self._args[4])
-        self.sysbench_generic_args = clusterbuster_pod_client.splitStr(r'\s+', self._args[5])
-        self.sysbench_cmd = self._args[6]
-        self.sysbench_fileio_args = clusterbuster_pod_client.splitStr(r'\s+', self._args[7])
-        if self._args[8]:
-            self.sysbench_modes = clusterbuster_pod_client.splitStr(r'\s+', self._args[8])
-        else:
-            self.sysbench_modes = ['seqwr', 'seqrewr', 'seqrd', 'rndrd', 'rndwr', 'rndrw']
+        try:
+            super().__init__()
+            self._set_processes(int(self._args[0]))
+            self.rundir = self._args[1]
+            self.runtime = int(self._args[2])
+            self.drop_cache_service = self._args[3]
+            self.drop_cache_port = int(self._args[4])
+            self.sysbench_generic_args = clusterbuster_pod_client.splitStr(r'\s+', self._args[5])
+            self.sysbench_cmd = self._args[6]
+            self.sysbench_fileio_args = clusterbuster_pod_client.splitStr(r'\s+', self._args[7])
+            if self._args[8]:
+                self.sysbench_modes = clusterbuster_pod_client.splitStr(r'\s+', self._args[8])
+            else:
+                self.sysbench_modes = ['seqwr', 'seqrewr', 'seqrd', 'rndrd', 'rndwr', 'rndrw']
+        except Exception as err:
+            self.abort(f"Init failed! {err} {' '.join(self._args)}")
 
     def build_sysbench_cmd(self, command: str, mode: str):
         args = ['sysbench', f'--time={self.runtime}']
@@ -68,9 +72,15 @@ class sysbench_client(clusterbuster_pod_client):
 
     def runit(self, process: int):
         op_answers = {}
-        localrundir = f'{self.rundir}/{self.podname()}/{str(os.getpid)}'
+        localrundir = f'{self.rundir}/{self.podname()}/{str(os.getpid())}'
         shutil.rmtree(localrundir, ignore_errors=True)
-        os.makedirs(localrundir)
+        while True:
+            try:
+                os.makedirs(localrundir)
+                break;
+            except Exception as exc:
+                self.timestamp(f"makedirs failed {exc}; retrying")
+                time.sleep(1)
         os.chdir(localrundir)
         data_start_time = self.adjusted_time()
         user, sys = self.cputimes()

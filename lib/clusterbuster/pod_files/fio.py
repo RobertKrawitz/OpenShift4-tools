@@ -15,26 +15,29 @@ class fio_client(clusterbuster_pod_client):
     """
 
     def __init__(self):
-        super().__init__()
-        self.processes = int(self._args[0])
-        self.rundir = self._args[1]
-        self.runtime = int(self._args[2])
-        self.jobfilesdir = self._args[3]
-        self.drop_cache_service = self._args[4]
-        self.drop_cache_port = int(self._args[5])
-        self.fio_blocksizes = clusterbuster_pod_client.toSizes(self._args[6])
-        self.fio_patterns = re.split(r'\s+', self._args[7])
-        self.fio_iodepths = clusterbuster_pod_client.toSizes(self._args[8])
-        self.fio_fdatasyncs = clusterbuster_pod_client.toBools(self._args[9])
-        self.fio_directs = clusterbuster_pod_client.toBools(self._args[10])
-        if self._args[11]:
-            self.fio_ioengines = re.split(r'\s+', self._args[11])
-        else:
-            self.fio_ioengines = []
-        if self._args[12]:
-            self.fio_generic_args = re.split(r'\s+', self._args[12])
-        else:
-            self.fio_generic_args = []
+        try:
+            super().__init__()
+            self._set_processes(int(self._args[0]))
+            self.rundir = self._args[1]
+            self.runtime = int(self._args[2])
+            self.jobfilesdir = self._args[3]
+            self.drop_cache_service = self._args[4]
+            self.drop_cache_port = int(self._args[5])
+            self.fio_blocksizes = clusterbuster_pod_client.toSizes(self._args[6])
+            self.fio_patterns = re.split(r'\s+', self._args[7])
+            self.fio_iodepths = clusterbuster_pod_client.toSizes(self._args[8])
+            self.fio_fdatasyncs = clusterbuster_pod_client.toBools(self._args[9])
+            self.fio_directs = clusterbuster_pod_client.toBools(self._args[10])
+            if self._args[11]:
+                self.fio_ioengines = re.split(r'\s+', self._args[11])
+            else:
+                self.fio_ioengines = []
+            if self._args[12]:
+                self.fio_generic_args = re.split(r'\s+', self._args[12])
+            else:
+                self.fio_generic_args = []
+        except Exception as err:
+            self.abort(f"Init failed! {err} {' '.join(self._args)}")
 
     def get_token(self, pattern: str, string: str, token: int = 1):
         match = re.match(pattern, string)

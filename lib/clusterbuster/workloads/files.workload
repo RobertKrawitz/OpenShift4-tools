@@ -33,7 +33,7 @@ function files_arglist() {
     local -i file_blocks=$((___file_size/___file_block_size))
     local mounts=("${volume_mount_paths[@]}" "${emptydirs[@]}")
     mk_yaml_args "$___file_dirs_per_volume" "$___files_per_dir" "$___file_block_size" "$file_blocks" \
-		 "$processes_per_pod" "$___files_direct" "svc-${namespace}-files-${instance}-${replica}-dc" \
+		 "$processes_per_pod" "$___files_direct" "svc-${namespace}-files-${instance}-${replica:-1}-dc" \
 		 "$drop_cache_port" "${mounts[@]}"
 }
 

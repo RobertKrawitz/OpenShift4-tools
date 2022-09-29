@@ -36,6 +36,8 @@ class clusterbuster_pod_client:
     """
 
     def __init__(self, initialize_timing_if_needed: bool = True, argv: list = sys.argv):
+        # No use in catching errors here, since we may not be sufficiently initialized
+        # to signal them back.
         if len(argv) < 9:
             print("clusterbuster_pod_client: incomplete argument list", file=sys.stderr)
             os._exit(1)
@@ -45,18 +47,43 @@ class clusterbuster_pod_client:
         self.__basetime = float(argv[3])
         self.__baseoffset = float(argv[4])
         self.__crtime = float(argv[5])
-        self.__exit_at_end = bool(argv[6])
+        self.__exit_at_end = clusterbuster_pod_client.toBool(argv[6])
         self.__synchost = argv[7]
         self.__syncport = int(argv[8])
         self.__start_time = float(time.time())
-        self.__pod = socket.gethostname()
-        self._args = argv[9:]
-        self.__timing_parameters = {}
-        self.__timing_initialized = False
-        if initialize_timing_if_needed:
-            self._initialize_timing()
-        self.__child_idx = None
-        self.__processes = 1
+        try:
+            child = os.fork()
+        except Exception as err:
+            print(f"Fork failed: {err}", file=sys.stderr)
+            if self.__exit_at_end:
+                os._exit(1)
+            else:
+                while True:
+                    signal.pause()
+        if child == 0:
+            self.__pod = socket.gethostname()
+            self._args = argv[9:]
+            self.__timing_parameters = {}
+            self.__timing_initialized = False
+            if initialize_timing_if_needed:
+                self._initialize_timing()
+            self.__child_idx = None
+            self.__processes = 1
+        else:
+            try:
+                pid, status = os.wait()
+                status = int((status / 256)) | (status & 255)
+                if status:
+                    print(f"Child process {pid} failed: {status}")
+                else:
+                    print("Child process {pid} succeeded")
+                if self.__exit_at_end:
+                    os._exit(status)
+                else:
+                    while True:
+                        signal.pause()
+            except Exception as err:
+                self.abort(f"Wait failed: {err}")
 
     @staticmethod
     def toBool(arg, defval: bool = None):
@@ -337,7 +364,7 @@ class clusterbuster_pod_client:
                     if status is None:
                         status = 0
                     self.timestamp(f"{os.getpid()} exiting, status {status}")
-                    self._finish(status)
+                    self._finish(status, usermsg=f"{os.getpid()} exiting, status {status}")
                 else:
                     pid_count = pid_count + 1
             except Exception as err:
@@ -347,13 +374,11 @@ class clusterbuster_pod_client:
             try:
                 pid, status = os.wait()
                 status = int((status / 256)) | (status & 255)
-                self.timestamp(f"waited for {pid} (status {status})")
                 if status != 0:
-                    self._finish(status, pid)
+                    self._finish(status, pid, usermsg=f"waited for {pid} (status {status})")
                 pid_count = pid_count - 1
             except Exception as err:
-                self.timestamp(f'Wait failed: {err}')
-                self._finish(1)
+                self._finish(1, usermsg=f'Wait failed: {err}')
         self._finish()
 
     def report_results(self, data_start_time: float, data_end_time: float,
@@ -425,9 +450,13 @@ oc logs -n '{self.namespace()}' '{self.podname()}' -c '{self.container()}'
         """
         try:
             answer = subprocess.run(cmd, stdout=subprocess.PIPE)
-            return self.get_timestamp(f'{cmd} output:\n{answer.stdout.decode("ascii")}')
+            message = answer.stdout.decode("ascii")
+            if message:
+                return f'{cmd} output:\n{message}'
+            else:
+                return f'{cmd} produced no output'
         except Exception as err:
-            return self.get_timestamp(f"Can't run {cmd}: {err}")
+            return f"Can't run {cmd}: {err}"
 
     def _clean_numbers(self, ref):
         """
@@ -568,12 +597,17 @@ oc logs -n '{self.namespace()}' '{self.podname()}' -c '{self.container()}'
             except Exception as err:
                 self.timestamp(f'sync failed {err}, retrying')
 
-    def _finish(self, status=0, pid=os.getpid()):
-        answer = f'{self._run_cmd("lscpu")}{self._run_cmd("dmesg")}'
-        print(answer, file=sys.stderr)
+    def _finish(self, status=0, pid=os.getpid(), usermsg: str = None):
+        message = self.get_timestamp(f'{self._run_cmd("lscpu")}\n{self._run_cmd("dmesg")}')
+        if usermsg:
+            if status:
+                message += f"\n\nERROR: {usermsg}"
+            else:
+                message += f"\n\n{usermsg}"
+        print(message, file=sys.stderr)
         if status != 0:
             self.timestamp("Run failed!")
-            self._fail(answer)
+            self._fail(message)
             if self.__exit_at_end:
                 os._exit(status)
             else:
@@ -598,3 +632,17 @@ oc logs -n '{self.namespace()}' '{self.podname()}' -c '{self.container()}'
             os._exit(pid_status)
         else:
             self._wait_forever()
+
+    def abort(self, msg: str = "Terminating"):
+        """
+        Abort the run.  This is intended to be called from inside the workload's
+        constructor if something goes wrong in initialization and should not be used
+        otherwise.
+        :param msg: Message to be logged
+        """
+        try:
+            message = f"Process {os.getpid()} aborting: {msg}\n{traceback.format_exc()}"
+        except Exception:
+            message = f"Process {os.getpid()} aborting: {msg} (no traceback)"
+        self.__exit_at_end = False
+        self._finish(1, usermsg = message)

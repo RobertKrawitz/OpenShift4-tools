@@ -13,17 +13,20 @@ class uperf_client(clusterbuster_pod_client):
     """
 
     def __init__(self):
-        super().__init__()
-        self.runtime = int(self._args[0])
-        self.ramp_time = int(self._args[1])
-        self.srvhost = self.resolve_host(self._args[2])
-        self.connect_port = int(self._args[3])
-        self.tests = self._args[4:]
-        self.podfile_dir = os.environ.get('PODFILE_DIR', '.')
-        self.process_file(os.path.join(self.podfile_dir, "uperf-mini.xml"), "/tmp/uperf-test.xml", {'srvhost': self.srvhost, 'runtime': 1})
-        self.timestamp(f"Waiting for uperf server {self.srvhost}:{self.connect_port} to come online...")
-        subprocess.run(f'until uperf -P "{self.connect_port}" -m /tmp/uperf-test.xml; do sleep 1; done', shell=True)
-        self.timestamp("Connected to uperf server")
+        try:
+            super().__init__()
+            self.runtime = int(self._args[0])
+            self.ramp_time = int(self._args[1])
+            self.srvhost = self.resolve_host(self._args[2])
+            self.connect_port = int(self._args[3])
+            self.tests = self._args[4:]
+            self.podfile_dir = os.environ.get('PODFILE_DIR', '.')
+            self.process_file(os.path.join(self.podfile_dir, "uperf-mini.xml"), "/tmp/uperf-test.xml", {'srvhost': self.srvhost, 'runtime': 1})
+            self.timestamp(f"Waiting for uperf server {self.srvhost}:{self.connect_port} to come online...")
+            subprocess.run(f'until uperf -P "{self.connect_port}" -m /tmp/uperf-test.xml; do sleep 1; done', shell=True)
+            self.timestamp("Connected to uperf server")
+        except Exception as err:
+            self.abort(f"Init failed! {err} {' '.join(self._args)}")
 
     def compute_seconds_uperf(self, value: str):
         # Specific to uperf, which defaults to milliseconds

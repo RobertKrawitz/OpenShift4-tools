@@ -10,11 +10,14 @@ class synctest_client(clusterbuster_pod_client):
     """
 
     def __init__(self):
-        super().__init__()
-        self.sync_count = int(self._args[0])
-        self.sync_cluster_count = int(self._args[1])
-        self.sync_sleep = float(self._args[2])
-        self._set_processes(int(self._args[3]))
+        try:
+            super().__init__()
+            self.sync_count = int(self._args[0])
+            self.sync_cluster_count = int(self._args[1])
+            self.sync_sleep = float(self._args[2])
+            self._set_processes(int(self._args[3]))
+        except Exception as err:
+            self.abort(f"Init failed! {err} {' '.join(self._args)}")
 
     def runit(self, process: int):
         user, system = self.cputimes()

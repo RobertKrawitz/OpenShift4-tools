@@ -13,15 +13,18 @@ class client_client(clusterbuster_pod_client):
     """
 
     def __init__(self):
-        super().__init__()
-        self.srvhost = self._args[0]
-        self.connect_port = int(self._args[1])
-        self.data_rate = clusterbuster_pod_client.toSize(self._args[2])
-        self.nbytes = clusterbuster_pod_client.toSize(self._args[3])
-        self.bytes_max = clusterbuster_pod_client.toSize(self._args[4])
-        self.msg_size = clusterbuster_pod_client.toSize(self._args[5])
-        self.xfertime = clusterbuster_pod_client.toSize(self._args[6])
-        self.xfertime_max = clusterbuster_pod_client.toSize(self._args[7])
+        try:
+            super().__init__()
+            self.srvhost = self._args[0]
+            self.connect_port = int(self._args[1])
+            self.data_rate = clusterbuster_pod_client.toSize(self._args[2])
+            self.nbytes = clusterbuster_pod_client.toSize(self._args[3])
+            self.bytes_max = clusterbuster_pod_client.toSize(self._args[4])
+            self.msg_size = clusterbuster_pod_client.toSize(self._args[5])
+            self.xfertime = clusterbuster_pod_client.toSize(self._args[6])
+            self.xfertime_max = clusterbuster_pod_client.toSize(self._args[7])
+        except Exception as err:
+            self.abort(f"Init failed! {err} {' '.join(self._args)}")
 
     def runit(self, process: int):
         npass = 0

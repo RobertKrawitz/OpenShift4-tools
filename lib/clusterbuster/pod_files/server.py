@@ -11,12 +11,14 @@ class server_client(clusterbuster_pod_client):
     """
 
     def __init__(self):
-        super().__init__()
-        self.listen_port = int(self._args[0])
-        self.msg_size = clusterbuster_pod_client.toSize(self._args[1])
-        # Not using the timestamp in args[2]
-        self.expected_clients = int(self._args[3])
-        self.buf = ('A' * self.msg_size).encode()
+        try:
+            super().__init__()
+            self.listen_port = int(self._args[0])
+            self.msg_size = clusterbuster_pod_client.toSize(self._args[1])
+            self.expected_clients = int(self._args[2])
+            self.buf = ('A' * self.msg_size).encode()
+        except Exception as err:
+            self.abort(f"Init failed! {err} {' '.join(self._args)}")
 
     def run_one_server(self, conn):
         consec_empty = 0
