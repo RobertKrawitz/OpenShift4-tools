@@ -21,14 +21,17 @@
 declare -g ___cpusoaker_workload=perl
 
 function cpusoaker_arglist() {
-    mk_yaml_args "$processes_per_pod" "$workload_run_time"
+    local mountdir=$1; shift
+    while [[ "$1" != '--' ]] ; do shift; done; shift
+    mk_yaml_args "$___cpusoaker_workload" "${mountdir}$(_cpusoaker_get_pod_workload)" "$@" \
+		 "$processes_per_pod" "$workload_run_time"
 }
 
 function _cpusoaker_get_pod_workload() {
     case "$___cpusoaker_workload" in
-	perl)   echo cpusoaker.pl         ;;
-	python) echo cpusoaker.py         ;;
-	*)      fatal "Unknown workload"  ;;
+	perl)    echo cpusoaker.pl         ;;
+	python3) echo cpusoaker.py         ;;
+	*)       fatal "Unknown workload"  ;;
     esac
 }
 
@@ -43,7 +46,7 @@ function cpusoaker_create_deployment() {
     create_sync_service_if_needed "$namespace" 2 "$((containers_per_pod * replicas * processes_per_pod * count))" \
 				  "$((containers_per_pod * replicas * count))"
     for instance in $(seq $first_deployment $((count + first_deployment - 1))) ; do
-	create_standard_deployment -a cpusoaker_arglist -e "$(_cpusoaker_get_pod_workload)" \
+	create_standard_deployment -a cpusoaker_arglist \
 				   "$namespace" "$instance" "$secret_count" "$replicas" "$containers_per_pod"
     done
 }
@@ -87,8 +90,8 @@ function cpusoaker_process_options() {
 	case "$noptname1" in
 	    cpusoakerworkload)
 		case "$optvalue" in
-		    perl|pl)   ___cpusoaker_workload=perl   ;;
-		    python|py) ___cpusoaker_workload=python ;;
+		    perl|pl)   ___cpusoaker_workload=perl    ;;
+		    python|py) ___cpusoaker_workload=python3 ;;
 		    *)
 			fatal "Unknown CPU soaker workload $optvalue; must be 'perl' or 'python'"
 			;;

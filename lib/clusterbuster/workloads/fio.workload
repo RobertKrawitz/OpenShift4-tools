@@ -33,12 +33,15 @@ declare -g  ___fio_prepare_job_file
 declare -g  ___fio_processed_job_file
 
 function fio_arglist() {
+    local mountdir=$1; shift
     local namespace=$1
     local instance=$2
     local secret_count=$3
     local replicas=$4
     local containers_per_pod=$5
-    mk_yaml_args "$processes_per_pod" "$___fio_workdir" "$workload_run_time" "$configmap_mount_dir" \
+    while [[ "$1" != '--' ]] ; do shift; done; shift
+    mk_yaml_args "python3" "${mountdir}fio.py" "$@" \
+		 "$processes_per_pod" "$___fio_workdir" "$workload_run_time" "$configmap_mount_dir" \
 		 "svc-${namespace}-fio-${instance}-${replica}-dc" "$drop_cache_port" \
 		 "${___fio_blocksizes[*]:-}" "${___fio_patterns[*]:-}" "${___fio_iodepths[*]:-}" \
 		 "${___fio_fdatasyncs[*]:-}" "${___fio_directs[*]:-}" "${___fio_ioengines[*]:-}" \
@@ -57,7 +60,7 @@ function fio_create_deployment() {
 				  "$((containers_per_pod * replicas * count))"
     for instance in $(seq "$first_deployment" $((count + first_deployment - 1))) ; do
 	create_drop_cache_deployment "$namespace" "$workload" "$instance" "$replicas"
-	create_standard_deployment  -a fio_arglist -e fio.py -p \
+	create_standard_deployment  -a fio_arglist -p \
 				    "$namespace" "$instance" "$secret_count" "$replicas" "$containers_per_pod"
     done
 }

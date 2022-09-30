@@ -28,7 +28,9 @@ declare -gir ___uperf_port_addrs=24
 declare -gi ___uperf_ramp_time=3
 
 function uperf_server_arglist() {
-    mk_yaml_args "$___uperf_port"
+    local mountdir=$1; shift
+    while [[ "$1" != '--' ]] ; do shift; done; shift
+    mk_yaml_args "python3" "${mountdir}uperf-server.py" "$@" "$___uperf_port"
 }
 
 function _uperf_create_security_context() {
@@ -41,7 +43,10 @@ EOF
 }
 
 function uperf_client_arglist() {
-    mk_yaml_args "$workload_run_time" "$___uperf_ramp_time" "svc-${namespace}-uperf-server-$instance" \
+    local mountdir=$1; shift
+    while [[ "$1" != '--' ]] ; do shift; done; shift
+    mk_yaml_args "python3" "${mountdir}uperf-client.py" "$@" \
+		 "$workload_run_time" "$___uperf_ramp_time" "svc-${namespace}-uperf-server-$instance" \
 		 "$___uperf_port" "${___uperf_tests[@]}"
 }
 
@@ -56,11 +61,11 @@ function uperf_create_deployment() {
 
     for instance in $(seq "$first_deployment" $((count + first_deployment - 1))) ; do
 	create_service "$namespace" "${namespace}-uperf-server-${instance}" $(seq "$___uperf_port" $((___uperf_port + ___uperf_port_addrs)))
-	create_standard_deployment -w uperf-server -p -c server -e uperf-server.py \
+	create_standard_deployment -w uperf-server -p -c server \
 				   -A "$(create_affinity_yaml "${namespace}-uperf-client-${instance}")" \
 				   -a uperf_server_arglist \
 				   "$namespace" "$instance" "$secret_count" 1 1
-	create_standard_deployment -w uperf-client -e uperf-client.py \
+	create_standard_deployment -w uperf-client \
 				   -A "$(create_affinity_yaml "${namespace}-uperf-server-${instance}")" \
 				   -a uperf_client_arglist \
 				   -S "$(_uperf_create_security_context)" \

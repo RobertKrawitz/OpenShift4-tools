@@ -119,8 +119,8 @@ declare -i total_objects_created=0
 # <name, filename with contents>
 declare -a configmap_files=()
 declare -a tolerations=()
-declare configmap_mount_dir=/etc/map
-declare system_configmap_mount_dir=/etc/bootstrap
+declare configmap_mount_dir=/etc/clusterbuster
+declare system_configmap_mount_dir=/var/lib/clusterbuster
 declare -i has_system_configmap=0
 declare node_selector='node-role.kubernetes.io/worker'
 declare -i pbench_controller_port=0
@@ -1659,9 +1659,10 @@ function create_standard_containers() {
   image: "$container_image"
 $(indent 2 container_standard_auxiliary_yaml)
 $(indent 2 standard_environment)
-$(indent 2 bootstrap_command_yaml "${node_executable:-}")
-$(indent 2 standard_yaml_args "$namespace" "$container")
-$(if [[ -n "${arglist_function}" ]] ; then "${arglist_function}" "$@" "$container" | indent 2 ; fi)
+  command:
+$(if [[ -n "${arglist_function}" ]] ; then
+     "${arglist_function}" "${system_configmap_mount_dir}/" "$@" "$container" -- "$namespace" "c$container" \
+     "$basetime" "$baseoffset" "$(ts)" "$exit_at_end" "$sync_service" "$sync_port_num" | indent 2 ; fi)
 $(indent 2 volume_mounts_yaml "$namespace" "${instance}" "$secret_count")
 EOF
     done
@@ -1770,18 +1771,6 @@ env:
 - name: PYTHONPATH
   value: "$system_configmap_mount_dir"
 EOF
-}
-
-function bootstrap_command_yaml() {
-    local command=$1
-    if [[ -n "${command:-}" ]] ; then
-	cat <<EOF
-command:
-- bootstrap.sh
-args:
-- "$system_configmap_mount_dir/$command"
-EOF
-    fi
 }
 
 function volume_mounts_yaml() {
@@ -2402,7 +2391,6 @@ function create_standard_deployment() {
 	    C) create_container_function="$OPTARG" ;;
 	    c) node_class="$OPTARG"		   ;;
 	    d) deployment_type="$OPTARG"	   ;;
-	    e) node_executable="$OPTARG"	   ;;
 	    p) allow_replica_controller=0	   ;;
 	    S) security_context="$OPTARG"	   ;;
 	    w) workload="$OPTARG"	  	   ;;
@@ -2445,7 +2433,9 @@ function create_container_sync() {
   ports:
   - containerPort: $port
 $(indent 2 standard_environment)
-$(indent 2 bootstrap_command_yaml sync.pl)
+  command:
+  - "perl"
+  - "$system_configmap_mount_dir/sync.pl"
   - "-f"
   - "$sync_flag_file"
   - "-e"
@@ -2494,7 +2484,9 @@ function create_container_drop_cache() {
   ports:
   - containerPort: $drop_cache_port
 $(indent 2 standard_environment)
-$(indent 2 bootstrap_command_yaml drop_cache.pl)
+  command:
+  - "perl"
+  - "${system_configmap_mount_dir}/drop_cache.pl"
   - "$drop_cache_port"
 $(indent 2 volume_mounts_yaml "$namespace" 0 0)
   - mountPath: "/proc-sys-vm"

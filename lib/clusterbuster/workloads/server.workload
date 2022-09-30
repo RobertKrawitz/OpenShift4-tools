@@ -22,17 +22,23 @@ declare -ig ___msg_size=32768
 declare -g ___server_workload=perl
 
 function server_server_arglist() {
-    mk_yaml_args "$port" "$___msg_size" "$((containers_per_pod * replicas_per_server))"
+    local mountdir=$1; shift
+    while [[ "$1" != '--' ]] ; do shift; done; shift
+    mk_yaml_args "$___server_workload" "${mountdir}server.$(_server_get_pod_workload)" "$@" \
+		 "$port" "$___msg_size" "$((containers_per_pod * replicas_per_server))"
 }
 
 function server_client_arglist() {
+    local mountdir=$1; shift
     local namespace=$1
     local instance=$2
+    while [[ "$1" != '--' ]] ; do shift; done; shift
     if [[ $target_data_rate != 0 && $target_data_rate != '' && $workload_run_time_max -eq 0 && bytes_transfer_max -eq 0 ]] ; then
 	bytes_transfer=$default_bytes_transfer
 	bytes_transfer_max=$default_bytes_transfer
     fi
-    mk_yaml_args "svc-${namespace}-server-server-$instance" "$port" "$target_data_rate" "$bytes_transfer" \
+    mk_yaml_args "$___server_workload" "${mountdir}client.$(_server_get_pod_workload)" "$@" \
+		 "svc-${namespace}-server-server-$instance" "$port" "$target_data_rate" "$bytes_transfer" \
 		 "$bytes_transfer_max" "$___msg_size" "$workload_run_time" "$workload_run_time_max"
 }
 
@@ -56,11 +62,11 @@ function server_create_deployment() {
 
     for instance in $(seq $first_deployment $((count + first_deployment - 1))) ; do
 	create_service "$namespace" "${namespace}-server-server-${instance}" "$port"
-	create_standard_deployment -w server-server -p -c server -e "server.$(_server_get_pod_workload)" \
+	create_standard_deployment -w server-server -p -c server \
 				   -A "$(create_affinity_yaml ${namespace}-server-client-${instance})" \
 				   -a server_server_arglist \
 				   "$namespace" "$instance" "$secret_count" 1 1
-	create_standard_deployment -w server-client -e "client.$(_server_get_pod_workload)" \
+	create_standard_deployment -w server-client \
 				   -A "$(create_affinity_yaml ${namespace}-server-server-${instance})" \
 				   -a server_client_arglist \
 				   "$namespace" "$instance" "$secret_count" "$replicas" "$containers_per_pod"

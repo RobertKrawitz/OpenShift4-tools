@@ -9,6 +9,8 @@ use POSIX;
 use Scalar::Util qw(looks_like_number);
 use strict;
 
+print STDERR "Args: ", join(" ", @ARGV), "\n";
+
 my %timing_parameters = ();
 
 my ($namespace, $container, $basetime, $baseoffset, $crtime, $exit_at_end, $synchost, $syncport, $start_time, $pod);

@@ -36,6 +36,7 @@ class clusterbuster_pod_client:
     """
 
     def __init__(self, initialize_timing_if_needed: bool = True, argv: list = sys.argv):
+        print(f'Args: {" ".join(argv)}', file=sys.stderr)
         # No use in catching errors here, since we may not be sufficiently initialized
         # to signal them back.
         if len(argv) < 9:
