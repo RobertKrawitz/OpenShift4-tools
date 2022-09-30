@@ -801,7 +801,13 @@ class ClusterBusterReporter:
             summary[var_avg] = summary[var] / summary[var_counter]
             if summary[var_counter] >= 2:
                 # From https://www.strchr.com/standard_deviation_in_one_pass
-                summary[var_stdev] = ((summary[var_sq] / summary[var_counter]) - (summary[var_avg] ** 2)) ** 0.5
+                if summary[var_avg] ** 2 > (summary[var_sq] / summary[var_counter]):
+                    # If the numbers are very close, this is probably an arithmetic rounding problem
+                    if (summary[var_sq] / summary[var_counter]) / summary[var_avg] ** 2 < 0.99999999999:
+                        print(f"Warning: taking sqrt of negative number: avg**2 {summary[var_avg] ** 2}, var_sq {(summary[var_sq] / summary[var_counter])}", file=sys.stderr)
+                    summary[var_stdev] = 0
+                else:
+                    summary[var_stdev] = ((summary[var_sq] / summary[var_counter]) - (summary[var_avg] ** 2)) ** 0.5
             else:
                 summary[var_stdev] = 0
             rowhash[var] = row_val
