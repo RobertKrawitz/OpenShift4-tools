@@ -18,11 +18,11 @@ class memory_client(clusterbuster_pod_client):
             self.__memory = int(self._args[1])
             self.__runtime = int(self._args[2])
         except Exception as err:
-            self.abort(f"Init failed! {err} {' '.join(self._args)}")
+            self._abort(f"Init failed! {err} {' '.join(self._args)}")
 
     def runit(self, process: int):
-        user, system = self.cputimes()
-        data_start_time = self.adjusted_time()
+        user, system = self._cputimes()
+        data_start_time = self._adjusted_time()
         memory_blk = 'a' * self.__memory  # noqa: F841
 
         if self.__runtime >= 0:
@@ -30,9 +30,9 @@ class memory_client(clusterbuster_pod_client):
         else:
             signal.pause()
 
-        user, system = self.cputimes(user, system)
-        data_end_time = self.adjusted_time()
-        self.report_results(data_start_time, data_end_time, data_end_time - data_start_time, user, system)
+        user, system = self._cputimes(user, system)
+        data_end_time = self._adjusted_time()
+        self._report_results(data_start_time, data_end_time, data_end_time - data_start_time, user, system)
 
 
 memory_client().run_workload()

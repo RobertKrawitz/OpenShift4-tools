@@ -17,16 +17,17 @@ class uperf_client(clusterbuster_pod_client):
             super().__init__()
             self.runtime = int(self._args[0])
             self.ramp_time = int(self._args[1])
-            self.srvhost = self.resolve_host(self._args[2])
+            self.srvhost = self._resolve_host(self._args[2])
             self.connect_port = int(self._args[3])
             self.tests = self._args[4:]
             self.podfile_dir = os.environ.get('PODFILE_DIR', '.')
-            self.process_file(os.path.join(self.podfile_dir, "uperf-mini.xml"), "/tmp/uperf-test.xml", {'srvhost': self.srvhost, 'runtime': 1})
-            self.timestamp(f"Waiting for uperf server {self.srvhost}:{self.connect_port} to come online...")
+            self.process_file(os.path.join(self.podfile_dir, "uperf-mini.xml"),
+                              "/tmp/uperf-test.xml", {'srvhost': self.srvhost, 'runtime': 1})
+            self._timestamp(f"Waiting for uperf server {self.srvhost}:{self.connect_port} to come online...")
             subprocess.run(f'until uperf -P "{self.connect_port}" -m /tmp/uperf-test.xml; do sleep 1; done', shell=True)
-            self.timestamp("Connected to uperf server")
+            self._timestamp("Connected to uperf server")
         except Exception as err:
-            self.abort(f"Init failed! {err} {' '.join(self._args)}")
+            self._abort(f"Init failed! {err} {' '.join(self._args)}")
 
     def compute_seconds_uperf(self, value: str):
         # Specific to uperf, which defaults to milliseconds
@@ -54,7 +55,7 @@ class uperf_client(clusterbuster_pod_client):
             outdata.write(contents)
 
     def runit(self, process: int):
-        ucpu, scpu = self.cputimes()
+        ucpu, scpu = self._cputimes()
         counter = 1
         data_start_time = None
         failed_cases = []
@@ -86,14 +87,16 @@ class uperf_client(clusterbuster_pod_client):
                 'test_name': test_name
                 }
             failed = False
-            self.sync_to_controller(self.idname(test_name))
-            self.timestamp(f"Running test {test_name}")
+            self._sync_to_controller(self._idname(test_name))
+            self._timestamp(f"Running test {test_name}")
             with open(testfile, 'r') as f:
-                self.timestamp(f.read())
-            job_start_time = self.adjusted_time()
+                self._timestamp(f.read())
+            job_start_time = self._adjusted_time()
             if data_start_time is None:
                 data_start_time = job_start_time
-            with subprocess.Popen(["uperf", "-f", "-P", str(self.connect_port), '-m', '/tmp/uperf-test.xml', '-R', '-a', '-i', '1', '-Tf'], stdout = subprocess.PIPE) as run:
+            with subprocess.Popen(["uperf", "-f", "-P", str(self.connect_port), '-m', '/tmp/uperf-test.xml',
+                                   '-R', '-a', '-i', '1', '-Tf'],
+                                  stdout=subprocess.PIPE) as run:
                 first_time = 0
                 last_time = 0
                 last_nbytes = 0
@@ -145,18 +148,18 @@ class uperf_client(clusterbuster_pod_client):
                     elif line.startswith('** Error') or (line.startswith('WARNING: Errors') and not failed):
                         failure_message = line
                         failed = True
-                        self.timestamp(f"Test case {test_name} failed!")
+                        self._timestamp(f"Test case {test_name} failed!")
                         failed_cases.append(test_name)
                     elif line.startswith('*'):
-                        self.timestamp(line)
+                        self._timestamp(line)
                     else:
                         pass
                     line = run.stdout.readline().decode('ascii')
                 status = run.poll()
-                if failed or status != 0:
-                    self.timestamp(f"Uperf failed: {status}")
+                if failed or status:
+                    self._timestamp(f"Uperf failed: {status}")
                     return 1
-            job_end_time = self.adjusted_time()
+            job_end_time = self._adjusted_time()
             data_end_time = job_end_time
             summary['raw_elapsed_time'] = last_time - first_time
             summary['raw_nbytes'] = last_nbytes
@@ -219,8 +222,8 @@ class uperf_client(clusterbuster_pod_client):
             cases[test_name] = case
         results['results'] = cases
         results['failed'] = failed_cases
-        ucpu, scpu = self.cputimes(ucpu, scpu)
-        self.report_results(data_start_time, data_end_time, elapsed_time, ucpu, scpu, results)
+        ucpu, scpu = self._cputimes(ucpu, scpu)
+        self._report_results(data_start_time, data_end_time, elapsed_time, ucpu, scpu, results)
 
 
 uperf_client().run_workload()

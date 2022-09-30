@@ -22,15 +22,15 @@ class sysbench_client(clusterbuster_pod_client):
             self.runtime = int(self._args[2])
             self.drop_cache_service = self._args[3]
             self.drop_cache_port = int(self._args[4])
-            self.sysbench_generic_args = clusterbuster_pod_client.splitStr(r'\s+', self._args[5])
+            self.sysbench_generic_args = clusterbuster_pod_client._splitStr(r'\s+', self._args[5])
             self.sysbench_cmd = self._args[6]
-            self.sysbench_fileio_args = clusterbuster_pod_client.splitStr(r'\s+', self._args[7])
+            self.sysbench_fileio_args = clusterbuster_pod_client._splitStr(r'\s+', self._args[7])
             if self._args[8]:
-                self.sysbench_modes = clusterbuster_pod_client.splitStr(r'\s+', self._args[8])
+                self.sysbench_modes = clusterbuster_pod_client._splitStr(r'\s+', self._args[8])
             else:
                 self.sysbench_modes = ['seqwr', 'seqrewr', 'seqrd', 'rndrd', 'rndwr', 'rndrw']
         except Exception as err:
-            self.abort(f"Init failed! {err} {' '.join(self._args)}")
+            self._abort(f"Init failed! {err} {' '.join(self._args)}")
 
     def build_sysbench_cmd(self, command: str, mode: str):
         args = ['sysbench', f'--time={self.runtime}']
@@ -39,15 +39,17 @@ class sysbench_client(clusterbuster_pod_client):
         args.extend(self.sysbench_fileio_args)
         return args
 
-    def simple_check1(self, m, op_answer: dict, key: str, multiplier: float, matchidx: int, is_float: bool, is_str: bool, is_int: bool):
+    def simple_check1(self, m, op_answer: dict, key: str, multiplier: float, matchidx: int,
+                      is_float: bool, is_str: bool, is_int: bool):
         if is_str:
             op_answer[key] = m.group(matchidx)
         elif is_float:
             op_answer[key] = float(m.group(matchidx)) * multiplier
         else:
-            op_answer[key] = self.toSize(m.group(matchidx)) * multiplier
+            op_answer[key] = self._toSize(m.group(matchidx)) * multiplier
 
-    def simple_check(self, pattern: str, line: str, op_answer: dict, key, multiplier = None, matchidx = None, is_float: bool=False, is_str: bool=False, is_int: bool=True):
+    def simple_check(self, pattern: str, line: str, op_answer: dict, key, multiplier=None, matchidx=None,
+                     is_float: bool = False, is_str: bool = False, is_int: bool = True):
         m = re.match(pattern, line)
         if not m:
             return False
@@ -72,31 +74,31 @@ class sysbench_client(clusterbuster_pod_client):
 
     def runit(self, process: int):
         op_answers = {}
-        localrundir = f'{self.rundir}/{self.podname()}/{str(os.getpid())}'
+        localrundir = f'{self.rundir}/{self._podname()}/{str(os.getpid())}'
         shutil.rmtree(localrundir, ignore_errors=True)
         while True:
             try:
                 os.makedirs(localrundir)
-                break;
+                break
             except Exception as exc:
-                self.timestamp(f"makedirs failed {exc}; retrying")
+                self._timestamp(f"makedirs failed {exc}; retrying")
                 time.sleep(1)
         os.chdir(localrundir)
-        data_start_time = self.adjusted_time()
-        user, sys = self.cputimes()
+        data_start_time = self._adjusted_time()
+        user, sys = self._cputimes()
         for mode in self.sysbench_modes:
-            self.sync_to_controller(f'{mode}+prepare')
-            self.timestamp("Preparing...")
+            self._sync_to_controller(f'{mode}+prepare')
+            self._timestamp("Preparing...")
             args = self.build_sysbench_cmd('prepare', mode)
-            self.timestamp(" ".join(args))
+            self._timestamp(" ".join(args))
             subprocess.run(args, check=True)
 
-            self.drop_cache(self.drop_cache_service, self.drop_cache_port)
-            self.sync_to_controller(f'{mode}+run')
-            op_user, op_sys = self.cputimes()
-            self.timestamp("Running...")
+            self._drop_cache(self.drop_cache_service, self.drop_cache_port)
+            self._sync_to_controller(f'{mode}+run')
+            op_user, op_sys = self._cputimes()
+            self._timestamp("Running...")
             args = self.build_sysbench_cmd('run', mode)
-            self.timestamp(" ".join(args))
+            self._timestamp(" ".join(args))
             np = '([0-9]+([kmgt]i)?)b'
             with subprocess.Popen(args, stdout=subprocess.PIPE) as run:
                 op_answer = {
@@ -107,18 +109,21 @@ class sysbench_client(clusterbuster_pod_client):
                 line = run.stdout.readline().decode('ascii')
                 while line:
                     line = line.strip().lower()
-                    self.timestamp(line)
+                    self._timestamp(line)
                     if self.simple_check(rf'([0-9]+) *files, *{np}', line, op_answer, ['files', 'filesize'], matchidx=[1, 2]):
                         pass
                     elif self.simple_check(rf'block size *{np}', line, op_answer, 'blocksize'):
                         pass
-                    elif self.simple_check(r'read/write ratio for combined random io test: *([0-9]+(\.[0-9]+)?)', line, op_answer, 'rdwr_ratio', is_float=True):
+                    elif self.simple_check(r'read/write ratio for combined random io test: *([0-9]+(\.[0-9]+)?)',
+                                           line, op_answer, 'rdwr_ratio', is_float=True):
                         pass
-                    elif self.simple_check(r'periodic fsync enabled, calling fsync.. each ([0-9]+)', line, op_answer, 'fsync_frequency'):
+                    elif self.simple_check(r'periodic fsync enabled, calling fsync.. each ([0-9]+)',
+                                           line, op_answer, 'fsync_frequency'):
                         pass
-                    elif self.simple_check(r'calling fsync.. at the end of test, (enabled|disabled)', line, op_answer, 'final_fsync_enabled', is_str=True):
+                    elif self.simple_check(r'calling fsync.. at the end of test, (enabled|disabled)',
+                                           line, op_answer, 'final_fsync_enabled', is_str=True):
                         pass
-                    elif self.simple_check(r'using (.*) i/o mode', line, op_answer, 'io_mode', is_str = True):
+                    elif self.simple_check(r'using (.*) i/o mode', line, op_answer, 'io_mode', is_str=True):
                         pass
                     elif self.simple_check(r'reads/s: *([0-9.]+)', line, op_answer, 'read_ops'):
                         pass
@@ -143,22 +148,22 @@ class sysbench_client(clusterbuster_pod_client):
                     line = run.stdout.readline().decode('ascii')
                 status = run.poll()
                 if status:
-                    self.timestamp(f"Sysbench failed: {status}")
+                    self._timestamp(f"Sysbench failed: {status}")
                     return 1
-            op_answer['user_cpu_time'], op_answer['sys_cpu_time'] = self.cputimes(op_user, op_sys)
-            self.sync_to_controller(f'{mode}+finish')
-            self.timestamp("Preparing...")
+            op_answer['user_cpu_time'], op_answer['sys_cpu_time'] = self._cputimes(op_user, op_sys)
+            self._sync_to_controller(f'{mode}+finish')
+            self._timestamp("Preparing...")
             args = self.build_sysbench_cmd('cleanup', mode)
-            self.timestamp(" ".join(args))
+            self._timestamp(" ".join(args))
             subprocess.run(args, check=True)
             op_answers[mode] = op_answer
-        data_end_time = self.adjusted_time()
+        data_end_time = self._adjusted_time()
         elapsed_time = data_end_time - data_start_time
-        user, sys = self.cputimes(user, sys)
+        user, sys = self._cputimes(user, sys)
         extras = {
             'workloads': op_answers
             }
-        self.report_results(data_start_time, data_end_time, elapsed_time, user, sys, extras)
+        self._report_results(data_start_time, data_end_time, elapsed_time, user, sys, extras)
 
 
 sysbench_client().run_workload()

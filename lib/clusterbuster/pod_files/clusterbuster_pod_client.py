@@ -48,7 +48,7 @@ class clusterbuster_pod_client:
         self.__basetime = float(argv[3])
         self.__baseoffset = float(argv[4])
         self.__crtime = float(argv[5])
-        self.__exit_at_end = clusterbuster_pod_client.toBool(argv[6])
+        self.__exit_at_end = clusterbuster_pod_client._toBool(argv[6])
         self.__synchost = argv[7]
         self.__syncport = int(argv[8])
         self.__start_time = float(time.time())
@@ -67,7 +67,7 @@ class clusterbuster_pod_client:
             self.__timing_parameters = {}
             self.__timing_initialized = False
             if initialize_timing_if_needed:
-                self._initialize_timing()
+                self.__initialize_timing()
             self.__child_idx = None
             self.__processes = 1
         else:
@@ -84,10 +84,56 @@ class clusterbuster_pod_client:
                     while True:
                         signal.pause()
             except Exception as err:
-                self.abort(f"Wait failed: {err}")
+                self._abort(f"Wait failed: {err}")
+
+    def run_workload(self):
+        """
+        Run a workload.  This method does not return.  The workload
+        is expected to take a process number.  This is the only public
+        method.
+        """
+        if self.__processes < 1:
+            self.__processes = 1
+        pid_count = 0
+        for i in range(self.__processes):
+            try:
+                try:
+                    child = os.fork()
+                except Exception as err:
+                    self._timestamp(f"Fork failed: {err}")
+                    os._exit(1)
+                if child == 0:  # Child
+                    self.__child_idx = i
+                    self._timestamp(f"About to run subprocess {i}")
+                    try:
+                        status = self.runit(i)
+                    except Exception:
+                        # If something goes wrong with the workload that isn't caught,
+                        # a traceback will likely be useful
+                        self._timestamp(f"Run failed: {traceback.format_exc()}")
+                        status = 1
+                    if status is None:
+                        status = 0
+                    self._timestamp(f"{os.getpid()} exiting, status {status}")
+                    self.__finish(status, report_system=False)
+                else:
+                    pid_count = pid_count + 1
+            except Exception as err:
+                self._timestamp(f"Subprocess {i} failed: {err}")
+                os._exit(1)
+        while pid_count > 0:
+            try:
+                pid, status = os.wait()
+                status = int((status / 256)) | (status & 255)
+                if status != 0:
+                    self.__finish(status, pid, usermsg=f"waited for {pid} (status {status})")
+                pid_count = pid_count - 1
+            except Exception as err:
+                self.__finish(1, usermsg=f'Wait failed: {err}')
+        self.__finish()
 
     @staticmethod
-    def toBool(arg, defval: bool = None):
+    def _toBool(arg, defval: bool = None):
         """
         Parse a string or numerical argument as a bool, based on the following rules:
         - 0,"0", false, no => False
@@ -115,11 +161,21 @@ class clusterbuster_pod_client:
         raise ValueError(f'Cannot parse {arg} as a boolean value')
 
     @staticmethod
-    def toBools(*args):
-        return [clusterbuster_pod_client.toBool(item) for sublist in args for item in re.split(r'[,\s]+', sublist)]
+    def _toBools(*args):
+        """
+        Split a list of bools, or comma or space separated string of bools,
+        into a list of bools.  See _toBool.
+        """
+        return [clusterbuster_pod_client._toBool(item) for sublist in args for item in re.split(r'[,\s]+', sublist)]
 
     @staticmethod
-    def toSize(arg: str):
+    def _toSize(arg: str):
+        """
+        Parse a size consisting of a decimal number with an optional
+        suffix of k, m, g, or t.  If the suffix is followed by 'i',
+        the resulting number is treated as binary (powers of 2**10),
+        otherwise decimal (powers of 10**3)
+        """
         if isinstance(arg, int) or isinstance(arg, float):
             return int(arg)
         m = re.match(r'(-?[0-9]+(\.[0-9]+)?)(([kmgt])([i]?)(b.*)?)?', arg.lower())
@@ -144,36 +200,51 @@ class clusterbuster_pod_client:
             raise Exception(f"Unparseable number {arg}")
 
     @staticmethod
-    def toSizes(*args):
-        return [clusterbuster_pod_client.toSize(item) for sublist in args for item in re.split(r'[,\s]+', sublist)]
+    def _toSizes(*args):
+        """
+        Split a list of sizes, or comma or space separated string of sizes,
+        into a list of sizes.  See _toSize.
+        """
+        return [clusterbuster_pod_client._toSize(item) for sublist in args for item in re.split(r'[,\s]+', sublist)]
 
     @staticmethod
-    def splitStr(regexp: str, arg: str):
+    def _splitStr(regexp: str, arg: str):
+        """
+        Split a string per the specified regexp.  If the arg is empty,
+        return an empty list (re.split() returns a single element for
+        an empty string)
+        """
         if arg:
             return re.split(regexp, str(arg))
         else:
             return []
 
-    def verbose(self):
+    def _verbose(self):
         """
         Should we be verbose?
         :return: whether we should print verbose messages
         """
-        return clusterbuster_pod_client.toBool(os.environ.get('VERBOSE', 0))
+        return clusterbuster_pod_client._toBool(os.environ.get('VERBOSE', 0))
 
-    def calibrate_time(self):
+    def _set_processes(self, processes: int = 1):
+        """
+        Set the number of processes to be run
+        """
+        self.__processes = processes
+
+    def _calibrate_time(self):
         """
         Estimate the time required to retrieve the system time
-        :return: Estimated time overhead in seconds for self.adjusted_time
+        :return: Estimated time overhead in seconds for self._adjusted_time
         """
         time_overhead = 0
         for i in range(1000):
-            start = self.adjusted_time()
-            end = self.adjusted_time()
+            start = self._adjusted_time()
+            end = self._adjusted_time()
             time_overhead += end - start
         return time_overhead / 1000
 
-    def cputimes(self, olduser: float = 0, oldsys: float = 0):
+    def _cputimes(self, olduser: float = 0, oldsys: float = 0):
         """
         Return the user and system CPU times, including self and children
         :return: system and user times, in seconds
@@ -182,7 +253,7 @@ class clusterbuster_pod_client:
         r_children = getrusage(RUSAGE_CHILDREN)
         return (r_self.ru_utime + r_children.ru_utime - olduser, r_self.ru_stime + r_children.ru_stime - oldsys)
 
-    def cputime(self, old: float = 0):
+    def _cputime(self, old: float = 0):
         """
         Return the total CPU, including self and children
         :return: total CPU time, in seconds
@@ -191,7 +262,7 @@ class clusterbuster_pod_client:
         r_children = getrusage(RUSAGE_CHILDREN)
         return r_self.ru_utime + r_children.ru_utime + r_self.ru_stime + r_children.ru_stime - old
 
-    def adjusted_time(self, otime: float = 0):
+    def _adjusted_time(self, otime: float = 0):
         """
         Return system time normalized to the host time
         :return: System time, normalized to the host time
@@ -201,7 +272,7 @@ class clusterbuster_pod_client:
         else:
             return time.time() - otime
 
-    def get_timestamp(self, string: str):
+    def _get_timestamp(self, string: str):
         """
         Return a string with a timestamp prepended to the first line
         and any other lines indented
@@ -209,75 +280,75 @@ class clusterbuster_pod_client:
         :return: Timestamped string
         """
         string = re.sub(r'\n(.*\S.*)', r'\n            \1', string)
-        return '%7d %s %s\n' % (os.getpid(), self._ts(), string)
+        return '%7d %s %s\n' % (os.getpid(), self.__ts(), string)
 
-    def timestamp(self, string):
+    def _timestamp(self, string):
         """
         Timestamp a string and print it to stderr
         :param string: String to be printed to stderr with timestamp attached
         """
-        print(self.get_timestamp(str(string)), file=sys.stderr, end='')
+        print(self._get_timestamp(str(string)), file=sys.stderr, end='')
 
-    def drop_cache(self, service: str = None, port: int = None):
+    def _drop_cache(self, service: str = None, port: int = None):
         """
         Attempt to drop buffer cache locally and on remote (typically hypervisor)
         :param service: Service for requesting drop cache
         :param port: Port for requesting drop cache
         """
-        self.timestamp("Dropping local cache")
+        self._timestamp("Dropping local cache")
         subprocess.run('sync')
-        self.timestamp("Dropping host cache")
+        self._timestamp("Dropping host cache")
         if service and port:
-            with self.connect_to(service, port) as sock:
-                self.timestamp(f"    Connected to {service}:{port}")
+            with self._connect_to(service, port) as sock:
+                self._timestamp(f"    Connected to {service}:{port}")
                 sock.recv(1)
-                self.timestamp("    Confirmed")
+                self._timestamp("    Confirmed")
 
-    def isdir(self, path: str):
+    def _isdir(self, path: str):
         try:
             s = os.stat(path)
             return stat.S_ISDIR(s.st_mode)
         except Exception:
             return False
 
-    def isfile(self, path: str):
+    def _isfile(self, path: str):
         try:
             s = os.stat(path)
             return stat.S_ISREG(s.st_mode)
         except Exception:
             return False
 
-    def podname(self):
+    def _podname(self):
         """
         :return: name of our pod
         """
         return self.__pod
 
-    def container(self):
+    def _container(self):
         """
         :return: name of the container we're running in
         """
         return self.__container
 
-    def namespace(self):
+    def _namespace(self):
         """
         :return: namespace that we're running in
         """
         return self.__namespace
 
-    def idname(self, args: list = None, separator: str = ':'):
+    def _idname(self, args: list = None, separator: str = ':'):
         """
         Generate an identifier based on namespace, pod, container, process ID, and any other desired values
         :param separator: Separator to be used between components (default ':')
         :param extra_components: Any extra components to be appended to the id
         :return: Identification string
         """
-        components = [self.namespace(), self.podname(), self.container(), str(os.getpid())]
+        components = [self._namespace(), self._podname(), self._container(), str(os.getpid())]
         if args is not None:
             components = components + [str(c) for c in args]
         return separator.join(components)
 
-    def resolve_host(self, hostname: str):
+    def _resolve_host(self, hostname: str):
         """
         Resolve a host name to dotted quad IP address, retrying as needed
         :param hostname: Host name to resolve
@@ -287,10 +358,10 @@ class clusterbuster_pod_client:
             try:
                 return socket.gethostbyname(hostname)
             except socket.gaierror as err:
-                self.timestamp(f"gethostbyname({hostname}) failed: {err}")
+                self._timestamp(f"gethostbyname({hostname}) failed: {err}")
                 time.sleep(1)
 
-    def connect_to(self, addr: str = None, port: int = None):
+    def _connect_to(self, addr: str = None, port: int = None):
         """
         Connect to specified address and port.
         :param addr: address to connect to, default the sync host
@@ -301,23 +372,30 @@ class clusterbuster_pod_client:
             addr = self.__synchost
         if port is None:
             port = self.__syncport
+        retries = 0
         while True:
             try:
                 try:
                     sock = socket.socket(family=socket.AF_INET, type=socket.SOCK_STREAM)
                 except Exception as err:
-                    self.timestamp(f"Cannot create socket: {err}")
+                    self._timestamp(f"Cannot create socket: {err}")
                     os._exit(1)
                 # We call gethostbyname() each time through the loop because
                 # the remote hostname might not exist immediately.
                 sock.connect((addr, port))
+                if retries:
+                    self._timestamp(f"Connected after {retries} retries")
                 return sock
             except Exception as err:
-                self.timestamp(f"Cannot connect to {addr} on port {port}: {err}")
+                if retries < 10:
+                    self._timestamp(f"Cannot connect to {addr} on port {port}: {err}")
+                elif retries == 10:
+                    self._timestamp("Printing no further messages")
                 time.sleep(1)
+                retries = retries + 1
             sock.close()
 
-    def listen(self, addr: str = None, port: int = None, backlog=5):
+    def _listen(self, addr: str = None, port: int = None, backlog=5):
         """
         Listen on specified port and optoinal address
         :param addr: address to listen on, or None for all
@@ -333,57 +411,11 @@ class clusterbuster_pod_client:
             sock.listen(backlog)
             return sock
         except Exception as err:
-            self.timestamp(f"Cannot create listener: {err}")
+            self._timestamp(f"Cannot create listener: {err}")
             os._exit(1)
 
-    def run_workload(self):
-        """
-        Run a workload.  This procedure does not return.  The workload
-        is expected to take a process number; all other options should
-        be members
-        """
-        if self.__processes < 1:
-            self.__processes = 1
-        pid_count = 0
-        for i in range(self.__processes):
-            try:
-                try:
-                    child = os.fork()
-                except Exception as err:
-                    self.timestamp(f"Fork failed: {err}")
-                    os._exit(1)
-                if child == 0:  # Child
-                    self.__child_idx = i
-                    self.timestamp(f"About to run subprocess {i}")
-                    try:
-                        status = self.runit(i)
-                    except Exception:
-                        # If something goes wrong with the workload that isn't caught,
-                        # a traceback will likely be useful
-                        self.timestamp(f"Run failed: {traceback.format_exc()}")
-                        status = 1
-                    if status is None:
-                        status = 0
-                    self.timestamp(f"{os.getpid()} exiting, status {status}")
-                    self._finish(status, report_system = False)
-                else:
-                    pid_count = pid_count + 1
-            except Exception as err:
-                self.timestamp(f"Subprocess {i} failed: {err}")
-                os._exit(1)
-        while pid_count > 0:
-            try:
-                pid, status = os.wait()
-                status = int((status / 256)) | (status & 255)
-                if status != 0:
-                    self._finish(status, pid, usermsg=f"waited for {pid} (status {status})")
-                pid_count = pid_count - 1
-            except Exception as err:
-                self._finish(1, usermsg=f'Wait failed: {err}')
-        self._finish()
-
-    def report_results(self, data_start_time: float, data_end_time: float,
-                       data_elapsed_time: float, user_cpu: float, sys_cpu: float, extra: dict = None):
+    def _report_results(self, data_start_time: float, data_end_time: float,
+                        data_elapsed_time: float, user_cpu: float, sys_cpu: float, extra: dict = None):
         """
         Report results back to the controller
         :param data_start_time: Adjusted time work started
@@ -395,9 +427,9 @@ class clusterbuster_pod_client:
         """
         answer = {
             'application': 'clusterbuster-json',
-            'namespace': self.namespace(),
-            'pod': self.podname(),
-            'container': self.container(),
+            'namespace': self._namespace(),
+            'pod': self._podname(),
+            'container': self._container(),
             'process_id': os.getpid(),
             'pod_create_time': self.__timing_parameters['controller_crtime'] - self.__timing_parameters['controller_basetime'],
             'pod_start_time': self.__timing_parameters['start_time'],
@@ -412,38 +444,52 @@ class clusterbuster_pod_client:
         if isinstance(extra, dict):
             for key, val in extra.items():
                 answer[key] = val
-        self.timestamp(f"Report results: {self.namespace()}, {self.podname()}, {self.container()}, {os.getpid()}")
+        self._timestamp(f"Report results: {self._namespace()}, {self._podname()}, {self._container()}, {os.getpid()}")
         try:
-            answer = json.dumps(self._clean_numbers(answer))
+            answer = json.dumps(self.__clean_numbers(answer))
         except Exception as exc:
-            self.timestamp(f"Cannot convert results to JSON: {exc}")
-            self._fail(f"Cannot convert results to JSON: {exc}")
-            self._wait_forever()
-        self._do_sync_command('RSLT', answer)
+            self._timestamp(f"Cannot convert results to JSON: {exc}")
+            self.__fail(f"Cannot convert results to JSON: {exc}")
+            self.__wait_forever()
+        self.__do_sync_command('RSLT', answer)
 
-    def sync_to_controller(self, token: str = None):
+    def _sync_to_controller(self, token: str = None):
         """
         Perform a sync to the controller
         :param token: Optional string to use for sync; None to generate one
         """
-        self.timestamp(f"do_sync_command {token}")
-        self._do_sync_command('SYNC', token)
+        self._timestamp(f"do_sync_command {token}")
+        self.__do_sync_command('SYNC', token)
 
-    def _wait_forever(self):
-        self.timestamp('Waiting forever')
+    def _abort(self, msg: str = "Terminating"):
+        """
+        Abort the run.  This is intended to be called from inside the workload's
+        constructor if something goes wrong in initialization and should not be used
+        otherwise.
+        :param msg: Message to be logged
+        """
+        try:
+            message = f"Process {os.getpid()} aborting: {msg}\n{traceback.format_exc()}"
+        except Exception:
+            message = f"Process {os.getpid()} aborting: {msg} (no traceback)"
+        self.__exit_at_end = False
+        self.__finish(1, usermsg=message)
+
+    def __wait_forever(self):
+        self._timestamp('Waiting forever')
         signal.pause()
         sys.exit()
 
-    def _fail(self, msg: str):
+    def __fail(self, msg: str):
         msg = f'''{msg}
 Run:
-oc logs -n '{self.namespace()}' '{self.podname()}' -c '{self.container()}'
+oc logs -n '{self._namespace()}' '{self._podname()}' -c '{self._container()}'
 '''
-        self._do_sync_command('FAIL', msg)
+        self.__do_sync_command('FAIL', msg)
         if self.__exit_at_end:
             os._exit(1)
 
-    def _run_cmd(self, cmd):
+    def __run_cmd(self, cmd):
         """
         Attempt to run the specified command
         :param command: Command to be run (string or list)
@@ -459,7 +505,7 @@ oc logs -n '{self.namespace()}' '{self.podname()}' -c '{self.container()}'
         except Exception as err:
             return f"Can't run {cmd}: {err}"
 
-    def _clean_numbers(self, ref):
+    def __clean_numbers(self, ref):
         """
         Perl to_json encodes infinity as inf and NaN as nan.
         This results in invalid JSON.  It's our responsibility to sanitize
@@ -469,13 +515,13 @@ oc logs -n '{self.namespace()}' '{self.podname()}' -c '{self.container()}'
         :param ref: object to be cleaned
         :return: object cleaned of any NaN or infinity values
         """
-        def _clean_numbers_impl(ref, pathto: str = ''):
+        def __clean_numbers_impl(ref, pathto: str = ''):
             errors = []
             warnings = []
             if isinstance(ref, dict):
                 answer = dict()
                 for key, val in ref.items():
-                    a1, e1, w1 = _clean_numbers_impl(val, f'{pathto}.{key}')
+                    a1, e1, w1 = __clean_numbers_impl(val, f'{pathto}.{key}')
                     answer[key] = a1
                     errors.extend(e1)
                     warnings.extend(w1)
@@ -483,7 +529,7 @@ oc logs -n '{self.namespace()}' '{self.podname()}' -c '{self.container()}'
             elif isinstance(ref, list):
                 answer = []
                 for index in range(len(ref)):
-                    a1, e1, w1 = _clean_numbers_impl(ref[index], f'{pathto}[{index}]')
+                    a1, e1, w1 = __clean_numbers_impl(ref[index], f'{pathto}[{index}]')
                     answer.append(a1)
                     errors.extend(e1)
                     warnings.extend(w1)
@@ -497,35 +543,32 @@ oc logs -n '{self.namespace()}' '{self.podname()}' -c '{self.container()}'
                 errors.append(f"    Object {pathto} ({ref}) cannot be serialized")
                 return ref, errors, warnings
 
-        [answer, errors, warnings] = _clean_numbers_impl(ref)
+        [answer, errors, warnings] = __clean_numbers_impl(ref)
         if warnings:
-            self.timestamp("\n".join(warnings))
+            self._timestamp("\n".join(warnings))
         if errors:
             raise Exception('\n' + '\n'.join(errors))
         else:
             return answer
 
-    def _ts(self):
+    def __ts(self):
         localoffset = self.__timing_parameters.get('local_offset_from_sync', 0)
         return datetime.utcfromtimestamp(time.time() - localoffset).strftime('%Y-%m-%dT%T.%f')
 
-    def _fsplit(self, string: str):
+    def __fsplit(self, string: str):
         return [float(s) for s in string.split()]
 
-    def _set_processes(self, processes: int = 1):
-        self.__processes = processes
-
-    def _initialize_timing(self):
+    def __initialize_timing(self):
         if self.__timing_initialized:
             return
-        name = self.idname()
-        self.timestamp("About to sync")
-        data = self._do_sync_command('TIME', f'timestamp: %s {name}')
+        name = self._idname()
+        self._timestamp("About to sync")
+        data = self.__do_sync_command('TIME', f'timestamp: %s {name}')
         try:
             [local_sync_start, remote_sync_start, absolute_sync_start,
-             remote_sync_base, remote_sync, sync_base_start_time] = self._fsplit(data.decode('ascii'))
+             remote_sync_base, remote_sync, sync_base_start_time] = self.__fsplit(data.decode('ascii'))
         except Exception as err:
-            self.timestamp(f"Could not parse response from server: {data}: {err}")
+            self._timestamp(f"Could not parse response from server: {data}: {err}")
             os._exit(1)
         local_sync = float(time.time())
         local_sync_rtt = local_sync - local_sync_start
@@ -560,47 +603,47 @@ oc logs -n '{self.namespace()}' '{self.podname()}' -c '{self.container()}'
             'local_offset_from_sync': local_offset_from_sync,
             'local_offset_from_base': local_offset_from_base,
             }
-        self.timestamp("Timing parameters:")
+        self._timestamp("Timing parameters:")
         for key, val in self.__timing_parameters.items():
-            self.timestamp('%-32s %.6f' % (key, val))
+            self._timestamp('%-32s %.6f' % (key, val))
             self.__basetime += self.__baseoffset
             self.__crtime += self.__baseoffset
         self.__timing_initialized = True
 
-    def _do_sync_command(self, command: str, token: str = ''):
+    def __do_sync_command(self, command: str, token: str = ''):
         lcommand = command.lower()
         if lcommand == 'sync' and (token is None or token == ''):
-            token = f'{self._ts()} {self.__pod()}-{random.randrange(1000000000)}'
+            token = f'{self.__ts()} {self.__pod()}-{random.randrange(1000000000)}'
         token = f'{command} {token}'.replace('%s', str(time.time()))
         token = ('0x%08x%s' % (len(token), token)).encode()
         while True:
-            self.timestamp(f'sync {lcommand} on {self.__synchost}:{self.__syncport}')
-            sync_conn = self.connect_to()
+            self._timestamp(f'sync {lcommand} on {self.__synchost}:{self.__syncport}')
+            sync_conn = self._connect_to()
             while len(token) > 0:
                 if len(token) > 128:
-                    self.timestamp(f'Writing {command}, {len(token)} bytes to sync')
+                    self._timestamp(f'Writing {command}, {len(token)} bytes to sync')
                 else:
-                    self.timestamp(f'Writing token {token.decode("utf-8")} to sync')
+                    self._timestamp(f'Writing token {token.decode("utf-8")} to sync')
                 try:
                     answer = sync_conn.send(token)
                     if answer <= 0:
-                        self.timestamp("Write token failed")
+                        self._timestamp("Write token failed")
                     else:
                         token = token[answer:]
                 except Exception as err:
-                    self.timestamp(f'Write token failed: {err}')
+                    self._timestamp(f'Write token failed: {err}')
                     os._exit(1)
             try:
                 answer = sync_conn.recv(1024)
                 sync_conn.close()
-                self.timestamp(f'sync complete, response {answer.decode("utf-8")}')
+                self._timestamp(f'sync complete, response {answer.decode("utf-8")}')
                 return answer
             except Exception as err:
-                self.timestamp(f'sync failed {err}, retrying')
+                self._timestamp(f'sync failed {err}, retrying')
 
-    def _finish(self, status=0, pid=os.getpid(), usermsg: str = None, report_system: bool=True):
+    def __finish(self, status=0, pid=os.getpid(), usermsg: str = None, report_system: bool = True):
         if report_system:
-            message = self.get_timestamp(f'{self._run_cmd("lscpu")}\n{self._run_cmd("dmesg")}')
+            message = self._get_timestamp(f'{self.__run_cmd("lscpu")}\n{self.__run_cmd("dmesg")}')
         else:
             message = ''
         if usermsg:
@@ -612,43 +655,29 @@ oc logs -n '{self.namespace()}' '{self.podname()}' -c '{self.container()}'
                 message += f"{usermsg}"
         print(message, file=sys.stderr)
         if status != 0:
-            self.timestamp("Run failed!")
-            self._fail(message)
+            self._timestamp("Run failed!")
+            self.__fail(message)
             if self.__exit_at_end:
                 os._exit(status)
             else:
                 pid_status = status
         else:
-            self.timestamp("Run succeeded")
+            self._timestamp("Run succeeded")
             pid_status = 0
         if self.__exit_at_end:
-            self.timestamp('About to exit')
+            self._timestamp('About to exit')
             try:
                 while True:
                     pid, status = os.wait()
                     if status != 0:
                         status = int((status / 256)) | (status & 255)
-                        self.timestamp(f'Pid {pid} returned status {status}')
+                        self._timestamp(f'Pid {pid} returned status {status}')
                         pid_status = status
             except ChildProcessError:
                 pass
             except Exception as err:
-                self.timestamp(f"wait() failed: {err}")
-            self.timestamp('Done waiting')
+                self._timestamp(f"wait() failed: {err}")
+            self._timestamp('Done waiting')
             os._exit(pid_status)
         else:
-            self._wait_forever()
-
-    def abort(self, msg: str = "Terminating"):
-        """
-        Abort the run.  This is intended to be called from inside the workload's
-        constructor if something goes wrong in initialization and should not be used
-        otherwise.
-        :param msg: Message to be logged
-        """
-        try:
-            message = f"Process {os.getpid()} aborting: {msg}\n{traceback.format_exc()}"
-        except Exception:
-            message = f"Process {os.getpid()} aborting: {msg} (no traceback)"
-        self.__exit_at_end = False
-        self._finish(1, usermsg = message)
+            self.__wait_forever()

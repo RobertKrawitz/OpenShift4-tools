@@ -37,6 +37,9 @@ class ClusterBusterReporter:
     def report_one(jdata: dict, format: str, **kwargs):
         if format == 'none' or format is None:
             return
+        if format == 'raw-python':
+            print(jdata, file=sys.stdout)
+            return
         if format == 'raw':
             json.dump(jdata, sys.stdout, indent=2)
             return
@@ -124,15 +127,21 @@ class ClusterBusterReporter:
     def print_report(items, format: str, outfile=sys.stdout, **kwargs):
         answers = ClusterBusterReporter.report(items, format, **kwargs)
         if format.startswith('json'):
-            json.dump(answers, outfile, indent=2)
+            if format.endswith('python'):
+                print(answers, file=outfile)
+            else:
+                json.dump(answers, outfile, indent=2)
         elif format != "none":
             print("\n\n".join(answers))
 
     @staticmethod
     def list_report_formats():
-        return ['none', 'summary', 'verbose', 'raw',
+        return ['none', 'summary', 'verbose', 'raw', 'raw-python',
                 'json-summary', 'json', 'json-verbose',
-                'parseable-summary', 'parseable-verbose']
+                'parseable-summary', 'parseable-verbose',
+                'json-summary-python', 'json-python', 'json-verbose-python',
+                'parseable-summary-python', 'parseable-verbose-python'
+                ]
 
     def __init__(self, jdata: dict, report_format: str, indent: int = 2, report_width=78):
         """
@@ -994,21 +1003,21 @@ class ClusterBusterReporter:
         if len(self._rows) > 0 or not self._expect_row_data:
             results['Summary'] = {}
             self._generate_summary(results['Summary'])
-        if self._format == 'json-summary':
+        if self._format.startswith('json-summary'):
             answer = {
                 'summary': self._summary,
                 'metadata': self._jdata['metadata'],
                 }
-        elif self._format == 'json':
-            answer = {
-                'summary': self._summary,
-                'metadata': self._jdata['metadata'],
-                'rows': self._rows
-                }
-        elif self._format == 'json-verbose':
+        elif self._format.startswith('json-verbose'):
             answer = deepcopy(self._jdata)
             answer['processed_results'] = {
                 'summary': self._summary,
+                'rows': self._rows
+                }
+        elif self._format.startswith('json'):
+            answer = {
+                'summary': self._summary,
+                'metadata': self._jdata['metadata'],
                 'rows': self._rows
                 }
         return answer

@@ -1429,18 +1429,18 @@ function _report_objects() {
     "drop_cache": $drop_node_cache,
     "always_drop_cache": $drop_all_node_cache,
     "pin_nodes": {$(_report_pin_nodes)},
-    $(indent 4 _report_volumes)
-    $(_report_liveness_probe)
+$(indent 8 _report_volumes)
+$(indent 4 _report_liveness_probe)
     "secrets": $secrets,
     "replicas": $replicas,
     "container_image": "$container_image",
     "node_selector": "$node_selector",
-    $(indent 4 container_resources_json)
+$(indent 8 container_resources_json)
     "runtime_classes": {$(_report_runtime_classes)},
-    $(indent 4 _report_emptydirs)
+$(indent 8 _report_emptydirs)
     "target_data_rate": $target_data_rate,
     "workloadOptions": {
-    $(indent 4 call_api -w "$requested_workload" "report_options")
+$(indent 8 call_api -w "$requested_workload" "report_options")
     }
   }
 },

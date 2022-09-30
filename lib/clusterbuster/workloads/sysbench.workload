@@ -45,7 +45,7 @@ function sysbench_create_deployment() {
     create_sync_service_if_needed "$namespace" "$(( (${#___sysbench_fileio_tests[@]} * 3) + 2))" \
 				  "$((containers_per_pod * processes_per_pod * replicas * count))" \
 				  "$((containers_per_pod * replicas * count))"
-    for instance in $(seq $first_deployment $((count + first_deployment - 1))) ; do
+    for instance in $(seq "$first_deployment" $((count + first_deployment - 1))) ; do
 	create_drop_cache_deployment "$namespace" "$workload" "$instance" "$replicas"
 	create_standard_deployment -a sysbench_arglist -e sysbench.py -p \
 				   "$namespace" "$instance" "$secret_count" "$replicas" "$containers_per_pod"

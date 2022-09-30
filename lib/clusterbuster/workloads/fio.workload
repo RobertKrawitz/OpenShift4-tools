@@ -29,7 +29,6 @@ declare -g  ___fio_job_file=generic.jobfile
 declare -gi ___fio_ramp_time=5
 declare -gi ___fio_filesize=; ___fio_filesize=$(parse_size "4Gi")
 declare -g  ___fio_workdir="/tmp"
-declare -g  ___fio_prepare_job_file
 declare -g  ___fio_processed_job_file
 
 function fio_arglist() {
@@ -45,7 +44,7 @@ function fio_arglist() {
 		 "svc-${namespace}-fio-${instance}-${replica}-dc" "$drop_cache_port" \
 		 "${___fio_blocksizes[*]:-}" "${___fio_patterns[*]:-}" "${___fio_iodepths[*]:-}" \
 		 "${___fio_fdatasyncs[*]:-}" "${___fio_directs[*]:-}" "${___fio_ioengines[*]:-}" \
-		 "${___fio_generic_options[*]:-}"
+		 "$___fio_ramp_time" "${___fio_generic_options[*]:-}"
 }
 
 function fio_create_deployment() {
@@ -153,7 +152,7 @@ function fio_process_options() {
 	    fioioengine*)	fioioengine=$optvalue			 ;;
 	    fioiodepth*)	fioiodepth=$optvalue			 ;;
 	    fiodirect*)		fiodirect=$optvalue			 ;;
-	    fioramptime)	___fio_ramptime=$optvalue		 ;;
+	    fioramptime)	___fio_ramp_time=$optvalue		 ;;
 	    fiofdatasync*)	fiofdatasync=$optvalue			 ;;
 	    fiofilesize)	___fio_filesize=$(parse_size "$optvalue");;
 	    fioworkdir)         ___fio_workdir=$optvalue		 ;;
@@ -170,9 +169,11 @@ function fio_process_options() {
 	help "${unknown_opts[@]}"
     fi
     if [[ -n "${fioblksize:-}" ]] ; then
+	# shellcheck disable=SC2086
 	readarray -t ___fio_blocksizes <<< "$(parse_size ${fioblksize//,/ })"
     fi
     if [[ -n "${fioiodepth:-}" ]] ; then
+	# shellcheck disable=SC2086
 	readarray -t ___fio_iodepths <<< "$(parse_size ${fioiodepth//,/ })"
     fi
     if [[ -n "${fiopattern:-}" ]] ; then
@@ -182,9 +183,11 @@ function fio_process_options() {
 	___fio_ioengines=(${fioioengine//,/ })
     fi
     if [[ -n "${fiodirect:-}" ]] ; then
+	# shellcheck disable=SC2086
 	readarray -t ___fio_directs <<< "$(bool ${fiodirect//,/ })"
     fi
     if [[ -n "${fiofdatasync:-}" ]] ; then
+	# shellcheck disable=SC2086
 	readarray -t ___fio_fdatasyncs <<< "$(parse_size ${fiofdatasync//,/ })"
     fi
 

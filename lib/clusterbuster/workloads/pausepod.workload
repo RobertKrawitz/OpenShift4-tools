@@ -59,7 +59,7 @@ function pausepod_create_deployment() {
     local replicas=${4:-1}
     local containers_per_pod=${5:-1}
     local -i instance
-    for instance in $(seq $first_deployment $((count + first_deployment - 1))) ; do
+    for instance in $(seq "$first_deployment" $((count + first_deployment - 1))) ; do
 	create_standard_deployment -C "pausepod_create_containers_yaml" "$namespace" "$instance" \
 				   "$secret_count" "$replicas" "$containers_per_pod"
     done

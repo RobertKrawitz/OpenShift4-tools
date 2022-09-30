@@ -175,7 +175,7 @@ function uperf_generate_metadata() {
 	    for msgsize in "${___uperf_msg_sizes[@]}" ; do
 		for nthr in "${___uperf_nthrs[@]}" ; do
 		    jobs+=("$(cat <<EOF
-$(printf '"%04d-%s-%s-%dB-%di"' $((jobidx)) "$proto" "$testtype" $msgsize $nthr): {
+$(printf '"%04d-%s-%s-%dB-%di"' $((jobidx)) "$proto" "$testtype" "$msgsize" "$nthr"): {
   "test_type": "$testtype",
   "proto": "$proto",
   "msgsize": $msgsize,
@@ -192,9 +192,33 @@ EOF
     echo '}'
 }
 
+function __uperf_stringify() {
+    local OPTIND=0
+    local -i print_strings=0
+    while getopts 'ns' arg "$@" ; do
+	case "$arg" in
+	    n) print_strings=0 ;;
+	    s) print_strings=1 ;;
+	    *)		       ;;
+	esac
+    done
+    shift $((OPTIND-1))
+    local -a args=("$@")
+    args=("$@")
+    if ((print_strings)) ; then
+	args=("${args[@]/#/\"}")
+	args=("${args[@]/%/\"}")
+    fi
+    printf '[ %s ]' "$(IFS=$', '; echo "${args[*]}")"
+}
+
 function uperf_report_options() {
     cat <<EOF
-"msg_size": $___msg_size
+"msg_size": $(__uperf_stringify -n "${___uperf_msg_sizes[@]}"),
+"test_types": $(__uperf_stringify -s "${___uperf_test_types[@]}"),
+"protocols": $(__uperf_stringify -s "${___uperf_protos[@]}"),
+"nthrs": $(__uperf_stringify -n "${___uperf_nthrs[@]}"),
+"ramp_time": ${___uperf_ramp_time}
 EOF
 }
 

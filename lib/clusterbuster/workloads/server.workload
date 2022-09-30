@@ -60,14 +60,14 @@ function server_create_deployment() {
     local -i instance
     create_sync_service_if_needed "$namespace" 2 "$((containers_per_pod * replicas * count))"
 
-    for instance in $(seq $first_deployment $((count + first_deployment - 1))) ; do
+    for instance in $(seq "$first_deployment" $((count + first_deployment - 1))) ; do
 	create_service "$namespace" "${namespace}-server-server-${instance}" "$port"
 	create_standard_deployment -w server-server -p -c server \
-				   -A "$(create_affinity_yaml ${namespace}-server-client-${instance})" \
+				   -A "$(create_affinity_yaml "${namespace}-server-client-${instance}")" \
 				   -a server_server_arglist \
 				   "$namespace" "$instance" "$secret_count" 1 1
 	create_standard_deployment -w server-client \
-				   -A "$(create_affinity_yaml ${namespace}-server-server-${instance})" \
+				   -A "$(create_affinity_yaml "${namespace}-server-server-${instance}")" \
 				   -a server_client_arglist \
 				   "$namespace" "$instance" "$secret_count" "$replicas" "$containers_per_pod"
     done
@@ -112,7 +112,6 @@ EOF
 function server_process_options() {
     local opt
     local -a unknown_opts=()
-    local ftest
     for opt in "$@" ; do
 	read -r noptname1 noptname optvalue <<< "$(parse_option "$opt")"
 	case "$noptname1" in

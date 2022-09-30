@@ -21,19 +21,19 @@ class files_client(clusterbuster_pod_client):
                 self.dir_list = self._args[8:]
             else:
                 self.dir_list = ['/tmp']
-            self.dirs = clusterbuster_pod_client.toSize(self._args[0])
-            self.files_per_dir = clusterbuster_pod_client.toSize(self._args[1])
-            self.blocksize = clusterbuster_pod_client.toSize(self._args[2])
-            self.block_count = clusterbuster_pod_client.toSize(self._args[3])
+            self.dirs = clusterbuster_pod_client._toSize(self._args[0])
+            self.files_per_dir = clusterbuster_pod_client._toSize(self._args[1])
+            self.blocksize = clusterbuster_pod_client._toSize(self._args[2])
+            self.block_count = clusterbuster_pod_client._toSize(self._args[3])
             self._set_processes(int(self._args[4]))
-            self.o_direct = clusterbuster_pod_client.toBool(self._args[5])
+            self.o_direct = clusterbuster_pod_client._toBool(self._args[5])
             self.drop_cache_service = self._args[6]
             self.drop_cache_port = int(self._args[7])
             self.flags = 0
             if self.o_direct:
                 self.flags = os.O_DIRECT
         except Exception as err:
-            self.abort(f"Init failed! {err} {' '.join(self._args)}")
+            self._abort(f"Init failed! {err} {' '.join(self._args)}")
 
     def remdir(self, dirname: str, oktofail: bool = False):
         try:
@@ -50,7 +50,7 @@ class files_client(clusterbuster_pod_client):
         ops = 0
         try:
             for bdir in self.dir_list:
-                direc = f"{bdir}/p{pid}/{self.container()}"
+                direc = f"{bdir}/p{pid}/{self._container()}"
                 os.makedirs(direc)
                 ops = ops + 2
                 for subdir in range(self.dirs):
@@ -69,14 +69,14 @@ class files_client(clusterbuster_pod_client):
                         os.close(fd)
             return ops
         except Exception as err:
-            self.timestamp(f"I/O error while creaating files: {err}")
+            self._timestamp(f"I/O error while creaating files: {err}")
             os._exit(1)
 
     def readthem(self, pid: int, oktofail: bool = False):
         ops = 0
         try:
             for bdir in self.dir_list:
-                direc = f"{bdir}/p{pid}/{self.container()}"
+                direc = f"{bdir}/p{pid}/{self._container()}"
                 ops = ops + 2
                 for subdir in range(self.dirs):
                     dirname = f"{direc}/{subdir}"
@@ -104,7 +104,7 @@ class files_client(clusterbuster_pod_client):
                                 raise exc
             return ops
         except Exception as err:
-            self.timestamp(f"I/O error while reading files: {err}")
+            self._timestamp(f"I/O error while reading files: {err}")
             os._exit(1)
 
     def removethem(self, pid: int, oktofail: bool = False):
@@ -112,18 +112,18 @@ class files_client(clusterbuster_pod_client):
         try:
             for bdir in self.dir_list:
                 pdir = f"{bdir}/p{pid}"
-                if oktofail and not self.isdir(pdir):
+                if oktofail and not self._isdir(pdir):
                     continue
-                direc = f"{pdir}/{self.container()}"
-                if oktofail and not self.isdir(bdir):
+                direc = f"{pdir}/{self._container()}"
+                if oktofail and not self._isdir(bdir):
                     continue
                 for subdir in range(self.dirs):
                     dirname = f"{direc}/{subdir}"
-                    if oktofail and not self.isdir(subdir):
+                    if oktofail and not self._isdir(subdir):
                         continue
                     for fileidx in range(self.files_per_dir):
                         filename = f"{dirname}/{fileidx}"
-                        if oktofail and not self.isfile(filename):
+                        if oktofail and not self._isfile(filename):
                             continue
                         os.unlink(filename)
                         ops = ops + 1
@@ -135,21 +135,21 @@ class files_client(clusterbuster_pod_client):
                 ops = ops + 1
             return ops
         except Exception as err:
-            self.timestamp(f"I/O error while removing files: {err}")
+            self._timestamp(f"I/O error while removing files: {err}")
             os._exit(1)
 
     def run_one_operation(self, op_name0: str, op_name1: str, op_name2: str, op_func, pid: int, data_start_time: float):
-        self.sync_to_controller(self.idname([pid, f"start {op_name2}"]))
-        self.drop_cache(self.drop_cache_service, self.drop_cache_port)
-        ucpu, scpu = self.cputimes()
-        op_start_time = self.adjusted_time() - data_start_time
+        self._sync_to_controller(self._idname([pid, f"start {op_name2}"]))
+        self._drop_cache(self.drop_cache_service, self.drop_cache_port)
+        ucpu, scpu = self._cputimes()
+        op_start_time = self._adjusted_time() - data_start_time
         ops = op_func(pid)
-        op_end_time_0 = self.adjusted_time() - data_start_time
-        self.drop_cache(self.drop_cache_service, self.drop_cache_port)
-        op_end_time = self.adjusted_time() - data_start_time
+        op_end_time_0 = self._adjusted_time() - data_start_time
+        self._drop_cache(self.drop_cache_service, self.drop_cache_port)
+        op_end_time = self._adjusted_time() - data_start_time
         op_elapsed_time = op_end_time - op_start_time
         op_elapsed_time_0 = op_end_time_0 - op_start_time
-        ucpu, scpu = self.cputimes(ucpu, scpu)
+        ucpu, scpu = self._cputimes(ucpu, scpu)
         answer = {
             'operation_elapsed_time': op_elapsed_time,
             'user_cpu_time': ucpu,
@@ -167,23 +167,23 @@ class files_client(clusterbuster_pod_client):
             answer['size'] = self.blocksize
             answer['data_size'] = self.blocksize * self.block_count * answer['total_files']
             answer['data_rate'] = answer['data_size'] / op_elapsed_time_0
-        self.timestamp(f'{op_name1} files...')
-        self.sync_to_controller(self.idname([pid, f'end {op_name2}']))
+        self._timestamp(f'{op_name1} files...')
+        self._sync_to_controller(self._idname([pid, f'end {op_name2}']))
         return answer
 
     def runit(self, process: int):
         self.removethem(os.getpid(), True)
-        data_start_time = self.adjusted_time()
+        data_start_time = self._adjusted_time()
 
         subprocess.run('sync')
         answer_create = self.run_one_operation('Creating', 'Created', 'create', self.makethem, os.getpid(), data_start_time)
-        self.timestamp("Sleeping for 60 seconds")
+        self._timestamp("Sleeping for 60 seconds")
         time.sleep(60)
-        self.timestamp('Back from sleep')
+        self._timestamp('Back from sleep')
         answer_read = self.run_one_operation('Reading', 'Read', 'read', self.readthem, os.getpid(), data_start_time)
-        self.timestamp("Sleeping for 60 seconds")
+        self._timestamp("Sleeping for 60 seconds")
         time.sleep(60)
-        self.timestamp('Back from sleep')
+        self._timestamp('Back from sleep')
         answer_remove = self.run_one_operation('Removing', 'Remove', 'remove', self.removethem, os.getpid(), data_start_time)
         create_et = answer_create['operation_end'] - answer_create['operation_start']
         # read_et = answer_read['operation_end'] - answer_read['operation_start']
@@ -208,7 +208,7 @@ class files_client(clusterbuster_pod_client):
             'read': answer_read,
             'remove': answer_remove
             }
-        self.report_results(data_start_time, data_end_time, create_et + remove_et, user_cpu, system_cpu, extras)
+        self._report_results(data_start_time, data_end_time, create_et + remove_et, user_cpu, system_cpu, extras)
 
 
 files_client().run_workload()
