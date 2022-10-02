@@ -19,7 +19,7 @@
 ################################################################
 
 declare -ig ___msg_size=32768
-declare -g ___server_workload=perl
+declare -g ___server_workload=python3
 
 function server_server_arglist() {
     local mountdir=$1; shift
@@ -44,8 +44,8 @@ function server_client_arglist() {
 
 function _server_get_pod_workload() {
     case "$___server_workload" in
-	perl)   echo pl			  ;;
-	python) echo py			  ;;
+	perl)    echo pl		  ;;
+	python3) echo py		  ;;
 	*)      fatal "Unknown workload"  ;;
     esac
 }
@@ -118,8 +118,8 @@ function server_process_options() {
 	    msgsize) ___msg_size=$optvalue ;;
 	    serverworkload)
 		case "$optvalue" in
-		    perl|pl)   ___server_workload=perl   ;;
-		    python|py) ___server_workload=python ;;
+		    perl|pl) ___server_workload=perl    ;;
+		    py*)     ___server_workload=python3 ;;
 		    *)
 			fatal "Unknown server workload $optvalue; must be 'perl' or 'python'"
 			;;

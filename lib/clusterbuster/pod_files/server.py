@@ -12,7 +12,7 @@ class server_client(clusterbuster_pod_client):
 
     def __init__(self):
         try:
-            super().__init__()
+            super().__init__(initialize_timing_if_needed=False)
             self.listen_port = int(self._args[0])
             self.msg_size = clusterbuster_pod_client._toSize(self._args[1])
             self.expected_clients = int(self._args[2])

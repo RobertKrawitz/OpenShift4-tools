@@ -25,6 +25,7 @@ uperf-timeout=300
 cpusoaker-timeout=300
 cpusoaker-replica-increment=10
 cpusoaker-max-replicas=10
+cpusoaker-workload=perl
 
 artifactdir=
 virtiofsd-direct=1

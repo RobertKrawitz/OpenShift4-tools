@@ -18,7 +18,7 @@
 # CPU soaker workload
 ################################################################
 
-declare -g ___cpusoaker_workload=perl
+declare -g ___cpusoaker_workload=python3
 
 function cpusoaker_arglist() {
     local mountdir=$1; shift
@@ -89,8 +89,8 @@ function cpusoaker_process_options() {
 	case "$noptname1" in
 	    cpusoakerworkload)
 		case "$optvalue" in
-		    perl|pl)   ___cpusoaker_workload=perl    ;;
-		    python|py) ___cpusoaker_workload=python3 ;;
+		    perl|pl) ___cpusoaker_workload=perl    ;;
+		    py*)     ___cpusoaker_workload=python3 ;;
 		    *)
 			fatal "Unknown CPU soaker workload $optvalue; must be 'perl' or 'python'"
 			;;
