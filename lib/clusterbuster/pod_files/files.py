@@ -48,95 +48,83 @@ class files_client(clusterbuster_pod_client):
         buf = mmap.mmap(-1, self.blocksize)
         buf.write(('a' * self.blocksize).encode())
         ops = 0
-        try:
-            for bdir in self.dir_list:
-                direc = f"{bdir}/p{pid}/{self._container()}"
-                os.makedirs(direc)
-                ops = ops + 2
-                for subdir in range(self.dirs):
-                    dirname = f"{direc}/{subdir}"
-                    os.mkdir(dirname)
+        for bdir in self.dir_list:
+            direc = f"{bdir}/p{pid}/{self._container()}"
+            os.makedirs(direc)
+            ops = ops + 2
+            for subdir in range(self.dirs):
+                dirname = f"{direc}/{subdir}"
+                os.mkdir(dirname)
+                ops = ops + 1
+                for fileidx in range(self.files_per_dir):
+                    filename = f"{dirname}/{fileidx}"
+                    fd = os.open(filename, self.flags | os.O_WRONLY | os.O_CREAT)
                     ops = ops + 1
-                    for fileidx in range(self.files_per_dir):
-                        filename = f"{dirname}/{fileidx}"
-                        fd = os.open(filename, self.flags | os.O_WRONLY | os.O_CREAT)
+                    for block in range(self.block_count):
+                        answer = os.write(fd, buf)
+                        if answer != self.blocksize:
+                            raise os.IOError(f"Incomplete write to {filename}: {answer} bytes, expect {self.blocksize}")
                         ops = ops + 1
-                        for block in range(self.block_count):
-                            answer = os.write(fd, buf)
-                            if answer != self.blocksize:
-                                raise os.IOError(f"Incomplete write to {filename}: {answer} bytes, expect {self.blocksize}")
-                            ops = ops + 1
-                        os.close(fd)
-            return ops
-        except Exception as err:
-            self._timestamp(f"I/O error while creaating files: {err}")
-            os._exit(1)
+                    os.close(fd)
+        return ops
 
     def readthem(self, pid: int, oktofail: bool = False):
         ops = 0
-        try:
-            for bdir in self.dir_list:
-                direc = f"{bdir}/p{pid}/{self._container()}"
-                ops = ops + 2
-                for subdir in range(self.dirs):
-                    dirname = f"{direc}/{subdir}"
-                    ops = ops + 1
-                    for fileidx in range(self.files_per_dir):
-                        filename = f"{dirname}/{fileidx}"
-                        try:
-                            if self.o_direct:
-                                fd = os.open(filename, self.flags | os.O_RDONLY)
+        for bdir in self.dir_list:
+            direc = f"{bdir}/p{pid}/{self._container()}"
+            ops = ops + 2
+            for subdir in range(self.dirs):
+                dirname = f"{direc}/{subdir}"
+                ops = ops + 1
+                for fileidx in range(self.files_per_dir):
+                    filename = f"{dirname}/{fileidx}"
+                    try:
+                        if self.o_direct:
+                            fd = os.open(filename, self.flags | os.O_RDONLY)
+                            ops = ops + 1
+                            for block in range(self.block_count):
+                                with mmap.mmap(fd, self.blocksize, offset=block * self.blocksize,
+                                               access=mmap.ACCESS_READ) as mm:
+                                    mm.read(self.blocksize)
+                                    ops = ops + 1
+                            os.close(fd)
+                        else:
+                            with open(filename) as file:
                                 ops = ops + 1
                                 for block in range(self.block_count):
-                                    with mmap.mmap(fd, self.blocksize, offset=block * self.blocksize,
-                                                   access=mmap.ACCESS_READ) as mm:
-                                        mm.read(self.blocksize)
-                                        ops = ops + 1
-                                os.close(fd)
-                            else:
-                                with open(filename) as file:
+                                    file.read(self.blocksize)
                                     ops = ops + 1
-                                    for block in range(self.block_count):
-                                        file.read(self.blocksize)
-                                        ops = ops + 1
-                        except Exception as exc:
-                            if not oktofail:
-                                raise exc
-            return ops
-        except Exception as err:
-            self._timestamp(f"I/O error while reading files: {err}")
-            os._exit(1)
+                    except Exception as exc:
+                        if not oktofail:
+                            raise exc
+        return ops
 
     def removethem(self, pid: int, oktofail: bool = False):
         ops = 0
-        try:
-            for bdir in self.dir_list:
-                pdir = f"{bdir}/p{pid}"
-                if oktofail and not self._isdir(pdir):
+        for bdir in self.dir_list:
+            pdir = f"{bdir}/p{pid}"
+            if oktofail and not self._isdir(pdir):
+                continue
+            direc = f"{pdir}/{self._container()}"
+            if oktofail and not self._isdir(bdir):
+                continue
+            for subdir in range(self.dirs):
+                dirname = f"{direc}/{subdir}"
+                if oktofail and not self._isdir(subdir):
                     continue
-                direc = f"{pdir}/{self._container()}"
-                if oktofail and not self._isdir(bdir):
-                    continue
-                for subdir in range(self.dirs):
-                    dirname = f"{direc}/{subdir}"
-                    if oktofail and not self._isdir(subdir):
+                for fileidx in range(self.files_per_dir):
+                    filename = f"{dirname}/{fileidx}"
+                    if oktofail and not self._isfile(filename):
                         continue
-                    for fileidx in range(self.files_per_dir):
-                        filename = f"{dirname}/{fileidx}"
-                        if oktofail and not self._isfile(filename):
-                            continue
-                        os.unlink(filename)
-                        ops = ops + 1
-                    self.remdir(dirname, oktofail)
+                    os.unlink(filename)
                     ops = ops + 1
-                self.remdir(direc, oktofail)
+                self.remdir(dirname, oktofail)
                 ops = ops + 1
-                self.remdir(pdir, oktofail)
-                ops = ops + 1
-            return ops
-        except Exception as err:
-            self._timestamp(f"I/O error while removing files: {err}")
-            os._exit(1)
+            self.remdir(direc, oktofail)
+            ops = ops + 1
+            self.remdir(pdir, oktofail)
+            ops = ops + 1
+        return ops
 
     def run_one_operation(self, op_name0: str, op_name1: str, op_name2: str, op_func, pid: int, data_start_time: float):
         self._sync_to_controller(self._idname([pid, f"start {op_name2}"]))

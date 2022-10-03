@@ -148,8 +148,7 @@ class sysbench_client(clusterbuster_pod_client):
                     line = run.stdout.readline().decode('ascii')
                 status = run.poll()
                 if status:
-                    self._timestamp(f"Sysbench failed: {status}")
-                    return 1
+                    raise Exception(f"Sysbench failed: {status}")
             op_answer['user_cpu_time'], op_answer['sys_cpu_time'] = self._cputimes(op_user, op_sys)
             self._sync_to_controller(f'{mode}+finish')
             self._timestamp("Preparing...")

@@ -25,25 +25,17 @@ class server_client(clusterbuster_pod_client):
         ntotal = 0
         while True:
             while ntotal < self.msg_size:
-                try:
-                    answer = conn.recv(self.msg_size - ntotal)
-                except Exception as err:
-                    self._timestamp(f"Recv failed: {err}")
-                    os._exit(1)
+                answer = conn.recv(self.msg_size - ntotal)
                 if len(answer) == 0:
                     if consec_empty > 1:
                         self._timestamp(f"Exiting {conn}")
-                    os._exit(0)
+                    return
                     consec_empty = consec_empty + 1
                 else:
                     consec_empty = 0
                     ntotal += len(answer)
             while ntotal > 0:
-                try:
-                    answer = conn.send(self.buf[(self.msg_size - ntotal):])
-                except Exception as err:
-                    self._timestamp(f"Send failed: {err}")
-                    os._exit(1)
+                answer = conn.send(self.buf[(self.msg_size - ntotal):])
                 ntotal -= answer
 
     def runit(self, process: int):
@@ -52,36 +44,25 @@ class server_client(clusterbuster_pod_client):
 
         pid_count = 0
         while expected_clients > 0:
-            try:
-                conn, address = sock.accept()
-            except Exception as err:
-                self._timestamp(f"Accept failed: {err}")
-                return 1
-            try:
-                child = os.fork()
-                if child == 0:
-                    sock.close()
-                    self._timestamp(f"Accepted connection from {address}")
-                    self.run_one_server(conn)
-                else:
-                    conn.close()
-                    pid_count += 1
-                    expected_clients -= 1
-            except Exception as err:
-                self._timestamp(f"Fork failed: {err}")
+            conn, address = sock.accept()
+            child = os.fork()
+            if child == 0:
+                sock.close()
+                self._timestamp(f"Accepted connection from {address}")
+                self.run_one_server(conn)
+                return
+            else:
+                conn.close()
+                pid_count += 1
+                expected_clients -= 1
         self._timestamp("Waiting for all clients to exit:")
         while pid_count > 0:
-            try:
-                pid, status = os.wait()
-                self._timestamp(f"waited for {pid} => {status}")
-                if status != 0:
-                    status = int((status / 256)) | (status & 255)
-                    return(1)
-                pid_count = pid_count - 1
-            except Exception as err:
-                self._timestamp(f'Wait failed: {err}')
+            pid, status = os.wait()
+            self._timestamp(f"waited for {pid} => {status}")
+            if status != 0:
+                status = int((status / 256)) | (status & 255)
                 return(1)
-        return 0
+                pid_count = pid_count - 1
 
 
 server_client().run_workload()

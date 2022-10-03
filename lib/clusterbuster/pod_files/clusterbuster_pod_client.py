@@ -51,6 +51,7 @@ class clusterbuster_pod_client:
         self.__exit_at_end = clusterbuster_pod_client._toBool(argv[6])
         self.__synchost = argv[7]
         self.__syncport = int(argv[8])
+        self.__is_worker = False
         self.__start_time = float(time.time())
         try:
             child = os.fork()
@@ -103,34 +104,40 @@ class clusterbuster_pod_client:
                     self._timestamp(f"Fork failed: {err}")
                     os._exit(1)
                 if child == 0:  # Child
+                    self.__is_worker = True
                     self.__child_idx = i
                     self._timestamp(f"About to run subprocess {i}")
                     try:
-                        status = self.runit(i)
-                    except Exception:
+                        self.runit(i)
+                        self._timestamp(f"{os.getpid()} complete")
+                        self.__finish()
+                    except Exception as err:
                         # If something goes wrong with the workload that isn't caught,
                         # a traceback will likely be useful
-                        self._timestamp(f"Run failed: {traceback.format_exc()}")
-                        status = 1
-                    if status is None:
-                        status = 0
-                    self._timestamp(f"{os.getpid()} exiting, status {status}")
-                    self.__finish(status, report_system=False)
+                        self.__finish(False, message=f'{err}\n{traceback.format_exc()}')
+                    raise Exception("runWorkload should not reach this point!")
                 else:
                     pid_count = pid_count + 1
             except Exception as err:
-                self._timestamp(f"Subprocess {i} failed: {err}")
-                os._exit(1)
+                self.__finish(False, message=f"Subprocess {i} failed: {err}")
+        messages = []
         while pid_count > 0:
             try:
                 pid, status = os.wait()
-                status = int((status / 256)) | (status & 255)
-                if status != 0:
-                    self.__finish(status, pid, usermsg=f"waited for {pid} (status {status})")
+                if status & 255:
+                    messages.append(f"Process {pid} killed by signal {status & 255}")
+                elif status / 256:
+                    messages.append(f"Process {pid} failed with status {int(status / 256)}")
+                else:
+                    self._timestamp(f"Process {pid} completed normally")
                 pid_count = pid_count - 1
             except Exception as err:
-                self.__finish(1, usermsg=f'Wait failed: {err}')
-        self.__finish()
+                self.__finish(False, message=f'Wait failed: {err}')
+        self._timestamp(f'{self.__run_cmd("lscpu")}\n{self.__run_cmd("dmesg")}')
+        if messages:
+            self.__finish(False, message='\n'.join(messages))
+        else:
+            self.__finish()
 
     @staticmethod
     def _toBool(arg, defval: bool = None):
@@ -361,7 +368,7 @@ class clusterbuster_pod_client:
                 self._timestamp(f"gethostbyname({hostname}) failed: {err}")
                 time.sleep(1)
 
-    def _connect_to(self, addr: str = None, port: int = None):
+    def _connect_to(self, addr: str = None, port: int = None, timeout: float=None):
         """
         Connect to specified address and port.
         :param addr: address to connect to, default the sync host
@@ -373,6 +380,7 @@ class clusterbuster_pod_client:
         if port is None:
             port = self.__syncport
         retries = 0
+        initial_time = time.time()
         while True:
             try:
                 try:
@@ -387,6 +395,9 @@ class clusterbuster_pod_client:
                     self._timestamp(f"Connected after {retries} retries")
                 return sock
             except Exception as err:
+                if timeout and time.time() - initial_time > timeout:
+                    sock.close()
+                    return None
                 if retries < 10:
                     self._timestamp(f"Cannot connect to {addr} on port {port}: {err}")
                 elif retries == 10:
@@ -425,6 +436,8 @@ class clusterbuster_pod_client:
         :param sys_cpu: System CPU consumed by the workload
         :param extra: Optional dict containing additional results
         """
+        if not self.__is_worker:
+            raise Exception("_report_results must not be called outside of a worker")
         answer = {
             'application': 'clusterbuster-json',
             'namespace': self._namespace(),
@@ -448,9 +461,7 @@ class clusterbuster_pod_client:
         try:
             answer = json.dumps(self.__clean_numbers(answer))
         except Exception as exc:
-            self._timestamp(f"Cannot convert results to JSON: {exc}")
             self.__fail(f"Cannot convert results to JSON: {exc}")
-            self.__wait_forever()
         self.__do_sync_command('RSLT', answer)
 
     def _sync_to_controller(self, token: str = None):
@@ -472,21 +483,22 @@ class clusterbuster_pod_client:
             message = f"Process {os.getpid()} aborting: {msg}\n{traceback.format_exc()}"
         except Exception:
             message = f"Process {os.getpid()} aborting: {msg} (no traceback)"
-        self.__exit_at_end = False
-        self.__finish(1, usermsg=message)
+        self.__finish(False, message=message)
 
     def __wait_forever(self):
         self._timestamp('Waiting forever')
         signal.pause()
-        sys.exit()
+        os.__exit(int(self.__run_failed))
 
     def __fail(self, msg: str):
+        self._timestamp(f"Run failed: {msg}")
         msg = f'''{msg}
 Run:
 oc logs -n '{self._namespace()}' '{self._podname()}' -c '{self._container()}'
 '''
-        self.__do_sync_command('FAIL', msg)
-        if self.__exit_at_end:
+        self.__do_sync_command('FAIL', msg, timeout=30)
+        self.__run_failed = True
+        if self.__is_worker:
             os._exit(1)
 
     def __run_cmd(self, cmd):
@@ -610,26 +622,31 @@ oc logs -n '{self._namespace()}' '{self._podname()}' -c '{self._container()}'
             self.__crtime += self.__baseoffset
         self.__timing_initialized = True
 
-    def __do_sync_command(self, command: str, token: str = ''):
+    def __do_sync_command(self, command: str, token: str = '', timeout: float = None):
         lcommand = command.lower()
         if lcommand == 'sync' and (token is None or token == ''):
             token = f'{self.__ts()} {self.__pod()}-{random.randrange(1000000000)}'
+        initial_time = time.time()
         token = f'{command} {token}'.replace('%s', str(time.time()))
         token = ('0x%08x%s' % (len(token), token)).encode()
         while True:
             self._timestamp(f'sync {lcommand} on {self.__synchost}:{self.__syncport}')
-            sync_conn = self._connect_to()
+            sync_conn = self._connect_to(timeout=timeout)
             while len(token) > 0:
                 if len(token) > 128:
                     self._timestamp(f'Writing {command}, {len(token)} bytes to sync')
                 else:
                     self._timestamp(f'Writing token {token.decode("utf-8")} to sync')
                 try:
-                    answer = sync_conn.send(token)
-                    if answer <= 0:
-                        self._timestamp("Write token failed")
+                    if sync_conn:
+                        answer = sync_conn.send(token)
+                        if answer <= 0:
+                            self._timestamp("Write token failed")
+                        else:
+                            token = token[answer:]
                     else:
-                        token = token[answer:]
+                        self._timestamp("Write token failed: timed out")
+                        return None
                 except Exception as err:
                     self._timestamp(f'Write token failed: {err}')
                     os._exit(1)
@@ -639,45 +656,35 @@ oc logs -n '{self._namespace()}' '{self._podname()}' -c '{self._container()}'
                 self._timestamp(f'sync complete, response {answer.decode("utf-8")}')
                 return answer
             except Exception as err:
-                self._timestamp(f'sync failed {err}, retrying')
+                if timeout and time.time() - initial_time > timeout:
+                    self._timestamp(f'sync failed {err}, timeout expired')
+                    return None
+                else:
+                    self._timestamp(f'sync failed {err}, retrying')
 
-    def __finish(self, status=0, pid=os.getpid(), usermsg: str = None, report_system: bool = True):
-        if report_system:
-            message = self._get_timestamp(f'{self.__run_cmd("lscpu")}\n{self.__run_cmd("dmesg")}')
-        else:
-            message = ''
-        if usermsg:
+    def __finish(self, status: bool = True, message: str = '', pid: int = os.getpid()):
+        if self.__is_worker:
             if message:
-                message += '\n\n'
+                message = f': {message}'
             if status:
-                message += f"ERROR: {usermsg}"
+                self._timestamp(f"Process {pid} succeeded{message}")
             else:
-                message += f"{usermsg}"
-        print(message, file=sys.stderr)
-        if status != 0:
-            self._timestamp("Run failed!")
-            self.__fail(message)
+                self._timestamp(f"ERROR: Process {pid} failed{message}")
+                self.__fail(f"ERROR: Process {pid} failed{message}")
+            os._exit(int(not status))
+        else:
+            if status:
+                if message:
+                    message = f': {message}'
+            else:
+                if not message:
+                    message = 'Unspecified error'
+            if status:
+                self._timestamp(f"Run succeeded{message}")
+            else:
+                self.__fail(message)
             if self.__exit_at_end:
-                os._exit(status)
+                os._exit(int(not status))
             else:
-                pid_status = status
-        else:
-            self._timestamp("Run succeeded")
-            pid_status = 0
-        if self.__exit_at_end:
-            self._timestamp('About to exit')
-            try:
-                while True:
-                    pid, status = os.wait()
-                    if status != 0:
-                        status = int((status / 256)) | (status & 255)
-                        self._timestamp(f'Pid {pid} returned status {status}')
-                        pid_status = status
-            except ChildProcessError:
-                pass
-            except Exception as err:
-                self._timestamp(f"wait() failed: {err}")
-            self._timestamp('Done waiting')
-            os._exit(pid_status)
-        else:
-            self.__wait_forever()
+                self.__wait_forever()
+        raise Exception("__finish() should not return")

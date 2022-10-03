@@ -149,25 +149,12 @@ I/O engines: {self._args[11]}""")
         localid = self._idname(separator='-')
         localrundir = f"{self.rundir}/{localid}"
         tmp_jobsfiledir = f"/tmp/fio-{localid}.job"
-        try:
-            os.makedirs(tmp_jobsfiledir)
-        except Exception as exc:
-            self._timestamp(f"Can't create temporary jobs directory {tmp_jobsfiledir}: {exc}")
-            raise(exc)
-        try:
-            os.makedirs(localrundir)
-        except Exception as exc:
-            self._timestamp(f"Can't create local run directory {localrundir}: {exc}")
-            raise(exc)
-        try:
-            os.chdir(localrundir)
-        except Exception as exc:
-            self._timestamp(f"Can't cd to local run directory {localrundir}: {exc}")
-            raise(exc)
+        os.makedirs(tmp_jobsfiledir)
+        os.makedirs(localrundir)
+        os.chdir(localrundir)
         jobfiles = self.get_jobfiles(self.jobfilesdir, tmp_jobsfiledir, localid)
         if not jobfiles:
-            self._timestamp("Error: no jobfiles provided!")
-            return 1
+            raise Exception("Error: no jobfiles provided!")
         for jobfile in jobfiles:
             self.runone(jobfile)
         shutil.rmtree(self.rundir, ignore_errors=True)

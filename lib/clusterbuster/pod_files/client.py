@@ -54,17 +54,12 @@ class client_client(clusterbuster_pod_client):
             rtt_start = self._adjusted_time()
             nleft = self.msg_size
             while nleft > 0:
-                try:
-                    nwrite = conn.send(msg[(self.msg_size - nleft):])
-                except Exception as error:
-                    self._timestamp(f"Write failed: {error}")
-                    return 1
+                nwrite = conn.send(msg[(self.msg_size - nleft):])
                 if nwrite > 0:
                     nleft -= nwrite
                     data_sent += nwrite
                 else:
-                    self._timestamp("Unexpected zero length msg sent")
-                    return 1
+                    raise Exception("Unexpected zero length message sent")
             nleft = self.msg_size
             read_failures = 0
             while nleft > 0:
@@ -73,7 +68,7 @@ class client_client(clusterbuster_pod_client):
                 except Exception as error:
                     self._timestamp(f"Read failed: {error}")
                     if read_failures > 2:
-                        return 1
+                        raise error
                     else:
                         read_failures += 1
                         continue
@@ -82,8 +77,7 @@ class client_client(clusterbuster_pod_client):
                 if nread > 0:
                     nleft -= nread
                 else:
-                    self._timestamp("Unexpected zero length msg received")
-                    return 1
+                    raise Exception("Unexpected zero length msg received")
             en = self._adjusted_time() - rtt_start - time_overhead
             ex += en
             ex2 += en * en
