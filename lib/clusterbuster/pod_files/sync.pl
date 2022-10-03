@@ -7,20 +7,9 @@ use Time::HiRes qw(gettimeofday usleep);
 use JSON;
 use Scalar::Util qw(looks_like_number);
 
-my ($verbose, $sync_file, $error_file, $controller_timestamp_file);
+my ($sync_file, $error_file, $controller_timestamp_file, $predelay, $postdelay, $listen_port, $expected_clients, $initial_expected_clients, $sync_count) = @ARGV;
 my ($offset_from_controller) = 0;
-my ($predelay) = 0;
-my ($postdelay) = 0;
-use Getopt::Long;
-Getopt::Long::Configure("bundling", "no_ignore_case", "pass_through");
-GetOptions("v!"  => \$verbose,
-	   "t:s" => \$controller_timestamp_file,
-	   "d:i" => \$predelay,
-	   "D:i" => \$postdelay,
-	   "f:s" => \$sync_file,
-	   "e:s" => \$error_file);
 
-my ($listen_port, $expected_clients, $initial_expected_clients, $sync_count) = @ARGV;
 if ($sync_count < 1 || $expected_clients < 1) {
     timestamp("Sync requested with no clients or no syncs");
     POSIX::exit(0);

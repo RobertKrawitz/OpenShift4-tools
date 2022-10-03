@@ -828,7 +828,7 @@ function list_configmaps() {
     cat <<EOF
 ${__podfile_dir__}/clusterbuster_pod_client.py
 ${__podfile_dir__}/clientlib.pl
-${__podfile_dir__}/sync.pl
+${__podfile_dir__}/sync.py
 ${__podfile_dir__}/drop_cache.py
 EOF
     call_api -w "$requested_workload" list_configmaps
@@ -2428,17 +2428,12 @@ function create_container_sync() {
   - containerPort: $port
 $(indent 2 standard_environment)
   command:
-  - "perl"
-  - "$system_configmap_mount_dir/sync.pl"
-  - "-f"
+  - "python3"
+  - "$system_configmap_mount_dir/sync.py"
   - "$sync_flag_file"
-  - "-e"
   - "$sync_error_file"
-  - "-t"
   - "$controller_timestamp_file"
-  - "-d"
   - "$predelay"
-  - "-D"
   - "$postdelay"
   - "$sync_port"
   - "$expected_clients"
