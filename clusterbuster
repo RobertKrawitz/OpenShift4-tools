@@ -829,6 +829,7 @@ function list_configmaps() {
 ${__podfile_dir__}/clusterbuster_pod_client.py
 ${__podfile_dir__}/clientlib.pl
 ${__podfile_dir__}/sync.pl
+${__podfile_dir__}/drop_cache.py
 EOF
     call_api -w "$requested_workload" list_configmaps
 }
@@ -1620,13 +1621,6 @@ function mk_yaml_args() {
     for arg in "$@" ; do
 	yamlize "$arg"
     done
-}
-
-function standard_yaml_args() {
-    local namespace=$1
-    local container=$2
-    mk_yaml_args "$namespace" "c$container" "$basetime" "$baseoffset" "$(ts)" \
-		 "$exit_at_end" "$sync_service" "$sync_port_num"
 }
 
 function create_standard_containers() {
@@ -2475,6 +2469,9 @@ EOF
 
 function create_container_drop_cache() {
     local namespace=$1
+    local sync_service=
+    local sync_port_num=
+    IFS=: read -r sync_service sync_port_num <<< "$(get_sync)"
     cat <<EOF
 - name: ${namespace}
   image_pull_policy: $image_pull_policy
@@ -2485,8 +2482,16 @@ function create_container_drop_cache() {
   - containerPort: $drop_cache_port
 $(indent 2 standard_environment)
   command:
-  - "perl"
-  - "${system_configmap_mount_dir}/drop_cache.pl"
+  - "python3"
+  - "${system_configmap_mount_dir}/drop_cache.py"
+  - "$namespace"
+  - "c0"
+  - "$basetime"
+  - "$baseoffset"
+  - "$(ts)"
+  - "0"
+  - "$sync_service"
+  - "$sync_port_num"
   - "$drop_cache_port"
 $(indent 2 volume_mounts_yaml "$namespace" 0 0)
   - mountPath: "/proc-sys-vm"

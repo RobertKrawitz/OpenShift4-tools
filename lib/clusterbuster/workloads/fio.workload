@@ -75,7 +75,6 @@ function fio_calculate_logs_required() {
 function fio_list_configmaps() {
     cat <<EOF
 ${__podfile_dir__}/fio.py
-${__podfile_dir__}/drop_cache.pl
 EOF
 }
 

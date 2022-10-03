@@ -55,7 +55,6 @@ function sysbench_create_deployment() {
 function sysbench_list_configmaps() {
     cat <<EOF
 ${__podfile_dir__}/sysbench.py
-${__podfile_dir__}/drop_cache.pl
 EOF
 }
 
