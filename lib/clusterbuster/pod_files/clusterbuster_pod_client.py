@@ -165,7 +165,7 @@ class clusterbuster_pod_client:
                 pass
         if defval is not None:
             return defval
-        raise ValueError(f'Cannot parse {arg} as a boolean value')
+        raise ValueError(f'Cannot parse "{arg}" as a boolean value')
 
     @staticmethod
     def _toBools(*args):
@@ -173,7 +173,7 @@ class clusterbuster_pod_client:
         Split a list of bools, or comma or space separated string of bools,
         into a list of bools.  See _toBool.
         """
-        return [clusterbuster_pod_client._toBool(item) for sublist in args for item in re.split(r'[,\s]+', sublist)]
+        return [clusterbuster_pod_client._toBool(item) for sublist in args for item in re.split(r'[,\s]+', sublist.strip())]
 
     @staticmethod
     def _toSize(arg: str):
@@ -185,7 +185,7 @@ class clusterbuster_pod_client:
         """
         if isinstance(arg, int) or isinstance(arg, float):
             return int(arg)
-        m = re.match(r'(-?[0-9]+(\.[0-9]+)?)(([kmgt])([i]?)(b.*)?)?', arg.lower())
+        m = re.match(r'(-?[0-9]+(\.[0-9]+)?)(([kmgt]?)(i?)(b?)?)?', arg.lower())
         if m:
             mantissa = float(m.group(1))
             modifier = m.group(4)
@@ -204,7 +204,7 @@ class clusterbuster_pod_client:
             else:
                 return int(mantissa * (1000 ** base))
         else:
-            raise Exception(f"Unparseable number {arg}")
+            raise Exception(f"Unparseable number '{arg}'")
 
     @staticmethod
     def _toSizes(*args):
@@ -212,7 +212,7 @@ class clusterbuster_pod_client:
         Split a list of sizes, or comma or space separated string of sizes,
         into a list of sizes.  See _toSize.
         """
-        return [clusterbuster_pod_client._toSize(item) for sublist in args for item in re.split(r'[,\s]+', sublist)]
+        return [clusterbuster_pod_client._toSize(item) for sublist in args for item in re.split(r'[,\s]+', sublist.strip())]
 
     @staticmethod
     def _splitStr(regexp: str, arg: str):
