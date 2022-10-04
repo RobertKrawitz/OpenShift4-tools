@@ -112,7 +112,7 @@ function files_process_options() {
 	esac
     done
     if [[ -n "${unknown_opts[*]:-}" ]] ; then
-	help "${unknown_opts[@]}"
+	warn "Notice: the following options are not known: ${unknown_opts[*]}"
     fi
     if (( ___file_block_size <= 0)) ; then
 	___file_block_size=___file_size

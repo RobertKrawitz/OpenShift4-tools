@@ -105,7 +105,7 @@ function logger_process_options() {
 	esac
     done
     if [[ -n "${unknown_opts[*]:-}" ]] ; then
-	help "${unknown_opts[@]}"
+	warn "Notice: the following options are not known: ${unknown_opts[*]}"
     fi
 }
 

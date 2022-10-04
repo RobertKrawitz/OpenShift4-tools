@@ -111,6 +111,9 @@ function cpusoaker_process_options() {
 	    *) unknown_opts+=("$noptname ($noptname1)") ;;
 	esac
     done
+    if [[ -n "${unknown_opts[*]:-}" ]] ; then
+	warn "Notice: the following options are not known: ${unknown_opts[*]}"
+    fi
 }
 
 function cpusoaker_supports_reporting() {
