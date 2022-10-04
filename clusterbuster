@@ -2386,7 +2386,7 @@ function create_standard_deployment() {
     local opt
     local security_context=
     local allow_replica_controller=1
-    local node_class=
+    local node_class=client
     local deployment_type=$deployment_type
     local arglist_function=
     local create_container_function=create_standard_containers
