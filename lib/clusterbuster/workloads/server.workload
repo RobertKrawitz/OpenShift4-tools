@@ -19,12 +19,11 @@
 ################################################################
 
 declare -ig ___msg_size=32768
-declare -g ___server_workload=python3
 
 function server_server_arglist() {
     local mountdir=$1; shift
     while [[ "$1" != '--' ]] ; do shift; done; shift
-    mk_yaml_args "$___server_workload" "${mountdir}server.$(_server_get_pod_workload)" "$@" \
+    mk_yaml_args "$___server_workload" "${mountdir}server" "$@" \
 		 "$port" "$___msg_size" "$((containers_per_pod * replicas_per_server))"
 }
 
@@ -37,7 +36,7 @@ function server_client_arglist() {
 	bytes_transfer=$default_bytes_transfer
 	bytes_transfer_max=$default_bytes_transfer
     fi
-    mk_yaml_args "$___server_workload" "${mountdir}client.$(_server_get_pod_workload)" "$@" \
+    mk_yaml_args "$___server_workload" "${mountdir}client.py" "$@" \
 		 "svc-${namespace}-server-server-$instance" "$port" "$target_data_rate" "$bytes_transfer" \
 		 "$bytes_transfer_max" "$___msg_size" "$workload_run_time" "$workload_run_time_max"
 }
@@ -75,8 +74,8 @@ function server_create_deployment() {
 
 function server_list_configmaps() {
     cat <<EOF
-${__podfile_dir__}/client.$(_server_get_pod_workload)
-${__podfile_dir__}/server.$(_server_get_pod_workload)
+${__podfile_dir__}/client.py
+${__podfile_dir__}/server.py
 EOF
 }
 
@@ -94,11 +93,6 @@ function server_help_options() {
        --msgsize       Message size in data transfer
        --pin_node=server=<node>
                        Specify node to which the server is bound.
-       --server-workload=<workload>
-                       Use specified server workload.  Performance
-                       cannot be compared across workloads.
-                       - perl (use legacy Perl-based client/server, default)
-                       - python (use Python-based client/server)
 EOF
 }
 
@@ -116,15 +110,6 @@ function server_process_options() {
 	read -r noptname1 noptname optvalue <<< "$(parse_option "$opt")"
 	case "$noptname1" in
 	    msgsize) ___msg_size=$optvalue ;;
-	    serverworkload)
-		case "$optvalue" in
-		    perl|pl) ___server_workload=perl    ;;
-		    py*)     ___server_workload=python3 ;;
-		    *)
-			fatal "Unknown server workload $optvalue; must be 'perl' or 'python'"
-			;;
-		esac
-		;;
 	    *) unknown_opts+=("$noptname ($noptname1)")	;;
 	esac
     done
@@ -144,7 +129,6 @@ function server_supports_reporting() {
 function server_report_options() {
     cat <<EOF
 "msg_size": $___msg_size,
-"server_workload": "$___server_workload"
 EOF
 }
 

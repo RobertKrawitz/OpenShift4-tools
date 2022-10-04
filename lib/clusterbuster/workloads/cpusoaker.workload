@@ -51,9 +51,21 @@ function cpusoaker_create_deployment() {
 }
 
 function cpusoaker_list_configmaps() {
+    if [[ $___cpusoaker_workload = perl ]] ; then
+	echo ${__podfile_dir__}/clientlib.pl
+    fi
     cat <<EOF
 ${__podfile_dir__}/$(_cpusoaker_get_pod_workload)
 EOF
+}
+
+function cpusoaker_generate_environment() {
+    if [[ $___cpusoaker_workload = perl ]] ; then
+	cat <<EOF
+- name: PERL5LIB
+  value: "$system_configmap_mount_dir"
+EOF
+    fi
 }
 
 function cpusoaker_calculate_logs_required() {

@@ -827,19 +827,22 @@ function calculate_logs_required() {
 function list_configmaps() {
     cat <<EOF
 ${__podfile_dir__}/clusterbuster_pod_client.py
-${__podfile_dir__}/clientlib.pl
 ${__podfile_dir__}/sync.py
 ${__podfile_dir__}/drop_cache.py
 EOF
-    call_api -w "$requested_workload" list_configmaps
+    call_api -w "$requested_workload" -s list_configmaps
 }
 
 function list_user_configmaps() {
-    call_api -w "$requested_workload" list_user_configmaps
+    call_api -w "$requested_workload" -s list_user_configmaps
 }
 
 function generate_workload_metadata() {
     call_api -w "$requested_workload" -s generate_metadata
+}
+
+function generate_environment() {
+    call_api -w "$requested_workload" -s generate_environment
 }
 
 ################################################################
@@ -1653,6 +1656,7 @@ function create_standard_containers() {
   image: "$container_image"
 $(indent 2 container_standard_auxiliary_yaml)
 $(indent 2 standard_environment)
+$(indent 2 generate_environment)
   command:
 $(if [[ -n "${arglist_function}" ]] ; then
      "${arglist_function}" "${system_configmap_mount_dir}/" "$@" "$container" -- "$namespace" "c$container" \
@@ -1758,8 +1762,6 @@ function standard_environment() {
 env:
 - name: VERBOSE
   value: "$verbose"
-- name: PERL5LIB
-  value: "$system_configmap_mount_dir"
 - name: PODFILE_DIR
   value: "$system_configmap_mount_dir"
 - name: PYTHONPATH
