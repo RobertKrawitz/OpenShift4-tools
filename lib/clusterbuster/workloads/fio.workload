@@ -164,7 +164,7 @@ function fio_process_options() {
 	help "Can't find job file $___fio_job_file"
     fi
     if [[ -n "${unknown_opts[*]:-}" ]] ; then
-	help "${unknown_opts[@]}"
+	warn "Notice: the following options are not known: ${unknown_opts[*]}"
     fi
     if [[ -n "${fioblksize:-}" ]] ; then
 	readarray -t ___fio_blocksizes <<< "$(parse_size ${fioblksize//,/ })"

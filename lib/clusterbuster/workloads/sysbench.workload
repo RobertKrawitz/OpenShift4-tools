@@ -99,7 +99,7 @@ function sysbench_process_options() {
 	esac
     done
     if [[ -n "${unknown_opts[*]:-}" ]] ; then
-	help "${unknown_opts[@]}"
+	warn "Notice: the following options are not known: ${unknown_opts[*]}"
     fi
     for ftest in ${___sysbench_fileio_test_string//,/ } ; do
 	___sysbench_fileio_tests[$ftest]=1
