@@ -78,13 +78,12 @@ A workload requires, at a minimum, a workload definition in
 tell clusterbuster how to deploy the workload.
 
 Most workloads require in addition a component to run on the worker
-nodes.  These components are written in perl, although I'm considering
-writing a python binding too.  The node components, which reside in
-`lib/clusterbuster/pod_files`, are responsible for initializing and
-running the workloads.  For most workloads, an additional
-synchronization/control service is used to ensure that all instances
-of the workload start simultaneously; the sync service also manages
-distributed time and collection of results.
+nodes.  These are written in python.  The node components, which
+reside in `lib/clusterbuster/pod_files`, are responsible for
+initializing and running the workloads.  For most workloads, an
+additional synchronization/control service is used to ensure that all
+instances of the workload start simultaneously; the sync service also
+manages distributed time and collection of results.
 
 Finally, there are optional components for processing reports and
 performing analysis of the data.  These are written in Python.
@@ -140,7 +139,7 @@ The following APIs are supported:
 * `<workload>_list_configmaps`
 
   Return a list of files that must be provided to the worker object
-  for the workload to run.  This consists of Perl files in
+  for the workload to run.  This consists of files in
   `lib/clusterbuster/pod_files` that are required to run the workload.
 
 * `<workload>_list_user_configmaps`
@@ -203,10 +202,10 @@ To create a new workload, you need to do the following:
    `lib/clusterbuster/workloads`.  The workload file is a set of bash
    functions, as the file is sourced by clusterbuster.
 
-2. (Optional) Create one or more perl scripts, which go into
-   `lib/clusterbuster/pod_files`.  These scripts are written in Perl
-   (sorry!) and are responsible for running workloads.  Documenting
-   them is Todo.
+2. (Optional) Create one or more workloads, which go into
+   `lib/clusterbuster/pod_files`.  These are the actual workloads, or
+   scripts that run them.  These are written in Python and are
+   subclasses of `clusterbuster_pod_client`.
 
 3. (Optional) Create Python scripts to generate reports.  If you don't
    do this and attempt to generate a report, you'll get only a generic
