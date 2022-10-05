@@ -34,6 +34,7 @@ etc. OpenShift 4 clusters.
 
 - **ocp4-upi-util**: OpenShift 4.x UPI installer wrapper, currently for
   baremetal hosts supporting IPMI.  Needs more documentation.
+  Examples in `examples/ocp4-upi-util`.
 
 - **waitfor-pod**: wait for a specified pod to make its appearance (used
   as a helper by `oinst`).

@@ -34,11 +34,11 @@ declare cluster_basedomain
 declare cluster_name
 declare cluster_network_bridge_name=baremetal
 declare cluster_install_dir=${KUBECONFIG:+${KUBECONFIG/\/auth\/kubeconfig/}}
-declare filesystems_json="$HOME"/filesystems.json
+declare filesystem_json=
 declare -i masters_schedulable=0
 declare -i infra_count=0
 declare -i master_as_infra=0
-declare -r cachedir="$HOME/.cache/ocp4_install"
+declare -r cachedir="$HOME/.cache/ocp4_upi_install"
 declare bootstrap_mac=52:54:00:f9:8e:41
 declare -a mgmt_masters=()
 declare -a master_macs=()
@@ -158,6 +158,8 @@ Usage: $command -c <configfile> [options]$cmdmsg args...
         bootstrap_mac         MAC address of bootstrap VM
                               (default 52:54:00:f9:8e:41)
         cluster_host_prefix   32 - desired bare metal network size (default 23)
+	filesystem_json	      File containing code to modify the filesystem
+			      layout
 
 $command_help
 EOF
@@ -703,10 +705,17 @@ EOF
 	cp -p "${i}.ign" "${i}.ign.orig"
 	filetranspile -i "${i}.ign.orig" -f ./lab -o "${i}.ign"
     done
-    if [[ -n "$filesystems_json" && -f "$filesystems_json" ]] ; then
-	for i in master worker; do
-	    jq -c ".systemd? += $(jq .systemd < "$filesystems_json") | .storage? += $(jq .storage < "$filesystems_json")" < "${i}.ign" > "${i}.ign.tmp" && mv -f "${i}.ign.tmp" "${i}.ign"
-	done
+    if [[ -n "$filesystem_json" ]] ; then
+	if [[ -r "$filesystem_json" && -f "$filesystem_json" ]] ; then
+	    jq -c . < "$filesystem_json" >/dev/null 2>&1 || fatal "Cannot parse filesystem JSON in $filesystem_json"
+	    jq -c .storage < "$filesystem_json" >/dev/null 2>&1 || fatal "Cannot find storage JSON in $filesystem_json"
+	    jq -c .systemd < "$filesystem_json" >/dev/null 2>&1 || fatal "Cannot find systemd JSON in $filesystem_json"
+	    for i in master worker; do
+		jq -c ".systemd? += $(jq .systemd < "$filesystem_json") | .storage? += $(jq .storage < "$filesystem_json")" < "${i}.ign" > "${i}.ign.tmp" && mv -f "${i}.ign.tmp" "${i}.ign"
+	    done
+	else
+	    fatal "Cannot read $filesystem_json"
+	fi
     fi
     for i in master worker bootstrap ; do
 	cp "$cluster_install_dir/$i.ign" /var/www/html/ocp4-upi
