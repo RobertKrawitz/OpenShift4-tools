@@ -27,7 +27,6 @@ fio-memsize=4096
 uperf-timeout=300
 
 cpusoaker-timeout=600
-cpusoaker-workload=perl
 
 job_runtime=60
 artifactdir=
