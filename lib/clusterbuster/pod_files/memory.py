@@ -23,7 +23,7 @@ class memory_client(clusterbuster_pod_client):
     def runit(self, process: int):
         user, system = self._cputimes()
         data_start_time = self._adjusted_time()
-        memory_blk = 'a' * self.__memory  # noqa: F841
+        memory_blk = b'a' * self.__memory  # noqa: F841
 
         if self.__runtime >= 0:
             time.sleep(self.__runtime)

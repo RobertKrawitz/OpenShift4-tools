@@ -46,7 +46,7 @@ class files_client(clusterbuster_pod_client):
 
     def makethem(self, pid: int):
         buf = mmap.mmap(-1, self.blocksize)
-        buf.write(('a' * self.blocksize).encode())
+        buf.write(b'a' * self.blocksize)
         ops = 0
         for bdir in self.dir_list:
             direc = f"{bdir}/p{pid}/{self._container()}"

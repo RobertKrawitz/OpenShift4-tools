@@ -16,7 +16,7 @@ class server_client(clusterbuster_pod_client):
             self.listen_port = int(self._args[0])
             self.msg_size = clusterbuster_pod_client._toSize(self._args[1])
             self.expected_clients = int(self._args[2])
-            self.buf = ('A' * self.msg_size).encode()
+            self.buf = b'B' * self.msg_size
         except Exception as err:
             self._abort(f"Init failed! {err} {' '.join(self._args)}")
 

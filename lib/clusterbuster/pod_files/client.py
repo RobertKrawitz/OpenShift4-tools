@@ -32,7 +32,7 @@ class client_client(clusterbuster_pod_client):
         ex2 = 0
 
         conn = self._connect_to(self.srvhost, self.connect_port)
-        msg = ('A' * self.msg_size).encode()
+        msg = b'A' * self.msg_size
 
         data_sent = 0
         mean_latency = 0
