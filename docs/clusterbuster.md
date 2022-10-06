@@ -13,16 +13,20 @@ as plugins.  Yes, it is possible to have a plugin architecture with bash!
 <!-- markdown-toc start - Don't edit this section. Run M-x markdown-toc-generate-toc again -->
 **Table of Contents**
 
-- [OpenShift4-tools](#openshift4-tools)
-    - [Cluster utilities](#cluster-utilities)
-    - [Testing tools](#testing-tools)
-    - [Data reporting utilities](#data-reporting-utilities)
-    - [General information tools](#general-information-tools)
-    - [PBench orchestration](#pbench-orchestration)
-    - [oinst API](#oinst-api)
-        - [Introduction](#introduction)
-        - [API calls](#api-calls)
-        - [Validating Instance Types](#validating-instance-types)
+- [ClusterBuster](#clusterbuster)
+    - [Introduction](#introduction)
+    - [Running Clusterbuster](#running-clusterbuster)
+    - [Internals](#internals)
+        - [Architecture](#architecture)
+        - [Workloads](#workloads)
+            - [Workload Host API](#workload-host-api)
+            - [Workload Client (Pod) API](#workload-client-pod-api)
+                - [Public Members](#public-members)
+                - [Running Workloads](#running-workloads)
+                - [Protected Members](#protected-members)
+                - [Static methods:](#static-methods)
+            - [Create A Workload](#create-a-workload)
+        - [Create A Deployment Type](#create-a-deployment-type)
 
 <!-- markdown-toc end -->
 
@@ -88,7 +92,7 @@ manages distributed time and collection of results.
 Finally, there are optional components for processing reports and
 performing analysis of the data.  These are written in Python.
 
-#### Workload API
+#### Workload Host API
 
 Clusterbuster has an API to interface between the tool and workloads.
 Workloads are responsible for providing functions implementing these
@@ -193,6 +197,250 @@ The following APIs are supported:
   ```
   This is not the result of the run, merely a directory of all subjobs and
   associated settings.
+
+#### Workload Client (Pod) API
+
+The Python3 API for workload pods is provided by
+`lib/clusterbuster/pod_files/clusterbuster_pod_client.py`.  All
+workloads should subclass this API.  The API is subject to change.
+All workloads should implement a subclass of
+`clusterbuster_pod_client` and invoke the `run_workload()` method of
+the derived class.
+
+```
+#!/usr/bin/env python3
+
+import time
+from clusterbuster_pod_client import clusterbuster_pod_client
+
+
+class minimal_client(clusterbuster_pod_client):
+    """
+    Minimal workload for clusterbuster
+    """
+
+    def __init__(self):
+        try:
+            super().__init__()
+            self._set_processes(int(self._args[0]))
+            self.__sleep_time = float(self._args[1])
+        except Exception as err:
+            self._abort(f"Init failed! {err} {' '.join(self._args)}")
+
+    def runit(self, process: int):
+        user, system = self._cputimes()
+        data_start_time = self._adjusted_time()
+        time.sleep(self.__sleep_time)
+        user, system = self._cputimes(user, system)
+        data_end_time = self._adjusted_time()
+        extras = {
+            'sleep_time': self.__sleep_time
+            }
+        self._report_results(data_start_time, data_end_time, data_end_time - data_start_time, user, system, extras)
+
+
+minimal_client().run_workload()
+```
+
+##### Public Members
+
+The `clusterbuster_pod_client` class should not be instantiated
+itself; only subclasses should be instantiated.
+
+* `clusterbuster_pod_client.run_workload(self)`
+
+  Run an instantiated workload.  This method, once called, will not
+  return.
+
+##### Running Workloads
+
+The `run_workload` method will call back to the `runit` method of the
+subclass, passing one argument, the process number.  The
+`run_workload` method will be invoked in parallel the number of times
+specified by the `_set_processes()` method described below, each in a
+separate subprocess.
+
+The `runit` method should call `self._report_results` (described
+below) to report the results back.  This method does not return.  If
+`runit` returns without calling `self._report_results`, or raises an
+uncaught exception, the workload is deemed to have failed.  Raising an
+exception is the preferred way to fail a run.  It should not call
+`sys.exit()` or `os.exit()` on its own; the results of that are
+undefined.
+
+##### Protected Members
+
+This currently only documents the most commonly used members.
+
+* /class/ `clusterbuster_pod_client.clusterbuster_pod_client(initialize_timing_if_needed: bool = True, argv: list = sys.argv)
+
+  Initialize the `clusterbuster_pod_client` class.
+
+  `initialize_timing_if_needed` should be `True` if the workload is
+  expected to use the synchronization and control services provided by
+  ClusterBuster (this is normally the case).  It should only be `False`
+  if the workload will not synchronize.  This is most commonly the
+  case if the workload is part of a composite workload that does not
+  need to synchronize independently, such as the server side of a
+  client-server workload.
+
+  `argv` is normally the command line arguments.  You should never
+  need to provide anything else.  Arguments not consumed by the
+  `clusterbuster_pod_client` are provided in the
+  `self._args` variable, as a list.  The constructor will only be
+  called once (as opposed to the `runit` method).
+
+  If the /constructor/ needs to report an error, it should call
+  `self.abort() with an error message rather than exiting.
+
+* `clusterbuster_pod_client._set_processes(self, processes: int = 1)`
+
+  Specify how many workload processes are to be run.  It is not
+  necessary to call this if you intend for only one instance of the
+  workload to run.
+
+* `clusterbuster_pod_client._cputimes(self, olduser: float = 0, oldsys: float = 0)`
+
+  Return a tuple of <user, system> cputime accrued by the process.  If
+  non-zero cputimes are provided as arguments, they will be subtracted
+  from the returned cputimes; this allows for convenient start/stop
+  timing.  This includes both self time and child time.
+
+* `clusterbuster_pod_client._cputime(self, otime: float = 0)`
+
+  Return the total CPU time accrued by the process.  If a non-zero
+  time value is provided, it is subtracted from the measured CPU time.
+
+* `clusterbuster_pod_client._adjusted_time(self, otime: float = 0)`
+
+  Return the wall clock time as a float, synchronized with the host.
+  This should be used in preference to `time.time()`.  If a non-zero
+  `otime` is provided, it returns the interval since that time.
+
+* `clusterbuster_pod_client._timestamp(self, string)`
+
+  Prints a message to stderr, with a timestamp prepended.  This is the
+  preferred way to log a message.
+
+* `clusterbuster_pod_client._report_results(self, data_start_time: float, data_end_time: float, data_elapsed_time: float, user_cpu: float, sys_cpu: float, extra: dict = None)`
+
+  Report results at the end of a run.  This should always be called
+  out of `runit()` unless `runit` raises an exception.  This method is
+  likely to change in the future.
+
+  `data_start_time` is the time that the job as a whole started work,
+  as returned by `_adjusted_time()`.  It may not be the moment at
+  which `_runit()` gets control, if that routine needs to perform
+  preliminary setup or synchronize.
+
+  `data_end_time` is the time that the job as a whole completed work,
+  as returned by `_adjusted_time()`.
+
+  `data_elapsed_time` is the total time spent running.  It may not be
+  the same as `data_end_time - data_start_time` if the workload
+  consists of multiple steps with synchronization or other
+  setup/teardown required between them.
+
+  `user_cpu` is the amount of user CPU time consumed by the workload;
+  it may not be the total accrued CPU time of the process.  `sys_cpu`
+  is similar.
+
+  `extra` is any additional data, as a dictionary, that the workload
+  wants to log.
+
+* `clusterbuster_pod_client._sync_to_controller(self, token: str = None)`
+
+  Synchronize to the controller.  The number of times that the
+  workload needs to synchronize should be computed on the host side;
+  the pod side needs to ensure that it only synchronizes the desired
+  number of times.  If `token` is not provided, one will be generated.
+
+* `clusterbuster_pod_client._idname(self, args: list = None, separator: str = ':')`
+
+  Generate an identifier based on namespace, pod name, container name,
+  and process ID along with any other tokens desired by the workload.
+  If a separator is provided, it is used to separate the tokens.
+
+* `clusterbuster_pod_client._podname(self)`
+  `clusterbuster_pod_client._container(self)`
+  `clusterbuster_pod_client._namespace(self)`
+
+  Return the pod name (equivalent to the hostname of the pod), the
+  container name, and the namespace of the pod respectively.
+
+* `clusterbuster_pod_client._listen(self, addr: str = None, port: int = None, backlog=5)`
+
+  Listen on the specified port and optionally address (this may change
+  in the future, as the port really is necessary while the address is
+  not).  If `backlog` is provided, the listener will listen with the
+  specified queue length.
+
+* `clusterbuster_pod_client._connect_to(self, addr: str = None, port: int = None, timeout: float=None)`
+
+  Connect to the specified address on the specified port.  If a
+  timeout is provided, it will time out after at least that long;
+  otherwise it will not time out.
+
+* `clusterbuster_pod_client._resolve_host(self, hostname: str)`
+
+  Resolve a DNS hostname.  This is not normally needed, as
+  `_connect_to` will do what is needed.  This will retry as needed
+  until it succeeds.
+
+##### Static methods:
+
+* `clusterbuster_pod_client._toSize(arg: str)`
+  `clusterbuster_pod_client._toSizes(*args)`
+
+  Convert an argument to a size (non-negative integer).  Sizes can be
+  decimal numbers, or numbers with a suffix of 'k', 'm', 'g', or 't'
+  respectively to represent thousands, millions, billions, or
+  trillions.  If the suffix has a further suffix of `i`, it is treated
+  as binary (powers of 1024) rather than decimal (powers of 1000).
+
+  If the argument is an integer or float, it is returned as an
+  integer.
+
+  If it cannot be parsed as an integer, a ValueError is raised.
+
+  The `toSizes()` takes any of the following:
+
+  * Integer or float: the value returned as an integer
+  * String: the string is comma- and space-split, and each component
+    is converted as described above.
+  * List: each element of the list is treated according to the
+    preceding rules.
+
+  These methods are useful for parsing argument lists.
+
+* `clusterbuster_pod_client._toBool(arg: str, defval: bool = None)`
+  `clusterbuster_pod_client._toBools(*args)`
+
+  Convert an argument to a Boolean.  The argument can be any of the
+  following:
+
+  * Boolean, integer, float, list, or dict: the Python rules for
+    conversion to Boolean are used.
+  * String (all case-insensitive:
+    * `true`, `y`, `yes`: True
+    * `false`, `n`, `no`: False
+	* Can be converted to an integer: 0 is False, anything else is True
+  * Anything else (including a string that cannot be converted as
+    above): if `defval` is provided, it is used; if not, a ValueError
+    is raised.
+
+  The `toBools` method works the same way as `toSizes`.  This method
+  cannot accept a default value.
+
+  These methods are useful for parsing argument lists.
+
+* `clusterbuster_pod_client._splitStr(regexp: str, arg: str)`
+
+  Split `arg` into a list of strings per the provided `regexp`.  It
+  differs from `re.split()` in that this routine returns an empty list
+  if an empty string is passed; `re.split()` returns a list of a
+  single element.
+
 
 #### Create A Workload
 
