@@ -18,8 +18,21 @@
 # CPU soaker workload
 ################################################################
 
+declare -g ___cpusoaker_workload=python3
+
 function cpusoaker_arglist() {
-    mk_yaml_args "$processes_per_pod" "$workload_run_time"
+    local mountdir=$1; shift
+    while [[ "$1" != '--' ]] ; do shift; done; shift
+    mk_yaml_args "$___cpusoaker_workload" "${mountdir}$(_cpusoaker_get_pod_workload)" "$@" \
+		 "$processes_per_pod" "$workload_run_time"
+}
+
+function _cpusoaker_get_pod_workload() {
+    case "$___cpusoaker_workload" in
+	perl)    echo cpusoaker.pl         ;;
+	python3) echo cpusoaker.py         ;;
+	*)       fatal "Unknown workload"  ;;
+    esac
 }
 
 function cpusoaker_create_deployment() {
@@ -31,16 +44,28 @@ function cpusoaker_create_deployment() {
     local -i instance
     create_sync_service_if_needed "$namespace" 2 "$((containers_per_pod * replicas * processes_per_pod * count))" \
 				  "$((containers_per_pod * replicas * count))"
-    for instance in $(seq $first_deployment $((count + first_deployment - 1))) ; do
-	create_standard_deployment -a cpusoaker_arglist -e cpusoaker.pl \
+    for instance in $(seq "$first_deployment" $((count + first_deployment - 1))) ; do
+	create_standard_deployment -a cpusoaker_arglist \
 				   "$namespace" "$instance" "$secret_count" "$replicas" "$containers_per_pod"
     done
 }
 
 function cpusoaker_list_configmaps() {
+    if [[ $___cpusoaker_workload = perl ]] ; then
+	echo ${__podfile_dir__}/clientlib.pl
+    fi
     cat <<EOF
-${__podfile_dir__}/cpusoaker.pl
+${__podfile_dir__}/$(_cpusoaker_get_pod_workload)
 EOF
+}
+
+function cpusoaker_generate_environment() {
+    if [[ $___cpusoaker_workload = perl ]] ; then
+	cat <<EOF
+- name: PERL5LIB
+  value: "$system_configmap_mount_dir"
+EOF
+    fi
 }
 
 function cpusoaker_calculate_logs_required() {
@@ -51,14 +76,54 @@ function cpusoaker_calculate_logs_required() {
     echo $((namespaces * processes_per_pod * containers_per_pod * replicas * deps_per_namespace))
 }
 
+function cpusoaker_help_options() {
+    cat <<'EOF'
+    CPUsoaker Options:
+       --cpusoaker-workload=<workload>
+                        Use specified cpusoaker workload.  Performance
+                        cannot be compared across workloads.
+                        - perl (use legacy Perl-based cpu load, default)
+                        - python (use Python-based cpu load)
+EOF
+}
+
 function cpusoaker_document() {
     cat <<'EOF'
 * cpusoaker: a simple CPU soaker running a continuous tight loop.
 EOF
 }
 
+function cpusoaker_process_options() {
+    local opt
+    local -a unknown_opts=()
+    for opt in "$@" ; do
+	read -r noptname1 noptname optvalue <<< "$(parse_option "$opt")"
+	case "$noptname1" in
+	    cpusoakerworkload)
+		case "$optvalue" in
+		    perl|pl) ___cpusoaker_workload=perl    ;;
+		    py*)     ___cpusoaker_workload=python3 ;;
+		    *)
+			fatal "Unknown CPU soaker workload $optvalue; must be 'perl' or 'python'"
+			;;
+		esac
+		;;
+	    *) unknown_opts+=("$noptname ($noptname1)") ;;
+	esac
+    done
+    if [[ -n "${unknown_opts[*]:-}" ]] ; then
+	warn "Notice: the following options are not known: ${unknown_opts[*]}"
+    fi
+}
+
 function cpusoaker_supports_reporting() {
     :
+}
+
+function cpusoaker_report_options() {
+    cat <<EOF
+"cpusoaker_workload": "$___cpusoaker_workload"
+EOF
 }
 
 register_workload cpusoaker cpu cpusoak 

@@ -19,6 +19,7 @@ declare -gi ___cpusoaker_replica_increment=5
 declare -gi ___cpusoaker_max_replicas=-1
 declare -gi ___cpusoaker_job_runtime=0
 declare -gi ___cpusoaker_job_timeout=0
+declare -g  ___cpusoaker_workload=perl
 
 function cpusoaker_test() {
     local default_job_runtime=$1
@@ -77,6 +78,7 @@ function cpusoaker_process_option() {
 	cpusoaker*runtime)  ___cpusoaker_job_runtime=$optvalue		;;
 	cpusoaker*timeout)  ___cpusoaker_job_timeout=$optvalue		;;
 	cpusoakermax*)      ___cpusoaker_max_replicas=$optvalue		;;
+	cpusoakerworkload)  ___cpusoaker_workload=$optvalue		;;
 	*) 		    return 1					;;
     esac
     return 0
@@ -105,6 +107,8 @@ function cpusoaker_help_options() {
         --cpusoaker-max-replicas=n
                                 Maximum number of replicas to scale to.
                                 Default is -1, equivalent to no upper limit.
+        --cpusoaker-workload=workload
+                                Specify the workload to run (perl or python).
 EOF
 }
 

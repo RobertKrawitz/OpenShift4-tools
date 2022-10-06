@@ -9,6 +9,8 @@ use POSIX;
 use Scalar::Util qw(looks_like_number);
 use strict;
 
+print STDERR "Args: ", join(" ", @ARGV), "\n";
+
 my %timing_parameters = ();
 
 my ($namespace, $container, $basetime, $baseoffset, $crtime, $exit_at_end, $synchost, $syncport, $start_time, $pod);
@@ -65,11 +67,22 @@ sub calibrate_time() {
     return $time_overhead / 1000;
 }
 
-sub cputime() {
+sub cputimes(;$$) {
+    my ($olduser, $oldsys) = @_;
+    $olduser = 0 if ! defined $olduser;
+    $oldsys = 0 if ! defined $oldsys;
     my (@times) = times();
     my ($usercpu) = $times[0] + $times[2];
     my ($syscpu) = $times[1] + $times[3];
-    return ($usercpu, $syscpu);
+    return ($usercpu - $olduser, $syscpu - $oldsys);
+}
+
+sub cputime(;$) {
+    my ($old) = @_;
+    my (@times) = times();
+    my ($usercpu) = $times[0] + $times[2];
+    my ($syscpu) = $times[1] + $times[3];
+    return ($usercpu + $syscpu - $old);
 }
 
 sub xtime() {
@@ -283,7 +296,7 @@ sub finish(;$$) {
     if (defined $status && $status != 0) {
 	print STDERR "FAIL!\n";
 	my ($buf) = sprintf("Namespace/pod/container: %s/%s/%s%s\n%s\n", $namespace, $pod, $container, (defined $pid ? " pid: $pid" : ""), $answer);
-	$buf .= sprintf("Run oc logs -n '%s' '%s' -c '%s'\n", $namespace, $pod, $container);
+	$buf .= sprintf("Run:\noc logs -n '%s' '%s' -c '%s'\n", $namespace, $pod, $container);
 	_do_sync_command('FAIL', $buf);
 	if ($exit_at_end) {
 	    POSIX::_exit($status);

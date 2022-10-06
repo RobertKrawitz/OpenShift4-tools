@@ -21,7 +21,10 @@
 declare -ig ___memory_size=1048576
 
 function memory_arglist() {
-    mk_yaml_args "$processes_per_pod" "$___memory_size" "$workload_run_time"
+    local mountdir=$1; shift
+    while [[ "$1" != '--' ]] ; do shift; done; shift
+    mk_yaml_args "python3" "${mountdir}memory.py" "$@" \
+		 "$processes_per_pod" "$___memory_size" "$workload_run_time"
 }
 
 function memory_create_deployment() {
@@ -33,15 +36,15 @@ function memory_create_deployment() {
     local -i instance
     create_sync_service_if_needed "$namespace" 2 "$((containers_per_pod * replicas * processes_per_pod * count))" \
 				  "$((containers_per_pod * replicas * count))"
-    for instance in $(seq $first_deployment $((count + first_deployment - 1))) ; do
-	create_standard_deployment -a memory_arglist -e memory.pl \
+    for instance in $(seq "$first_deployment" $((count + first_deployment - 1))) ; do
+	create_standard_deployment -a memory_arglist \
 				   "$namespace" "$instance" "$secret_count" "$replicas" "$containers_per_pod"
     done
 }
 
 function memory_list_configmaps() {
     cat <<EOF
-${__podfile_dir__}/memory.pl
+${__podfile_dir__}/memory.py
 EOF
 }
 
@@ -70,8 +73,6 @@ EOF
 function memory_process_options() {
     local opt
     local -a unknown_opts=()
-    local fioblksize=
-    local fiopattern=
     for opt in "$@" ; do
 	read -r noptname1 noptname optvalue <<< "$(parse_option "$opt")"
 	case "$noptname1" in

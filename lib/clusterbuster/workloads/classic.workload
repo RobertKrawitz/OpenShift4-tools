@@ -19,7 +19,9 @@
 ################################################################
 
 function classic_arglist() {
-    mk_yaml_args "${workload_run_time:-10}" "$processes_per_pod"
+    local mountdir=$1; shift
+    while [[ "$1" != '--' ]] ; do shift; done; shift
+    mk_yaml_args "python3" "${mountdir}classic.py" "$@" "${workload_run_time:-10}" "$processes_per_pod"
 }
 
 function classic_create_deployment() {
@@ -31,15 +33,15 @@ function classic_create_deployment() {
     local -i instance
     create_sync_service_if_needed "$namespace" 2 "$((containers_per_pod * processes_per_pod * replicas * count))" \
 				  "$((containers_per_pod * replicas * count))"
-    for instance in $(seq $first_deployment $((count + first_deployment - 1))) ; do
-	create_standard_deployment -a classic_arglist -e classic.pl \
+    for instance in $(seq "$first_deployment" $((count + first_deployment - 1))) ; do
+	create_standard_deployment -a classic_arglist \
 				   "$namespace" "$instance" "$secret_count" "$replicas" "$containers_per_pod"
     done
 }
 
 function classic_list_configmaps() {
     cat <<EOF
-${__podfile_dir__}/classic.pl
+${__podfile_dir__}/classic.py
 EOF
 }
 

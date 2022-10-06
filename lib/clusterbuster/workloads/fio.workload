@@ -29,20 +29,22 @@ declare -g  ___fio_job_file=generic.jobfile
 declare -gi ___fio_ramp_time=5
 declare -gi ___fio_filesize=; ___fio_filesize=$(parse_size "4Gi")
 declare -g  ___fio_workdir="/tmp"
-declare -g  ___fio_prepare_job_file
 declare -g  ___fio_processed_job_file
 
 function fio_arglist() {
+    local mountdir=$1; shift
     local namespace=$1
     local instance=$2
     local secret_count=$3
     local replicas=$4
     local containers_per_pod=$5
-    mk_yaml_args "$processes_per_pod" "$___fio_workdir" "$workload_run_time" "$configmap_mount_dir" \
+    while [[ "$1" != '--' ]] ; do shift; done; shift
+    mk_yaml_args "python3" "${mountdir}fio.py" "$@" \
+		 "$processes_per_pod" "$___fio_workdir" "$workload_run_time" "$configmap_mount_dir" \
 		 "svc-${namespace}-fio-${instance}-${replica}-dc" "$drop_cache_port" \
 		 "${___fio_blocksizes[*]:-}" "${___fio_patterns[*]:-}" "${___fio_iodepths[*]:-}" \
 		 "${___fio_fdatasyncs[*]:-}" "${___fio_directs[*]:-}" "${___fio_ioengines[*]:-}" \
-		 "${___fio_generic_options[*]:-}"
+		 "$___fio_ramp_time" "${___fio_generic_options[*]:-}"
 }
 
 function fio_create_deployment() {
@@ -57,7 +59,7 @@ function fio_create_deployment() {
 				  "$((containers_per_pod * replicas * count))"
     for instance in $(seq "$first_deployment" $((count + first_deployment - 1))) ; do
 	create_drop_cache_deployment "$namespace" "$workload" "$instance" "$replicas"
-	create_standard_deployment  -a fio_arglist -e fio.pl -p \
+	create_standard_deployment  -a fio_arglist -p \
 				    "$namespace" "$instance" "$secret_count" "$replicas" "$containers_per_pod"
     done
 }
@@ -72,8 +74,7 @@ function fio_calculate_logs_required() {
 
 function fio_list_configmaps() {
     cat <<EOF
-${__podfile_dir__}/fio.pl
-${__podfile_dir__}/drop_cache.pl
+${__podfile_dir__}/fio.py
 EOF
 }
 
@@ -84,7 +85,7 @@ EOF
 }
 
 function fio_help_options() {
-    cat <<'EOF'
+    cat <<EOF
     Fio Options:
        --fio-patterns=<patterns>
                         Comma-separated list of patterns to use.
@@ -104,7 +105,7 @@ function fio_help_options() {
                         Name of fio job file to use (defaults to generic).
        --fio-ioengines=<engines>
                         Comma-separated list of names of ioengines to use
-                        (default ${___fio_ioenginse[*]})
+                        (default ${___fio_ioengines[*]})
        --fio-iodepth=<n>
                         Comma-separated list of names of I/O depths to use
                         I/O depth (default ${___fio_iodepths[*]})
@@ -112,7 +113,7 @@ function fio_help_options() {
                         Comma-separated list of whether to use direct I/O
                         (default ${___fio_directs[*]}), values are 0 or 1.
        --fio-ramptime=<ramp time>
-                        Ramp-up and down time (default $___fio_ramptime)
+                        Ramp-up and down time (default $___fio_ramp_time)
        --fio-fdatasync=<fdatasyncs>
                         Comma-separated list of whether to use fdatasync 
                         (default ${___fio_fdatasyncs[*]}), values are 0 or 1.
@@ -150,7 +151,7 @@ function fio_process_options() {
 	    fioioengine*)	fioioengine=$optvalue			 ;;
 	    fioiodepth*)	fioiodepth=$optvalue			 ;;
 	    fiodirect*)		fiodirect=$optvalue			 ;;
-	    fioramptime)	___fio_ramptime=$optvalue		 ;;
+	    fioramptime)	___fio_ramp_time=$optvalue		 ;;
 	    fiofdatasync*)	fiofdatasync=$optvalue			 ;;
 	    fiofilesize)	___fio_filesize=$(parse_size "$optvalue");;
 	    fioworkdir)         ___fio_workdir=$optvalue		 ;;
@@ -167,9 +168,11 @@ function fio_process_options() {
 	warn "Notice: the following options are not known: ${unknown_opts[*]}"
     fi
     if [[ -n "${fioblksize:-}" ]] ; then
+	# shellcheck disable=SC2086
 	readarray -t ___fio_blocksizes <<< "$(parse_size ${fioblksize//,/ })"
     fi
     if [[ -n "${fioiodepth:-}" ]] ; then
+	# shellcheck disable=SC2086
 	readarray -t ___fio_iodepths <<< "$(parse_size ${fioiodepth//,/ })"
     fi
     if [[ -n "${fiopattern:-}" ]] ; then
@@ -179,9 +182,11 @@ function fio_process_options() {
 	___fio_ioengines=(${fioioengine//,/ })
     fi
     if [[ -n "${fiodirect:-}" ]] ; then
+	# shellcheck disable=SC2086
 	readarray -t ___fio_directs <<< "$(bool ${fiodirect//,/ })"
     fi
     if [[ -n "${fiofdatasync:-}" ]] ; then
+	# shellcheck disable=SC2086
 	readarray -t ___fio_fdatasyncs <<< "$(parse_size ${fiofdatasync//,/ })"
     fi
 

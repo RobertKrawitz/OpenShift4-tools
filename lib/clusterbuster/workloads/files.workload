@@ -25,15 +25,18 @@ declare -ig ___files_per_dir=1
 declare -ig ___files_direct=0
 
 function files_arglist() {
+    local mountdir=$1; shift
     local namespace=$1
     local instance=$2
     local secret_count=$3
     local replicas=$4
     local containers_per_pod=$5
+    while [[ "$1" != '--' ]] ; do shift; done; shift
     local -i file_blocks=$((___file_size/___file_block_size))
     local mounts=("${volume_mount_paths[@]}" "${emptydirs[@]}")
-    mk_yaml_args "$___file_dirs_per_volume" "$___files_per_dir" "$___file_block_size" "$file_blocks" \
-		 "$processes_per_pod" "$___files_direct" "svc-${namespace}-files-${instance}-${replica}-dc" \
+    mk_yaml_args "python3" "${mountdir}files.py" "$@" \
+		 "$___file_dirs_per_volume" "$___files_per_dir" "$___file_block_size" "$file_blocks" \
+		 "$processes_per_pod" "$___files_direct" "svc-${namespace}-files-${instance}-${replica:-1}-dc" \
 		 "$drop_cache_port" "${mounts[@]}"
 }
 
@@ -46,9 +49,9 @@ function files_create_deployment() {
     local -i instance
     create_sync_service_if_needed "$namespace" 8 "$((containers_per_pod * processes_per_pod * replicas * count))" \
 				   "$((containers_per_pod * replicas * count))"
-    for instance in $(seq $first_deployment $((count + first_deployment - 1))) ; do
+    for instance in $(seq "$first_deployment" $((count + first_deployment - 1))) ; do
 	create_drop_cache_deployment "$namespace" "$workload" "$instance" "$replicas"
-	create_standard_deployment -e files.pl -a files_arglist -p \
+	create_standard_deployment -a files_arglist -p \
 				   "$namespace" "$instance" "$secret_count" "$replicas" "$containers_per_pod"
     done
 }
@@ -63,8 +66,7 @@ function files_calculate_logs_required() {
 
 function files_list_configmaps() {
     cat <<EOF
-${__podfile_dir__}/files.pl
-${__podfile_dir__}/drop_cache.pl
+${__podfile_dir__}/files.py
 EOF
 }
 
@@ -99,7 +101,7 @@ function files_process_options() {
     local opt
     local -a unknown_opts=()
     for opt in "$@" ; do
-	read -r noptname1 noptname optvalue <<< $(parse_option "$opt")
+	read -r noptname1 noptname optvalue <<< "$(parse_option "$opt")"
 	case "$noptname1" in
 	    dirspervolume)	___file_dirs_per_volume=$optvalue		;;
 	    filesperdir)	___files_per_dir=$optvalue			;;
