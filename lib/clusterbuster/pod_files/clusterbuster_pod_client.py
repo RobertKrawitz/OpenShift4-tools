@@ -204,7 +204,7 @@ class clusterbuster_pod_client:
             else:
                 return int(mantissa * (1000 ** base))
         else:
-            raise Exception(f"Unparseable number '{arg}'")
+            raise ValueError(f"Unparseable number '{arg}'")
 
     @staticmethod
     def _toSizes(*args):
