@@ -22,11 +22,11 @@ class sysbench_client(clusterbuster_pod_client):
             self.runtime = int(self._args[2])
             self.drop_cache_service = self._args[3]
             self.drop_cache_port = int(self._args[4])
-            self.sysbench_generic_args = clusterbuster_pod_client._splitStr(r'\s+', self._args[5])
+            self.sysbench_generic_args = self._splitStr(r'\s+', self._args[5])
             self.sysbench_cmd = self._args[6]
-            self.sysbench_fileio_args = clusterbuster_pod_client._splitStr(r'\s+', self._args[7])
+            self.sysbench_fileio_args = self._splitStr(r'\s+', self._args[7])
             if self._args[8]:
-                self.sysbench_modes = clusterbuster_pod_client._splitStr(r'\s+', self._args[8])
+                self.sysbench_modes = self._splitStr(r'\s+', self._args[8])
             else:
                 self.sysbench_modes = ['seqwr', 'seqrewr', 'seqrd', 'rndrd', 'rndwr', 'rndrw']
         except Exception as err:

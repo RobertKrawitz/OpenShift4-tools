@@ -826,6 +826,7 @@ function calculate_logs_required() {
 
 function list_configmaps() {
     cat <<EOF
+${__podfile_dir__}/cb_util.py
 ${__podfile_dir__}/clusterbuster_pod_client.py
 ${__podfile_dir__}/sync.py
 ${__podfile_dir__}/drop_cache.py

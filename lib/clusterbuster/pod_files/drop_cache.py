@@ -16,7 +16,7 @@ class drop_cache_client(clusterbuster_pod_client):
             self._abort(f"Init failed! {err} {' '.join(self._args)}")
 
     def runit(self, process: int):
-        sock = self._listen(None, port=self.listen_port, backlog=128)
+        sock = self._listen(port=self.listen_port, backlog=128)
         while True:
             try:
                 conn, address = sock.accept()

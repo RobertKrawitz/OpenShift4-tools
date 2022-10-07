@@ -21,12 +21,12 @@ class files_client(clusterbuster_pod_client):
                 self.dir_list = self._args[8:]
             else:
                 self.dir_list = ['/tmp']
-            self.dirs = clusterbuster_pod_client._toSize(self._args[0])
-            self.files_per_dir = clusterbuster_pod_client._toSize(self._args[1])
-            self.blocksize = clusterbuster_pod_client._toSize(self._args[2])
-            self.block_count = clusterbuster_pod_client._toSize(self._args[3])
+            self.dirs = self._toSize(self._args[0])
+            self.files_per_dir = self._toSize(self._args[1])
+            self.blocksize = self._toSize(self._args[2])
+            self.block_count = self._toSize(self._args[3])
             self._set_processes(int(self._args[4]))
-            self.o_direct = clusterbuster_pod_client._toBool(self._args[5])
+            self.o_direct = self._toBool(self._args[5])
             self.drop_cache_service = self._args[6]
             self.drop_cache_port = int(self._args[7])
             self.flags = 0

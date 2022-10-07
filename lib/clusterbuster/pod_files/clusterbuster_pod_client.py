@@ -15,27 +15,24 @@
 # limitations under the License.
 
 import time
-from datetime import datetime
 import socket
-import re
 import json
 import os
 import sys
 import subprocess
 import signal
-import math
 import random
 import traceback
-import stat
-from resource import getrusage, RUSAGE_SELF, RUSAGE_CHILDREN
+from cb_util import cb_util
 
 
-class clusterbuster_pod_client:
+class clusterbuster_pod_client(cb_util):
     """
     Python interface to the ClusterBuster pod API
     """
 
     def __init__(self, initialize_timing_if_needed: bool = True, argv: list = sys.argv):
+        super().__init__()
         print(f'Args: {" ".join(argv)}', file=sys.stderr)
         # No use in catching errors here, since we may not be sufficiently initialized
         # to signal them back.
@@ -48,11 +45,12 @@ class clusterbuster_pod_client:
         self.__basetime = float(argv[3])
         self.__baseoffset = float(argv[4])
         self.__crtime = float(argv[5])
-        self.__exit_at_end = clusterbuster_pod_client._toBool(argv[6])
+        self.__exit_at_end = self._toBool(argv[6])
         self.__synchost = argv[7]
         self.__syncport = int(argv[8])
         self.__is_worker = False
         self.__start_time = float(time.time())
+        self.__enable_sync = True
         try:
             child = os.fork()
         except Exception as err:
@@ -69,8 +67,10 @@ class clusterbuster_pod_client:
             self.__timing_initialized = False
             if initialize_timing_if_needed:
                 self.__initialize_timing()
+            self._set_offset(self.__timing_parameters.get('local_offset_from_sync', 0))
             self.__child_idx = None
             self.__processes = 1
+            self._set_preferred_ip_addr(self._get_primary_ip())
         else:
             try:
                 pid, status = os.wait()
@@ -133,105 +133,18 @@ class clusterbuster_pod_client:
                 pid_count = pid_count - 1
             except Exception as err:
                 self.__finish(False, message=f'Wait failed: {err}')
-        self._timestamp(f'{self.__run_cmd("lscpu")}\n{self.__run_cmd("dmesg")}')
+        self._timestamp(f'{self._run_cmd("lscpu")}\n{self._run_cmd("dmesg")}')
         if messages:
             self.__finish(False, message='\n'.join(messages))
         else:
             self.__finish()
-
-    @staticmethod
-    def _toBool(arg, defval: bool = None):
-        """
-        Parse a string or numerical argument as a bool, based on the following rules:
-        - 0,"0", false, no => False
-        - non-zero number or string converted to number, true, yes => True
-        - Array or hash, empty => False, non-empty => True
-        - Anything else, return default value
-        :param arg: item to be evaluated
-        :return: conversion to bool
-        """
-        if isinstance(arg, (bool, int, float, list, dict)):
-            return bool(arg)
-        if isinstance(arg, str):
-            arg = arg.lower()
-            if arg == 'true' or arg == 'y' or arg == 'yes':
-                return True
-            elif arg == 'false' or arg == 'n' or arg == 'no':
-                return False
-            try:
-                arg1 = int(arg)
-                return arg1 != 0
-            except Exception:
-                pass
-        if defval is not None:
-            return defval
-        raise ValueError(f'Cannot parse "{arg}" as a boolean value')
-
-    @staticmethod
-    def _toBools(*args):
-        """
-        Split a list of bools, or comma or space separated string of bools,
-        into a list of bools.  See _toBool.
-        """
-        return [clusterbuster_pod_client._toBool(item) for sublist in args for item in re.split(r'[,\s]+', sublist.strip())]
-
-    @staticmethod
-    def _toSize(arg: str):
-        """
-        Parse a size consisting of a decimal number with an optional
-        suffix of k, m, g, or t.  If the suffix is followed by 'i',
-        the resulting number is treated as binary (powers of 2**10),
-        otherwise decimal (powers of 10**3)
-        """
-        if isinstance(arg, int) or isinstance(arg, float):
-            return int(arg)
-        m = re.match(r'(-?[0-9]+(\.[0-9]+)?)(([kmgt]?)(i?)(b?)?)?', arg.lower())
-        if m:
-            mantissa = float(m.group(1))
-            modifier = m.group(4)
-            binary = bool(m.group(5))
-            base = 0
-            if modifier == 'k':
-                base = 1
-            elif modifier == 'm':
-                base = 2
-            elif modifier == 'g':
-                base = 3
-            elif modifier == 't':
-                base = 4
-            if binary:
-                return int(mantissa * (1024 ** base))
-            else:
-                return int(mantissa * (1000 ** base))
-        else:
-            raise ValueError(f"Unparseable number '{arg}'")
-
-    @staticmethod
-    def _toSizes(*args):
-        """
-        Split a list of sizes, or comma or space separated string of sizes,
-        into a list of sizes.  See _toSize.
-        """
-        return [clusterbuster_pod_client._toSize(item) for sublist in args for item in re.split(r'[,\s]+', sublist.strip())]
-
-    @staticmethod
-    def _splitStr(regexp: str, arg: str):
-        """
-        Split a string per the specified regexp.  If the arg is empty,
-        return an empty list (re.split() returns a single element for
-        an empty string)
-        """
-        if arg:
-            return re.split(regexp, str(arg))
-        else:
-            return []
 
     def _verbose(self):
         """
         Should we be verbose?
         :return: whether we should print verbose messages
         """
-        return clusterbuster_pod_client._toBool(os.environ.get('VERBOSE', 0))
+        return self._toBool(os.environ.get('VERBOSE', 0))
 
     def _set_processes(self, processes: int = 1):
         """
@@ -251,24 +164,6 @@ class clusterbuster_pod_client:
             time_overhead += end - start
         return time_overhead / 1000
 
-    def _cputimes(self, olduser: float = 0, oldsys: float = 0):
-        """
-        Return the user and system CPU times, including self and children
-        :return: system and user times, in seconds
-        """
-        r_self = getrusage(RUSAGE_SELF)
-        r_children = getrusage(RUSAGE_CHILDREN)
-        return (r_self.ru_utime + r_children.ru_utime - olduser, r_self.ru_stime + r_children.ru_stime - oldsys)
-
-    def _cputime(self, old: float = 0):
-        """
-        Return the total CPU, including self and children
-        :return: total CPU time, in seconds
-        """
-        r_self = getrusage(RUSAGE_SELF)
-        r_children = getrusage(RUSAGE_CHILDREN)
-        return r_self.ru_utime + r_children.ru_utime + r_self.ru_stime + r_children.ru_stime - old
-
     def _adjusted_time(self, otime: float = 0):
         """
         Return system time normalized to the host time
@@ -278,23 +173,6 @@ class clusterbuster_pod_client:
             return time.time() - self.__timing_parameters['xtime_adjustment'] - otime
         else:
             return time.time() - otime
-
-    def _get_timestamp(self, string: str):
-        """
-        Return a string with a timestamp prepended to the first line
-        and any other lines indented
-        :param string: String to be timestamped
-        :return: Timestamped string
-        """
-        string = re.sub(r'\n(.*\S.*)', r'\n            \1', string)
-        return '%7d %s %s\n' % (os.getpid(), self.__ts(), string)
-
-    def _timestamp(self, string):
-        """
-        Timestamp a string and print it to stderr
-        :param string: String to be printed to stderr with timestamp attached
-        """
-        print(self._get_timestamp(str(string)), file=sys.stderr, end='')
 
     def _drop_cache(self, service: str = None, port: int = None):
         """
@@ -310,20 +188,6 @@ class clusterbuster_pod_client:
                 self._timestamp(f"    Connected to {service}:{port}")
                 sock.recv(1)
                 self._timestamp("    Confirmed")
-
-    def _isdir(self, path: str):
-        try:
-            s = os.stat(path)
-            return stat.S_ISDIR(s.st_mode)
-        except Exception:
-            return False
-
-    def _isfile(self, path: str):
-        try:
-            s = os.stat(path)
-            return stat.S_ISREG(s.st_mode)
-        except Exception:
-            return False
 
     def _podname(self):
         """
@@ -354,76 +218,6 @@ class clusterbuster_pod_client:
         if args is not None:
             components = components + [str(c) for c in args]
         return separator.join(components)
-
-    def _resolve_host(self, hostname: str):
-        """
-        Resolve a host name to dotted quad IP address, retrying as needed
-        :param hostname: Host name to resolve
-        :return: Dotted-quad string representation of hostname
-        """
-        while True:
-            try:
-                return socket.gethostbyname(hostname)
-            except socket.gaierror as err:
-                self._timestamp(f"gethostbyname({hostname}) failed: {err}")
-                time.sleep(1)
-
-    def _connect_to(self, addr: str = None, port: int = None, timeout: float=None):
-        """
-        Connect to specified address and port.
-        :param addr: address to connect to, default the sync host
-        :param port: port to connect to, default the sync port
-        :return: connected socket
-        """
-        if addr is None:
-            addr = self.__synchost
-        if port is None:
-            port = self.__syncport
-        retries = 0
-        initial_time = time.time()
-        while True:
-            try:
-                try:
-                    sock = socket.socket(family=socket.AF_INET, type=socket.SOCK_STREAM)
-                except Exception as err:
-                    self._timestamp(f"Cannot create socket: {err}")
-                    os._exit(1)
-                # We call gethostbyname() each time through the loop because
-                # the remote hostname might not exist immediately.
-                sock.connect((addr, port))
-                if retries:
-                    self._timestamp(f"Connected after {retries} retries")
-                return sock
-            except Exception as err:
-                if timeout and time.time() - initial_time > timeout:
-                    sock.close()
-                    return None
-                if retries < 10:
-                    self._timestamp(f"Cannot connect to {addr} on port {port}: {err}")
-                elif retries == 10:
-                    self._timestamp("Printing no further messages")
-                time.sleep(1)
-                retries = retries + 1
-            sock.close()
-
-    def _listen(self, addr: str = None, port: int = None, backlog=5):
-        """
-        Listen on specified port and optoinal address
-        :param addr: address to listen on, or None for all
-        :param port: port to listen on
-        :param backlog: listen queue length, default 5
-        :return: socket that we are listening on
-        """
-        if addr is None:
-            addr = ''
-        try:
-            sock = socket.socket()
-            sock.bind(('', port))
-            sock.listen(backlog)
-            return sock
-        except Exception as err:
-            self._timestamp(f"Cannot create listener: {err}")
-            os._exit(1)
 
     def _report_results(self, data_start_time: float, data_end_time: float,
                         data_elapsed_time: float, user_cpu: float, sys_cpu: float, extra: dict = None):
@@ -459,18 +253,26 @@ class clusterbuster_pod_client:
                 answer[key] = val
         self._timestamp(f"Report results: {self._namespace()}, {self._podname()}, {self._container()}, {os.getpid()}")
         try:
-            answer = json.dumps(self.__clean_numbers(answer))
+            answer = json.dumps(self._clean_numbers(answer))
         except Exception as exc:
             self.__fail(f"Cannot convert results to JSON: {exc}")
         self.__do_sync_command('RSLT', answer)
+
+    def _enable_sync(self, enable_sync: bool = True):
+        """
+        Enable sync to controller.  Normally true unless you are running
+        a workload that should not attempt to sync
+        """
+        self.__enable_sync = enable_sync
 
     def _sync_to_controller(self, token: str = None):
         """
         Perform a sync to the controller
         :param token: Optional string to use for sync; None to generate one
         """
-        self._timestamp(f"do_sync_command {token}")
-        self.__do_sync_command('SYNC', token)
+        if self.__enable_sync:
+            self._timestamp(f"do_sync_command {token}")
+            self.__do_sync_command('SYNC', token)
 
     def _abort(self, msg: str = "Terminating"):
         """
@@ -484,6 +286,9 @@ class clusterbuster_pod_client:
         except Exception:
             message = f"Process {os.getpid()} aborting: {msg} (no traceback)"
         self.__finish(False, message=message)
+
+    def _set_preferred_ip_addr(self, addr: str):
+        self.__preferred_ip_addr = addr
 
     def __wait_forever(self):
         self._timestamp('Waiting forever')
@@ -501,75 +306,6 @@ oc logs -n '{self._namespace()}' '{self._podname()}' -c '{self._container()}'
         if self.__is_worker:
             os._exit(1)
 
-    def __run_cmd(self, cmd):
-        """
-        Attempt to run the specified command
-        :param command: Command to be run (string or list)
-        :return: Timestamped stdout of the command
-        """
-        try:
-            answer = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-            message = answer.stdout.decode("ascii")
-            if message:
-                return f'{cmd} output:\n{message}'
-            else:
-                return f'{cmd} produced no output'
-        except Exception as err:
-            return f"Can't run {cmd}: {err}"
-
-    def __clean_numbers(self, ref):
-        """
-        Perl to_json encodes infinity as inf and NaN as nan.
-        This results in invalid JSON.  It's our responsibility to sanitize
-        this up front.
-        https://docs.python.org/3.8/library/json.html#infinite-and-nan-number-values
-        Also, detect objects that can't be converted to JSON and fail fast
-        :param ref: object to be cleaned
-        :return: object cleaned of any NaN or infinity values
-        """
-        def __clean_numbers_impl(ref, pathto: str = ''):
-            errors = []
-            warnings = []
-            if isinstance(ref, dict):
-                answer = dict()
-                for key, val in ref.items():
-                    a1, e1, w1 = __clean_numbers_impl(val, f'{pathto}.{key}')
-                    answer[key] = a1
-                    errors.extend(e1)
-                    warnings.extend(w1)
-                return answer, errors, warnings
-            elif isinstance(ref, list):
-                answer = []
-                for index in range(len(ref)):
-                    a1, e1, w1 = __clean_numbers_impl(ref[index], f'{pathto}[{index}]')
-                    answer.append(a1)
-                    errors.extend(e1)
-                    warnings.extend(w1)
-                return answer, errors, warnings
-            elif isinstance(ref, float) and (math.isnan(ref) or math.isinf(ref)):
-                warnings.append(f"Warning: illegal float value {ref} at {pathto} converted to None")
-                return None, errors, warnings
-            elif ref is None or isinstance(ref, float) or isinstance(ref, str) or isinstance(ref, int):
-                return ref, errors, warnings
-            else:
-                errors.append(f"    Object {pathto} ({ref}) cannot be serialized")
-                return ref, errors, warnings
-
-        [answer, errors, warnings] = __clean_numbers_impl(ref)
-        if warnings:
-            self._timestamp("\n".join(warnings))
-        if errors:
-            raise Exception('\n' + '\n'.join(errors))
-        else:
-            return answer
-
-    def __ts(self):
-        localoffset = self.__timing_parameters.get('local_offset_from_sync', 0)
-        return datetime.utcfromtimestamp(time.time() - localoffset).strftime('%Y-%m-%dT%T.%f')
-
-    def __fsplit(self, string: str):
-        return [float(s) for s in string.split()]
-
     def __initialize_timing(self):
         if self.__timing_initialized:
             return
@@ -578,7 +314,7 @@ oc logs -n '{self._namespace()}' '{self._podname()}' -c '{self._container()}'
         data = self.__do_sync_command('TIME', f'timestamp: %s {name}')
         try:
             [local_sync_start, remote_sync_start, absolute_sync_start,
-             remote_sync_base, remote_sync, sync_base_start_time] = self.__fsplit(data.decode('ascii'))
+             remote_sync_base, remote_sync, sync_base_start_time] = self._fsplit(data.decode('ascii'))
         except Exception as err:
             self._timestamp(f"Could not parse response from server: {data}: {err}")
             os._exit(1)
@@ -623,15 +359,17 @@ oc logs -n '{self._namespace()}' '{self._podname()}' -c '{self._container()}'
         self.__timing_initialized = True
 
     def __do_sync_command(self, command: str, token: str = '', timeout: float = None):
+        if not self.__enable_sync:
+            return
         lcommand = command.lower()
         if lcommand == 'sync' and (token is None or token == ''):
-            token = f'{self.__ts()} {self.__pod()}-{random.randrange(1000000000)}'
+            token = f'{self._ts()} {self.__pod()}-{random.randrange(1000000000)}'
         initial_time = time.time()
         token = f'{command} {token}'.replace('%s', str(time.time()))
         token = ('0x%08x%s' % (len(token), token)).encode()
         while True:
             self._timestamp(f'sync {lcommand} on {self.__synchost}:{self.__syncport}')
-            sync_conn = self._connect_to(timeout=timeout)
+            sync_conn = self._connect_to(self.__synchost, self.__syncport, timeout=timeout)
             while len(token) > 0:
                 if len(token) > 128:
                     self._timestamp(f'Writing {command}, {len(token)} bytes to sync')

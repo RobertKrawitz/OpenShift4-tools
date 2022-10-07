@@ -12,9 +12,9 @@ class server_client(clusterbuster_pod_client):
 
     def __init__(self):
         try:
-            super().__init__(initialize_timing_if_needed=False)
+            super().__init__()
             self.listen_port = int(self._args[0])
-            self.msg_size = clusterbuster_pod_client._toSize(self._args[1])
+            self.msg_size = self._toSize(self._args[1])
             self.expected_clients = int(self._args[2])
             self.buf = b'B' * self.msg_size
         except Exception as err:
@@ -40,7 +40,7 @@ class server_client(clusterbuster_pod_client):
 
     def runit(self, process: int):
         expected_clients = self.expected_clients
-        sock = self._listen(None, port=self.listen_port, backlog=self.expected_clients)
+        sock = self._listen(port=self.listen_port, backlog=self.expected_clients)
 
         pid_count = 0
         while expected_clients > 0:
@@ -62,7 +62,7 @@ class server_client(clusterbuster_pod_client):
             if status != 0:
                 status = int((status / 256)) | (status & 255)
                 return(1)
-                pid_count = pid_count - 1
+            pid_count = pid_count - 1
 
 
 server_client().run_workload()
