@@ -23,16 +23,16 @@ class fio_client(clusterbuster_pod_client):
             self.jobfilesdir = self._args[3]
             self.drop_cache_service = self._args[4]
             self.drop_cache_port = int(self._args[5])
-            self.fio_blocksizes = clusterbuster_pod_client._toSizes(self._args[6])
+            self.fio_blocksizes = self._toSizes(self._args[6])
             self.fio_patterns = re.split(r'\s+', self._args[7])
-            self.fio_iodepths = clusterbuster_pod_client._toSizes(self._args[8])
-            self.fio_fdatasyncs = clusterbuster_pod_client._toBools(self._args[9])
-            self.fio_directs = clusterbuster_pod_client._toBools(self._args[10])
+            self.fio_iodepths = self._toSizes(self._args[8])
+            self.fio_fdatasyncs = self._toBools(self._args[9])
+            self.fio_directs = self._toBools(self._args[10])
             if self._args[11]:
                 self.fio_ioengines = re.split(r'\s+', self._args[11])
             else:
                 self.fio_ioengines = []
-            self.fio_ramptime = clusterbuster_pod_client._toSizes(self._args[12])
+            self.fio_ramptime = self._toSizes(self._args[12])
             if self._args[13]:
                 self.fio_generic_args = re.split(r'\s+', self._args[13])
             else:

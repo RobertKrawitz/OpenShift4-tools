@@ -15,9 +15,9 @@ class logger_client(clusterbuster_pod_client):
             super().__init__()
             self._set_processes(int(self._args[0]))
             self.__xfer_time = float(self._args[1])
-            self.__bytes_per_line = clusterbuster_pod_client._toSize(self._args[2])
-            self.__lines_per_io = clusterbuster_pod_client._toSize(self._args[3])
-            self.__xfer_count = clusterbuster_pod_client._toSize(self._args[4])
+            self.__bytes_per_line = self._toSize(self._args[2])
+            self.__lines_per_io = self._toSize(self._args[3])
+            self.__xfer_count = self._toSize(self._args[4])
             self.__delay = float(self._args[5])
         except Exception as err:
             self._abort(f"Init failed! {err} {' '.join(self._args)}")

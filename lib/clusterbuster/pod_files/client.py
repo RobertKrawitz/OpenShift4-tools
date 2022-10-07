@@ -17,12 +17,12 @@ class client_client(clusterbuster_pod_client):
             super().__init__()
             self.srvhost = self._args[0]
             self.connect_port = int(self._args[1])
-            self.data_rate = clusterbuster_pod_client._toSize(self._args[2])
-            self.nbytes = clusterbuster_pod_client._toSize(self._args[3])
-            self.bytes_max = clusterbuster_pod_client._toSize(self._args[4])
-            self.msg_size = clusterbuster_pod_client._toSize(self._args[5])
-            self.xfertime = clusterbuster_pod_client._toSize(self._args[6])
-            self.xfertime_max = clusterbuster_pod_client._toSize(self._args[7])
+            self.data_rate = self._toSize(self._args[2])
+            self.nbytes = self._toSize(self._args[3])
+            self.bytes_max = self._toSize(self._args[4])
+            self.msg_size = self._toSize(self._args[5])
+            self.xfertime = self._toSize(self._args[6])
+            self.xfertime_max = self._toSize(self._args[7])
         except Exception as err:
             self._abort(f"Init failed! {err} {' '.join(self._args)}")
 

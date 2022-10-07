@@ -368,12 +368,12 @@ This currently only documents the most commonly used members.
   Return the pod name (equivalent to the hostname of the pod), the
   container name, and the namespace of the pod respectively.
 
-* `clusterbuster_pod_client._listen(self, addr: str = None, port: int = None, backlog=5)`
+* `clusterbuster_pod_client._listen(self, port: int = None, addr: str = None, sock: socket = None, backlog=5)`
 
-  Listen on the specified port and optionally address (this may change
-  in the future, as the port really is necessary while the address is
-  not).  If `backlog` is provided, the listener will listen with the
-  specified queue length.
+  Listen  on  the  specified  port  and  optionally  address.   As  an
+  alternate option, an existing socket  may be provided; in this case,
+  port and  addr must  both be  None.  If  `backlog` is  provided, the
+  listener will listen with the specified queue length.
 
 * `clusterbuster_pod_client._connect_to(self, addr: str = None, port: int = None, timeout: float=None)`
 
@@ -387,10 +387,8 @@ This currently only documents the most commonly used members.
   `_connect_to` will do what is needed.  This will retry as needed
   until it succeeds.
 
-##### Static methods:
-
-* `clusterbuster_pod_client._toSize(arg: str)`
-  `clusterbuster_pod_client._toSizes(*args)`
+* `clusterbuster_pod_client._toSize(self, arg: str)`
+  `clusterbuster_pod_client._toSizes(self, *args)`
 
   Convert an argument to a size (non-negative integer).  Sizes can be
   decimal numbers, or numbers with a suffix of 'k', 'm', 'g', or 't'
@@ -413,8 +411,8 @@ This currently only documents the most commonly used members.
 
   These methods are useful for parsing argument lists.
 
-* `clusterbuster_pod_client._toBool(arg: str, defval: bool = None)`
-  `clusterbuster_pod_client._toBools(*args)`
+* `clusterbuster_pod_client._toBool(self, arg: str, defval: bool = None)`
+  `clusterbuster_pod_client._toBools(self, *args)`
 
   Convert an argument to a Boolean.  The argument can be any of the
   following:
@@ -434,7 +432,7 @@ This currently only documents the most commonly used members.
 
   These methods are useful for parsing argument lists.
 
-* `clusterbuster_pod_client._splitStr(regexp: str, arg: str)`
+* `clusterbuster_pod_client._splitStr(self, regexp: str, arg: str)`
 
   Split `arg` into a list of strings per the provided `regexp`.  It
   differs from `re.split()` in that this routine returns an empty list
