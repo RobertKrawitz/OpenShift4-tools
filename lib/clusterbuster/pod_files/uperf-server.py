@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import subprocess
+import time
 from clusterbuster_pod_client import clusterbuster_pod_client
 
 
@@ -18,7 +19,9 @@ class uperf_server_client(clusterbuster_pod_client):
 
     def runit(self, process: int):
         self._timestamp(f"Starting uperf server on port {self.listen_port}")
-        subprocess.run(['uperf', '-s', '-v', '-P', self.listen_port])
+        while subprocess.run(['uperf', '-s', '-v', '-P', self.listen_port]).returncode != 0:
+            self._timestamp("uperf server failed to start: retrying in 10 seconds")
+            time.sleep(10)
         self._timestamp("Done!")
 
 
