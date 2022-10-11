@@ -15,7 +15,7 @@ class client_client(clusterbuster_pod_client):
     def __init__(self):
         try:
             super().__init__()
-            self.srvhost = self._args[0]
+            self.srvhost = self._resolve_host(self._args[0])
             self.connect_port = int(self._args[1])
             self.data_rate = self._toSize(self._args[2])
             self.nbytes = self._toSize(self._args[3])
@@ -32,6 +32,7 @@ class client_client(clusterbuster_pod_client):
         ex2 = 0
 
         conn = self._connect_to(self.srvhost, self.connect_port)
+        self._sync_to_controller()
         msg = b'A' * self.msg_size
 
         data_sent = 0
