@@ -48,9 +48,11 @@ class clusterbuster_pod_client(cb_util):
         self.__exit_at_end = self._toBool(argv[6])
         self.__synchost = argv[7]
         self.__syncport = int(argv[8])
+        self.__sync_ns_port = int(argv[9])
         self.__is_worker = False
         self.__start_time = float(time.time())
         self.__enable_sync = True
+        self.__host_table = {}
         try:
             child = os.fork()
         except Exception as err:
@@ -62,7 +64,7 @@ class clusterbuster_pod_client(cb_util):
                     signal.pause()
         if child == 0:
             self.__pod = socket.gethostname()
-            self._args = argv[9:]
+            self._args = argv[10:]
             self.__timing_parameters = {}
             self.__timing_initialized = False
             if initialize_timing_if_needed:
@@ -70,7 +72,7 @@ class clusterbuster_pod_client(cb_util):
             self._set_offset(self.__timing_parameters.get('local_offset_from_sync', 0))
             self.__child_idx = None
             self.__processes = 1
-            self._set_preferred_ip_addr(self._get_primary_ip())
+            self.__requested_ip_addresses = [f'{self.__pod}.{self.__namespace}']
         else:
             try:
                 pid, status = os.wait()
@@ -287,9 +289,6 @@ class clusterbuster_pod_client(cb_util):
             message = f"Process {os.getpid()} aborting: {msg} (no traceback)"
         self.__finish(False, message=message)
 
-    def _set_preferred_ip_addr(self, addr: str):
-        self.__preferred_ip_addr = addr
-
     def __wait_forever(self):
         self._timestamp('Waiting forever')
         signal.pause()
@@ -306,12 +305,43 @@ oc logs -n '{self._namespace()}' '{self._podname()}' -c '{self._container()}'
         if self.__is_worker:
             os._exit(1)
 
+    def _resolve_host(self, addr):
+        if '@' in addr:
+            addr = f'{addr}.{self.__namespace}'
+            answer = self.__request_ip_addresses([addr])
+            if addr in answer:
+                return answer[addr]
+            else:
+                raise socket.gaierror("Unable to resolve {addr}")
+        else:
+            return super()._resolve_host(addr)
+
+    def __request_ip_addresses(self, addresses: list):
+        answer = {}
+        request = {'rqst': []}
+        for if_addr in addresses:
+            if if_addr in self.__host_table:
+                self._timestamp(f"Found cached {if_addr} => {self.__host_table[if_addr]}")
+                answer[if_addr] = self.__host_table[if_addr]
+            else:
+                request['rqst'].append(if_addr)
+        if len(request['rqst']) > 0:
+            ns_answer = json.loads(self.__do_sync_command('nsrq', json.dumps(request), port=self.__sync_ns_port))
+            self._timestamp(f"Requested addresses {addresses}, got {ns_answer}")
+            for if_addr, addr in ns_answer.items():
+                answer[if_addr] = addr
+                self.__host_table[if_addr] = addr
+        return answer
+
     def __initialize_timing(self):
         if self.__timing_initialized:
             return
         name = self._idname()
         self._timestamp("About to sync")
-        data = self.__do_sync_command('TIME', f'timestamp: %s {name}')
+        request = {'timestamp': '%s', 'name': name, 'have': {}}
+        for ifname, addr in self._get_ip_addresses().items():
+            request['have'][f'{ifname}@{self.__pod}.{self.__namespace}'] = addr
+        data = self.__do_sync_command('TNET', json.dumps(request))
         try:
             [local_sync_start, remote_sync_start, absolute_sync_start,
              remote_sync_base, remote_sync, sync_base_start_time] = self._fsplit(data.decode('ascii'))
@@ -358,47 +388,21 @@ oc logs -n '{self._namespace()}' '{self._podname()}' -c '{self._container()}'
             self.__crtime += self.__baseoffset
         self.__timing_initialized = True
 
-    def __do_sync_command(self, command: str, token: str = '', timeout: float = None):
+    def __do_sync_command(self, command: str, token: str = '', timeout: float = None, port: int = None):
         if not self.__enable_sync:
             return
+        if not port:
+            port = self.__syncport
         lcommand = command.lower()
         if lcommand == 'sync' and (token is None or token == ''):
-            token = f'{self._ts()} {self.__pod()}-{random.randrange(1000000000)}'
-        initial_time = time.time()
-        token = f'{command} {token}'.replace('%s', str(time.time()))
-        token = ('0x%08x%s' % (len(token), token)).encode()
-        while True:
-            self._timestamp(f'sync {lcommand} on {self.__synchost}:{self.__syncport}')
-            sync_conn = self._connect_to(self.__synchost, self.__syncport, timeout=timeout)
-            while len(token) > 0:
-                if len(token) > 128:
-                    self._timestamp(f'Writing {command}, {len(token)} bytes to sync')
-                else:
-                    self._timestamp(f'Writing token {token.decode("utf-8")} to sync')
-                try:
-                    if sync_conn:
-                        answer = sync_conn.send(token)
-                        if answer <= 0:
-                            self._timestamp("Write token failed")
-                        else:
-                            token = token[answer:]
-                    else:
-                        self._timestamp("Write token failed: timed out")
-                        return None
-                except Exception as err:
-                    self._timestamp(f'Write token failed: {err}')
-                    os._exit(1)
-            try:
-                answer = sync_conn.recv(1024)
-                sync_conn.close()
-                self._timestamp(f'sync complete, response {answer.decode("utf-8")}')
-                return answer
-            except Exception as err:
-                if timeout and time.time() - initial_time > timeout:
-                    self._timestamp(f'sync failed {err}, timeout expired')
-                    return None
-                else:
-                    self._timestamp(f'sync failed {err}, retrying')
+            token = f'{self._ts()} {self.__pod}-{random.randrange(1000000000)}'
+        token = f'{lcommand} {token}'.replace('%s', str(time.time()))
+        self._timestamp(f"do_sync_command {command} {len(token)}")
+        try:
+            return self._send_message(self.__synchost, port, token, timeout=timeout)
+        except Exception as err:
+            self._timestamp(f"Unable to send sync message: {err}")
+            os._exit(1)
 
     def __finish(self, status: bool = True, message: str = '', pid: int = os.getpid()):
         if self.__is_worker:

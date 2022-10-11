@@ -26,6 +26,7 @@ declare -ag ___uperf_tests=()
 declare -gir ___uperf_port=30000
 declare -gir ___uperf_port_addrs=24
 declare -gi ___uperf_ramp_time=3
+declare -g ___uperf_interface=
 
 function uperf_server_arglist() {
     local mountdir=$1; shift
@@ -46,7 +47,7 @@ function uperf_client_arglist() {
     local mountdir=$1; shift
     while [[ "$1" != '--' ]] ; do shift; done; shift
     mk_yaml_args "python3" "${mountdir}uperf-client.py" "$@" \
-		 "$workload_run_time" "$___uperf_ramp_time" "svc-${namespace}-uperf-server-$instance" \
+		 "$workload_run_time" "$___uperf_ramp_time" "${___uperf_interface:+${___uperf_interface}@}${namespace}-uperf-server-${instance}-1" \
 		 "$___uperf_port" "${___uperf_tests[@]}"
 }
 
@@ -60,10 +61,13 @@ function uperf_create_deployment() {
     create_sync_service_if_needed "$namespace" $((${#___uperf_tests[@]} + 2)) "$((containers_per_pod * replicas * count))" "$(( (containers_per_pod * replicas * count) + count))"
 
     for instance in $(seq "$first_deployment" $((count + first_deployment - 1))) ; do
-	create_service "$namespace" "${namespace}-uperf-server-${instance}" $(seq "$___uperf_port" $((___uperf_port + ___uperf_port_addrs)))
+	if [[ -z "${___uperf_interface}" ]] ; then
+	    create_service -k replica -e "$namespace" "${namespace}-uperf-server-${instance}-1" $(seq "$___uperf_port" $((___uperf_port + ___uperf_port_addrs)))
+	fi
 	create_standard_deployment -w uperf-server -p -c server \
 				   -A "$(create_affinity_yaml "${namespace}-uperf-client-${instance}")" \
 				   -a uperf_server_arglist \
+				   -S "$(_uperf_create_security_context)" \
 				   "$namespace" "$instance" "$secret_count" 1 1
 	create_standard_deployment -w uperf-client \
 				   -A "$(create_affinity_yaml "${namespace}-uperf-server-${instance}")" \
@@ -96,6 +100,10 @@ function uperf_help_options() {
     Uperf Options:
        --pin_node=server=<node>
                        Specify node to which the server is bound.
+       --uperf-ramp-time=<sec>
+                       Specify the ramp time for uperf.
+       --uperf-interface=<interface>
+                       Specify the network interface to use.
      The following options take a comma-separated list of each
      value to test.  The outer product of all specified tests
      is run.
@@ -129,6 +137,7 @@ function uperf_process_options() {
 	    uperfproto*) ___uperf_protos=(${optvalue//,/ })	   ;;
 	    uperfnthr*) ___uperf_nthrs=(${optvalue//,/ })	   ;;
 	    uperframp*) ___uperf_ramp_time=$optvalue		   ;;
+	    uperfint*) ___uperf_interface=$optvalue		   ;;
 	    *) unknown_opts+=("$noptname ($noptname1)")		   ;;
 	esac
     done
@@ -218,7 +227,8 @@ function uperf_report_options() {
 "test_types": $(__uperf_stringify -s "${___uperf_test_types[@]}"),
 "protocols": $(__uperf_stringify -s "${___uperf_protos[@]}"),
 "nthrs": $(__uperf_stringify -n "${___uperf_nthrs[@]}"),
-"ramp_time": ${___uperf_ramp_time}
+"ramp_time": ${___uperf_ramp_time},
+"interface": "${___uperf_interface}"
 EOF
 }
 

@@ -68,6 +68,7 @@ declare -i objs_item_count=0
 declare -i port=7777
 declare -i sync_port=7778
 declare -i drop_cache_port=7779
+declare -i sync_ns_port=7753
 declare sync_host=
 declare -i affinity=0
 declare -A pin_nodes=()
@@ -888,7 +889,7 @@ function ___OC() {
 function get_sync() {
     if (( sync_start )) ; then
 	if [[ ${1:-} != -q ]] ; then
-	    echo "${global_sync_service}:$sync_port"
+	    echo "${global_sync_service}:$sync_port:$sync_ns_port"
 	fi
 	return 0
     else
@@ -904,10 +905,10 @@ function create_sync_service_if_needed() {
     if ((sync_count <= 0)) ; then return; fi
     if get_sync -q ; then
 	if [[ $namespace = "${namespaces_to_create[0]:-}" ]] ; then
-	    create_service -h "$sync_namespace" "${sync_namespace}-sync" "$sync_port"
+	    create_service -h "$sync_namespace" "${sync_namespace}-sync" "$sync_port" "$sync_ns_port"
 	    create_sync_deployment "$sync_namespace" "$sync_count" "$((sync_clients * ${#namespaces_to_create[@]}))" "$((initial_sync_clients * ${#namespaces_to_create[@]}))"
 	fi
-	create_external_service "$namespace" "${namespace}-sync" "$sync_port" "$global_sync_service"
+	create_external_service "$namespace" "${namespace}-sync" "$global_sync_service" "$sync_port" "$sync_ns_port"
     fi
 }
 
@@ -1647,9 +1648,10 @@ function create_standard_containers() {
     local -i container
     local sync_service=
     local sync_port_num=
+    local sync_ns_port_num=
     local yaml_args
     yaml_args="$(mk_yaml_args)"
-    IFS=: read -r sync_service sync_port_num <<< "$(get_sync)"
+    IFS=: read -r sync_service sync_port_num sync_ns_port_num <<< "$(get_sync)"
     for container in $(seq 0 $((containers - 1))) ; do
 	cat <<EOF
 - name: "c${container}"
@@ -1661,7 +1663,7 @@ $(indent 2 generate_environment)
   command:
 $(if [[ -n "${arglist_function}" ]] ; then
      "${arglist_function}" "${system_configmap_mount_dir}/" "$@" "$container" -- "$namespace" "c$container" \
-     "$basetime" "$baseoffset" "$(ts)" "$exit_at_end" "$sync_service" "$sync_port_num" | indent 2 ; fi)
+     "$basetime" "$baseoffset" "$(ts)" "$exit_at_end" "$sync_service" "$sync_port_num" "$sync_ns_port_num" | indent 2 ; fi)
 $(indent 2 volume_mounts_yaml "$namespace" "${instance}" "$secret_count")
 EOF
     done
@@ -2214,8 +2216,11 @@ function create_service() {
     local -i force_headless_services=-1
     local headless=
     local key=name
-    while getopts 'hHk:' opt ; do
+    local prefix='svc-'
+    while getopts 'eEhHk:' opt ; do
 	case "$opt" in
+	    e) prefix=			 ;;
+	    E) prefix='svc-'		 ;;
 	    h) force_headless_services=1 ;;
 	    H) force_headless_services=0 ;;
 	    k) key="$OPTARG"		 ;;
@@ -2232,7 +2237,7 @@ function create_service() {
 apiVersion: v1
 kind: Service
 metadata:
-  name: "svc-${deployment}"
+  name: "${prefix}${deployment}"
 $(indent 2 namespace_yaml "$namespace")
 $(indent 2 standard_labels_yaml -t service)
 spec:
@@ -2247,8 +2252,17 @@ EOF
 function create_external_service() {
     local namespace=$1
     local deployment=$2
-    local portnum=$3
-    local external_name=$4
+    local external_name=$3
+    shift 3
+    function list_ports() {
+	local portnum
+	for portnum in "$@" ; do
+	    cat <<EOF
+- port: $portnum
+  name: "svc-${deployment}-${portnum}"
+EOF
+	done
+    }
     create_object -t Service -n "$namespace" "svc-${deployment}" <<EOF
 apiVersion: v1
 kind: Service
@@ -2257,10 +2271,10 @@ metadata:
 $(indent 2 namespace_yaml "$namespace")
 $(indent 2 standard_labels_yaml -t service)
 spec:
-  ports:
-  - port: $portnum
   type: ExternalName
   externalName: $external_name
+  ports:
+$(indent 2 list_ports "$@")
 EOF
 }
 
@@ -2439,6 +2453,7 @@ $(indent 2 standard_environment)
   - "$predelay"
   - "$postdelay"
   - "$sync_port"
+  - "$sync_ns_port"
   - "$expected_clients"
   - "$initial_expected_clients"
   - "$sync_count"
@@ -2469,7 +2484,8 @@ function create_container_drop_cache() {
     local namespace=$1
     local sync_service=
     local sync_port_num=
-    IFS=: read -r sync_service sync_port_num <<< "$(get_sync)"
+    local sync_ns_port_num=
+    IFS=: read -r sync_service sync_port_num sync_ns_port_num <<< "$(get_sync)"
     cat <<EOF
 - name: ${namespace}
   image_pull_policy: $image_pull_policy
@@ -2490,6 +2506,7 @@ $(indent 2 standard_environment)
   - "0"
   - "$sync_service"
   - "$sync_port_num"
+  - "$sync_ns_port"
   - "$drop_cache_port"
 $(indent 2 volume_mounts_yaml "$namespace" 0 0)
   - mountPath: "/proc-sys-vm"

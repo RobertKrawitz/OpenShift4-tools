@@ -263,7 +263,8 @@ class cb_util:
                     os._exit(1)
                 # We call gethostbyname() each time through the loop because
                 # the remote hostname might not exist immediately.
-                sock.connect((addr, port))
+                caddr = self._resolve_host(addr)
+                sock.connect((caddr, port))
                 if retries:
                     self._timestamp(f"Connected after {retries} retries")
                 return sock
@@ -304,10 +305,15 @@ class cb_util:
             raise ValueError("Either a port or a socket must be provided")
         elif port is not None and sock is not None:
             raise ValueError("Only one of a port or a socket must be provided")
-        if sock is None:
-            sock = self._get_port(port, addr)
-        sock.listen(backlog)
-        return sock
+        while True:
+            try:
+                if sock is None:
+                    sock = self._get_port(port, addr)
+                sock.listen(backlog)
+                return sock
+            except Exception as exc:
+                self._timestamp(f"Listen failed {exc}, will retry after 10 seconds")
+                time.sleep(10)
 
     def _resolve_host(self, hostname: str):
         """
@@ -315,12 +321,47 @@ class cb_util:
         :param hostname: Host name to resolve
         :return: Dotted-quad string representation of hostname
         """
+        if re.match(r'([0-9]{1,3}\.){3}[0-9]{1,3}', hostname):
+            return hostname
         while True:
             try:
                 return socket.gethostbyname(hostname)
             except socket.gaierror as err:
                 self._timestamp(f"gethostbyname({hostname}) failed: {err}")
                 time.sleep(1)
+
+    def _send_message(self, host: str, port: int, token: str, timeout: float = None):
+        initial_time = time.time()
+        token = ('0x%08x%s' % (len(token), token)).encode()
+        while True:
+            self._timestamp(f'sync {port}:{port}')
+            sync_conn = self._connect_to(host, port, timeout=timeout)
+            while len(token) > 0:
+                if len(token) > 128:
+                    self._timestamp(f'Writing {len(token)} bytes to sync')
+                else:
+                    self._timestamp(f'Writing token {token.decode("utf-8")} to sync')
+                if sync_conn:
+                    answer = sync_conn.send(token)
+                    if answer <= 0:
+                        self._timestamp("Write token failed")
+                    else:
+                        token = token[answer:]
+                else:
+                    self._timestamp("Write token failed: timed out")
+                    return None
+            try:
+                answer = sync_conn.recv(1024)
+                self._timestamp(f'sync complete, response {answer.decode("utf-8")}')
+                return answer
+            except Exception as err:
+                if timeout and time.time() - initial_time > timeout:
+                    self._timestamp(f'sync failed {err}, timeout expired')
+                    return None
+                else:
+                    self._timestamp(f'sync failed {err}, retrying')
+            finally:
+                sync_conn.close()
 
     def _get_primary_ip(self):
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -346,9 +387,10 @@ class cb_util:
                 end = line.rfind(':')
                 if end > 0:
                     ifname = line[:end].strip()
-                    try:
-                        answers[ifname] = socket.inet_ntoa(fcntl.ioctl(s.fileno(), 0x8915,
-                                                                       struct.pack('256s', ifname.encode('ascii')))[20:24])
-                    except Exception:
-                        pass
+                    if ifname != 'lo':
+                        try:
+                            answers[ifname] = socket.inet_ntoa(fcntl.ioctl(s.fileno(), 0x8915,
+                                                                           struct.pack('256s', ifname.encode('ascii')))[20:24])
+                        except Exception:
+                            pass
         return answers

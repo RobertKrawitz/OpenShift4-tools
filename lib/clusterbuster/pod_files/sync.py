@@ -23,10 +23,19 @@ from cb_util import cb_util
 
 offset_from_controller = 0
 timebase = cb_util(offset_from_controller)
+nameserver_pid = None
+
+
+def kill_nameserver(timebase: cb_util):
+    global nameserver_pid
+    if nameserver_pid:
+        timebase._timestamp("Killing nameserver")
+        os.kill(nameserver_pid, 9)
 
 
 def fatal(string: str):
     timebase._timestamp(string)
+    kill_nameserver
     sys.exit(1)
 
 
@@ -40,32 +49,123 @@ def touch(file: str):
         f.write('')
 
 
+class nameserver:
+    """
+    Simplistic nameserver for ClusterBuster workloads
+    """
+    def __init__(self, timebase: cb_util, port: int, backlog: int = 5):
+        self.timebase = timebase
+        self.addrs = dict()
+        self.requests = dict()
+        self.clients = dict()
+        try:
+            self.sock = timebase._listen(port=port, backlog=backlog)
+        except Exception as err:
+            self.fatal(f"listen failed: {err}")
+
+    def timestamp(self, string):
+        self.timebase._timestamp("Nameserver: " + str(string))
+
+    def fatal(self, string: str):
+        self.timestamp(string)
+        sys.exit(1)
+
+    def satisfy_requests(self):
+        requestors_satisfied = list()
+        for addr, req in self.requests.items():
+            requests_satisfied = list()
+            for want in req['want'].keys():
+                if want in self.addrs:
+                    self.timestamp(f"    Request from {addr} for {want} => {self.addrs[want]}")
+                    self.requests[addr]['have'][want] = self.addrs[want]
+                    requests_satisfied.append(want)
+            if requests_satisfied:
+                for want in requests_satisfied:
+                    del self.requests[addr]['want'][want]
+                if not self.requests[addr]['want']:
+                    jdata = json.dumps(self.requests[addr]['have'])
+                    self.timestamp(f"        All requests from {addr} are satisfied: {jdata}, sending")
+                    self.clients[addr].send(jdata.encode('ascii'))
+                    self.clients[addr].close()
+                    del self.clients[addr]
+                    requestors_satisfied.append(addr)
+        if requestors_satisfied:
+            for requestor in requestors_satisfied:
+                del self.requests[requestor]
+
+    def get_command(self):
+        client, address = self.sock.accept()
+        try:
+            tbuf = read_token(client)
+            command = tbuf[0:4].lower()
+            payload = tbuf[4:].lstrip()
+            self.timestamp(f"Accepted connection from {address}, command {command}, payload {payload}")
+            json_payload = json.loads(payload)
+            if command != 'nsrq':
+                raise ValueError(f"Unexpected command {command}")
+        except Exception as exc:
+            self.timestamp(f"Could not read command from {client} at {address}: {exc}")
+            client.close()
+            return
+        return client, address, json_payload
+
+    def process_command(self):
+        try:
+            client, address, json_payload = self.get_command()
+        except Exception as exc:
+            self.timestamp(f"Unable to read command: {exc}")
+            return
+        for command, args in json_payload.items():
+            if command == 'have':
+                if not isinstance(args, dict):
+                    self.timestamp(f"have payload should be dict, is {args}")
+                    continue
+                for name, ipaddr in args.items():
+                    self.timestamp(f"    {address} offers {name} at {ipaddr}")
+                    self.addrs[name] = ipaddr
+            elif command == 'rqst':
+                if not isinstance(args, list):
+                    self.timestamp(f"rqst payload should be list, is {args}")
+                    continue
+                if address not in self.requests:
+                    self.requests[address] = {
+                        'have': {},
+                        'want': {}
+                        }
+                for name in args:
+                    if address not in self.clients:
+                        self.clients[address] = client
+                    self.requests[address]['want'][name] = None
+            else:
+                self.timestamp(f"Unknown command from {address}: '{command}'")
+
+    def run(self):
+        while True:
+            self.process_command()
+            self.satisfy_requests()
+
+
 def read_token(stream):
-    try:
-        prefix = stream.recv(10).decode('ascii').lower()
-    except Exception as exc:
-        timebase._timestamp(f"Unable to read token: {exc}")
+    prefix = stream.recv(10).decode('ascii').lower()
+    if len(prefix) == 0:
         return None
     if len(prefix) != 10:
-        timebase._timestamp("Unable to read token: short read")
-        return None
+        raise ValueError("Unable to read token: short read")
     m = re.match(r'0x[0-9a-z]{8}', prefix)
     if m:
         bytes_to_read = int(prefix, base=16)
     else:
-        timebase._timestamp(f"Bad token: {prefix}")
-        return None
+        raise ValueError(f"Bad token: {prefix}")
     answer = ''
     offset = 0
     while bytes_to_read > 0:
         try:
             chunk = stream.recv(bytes_to_read).decode('ascii')
         except Exception as exc:
-            timebase._timestamp(f"Bad read with {bytes_to_read} left at offset {offset}: {exc}")
+            raise ValueError(f"Bad read with {bytes_to_read} left at offset {offset}: {exc}")
         nbytes = len(chunk)
         if nbytes == 0:
-            timebase._timestamp(f"Short read: got zero bytes with {bytes_to_read} left at {offset}")
-            return None
+            raise ValueError(f"Short read: got zero bytes with {bytes_to_read} left at {offset}")
         else:
             answer += chunk
             bytes_to_read -= nbytes
@@ -124,6 +224,25 @@ def reply_timestamp(start_time: float, base_start_time: float, ts_clients: list)
     timebase._timestamp(f"Sending sync time took {et} seconds")
 
 
+def fail_hard(payload: str):
+    if tmp_error_file:
+        try:
+            with open(tmp_error_file, "w") as tmp:
+                tmp.write(payload)
+        except Exception as err:
+            fatal(f"Can't write to {tmp_error_file}: {err}")
+        try:
+            os.link(tmp_error_file, error_file)
+        except Exception as err:
+            fatal(f"Can't link {tmp_error_file} to {error_file}: {err}")
+        timebase._timestamp(f"Waiting for error file {error_file} to be removed")
+        while timebase._isfile(error_file):
+            time.sleep(1)
+    else:
+        timebase._timestamp("Message: {payload}")
+    os._exit(1)
+
+
 def sync_one(sock, tmp_sync_file_base: str, tmp_error_file: str, start_time: float,
              base_start_time: float, expected_clients: int, first_pass: bool):
     timebase._timestamp(f"Listening on port {listen_port}")
@@ -133,6 +252,7 @@ def sync_one(sock, tmp_sync_file_base: str, tmp_error_file: str, start_time: flo
         fatal(f"listen failed: {err}")
     timebase._timestamp(f"Expect {expected_clients} client(s)")
     ts_clients = []
+    net_clients = {}
     # Ensure that the client file descriptors do not get gc'ed,
     # closing it prematurely.  This is used when we don't
     # need to send a meaningful reply.  Without this, we do get some
@@ -152,46 +272,38 @@ def sync_one(sock, tmp_sync_file_base: str, tmp_error_file: str, start_time: flo
         command = tbuf[0:4].lower()
         payload = tbuf[4:].lstrip()
         timebase._timestamp(f"Accepted connection from {address}, command {command}, payload {len(payload)}")
-        if command == 'time':
-            if not first_pass:
-                timebase._timestamp(f"Unexpected request for time sync from {payload}")
-                with open(tmp_error_file, "w") as tmp:
-                    print(f"Unexpected request for time sync from {payload}", file=tmp_error_file)
-                try:
-                    os.link(tmp_error_file, error_file)
-                except Exception as err:
-                    fatal(f"Can't link {tmp_error_file} to {error_file}: {err}")
-                timebase._timestamp(f"Waiting for error file {error_file} to be removed")
-                while timebase._isfile(error_file):
-                    time.sleep(1)
-                os._exit(1)
-            ignore, ts, ignore = payload.split()
-            ts_clients.append([client, f"{ts} {ytime()}"])
+        if command == 'time' or command == 'tnet':
+            timebase._timestamp(f"Time request {payload}")
+            if first_pass:
+                if command == 'tnet':
+                    try:
+                        jdata = json.loads(payload)
+                        ts = jdata['timestamp']
+                        if 'have' in jdata and isinstance(jdata['have'], dict):
+                            for name, addr in jdata['have'].items():
+                                net_clients[name] = addr
+                    except Exception as exc:
+                        timebase._timestamp(f"Failed to parse JSON data: {exc}")
+                        continue
+                else:
+                    ignore, ts, ignore = payload.split()
+                ts_clients.append([client, f"{ts} {ytime()}"])
+            else:
+                fail_hard(f"Unexpected request for time sync from {payload}")
         elif command == 'rslt':
             handle_result(tmp_sync_file_base, expected_clients, payload)
         elif command == 'fail':
             timebase._timestamp(f"Detected failure from {address}")
-            if tmp_error_file:
-                try:
-                    with open(tmp_error_file, "w") as tmp:
-                        tmp.write(payload)
-                except Exception as err:
-                    fatal(f"Can't write to {tmp_error_file}: {err}")
-                try:
-                    os.link(tmp_error_file, error_file)
-                except Exception as err:
-                    fatal(f"Can't link {tmp_error_file} to {error_file}: {err}")
-                timebase._timestamp(f"Waiting for error file {error_file} to be removed")
-                while timebase._isfile(error_file):
-                    time.sleep(1)
-            else:
-                timebase._timestamp("Message: {payload}")
-            os._exit(1)
+            fail_hard(payload)
         elif command != 'sync':
             timebase._timestamp(f"Unknown command from {address}: '{command}'")
         expected_clients -= 1
     if ts_clients:
         reply_timestamp(start_time, base_start_time, ts_clients)
+    if net_clients:
+        msg = json.dumps({'have': net_clients})
+        command = f'nsrq {msg}'
+        timebase._send_message('127.0.0.1', ns_port, command)
     timebase._timestamp("Sync complete")
     sys.exit(0)
 
@@ -204,9 +316,10 @@ try:
     predelay = float(sys.argv[4])
     postdelay = float(sys.argv[5])
     listen_port = int(sys.argv[6])
-    expected_clients = int(sys.argv[7])
-    initial_expected_clients = int(sys.argv[8])
-    sync_count = int(sys.argv[9])
+    ns_port = int(sys.argv[7])
+    expected_clients = int(sys.argv[8])
+    initial_expected_clients = int(sys.argv[9])
+    sync_count = int(sys.argv[10])
     if initial_expected_clients < 0:
         initial_expected_clients = expected_clients
 except Exception as exc:
@@ -235,6 +348,16 @@ timebase._timestamp(f"Max timebase error {offset_from_controller}")
 timebase._set_offset(-offset_from_controller)
 start_time += offset_from_controller
 timebase._timestamp(f"Adjusted timebase by {offset_from_controller} seconds {base_start_time} => {start_time}")
+try:
+    child = os.fork()
+except Exception as exc:
+    fatal(f"Fork failed: {exc}")
+if child == 0:
+    timebase._timestamp("About to launch nameserver")
+    nameserver = nameserver(timebase, ns_port, expected_clients).run()
+    sys.exit()
+else:
+    nameserver_pid = child
 if sync_count == 0:
     timebase._timestamp(f"No synchronization requested; sleeping {postdelay} seconds")
     time.sleep(postdelay)
@@ -314,4 +437,5 @@ timebase._timestamp(f"Waiting for sync file {sync_file} to be removed")
 while timebase._isfile(sync_file):
     time.sleep(1)
 timebase._timestamp(f"Sync file {sync_file} removed, exiting")
+kill_nameserver(timebase)
 sys.exit(0)

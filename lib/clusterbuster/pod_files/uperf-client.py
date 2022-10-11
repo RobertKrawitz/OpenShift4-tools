@@ -115,6 +115,9 @@ class uperf_client(clusterbuster_pod_client):
                     m = re.match(r'timestamp_ms:([0-9.]+) +name:([0-9a-zA-Z]+) +nr_bytes:([0-9]+) +nr_ops:([0-9]+)', line)
                     if m:
                         ts = float(m.group(1)) / 1000.0
+                        if first_time == 0:
+                            first_time = ts
+                            last_time = ts
                         name = m.group(2)
                         nbytes = int(m.group(3))
                         nops = int(m.group(4))
