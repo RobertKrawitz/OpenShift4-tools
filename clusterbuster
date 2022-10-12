@@ -2871,7 +2871,6 @@ function do_logging() {
     fi
     if (( get_logs_pid > 1 )) ; then
 	wait "$get_logs_pid" 2>/dev/null
-	status=$?
     fi
 }
 
