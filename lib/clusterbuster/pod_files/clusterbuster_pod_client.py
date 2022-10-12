@@ -53,6 +53,7 @@ class clusterbuster_pod_client(cb_util):
         self.__start_time = float(time.time())
         self.__enable_sync = True
         self.__host_table = {}
+        self.__reported_results = False
         try:
             child = os.fork()
         except Exception as err:
@@ -110,7 +111,13 @@ class clusterbuster_pod_client(cb_util):
                     self.__child_idx = i
                     self._timestamp(f"About to run subprocess {i}")
                     try:
+                        start_time = self._adjusted_time()
+                        user, system = self._cputimes()
                         self.runit(i)
+                        if not self.__reported_results:
+                            end_time = self._adjusted_time()
+                            user, system = self._cputimes(user, system)
+                            self._report_results(start_time, end_time, start_time - end_time, user, system, {'Note': 'No results provided'})
                         self._timestamp(f"{os.getpid()} complete")
                         self.__finish()
                     except Exception as err:
@@ -259,6 +266,7 @@ class clusterbuster_pod_client(cb_util):
         except Exception as exc:
             self.__fail(f"Cannot convert results to JSON: {exc}")
         self.__do_sync_command('RSLT', answer)
+        self.__reported_results = True
 
     def _enable_sync(self, enable_sync: bool = True):
         """
