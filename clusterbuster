@@ -897,16 +897,14 @@ function get_sync() {
     fi
 }
 
-function create_sync_service_if_needed() {
+function create_sync_service() {
     local namespace=$1
-    local sync_count=${2:-0}
-    local sync_clients=${3:-0}
-    local initial_sync_clients=${4:-$sync_clients}
-    if ((sync_count <= 0)) ; then return; fi
+    local sync_clients=${2:-0}
+    local initial_sync_clients=${3:-$sync_clients}
     if get_sync -q ; then
 	if [[ $namespace = "${namespaces_to_create[0]:-}" ]] ; then
 	    create_service -h "$sync_namespace" "${sync_namespace}-sync" "$sync_port" "$sync_ns_port"
-	    create_sync_deployment "$sync_namespace" "$sync_count" "$((sync_clients * ${#namespaces_to_create[@]}))" "$((initial_sync_clients * ${#namespaces_to_create[@]}))"
+	    create_sync_deployment "$sync_namespace" "$((sync_clients * ${#namespaces_to_create[@]}))" "$((initial_sync_clients * ${#namespaces_to_create[@]}))"
 	fi
 	create_external_service "$namespace" "${namespace}-sync" "$global_sync_service" "$sync_port" "$sync_ns_port"
     fi
@@ -1649,8 +1647,6 @@ function create_standard_containers() {
     local sync_service=
     local sync_port_num=
     local sync_ns_port_num=
-    local yaml_args
-    yaml_args="$(mk_yaml_args)"
     IFS=: read -r sync_service sync_port_num sync_ns_port_num <<< "$(get_sync)"
     for container in $(seq 0 $((containers - 1))) ; do
 	cat <<EOF
@@ -2434,9 +2430,8 @@ function create_standard_deployment() {
 
 function create_container_sync() {
     local namespace=$1
-    local sync_count=${4:-1}
-    local expected_clients=$5
-    local initial_expected_clients=$6
+    local expected_clients=$4
+    local initial_expected_clients=$5
     cat <<EOF
 - name: ${namespace}
   image_pull_policy: $image_pull_policy
@@ -2456,14 +2451,12 @@ $(indent 2 standard_environment)
   - "$sync_ns_port"
   - "$expected_clients"
   - "$initial_expected_clients"
-  - "$sync_count"
 $(indent 2 volume_mounts_yaml "$namespace" 0 0)
 EOF
 }
 
 function create_sync_deployment() {
     local namespace=$1; shift
-    local sync_count=$1; shift
     create_object -t Pod -n "$namespace" "${namespace}-sync" <<EOF
 apiVersion: v1
 kind: Pod
@@ -2475,7 +2468,7 @@ $(indent 2 standard_labels_yaml 'sync' "$namespace")
   selector:
     matchLabels:
       app: ${namespace}
-$(create_container_function=create_container_sync create_spec -P -c sync -r '' "$namespace" 0 0 "$sync_count" "$@")
+$(create_container_function=create_container_sync create_spec -P -c sync -r '' "$namespace" 0 0 "$@")
   restartPolicy: Never
 EOF
 }

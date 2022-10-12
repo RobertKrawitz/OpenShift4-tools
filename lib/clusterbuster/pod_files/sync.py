@@ -245,12 +245,11 @@ def fail_hard(payload: str):
 
 def sync_one(sock, tmp_sync_file_base: str, tmp_error_file: str, start_time: float,
              base_start_time: float, expected_clients: int, first_pass: bool):
-    timebase._timestamp(f"Listening on port {listen_port}")
+    timebase._timestamp(f"Listening on port {listen_port}, expect {expected_clients} client(s)")
     try:
         timebase._listen(sock=sock, backlog=expected_clients)
     except Exception as err:
         fatal(f"listen failed: {err}")
-    timebase._timestamp(f"Expect {expected_clients} client(s)")
     ts_clients = []
     net_clients = {}
     # Ensure that the client file descriptors do not get gc'ed,
@@ -261,6 +260,7 @@ def sync_one(sock, tmp_sync_file_base: str, tmp_error_file: str, start_time: flo
     # clusterbuster -P synctest --synctest-count=1000 --synctest-cluster-count=3
     #     --precleanup --deployments=10 --cleanup=0
     protected_clients = []
+    expected_command = None
     while expected_clients > 0:
         # Reverse hostname lookup adds significant overhead
         # when using sync to establish the timebase.
@@ -270,6 +270,11 @@ def sync_one(sock, tmp_sync_file_base: str, tmp_error_file: str, start_time: flo
             timebase._timestamp(f"Read token from {address} failed")
         protected_clients.append(client)
         command = tbuf[0:4].lower()
+        if expected_command:
+            if command != expected_command:
+                fatal(f"Unexpected command {command} from {address}, expected {expected_command}")
+        else:
+            expected_command = command
         payload = tbuf[4:].lstrip()
         timebase._timestamp(f"Accepted connection from {address}, command {command}, payload {len(payload)}")
         if command == 'time' or command == 'tnet':
@@ -305,7 +310,10 @@ def sync_one(sock, tmp_sync_file_base: str, tmp_error_file: str, start_time: flo
         command = f'nsrq {msg}'
         timebase._send_message('127.0.0.1', ns_port, command)
     timebase._timestamp("Sync complete")
-    sys.exit(0)
+    if command == 'rslt':
+        return 2
+    else:
+        return 0
 
 
 print(sys.argv, file=sys.stderr)
@@ -319,7 +327,6 @@ try:
     ns_port = int(sys.argv[7])
     expected_clients = int(sys.argv[8])
     initial_expected_clients = int(sys.argv[9])
-    sync_count = int(sys.argv[10])
     if initial_expected_clients < 0:
         initial_expected_clients = expected_clients
 except Exception as exc:
@@ -327,7 +334,6 @@ except Exception as exc:
 
 start_time = time.time()
 base_start_time = start_time
-original_sync_count = sync_count
 timebase._timestamp("Clusterbuster sync starting")
 sock = timebase._get_port(addr=None, port=listen_port)
 if sync_file:
@@ -358,46 +364,49 @@ if child == 0:
     sys.exit()
 else:
     nameserver_pid = child
-if sync_count == 0:
-    timebase._timestamp(f"No synchronization requested; sleeping {postdelay} seconds")
-    time.sleep(postdelay)
-else:
-    timebase._timestamp(f"Will sync {sync_count} times")
-    first_pass = True
-    while sync_count != 0:
-        if sync_count > 0:
-            sync_count -= 1
-        if timebase._isfile(tmp_error_file):
-            fatal("Job failed, exiting")
-        tmp_sync_file = None
-        # Ensure that all of the accepted connections get closed by exiting
-        # a child process.  This way we don't have to keep track of all of the
-        # clients and close them manually.
-        try:
-            child = os.fork()
-        except Exception as exc:
-            fatal(f"Fork failed: {exc}")
-        if child == 0:
-            if first_pass:
-                clients = initial_expected_clients
-            else:
-                clients = expected_clients
-            sync_one(sock, tmp_sync_file_base, tmp_error_file, start_time, base_start_time, clients, first_pass)
-        else:
-            try:
-                os.wait()
-            except Exception as err:
-                fatal(f"Wait failed: {err}")
+timebase._timestamp("Starting sync")
+first_pass = True
+while True:
+    if timebase._isfile(tmp_error_file):
+        fatal("Job failed, exiting")
+    tmp_sync_file = None
+    # Ensure that all of the accepted connections get closed by exiting
+    # a child process.  This way we don't have to keep track of all of the
+    # clients and close them manually.
+    try:
+        child = os.fork()
+    except Exception as exc:
+        fatal(f"Fork failed: {exc}")
+    status = -1
+    if child == 0:
         if first_pass:
-            touch("/tmp/clusterbuster-started")
-            if predelay > 0:
-                timebase._timestamp(f"Waiting {predelay} seconds before start")
-                time.sleep(predelay)
-            first_pass = False
-    touch("/tmp/clusterbuster-finished")
-    if postdelay > 0:
-        timebase._timestamp(f"Waiting {postdelay} seconds before end")
-        time.sleep(postdelay)
+            clients = initial_expected_clients
+        else:
+            clients = expected_clients
+        sys.exit(sync_one(sock, tmp_sync_file_base, tmp_error_file, start_time, base_start_time, clients, first_pass))
+    else:
+        try:
+            pid, status = os.wait()
+        except Exception as err:
+            fatal(f"Wait failed: {err}")
+    if first_pass:
+        touch("/tmp/clusterbuster-started")
+        if predelay > 0:
+            timebase._timestamp(f"Waiting {predelay} seconds before start")
+            time.sleep(predelay)
+        first_pass = False
+    if (status >> 8) == 2:
+        timebase._timestamp("Final sync complete, finishing up")
+        touch("/tmp/clusterbuster-finished")
+        break
+    elif status & 255:
+        fatal(f"Sync killed by signal {status & 255}")
+    elif status != 0:
+        fatal("Job failed, exiting")
+
+if postdelay > 0:
+    timebase._timestamp(f"Waiting {postdelay} seconds before end")
+    time.sleep(postdelay)
 
 if timebase._isfile(tmp_error_file):
     fatal("Job failed, exiting")
@@ -418,10 +427,8 @@ if tmp_sync_files:
         except Exception as exc:
             timebase._timestamp(f"Could not load JSON from {f}: {exc}")
             data.append(dict())
-elif not original_sync_count:
-    data = [dict() for i in expected_clients]
 else:
-    timebase._timestamp(f"original sync count {original_sync_count}")
+    data = [dict() for i in expected_clients]
 result['worker_results'] = data
 
 try:
