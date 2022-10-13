@@ -2351,6 +2351,86 @@ EOF
     done
 }
 
+function create_vm_deployment() {
+    local namespace=$1
+    local instance=$2
+    local -i replicas=$4
+    local -i replica=0
+    local depname="${namespace}-${workload}-${instance}"
+    while (( replica++ < replicas )) ; do
+        local name="${depname}-${replica}"
+        local vmname=$(mkpodname "$name")
+        create_object -n "$namespace" "$name" <<EOF
+apiVersion: kubevirt.io/v1alpha3
+kind: VirtualMachine
+metadata:
+  labels:
+    app: $name
+    kubevirt-vm: $vmname
+  name: $vmname
+$(indent 2 standard_deployment_metadata_yaml "$namespace" client)
+$(indent 2 standard_pod_metadata_yaml "$namespace" client)
+$(create_vm_spec -n "$vmname")
+EOF
+    done
+}
+
+function create_vm_spec() {
+    local vmname cores sockets threads mem grace image password
+    local OPT OPTIND=1 OPTARG
+    while getopts ':n:c:s:t:m:g:i:p:-' OPT; do
+        case "$OPT" in 
+        ('?') fatal "Unknown option -$OPTARG" ;;
+        ( : ) fatal "Option -$OPTARG requires a value" ;;
+        ( - ) break ;; # end options with --
+        ( n ) vmname=$OPTARG ;;
+        ( c ) cores=$OPTARG ;;
+        ( s ) sockets=$OPTARG ;;
+        ( t ) threads=$OPTARG ;;
+        ( m ) mem=$OPTARG ;;
+        ( g ) grace=$OPTARG ;;
+        ( i ) image=$OPTARG ;;
+        ( p ) password=$OPTARG ;;
+        ( * ) fatal "Unhandled option -$OPT"
+        esac
+    done
+    shift $((OPTIND-1))
+    [[ -z $vmname ]] && fatal "vmname is required"
+    cores=${cores:-1}; sockets=${sockets:-1}; threads=${threads:-1}
+    mem=${mem:-1024}; grace=${grace:-30}; password=${password:-fedora}
+    image=${image:-quay.io/kubevirt/fedora-container-disk-images:35}
+    cat <<EOF
+spec:
+  running: true
+  template:
+    metadata:
+      labels:
+        kubevirt-vm: $vmname
+    spec:
+      domain:
+        cpu:
+          cores: $cores
+          sockets: $sockets
+          threads: $threads
+        devices:
+          disks:
+            - name: containerdisk
+              disk:
+                bus: virtio   
+        machine:
+          type: q35
+        resources:
+          requests:
+            memory: ${mem}Mi
+      terminationGracePeriodSeconds: $grace
+      volumes:
+        - name: containerdisk
+          containerDisk:
+            image: $image 
+status: {}
+EOF
+}
+
 function create_replication_deployment() {
     local namespace=$1
     local instance=$2
@@ -2410,11 +2490,14 @@ function create_standard_deployment() {
     if (($# != 5)) ; then
 	fatal "Usage: create_standard_deployment <args> namespace instance secret_count replicas containers"
     fi
-    
+
     case "${deployment_type,,}" in
 	pod)
 	    create_pod_deployment "$@"
 	    ;;
+        vm)
+            create_vm_deployment "$@"
+            ;;
 	replicaset|deployment)
 	    if ((allow_replica_controller)) ; then
 		create_replication_deployment "$@"
@@ -2994,7 +3077,6 @@ trap "remove_tmpdir; exit 1" TERM INT HUP
 cb_tempdir=$(umask 77; mktemp -d -p /tmp -t cbtmp_XXXXXXXX) || fatal "Can't create temporary directory"
 
 load_workloads "$__workloaddir__"
-
 while getopts ":B:Eef:Hhno:P:Qqv-:" opt ; do
     case "$opt" in
 	B) process_option "basename=$OPTARG"	 ;;
@@ -3047,16 +3129,16 @@ fi
 if [[ -n "$metrics_file" && ! -r "$metrics_file" ]] ; then
     fatal "Cannot read metrics file $metrics_file"
 fi
-
 case "${deployment_type,,}" in
     # If we're using deployments or replicasets, we do not want
     # to exit when workers complete, or the controller will
     # immediately try to re-create them.
     replicaset|rs)         deployment_type=ReplicaSet; exit_at_end=0 ;;
     deployment|dep|deploy) deployment_type=Deployment; exit_at_end=0 ;;
-    pod) deployment_type=pod		   		  ;;
+    pod) deployment_type=pod                                         ;;
+    vm) deployment_type=vm                                           ;;
     *)
-	echo "--deployment_type must be pod, deployment, or replicaset"
+	echo "--deployment_type must be pod, vm, deployment, or replicaset"
 	help
 esac
 
