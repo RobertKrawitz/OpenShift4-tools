@@ -19,6 +19,11 @@ declare ocp4_pull_secret=${OCP4_PULL_SECRET:-$HOME/.docker/config.json}
 declare ocp4_public_key=${OCP4_PUBLIC_KEY:-$HOME/.ssh/id_rsa.pub}
 declare command=$0
 
+if [[ -z "${KUBECONFIG:-}" ]] ; then
+    echo "KUBECONFIG must be set (recommend $HOME/ocp4-upi-install-1/auth/kubeconfig)"
+    exit 1
+fi
+
 # The following can be overridden in the config file if needed.
 declare bootstrap_prefix=192.168.222
 declare bootstrap_ipaddr
@@ -50,6 +55,9 @@ declare bare_metal_interface=
 declare -i do_install_kata=0
 declare -i do_install_cnv=0
 declare -i apply_kata_workaround=1
+declare platform=$(uname -i)
+declare installer_image=
+declare client_image=
 
 # shellcheck disable=SC2155
 declare -r command_help=$(cat <<'EOF'
@@ -483,7 +491,7 @@ function setup_tftpboot() {
 
 function setup_bm_if() {
     ip addr show dev "${cluster_network_bridge_name}" >/dev/null 2>&1 && return
-    [[ -n "$bare_metal_interface" ]] && {
+    [[ -n "$bare_metal_interface" ]] || {
 	fatal "No bare metal interface defined in bare_metal_interface"
     }
     nmcli con down "$bare_metal_interface"
@@ -494,6 +502,21 @@ function setup_bm_if() {
     nmcli con reload "${cluster_network_bridge_name}"
     nmcli con up "${cluster_network_bridge_name}"
     nmcli con up "$bare_metal_interface"
+}
+
+function setup_virt_net() {
+    if ! virsh net-info ocp4-upi >/dev/null 2>&1 ; then
+	tnetfile=$(mktemp net-ocp4-upi.XXXXXXXX)
+	cat > "$tnetfile" <<\EOF
+<network>
+  <name>ocp4-upi</name>
+  <forward mode='bridge'/>
+  <bridge name='baremetal'/>
+</network>
+EOF
+	virsh net-create "$tnetfile"
+	rm -f "$tnetfile"
+    fi
 }
 
 function setup_iptables() {
@@ -536,22 +559,23 @@ EOF
 }
 
 function check_packages() {
-    if [[ -z "$(dnf -q group list -C --installed 'Virtualization Host')" ]] ; then
-	dnf -y groupinstall 'Virtualization Host'
-    fi
+    dnf -y groupinstall 'Virtualization Host' || yum module install virt
     local -a required_rpms=()
     local rpm
-    for rpm in wget virt-install jq podman git python3-pyyaml qemu-kvm syslinux virt-manager virt-viewer xorg-x11-xauth xinetd syslinux-tftpboot haproxy httpd perl perl-JSON ipmitool ; do
+    for rpm in wget virt-install jq podman git python3-pyyaml qemu-kvm virt-manager virt-viewer xorg-x11-xauth xinetd syslinux-tftpboot haproxy httpd perl perl-JSON ipmitool python3-magic ; do
 	rpm --quiet -q "$rpm" || required_rpms+=("$rpm")
     done
     if [[ -n "${!required_rpms[*]}" ]] ; then
 	echo "Installing ${required_rpms[*]}"
 	dnf -y install "${required_rpms[@]}"
     fi
+    systemctl enable libvirtd
+    systemctl start libvirtd
 }
 
 function pre_setup() {
     cd ~
+    [[ -d "$cachedir" ]] || mkdir -p "$cachedir"
     setenforce 0 || true
     grep -q SELINUX=disabled /etc/selinux/config || sed -i s/^SELINUX=.*/SELINUX=disabled/ /etc/selinux/config
     check_packages
@@ -582,7 +606,6 @@ function try_to_download() {
     local -a registry_hosts=(openshift-release.apps.ci.l2s4.p1.openshiftapps.com openshift-release-artifacts.apps.ci.l2s4.p1.openshiftapps.com)
     local target=$1; shift
     local host
-    [[ -d "$cachedir" ]] || mkdir "$cachedir"
     for host in "${registry_hosts[@]}" ; do
 	wget -P "$cachedir" "$@" "https://${host}/${target}" && return 0
     done
@@ -590,6 +613,12 @@ function try_to_download() {
 }
 
 function fetch_tools_if_needed() {
+    if [[ -n "$installer_image" && -f "$installer_image" ]] ; then
+	cp -p "$installer_image" "$cachedir/openshift-install-linux-${VERSION}.tar.gz"
+    fi
+    if [[ -n "$client_image" && -f "$client_image" ]] ; then
+	cp -p "$client_image" "$cachedir/openshift-client-linux-${VERSION}.tar.gz"
+    fi
     if [[ -f "$cachedir/openshift-client-linux-${VERSION}.tar.gz" &&
 	      -f "$cachedir/openshift-install-linux-${VERSION}.tar.gz" ]] ; then
 	return 0
@@ -625,8 +654,14 @@ function setup_install_1() {
     [[ -d "$cluster_install_dir" ]] && rm -rf "$cluster_install_dir"
     mkdir "$cluster_install_dir"
     setup_dnsmasq
+    setup_virt_net
     fetch_tools_if_needed || return 1
     cd "$cluster_install_dir"
+    if [[ ! -f "$cluster_install_dir/filetranspile" ]] ; then
+	wget -P "$cluster_install_dir" https://raw.githubusercontent.com/ashcrow/filetranspiler/1.1.3/filetranspile
+	chmod +x "$cluster_install_dir/filetranspile"
+    fi
+    set +x
     tar -C "$cluster_install_dir" -xzf "$cachedir/openshift-client-linux-${VERSION}.tar.gz"
     tar -C "$cluster_install_dir" -xzf "$cachedir/openshift-install-linux-${VERSION}.tar.gz"
     PATH="${cluster_install_dir}:$PATH"
@@ -646,12 +681,12 @@ function setup_install_1() {
 	paths[initramfs]=$(get_key "$installer_data" .images.initramfs.path '.images."live-initramfs".path')
 	paths[rootfs]=$(get_key "$installer_data" '.images."live-rootfs".path')
     else
-	baseURI=https://mirror.openshift.com/pub/openshift-v4/dependencies/rhcos/$RELEASE/latest
+	baseURI=https://mirror.openshift.com/pub/openshift-v4/${platform}/dependencies/rhcos/$RELEASE/latest
 	echo "Using fallback $baseURI"
-	paths[bios]=rhcos-metal.x86_64.raw.gz
-	paths[kernel]=rhcos-live-kernel-x86_64
-	paths[initramfs]=rhcos-live-initramfs.x86_64.img
-	paths[rootfs]=rhcos-live-rootfs.x86_64.img
+	paths[bios]=rhcos-metal."${platform}".raw.gz
+	paths[kernel]=rhcos-live-kernel-"${platform}"
+	paths[initramfs]=rhcos-live-initramfs."${platform}".img
+	paths[rootfs]=rhcos-live-rootfs."${platform}".img
     fi
 
     fn[bios]="rhcos-metal-bios.raw.gz"
