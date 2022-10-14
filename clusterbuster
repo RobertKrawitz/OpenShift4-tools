@@ -2424,8 +2424,6 @@ spec:
             - name: containerdisk
               disk:
                 bus: virtio
-        machine:
-          type: q35
         resources:
           requests:
             memory: ${mem}Mi
