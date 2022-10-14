@@ -175,6 +175,9 @@ declare -A injected_errors=()
 declare cb_tempdir=
 declare force_cleanup_timeout=
 
+# vm related variables
+declare default_vm_image='quay.io/kubevirt/fedora-container-disk-images:35'
+
 declare OC=${OC:-${KUBECTL:-}}
 OC=${OC:-$(type -p oc)}
 OC=${OC:-$(type -p kubectl)}	# kubectl might not work, though...
@@ -2403,7 +2406,7 @@ function create_vm_spec() {
     done
     shift $((OPTIND-1))
     [[ -z $vmname ]] && fatal "vmname is required"
-    image=${image:-quay.io/kubevirt/fedora-container-disk-images:35}
+    image=${image:-$default_vm_image}
     cores=${cores:-1}; sockets=${sockets:-1}; threads=${threads:-1}
     mem=${mem:-1024}; grace=${grace:-30}
     cat <<EOF
