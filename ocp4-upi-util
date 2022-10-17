@@ -55,9 +55,11 @@ declare bare_metal_interface=
 declare -i do_install_kata=0
 declare -i do_install_cnv=0
 declare -i apply_kata_workaround=1
-declare platform=$(uname -i)
+declare platform
 declare installer_image=
 declare client_image=
+declare local_toolsdir=
+platform=$(uname -i)
 
 # shellcheck disable=SC2155
 declare -r command_help=$(cat <<'EOF'
@@ -655,23 +657,33 @@ function try_to_download() {
 }
 
 function fetch_tools_if_needed() {
+    local client_filename=openshift-client-linux-${VERSION}.tar.gz
+    local installer_filename=openshift-install-linux-${VERSION}.tar.gz
+    if [[ -d "$local_toolsdir" ]] ; then
+	if [[ -z "$installer_image" ]] ; then
+	    installer_image="${local_toolsdir}/$installer_filename"
+	fi
+	if [[ -z "$client_image" ]] ; then
+	    client_image="${local_toolsdir}/$client_filename"
+	fi
+    fi
     if [[ -n "$installer_image" && -f "$installer_image" ]] ; then
-	cp -p "$installer_image" "$cachedir/openshift-install-linux-${VERSION}.tar.gz"
+	cp -p "$installer_image" "$cachedir/$installer_filename"
     fi
     if [[ -n "$client_image" && -f "$client_image" ]] ; then
-	cp -p "$client_image" "$cachedir/openshift-client-linux-${VERSION}.tar.gz"
+	cp -p "$client_image" "$cachedir/$client_filename"
     fi
-    if [[ -f "$cachedir/openshift-client-linux-${VERSION}.tar.gz" &&
-	      -f "$cachedir/openshift-install-linux-${VERSION}.tar.gz" ]] ; then
+    if [[ -f "$cachedir/$client_filename" &&
+	      -f "$cachedir/$installer_filename" ]] ; then
 	return 0
     elif [[ -n "$(type -p oc)" ]] && (cd "$cachedir" && oc adm release extract --tools "$VERSION") ; then
 	return 0
     else
-	[[ -f "$cachedir/openshift-client-linux-${VERSION}.tar.gz" ]] || try_to_download "${VERSION}/openshift-client-linux-${VERSION}.tar.gz" -nv -N || {
+	[[ -f "$cachedir/$client_filename" ]] || try_to_download "${VERSION}/$client_filename" -nv -N || {
 		echo "Can't download client for $VERSION"
 		return 1
 	    }
-	[[ -f "$cachedir/openshift-install-linux-${VERSION}.tar.gz" ]] || try_to_download "${VERSION}/openshift-install-linux-${VERSION}.tar.gz" -nv -N || {
+	[[ -f "$cachedir/$installer_filename" ]] || try_to_download "${VERSION}/$installer_filename" -nv -N || {
 		echo "Can't download installer for $VERSION"
 		return 1
 	    }
@@ -1361,13 +1373,14 @@ function do_install() {
 #################################################################
 declare -a cmdline_vars=()
 
-while getopts 'c:i:k:p:e:' opt ; do
+while getopts 'c:i:k:p:e:t:' opt ; do
     case "$opt" in
-	c) config_file="$OPTARG" ;;
+	c) config_file="$OPTARG"	 ;;
 	i) cluster_install_dir="$OPTARG" ;;
 	k) ocp4_public_key="$OPTARG"     ;;
 	p) ocp4_pull_secret="$OPTARG"    ;;
 	e) cmdline_vars+=("$OPTARG")     ;;
+	t) local_toolsdir="$OPTARG"	 ;;
 	*) usage                         ;;
     esac
 done
