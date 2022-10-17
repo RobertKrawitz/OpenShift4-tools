@@ -216,7 +216,8 @@ EOF
     done
     cat <<EOF
 #interface=baremetal
-dhcp-range=${ip_base}.${host_base},${ip_base}.${host_max}
+#dhcp-range=${ip_base}.${host_base},${ip_base}.${host_max}
+dhcp-range=static
 dhcp-no-override
 dhcp-authoritative
 dhcp-lease-max=41
