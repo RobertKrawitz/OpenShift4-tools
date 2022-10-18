@@ -170,6 +170,14 @@ Usage: $command -c <configfile> [options]$cmdmsg args...
         bootstrap_mac         MAC address of bootstrap VM
                               (default 52:54:00:f9:8e:41)
         cluster_host_prefix   32 - desired bare metal network size (default 23)
+        install_device        Device (without /dev) to install to (default sda)
+        install_retries       Number of times to retry waiting for bootstrap
+                              to complete; needed for bare metal nodes that
+                              take a long time to boot.  Default 2 (90 minutes)
+        client_image          Path to local client image .tgz to be used for oc
+        installer_image       Path to local installer image .tgz
+        loal_toolsdir         Location of client_image and installer_image.
+                              Must match the version to be installed.
 
 $command_help
 EOF
