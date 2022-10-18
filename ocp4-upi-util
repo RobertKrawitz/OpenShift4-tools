@@ -59,6 +59,8 @@ declare platform
 declare installer_image=
 declare client_image=
 declare local_toolsdir=
+declare install_device=install_device
+declare -i install_retries=2	# Many bare metal nodes take a long time to POST
 platform=$(uname -i)
 
 # shellcheck disable=SC2155
@@ -217,7 +219,8 @@ EOF
     cat <<EOF
 #interface=baremetal
 #dhcp-range=${ip_base}.${host_base},${ip_base}.${host_max}
-dhcp-range=static
+dhcp-range=192.168.222.0,static
+dhcp-ignore=tag:!known
 dhcp-no-override
 dhcp-authoritative
 dhcp-lease-max=41
@@ -468,6 +471,12 @@ EOF
 
 function generate_pxelinux_cfg() {
     local node_type=${1:-master}
+    local installdev
+    if [[ $node_type = bootstrap ]] ; then
+	installdev=sda
+    else
+	installdev=$install_device
+    fi
     shift
     cat <<EOF
 DEFAULT pxeboot
@@ -475,18 +484,24 @@ TIMEOUT 20
 PROMPT 0
 LABEL pxeboot
     KERNEL http://${bootstrap_ipaddr}:${pxe_port}/ocp4-upi/rhcos-installer-kernel
-    APPEND rdblacklist=megaraid_sas ip=dhcp rd.neednet=1 initrd=http://${bootstrap_ipaddr}:${pxe_port}/ocp4-upi/rhcos-installer-initramfs.img console=tty0 console=ttyS0 coreos.inst=yes coreos.inst.install_dev=sda coreos.inst.image_url=http://${bootstrap_ipaddr}:${pxe_port}/ocp4-upi/rhcos-metal-bios.raw.gz coreos.inst.ignition_url=http://${bootstrap_ipaddr}:${pxe_port}/ocp4-upi/${node_type}.ign $*
+    APPEND rdblacklist=megaraid_sas ip=dhcp rd.neednet=1 initrd=http://${bootstrap_ipaddr}:${pxe_port}/ocp4-upi/rhcos-installer-initramfs.img console=tty0 console=ttyS0 coreos.inst=yes coreos.inst.install_dev=/dev/${installdev} coreos.inst.image_url=http://${bootstrap_ipaddr}:${pxe_port}/ocp4-upi/rhcos-metal-bios.raw.gz coreos.inst.ignition_url=http://${bootstrap_ipaddr}:${pxe_port}/ocp4-upi/${node_type}.ign $*
     SYSAPPEND 2
 EOF
 }
 
 function generate_grub_cfg() {
     local node_type=${1:-master}
+    local installdev
+    if [[ $node_type = bootstrap ]] ; then
+	installdev=sda
+    else
+	installdev=$install_device
+    fi
     shift
     cat <<EOF
 set timeout=10
 menuentry 'Install CoreOS' {
-  linux rhcos-installer-kernel rdblacklist=megaraid_sas ip=dhcp coreos.inst.install_dev=sda nomodeset rd.neednet=1 coreos.inst=yes coreos.inst.image_url=http://${bootstrap_ipaddr}:${pxe_port}/ocp4-upi/rhcos-metal-bios.raw.gz coreos.inst.ignition_url=http://${bootstrap_ipaddr}:${pxe_port}/ocp4-upi/${node_type}.ign $*
+  linux rhcos-installer-kernel rdblacklist=megaraid_sas ip=dhcp coreos.inst.install_dev=/dev/${installdev} nomodeset rd.neednet=1 coreos.inst=yes coreos.inst.image_url=http://${bootstrap_ipaddr}:${pxe_port}/ocp4-upi/rhcos-metal-bios.raw.gz coreos.inst.ignition_url=http://${bootstrap_ipaddr}:${pxe_port}/ocp4-upi/${node_type}.ign $*
   initrd rhcos-installer-initramfs.img
 }
 EOF
@@ -974,8 +989,20 @@ function bootstrap_install() {
     fi
 }
 
+function _master_install() {
+    cd "$cluster_install_dir"
+    while ((install_retries-- >= 0)) ; do
+	if ./openshift-install wait-for bootstrap-complete ; then
+	    return 0
+	fi
+	echo "**** Installer failed, retrying $install_retries time(s)"
+    done
+    echo "***** Wait for bootstrap complete failed!" 1>&2
+    return 1
+}
+
 function master_install() {
-    (cd "$cluster_install_dir" && ./openshift-install wait-for bootstrap-complete --log-level debug)
+    (_master_install)
 }
 
 function approve_csrs() {
