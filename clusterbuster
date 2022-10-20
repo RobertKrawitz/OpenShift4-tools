@@ -153,6 +153,7 @@ declare -a virtiofsd_args=()
 declare -i liveness_probe_frequency=0
 declare -i liveness_probe_sleep_time=0
 declare pod_prefix=
+declare -r arch=$(uname -m)
 
 declare -r sync_flag_file="/tmp/syncfile";
 declare -r sync_error_file="/tmp/syncerror";
@@ -163,7 +164,7 @@ declare xuuid=$uuid
 
 declare kata_runtime_class=kata
 declare image_pull_policy=
-declare container_image=quay.io/rkrawitz/clusterbuster
+declare container_image=quay.io/rkrawitz/clusterbuster:${arch}-latest
 
 declare accumulateddata=
 declare -a plurals=('s' '')

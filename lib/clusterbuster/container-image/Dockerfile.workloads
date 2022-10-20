@@ -1,4 +1,5 @@
-FROM quay.io/rkrawitz/clusterbuster:latest
+ARG ARCH=${ARCH}
+FROM quay.io/rkrawitz/clusterbuster:${ARCH}-latest
 
 RUN microdnf --setopt=install_weak_deps=0 install -y \
     fio \
