@@ -25,7 +25,6 @@ import base64
 import importlib
 import inspect
 import traceback
-from pprint import pp
 from .metrics.PrometheusMetrics import PrometheusMetrics
 
 
@@ -39,7 +38,7 @@ class ClusterBusterReporter:
         if format == 'none' or format is None:
             return
         if format == 'raw-python':
-            pp(jdata, indent=2, width=-1)
+            print(jdata)
             return
         if format == 'raw':
             json.dump(jdata, sys.stdout, indent=2)
@@ -49,7 +48,7 @@ class ClusterBusterReporter:
         else:
             try:
                 workload = jdata["metadata"]["workload"]
-            except Exception as exc:
+            except Exception:
                 raise TypeError("Unable to identify workload")
         if 'runtime_class' not in jdata['metadata']:
             runtime_class = jdata['metadata']['options']['runtime_classes'].get('default')
@@ -101,7 +100,7 @@ class ClusterBusterReporter:
             with open(item) as f:
                 try:
                     answers.append(ClusterBusterReporter.report_one(json.load(f), format, **kwargs))
-                except Exception as exc:
+                except Exception:
                     print(f'Unable to load {item}: {traceback.format_exc()}', file=sys.stderr)
         for item in items:
             jdata = dict()
@@ -128,7 +127,7 @@ class ClusterBusterReporter:
     def print_report(items, format: str, outfile=sys.stdout, **kwargs):
         answers = ClusterBusterReporter.report(items, format, **kwargs)
         if format.endswith('python'):
-            pp(answers, indent=2, width=-1, stream=outfile)
+            print(answers, file=outfile)
         elif format.startswith('json'):
             json.dump(answers, outfile, indent=2)
         elif format != "none":
@@ -291,7 +290,7 @@ class ClusterBusterReporter:
         rowhash = {}
         self._summary['total_instances'] += 1
         if 'namespace' in row:
-            pod_name=f'{row["namespace"]}/{row["pod"]}'
+            pod_name = f'{row["namespace"]}/{row["pod"]}'
             if pod_name not in self._found_pods:
                 self._summary['total_pods'] += 1
                 self._found_pods[pod_name] = 1
@@ -598,7 +597,7 @@ class ClusterBusterReporter:
         key = str(path.pop())
         results1[key] = value
 
-    def _copy_formatted_value(self, var: str, dest: dict, source: dict, dont_overwrite: bool=False, orig_var=None):
+    def _copy_formatted_value(self, var: str, dest: dict, source: dict, dont_overwrite: bool = False, orig_var=None):
         """
         Copy a value from source to dest, with optional formatting of the form
         var[:key1=val1:key2=val2...]
@@ -691,23 +690,25 @@ class ClusterBusterReporter:
                 return
             if (isinstance(row[components[0]], list)):
                 for element in row[components[0]]:
-                    self.__copy_field(components[1], element, summary, rowhash, orig_var = orig_var)
+                    self.__copy_field(components[1], element, summary, rowhash, orig_var=orig_var)
             else:
                 if components[0] not in rowhash:
                     rowhash[components[0]] = {}
                 if components[0] not in summary:
                     summary[components[0]] = {}
-                self.__copy_field(components[1], row[components[0]], summary[components[0]], rowhash[components[0]], orig_var = orig_var)
+                self.__copy_field(components[1], row[components[0]], summary[components[0]],
+                                  rowhash[components[0]], orig_var=orig_var)
 
         if len(components) > 1:
             if components[0] not in rowhash:
                 [components[0]] = {}
             if components[0] not in summary:
                 summary[components[0]] = {}
-            self.__copy_field(components[1], row[components[0]], summary[components[0]], rowhash[components[0]], orig_var = orig_var)
+            self.__copy_field(components[1], row[components[0]], summary[components[0]],
+                              rowhash[components[0]], orig_var=orig_var)
         else:
-            self._copy_formatted_value(var, rowhash, row, orig_var = orig_var)
-            self._copy_formatted_value(var, summary, row, dont_overwrite=True, orig_var = orig_var)
+            self._copy_formatted_value(var, rowhash, row, orig_var=orig_var)
+            self._copy_formatted_value(var, summary, row, dont_overwrite=True, orig_var=orig_var)
 
     def __update_timeline_val(self, var: str, row, summary: dict):
         """

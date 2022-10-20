@@ -102,7 +102,7 @@ class ClusterBusterLoader:
                 continue
             if os.path.isdir(d):
                 dirs.append(d)
-                if  os.path.isfile(os.path.join(d, "clusterbuster-ci-results.json")):
+                if os.path.isfile(os.path.join(d, "clusterbuster-ci-results.json")):
                     with open(os.path.join(d, "clusterbuster-ci-results.json")) as f:
                         dir_status = json.load(f)
                         if 'result' not in self.status or dir_status.get('result', 'FAIL') != 'PASS':
