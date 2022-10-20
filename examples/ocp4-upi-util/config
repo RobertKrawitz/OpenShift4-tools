@@ -1,0 +1,17 @@
+#!/bin/bash
+
+mgmt_masters=(system-1-mgmt.example.com)
+mgmt_workers=(system-2-mgmt.example.com system-3-mgmt.example.com system-4-mgmt.example.com system-5-mgmt.example.com system-6-mgmt.example.com system-7-mgmt.example.com)
+
+public_interface=enp2s0f0
+bare_metal_interface=enp1s0f1
+master_macs=(00:00:00:00:00:00)
+worker_macs=(00:00:00:00:00:01 00:00:00:00:00:02 00:00:00:00:00:03 00:00:00:00:00:04 00:00:00:00:00:05 00:00:00:00:00:06)
+exclude_ifs=(enp1s0f1 enp2s0f1 enp3s0f0 enp3s0f1)
+
+cluster_domain=example.myocp4.com
+do_install_cnv=0
+master_as_infra=1
+filesystem_json=filesystem.json
+IPMI_USER=your_ipmi_username
+IPMI_PASSWORD=your_ipmi_password
