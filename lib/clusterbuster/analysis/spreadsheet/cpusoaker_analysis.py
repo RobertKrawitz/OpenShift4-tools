@@ -68,32 +68,35 @@ uuid: {self._metadata['uuid']}
 """
         rows = []
         for pods, data1 in data.items():
-            row = [str(pods)]
-            for column in columns:
-                if valfunc is not None:
-                    runc_value = valfunc(data1, 'runc', column)
-                    kata_value = valfunc(data1, 'kata', column)
-                else:
-                    if 'runc' in data1:
-                        runc_value = data1['runc'][column] / divisor
+            try:
+                row = [str(pods)]
+                for column in columns:
+                    if valfunc is not None:
+                        runc_value = valfunc(data1, 'runc', column)
+                        kata_value = valfunc(data1, 'kata', column)
                     else:
-                        runc_value = None
-                    if 'kata' in data1:
-                        kata_value = data1['kata'][column] / divisor
+                        if 'runc' in data1:
+                            runc_value = data1['runc'][column] / divisor
+                        else:
+                            runc_value = None
+                        if 'kata' in data1:
+                            kata_value = data1['kata'][column] / divisor
+                        else:
+                            kata_value = None
+                    if kata_value:
+                        row.append(self._prettyprint(kata_value, base=0, integer=integer))
                     else:
-                        kata_value = None
-                if kata_value:
-                    row.append(self._prettyprint(kata_value, base=0, integer=integer))
-                else:
-                    row.append('')
-                if runc_value:
-                    row.append(self._prettyprint(runc_value, base=0, integer=integer))
-                else:
-                    row.append('')
-                if runc_value is not None and kata_value is not None:
-                    if ratio:
-                        row.append(self._prettyprint(kata_value / runc_value, base=0, precision=3))
-                    if difference:
-                        row.append(self._prettyprint(kata_value - runc_value, base=0, integer=integer, precision=3))
-            rows.append('\t'.join(row))
+                        row.append('')
+                    if runc_value:
+                        row.append(self._prettyprint(runc_value, base=0, integer=integer))
+                    else:
+                        row.append('')
+                    if runc_value is not None and kata_value is not None:
+                        if ratio:
+                            row.append(self._prettyprint(kata_value / runc_value, base=0, precision=3))
+                        if difference:
+                            row.append(self._prettyprint(kata_value - runc_value, base=0, integer=integer, precision=3))
+                rows.append('\t'.join(row))
+            except Exception:
+                pass
         return answer + '\n'.join(rows) + '\n'
