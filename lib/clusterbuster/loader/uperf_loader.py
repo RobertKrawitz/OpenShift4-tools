@@ -30,7 +30,10 @@ class uperf_loader(LoadOneReport):
 
         self._MakeHierarchy(self._answer, ['uperf', self._count, msgsize, threads, self._runtime_env])
         root = self._answer['uperf'][self._count][msgsize][threads][self._runtime_env]
-        root[f'cpu_util_{op}'] = self._metrics['CPU utilization']['Total'][f'instance: {self._client_pin_node}']
+        try:
+            root[f'cpu_util_{op}'] = self._metrics['CPU utilization']['Total'][f'instance: {self._client_pin_node}']
+        except Exception:
+            pass
         if op == 'stream':
             root['rate'] = job['data_rate']
         elif op == 'rr':
