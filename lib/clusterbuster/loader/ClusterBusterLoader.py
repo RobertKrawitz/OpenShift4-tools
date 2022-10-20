@@ -30,9 +30,9 @@ class LoadOneReport:
             self._summary = self._report['summary']
             self._metrics = self._summary['metrics']
         except Exception:
-            if not getattr(self, '_report', False):
+            if getattr(self, '_report', None) is None:
                 self._report = {}
-            if not getattr(self, '_answer', False):
+            if getattr(self, '_answer', None) is None:
                 self._answer = {}
             if 'metadata' not in self._report:
                 self._metadata = {}

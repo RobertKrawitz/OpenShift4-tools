@@ -39,11 +39,11 @@ declare cluster_basedomain
 declare cluster_name
 declare cluster_network_bridge_name=baremetal
 declare cluster_install_dir=${KUBECONFIG:+${KUBECONFIG/\/auth\/kubeconfig/}}
-declare filesystems_json="$HOME"/filesystems.json
+declare filesystem_json=
 declare -i masters_schedulable=0
 declare -i infra_count=0
 declare -i master_as_infra=0
-declare -r cachedir="$HOME/.cache/ocp4_install"
+declare -r cachedir="$HOME/.cache/ocp4_upi_install"
 declare bootstrap_mac=52:54:00:f9:8e:41
 declare -a mgmt_masters=()
 declare -a master_macs=()
@@ -170,6 +170,8 @@ Usage: $command -c <configfile> [options]$cmdmsg args...
         bootstrap_mac         MAC address of bootstrap VM
                               (default 52:54:00:f9:8e:41)
         cluster_host_prefix   32 - desired bare metal network size (default 23)
+	filesystem_json	      File containing code to modify the filesystem
+			      layout
         install_device        Device (without /dev) to install to (default sda)
         install_retries       Number of times to retry waiting for bootstrap
                               to complete; needed for bare metal nodes that
@@ -262,13 +264,6 @@ address=/api.${ocp4_domain}/${ip_base}.${prov_host}
 address=/api-int.${ocp4_domain}/${ip_base}.${prov_host}
 address=/.apps.${ocp4_domain}/${ip_base}.${prov_host}
 EOF
-
-    for i in $(seq 0 "$((master_count - 1))") ; do
-	cat <<EOF
-address=/etcd-${i}.${ocp4_domain}/${ip_base}.$((master_base+i))
-srv-host=_etcd-server-ssl._tcp.${ocp4_domain},etcd-${i}.${ocp4_domain}.,2380,0,10
-EOF
-    done
 }
 
 function generate_service() {
@@ -281,23 +276,23 @@ function generate_service() {
     case "$name" in
 	master)
 	    cat <<EOF
-    server           bootstrap ${ip_base}.$((bootstrap_host)):${port} check
+    server           bootstrap ${ip_base}.$((bootstrap_host)):${port} check inter 1s backup
 EOF
 	    for i in $(seq 0 "$((master_count - 1))") ; do
 		cat <<EOF
-    server           master-${i} ${ip_base}.$((master_base+i)):${port} check
+    server           master-${i} ${ip_base}.$((master_base+i)):${port} check inter 1s
 EOF
 	    done
 	    ;;
 	worker)
 	    for i in $(seq 0 "$((infra_count - 1))") ; do
 		cat <<EOF
-    server           infra-${i} ${ip_base}.$((infra_base+i)):${port} check
+    server           infra-${i} ${ip_base}.$((infra_base+i)):${port} check inter 1s
 EOF
 	    done
 	    for i in $(seq 0 "$((worker_count - 1))") ; do
 		cat <<EOF
-    server           worker-${i} ${ip_base}.$((worker_base+i)):${port} check
+    server           worker-${i} ${ip_base}.$((worker_base+i)):${port} check inter 1s
 EOF
 	    done
 	    ;;
@@ -344,6 +339,11 @@ frontend http
     bind             *:80
     default_backend  http
 
+frontend ingress
+    mode             http
+    bind             *:1936
+    default_backend  ingress
+
 backend kapi
     mode             tcp
     balance          roundrobin
@@ -363,6 +363,11 @@ backend http
     mode             http
     balance          roundrobin
 $(generate_service worker 80 "$master_count" "$worker_count" "$infra_count")
+
+backend ingress
+    mode             http
+    balance          roundrobin
+$(generate_service worker 1936 "$master_count" "$worker_count" "$infra_count")
 EOF
 }
 
@@ -817,10 +822,17 @@ EOF
 	cp -p "${i}.ign" "${i}.ign.orig"
 	filetranspile -i "${i}.ign.orig" -f ./lab -o "${i}.ign"
     done
-    if [[ -n "$filesystems_json" && -f "$filesystems_json" ]] ; then
-	for i in master worker; do
-	    jq -c ".systemd? += $(jq .systemd < "$filesystems_json") | .storage? += $(jq .storage < "$filesystems_json")" < "${i}.ign" > "${i}.ign.tmp" && mv -f "${i}.ign.tmp" "${i}.ign"
-	done
+    if [[ -n "$filesystem_json" ]] ; then
+	if [[ -r "$filesystem_json" && -f "$filesystem_json" ]] ; then
+	    jq -c . < "$filesystem_json" >/dev/null 2>&1 || fatal "Cannot parse filesystem JSON in $filesystem_json"
+	    jq -c .storage < "$filesystem_json" >/dev/null 2>&1 || fatal "Cannot find storage JSON in $filesystem_json"
+	    jq -c .systemd < "$filesystem_json" >/dev/null 2>&1 || fatal "Cannot find systemd JSON in $filesystem_json"
+	    for i in master worker; do
+		jq -c ".systemd? += $(jq .systemd < "$filesystem_json") | .storage? += $(jq .storage < "$filesystem_json")" < "${i}.ign" > "${i}.ign.tmp" && mv -f "${i}.ign.tmp" "${i}.ign"
+	    done
+	else
+	    fatal "Cannot read $filesystem_json"
+	fi
     fi
     for i in master worker bootstrap ; do
 	cp "$cluster_install_dir/$i.ign" /var/www/html/ocp4-upi
@@ -1355,7 +1367,10 @@ function do_install_2() {
     echo "*** Installing master(s)"
     master_install
     echo "*** Destroying bootstrap"
+    sed -i -e "/bootstrap ${bootstrap_prefix}/d" /etc/haproxy/haproxy.cfg
+    systemctl restart haproxy
     bootstrap_destroy
+    echo "*** Starting worker(s)"
     start_workers
     # We don't invoke setup_chrony with arguments,
     # but command line use might.

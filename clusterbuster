@@ -135,14 +135,14 @@ declare prometheus_exact_starting_timestamp=
 declare second_start_timestamp=
 declare prometheus_ending_timestamp=
 declare -i target_data_rate=0
-declare metrics_file=
 declare job_name=
 # shellcheck disable=2155
 declare -i job_start_time=$(date +%s)
 declare global_sync_service=
 declare -i predelay=0
 declare -i postdelay=0
-declare -r default_metrics_file=metrics-default.yaml
+declare -r default_metrics_file="metrics-default.yaml"
+declare metrics_file=default
 declare -i drop_node_cache=0
 declare -i drop_all_node_cache=0
 declare -i headless_services=1
@@ -152,6 +152,7 @@ declare -i virtiofsd_threadpoolsize=0
 declare -a virtiofsd_args=()
 declare -i liveness_probe_frequency=0
 declare -i liveness_probe_sleep_time=0
+declare -i metrics_support=-1
 declare pod_prefix=
 declare -r arch=$(uname -m)
 
@@ -309,9 +310,11 @@ $(print_workloads_supporting_reporting '                        - ')
                         artifacts directory
        --metrics[=<file>]
                         benchmark-runner compatible metrics file
-                        for metrics extraction if promextract
-                        reporting is in use.  With no argument, uses
-                        default in $default_metrics_file.
+                        for metrics extraction.  If empty or 'none',
+                        no metrics extraction is done.  If 'default',
+                        the default
+                        ($default_metrics_file)
+                        is used.
        --metrics-epoch=<seconds>
                         Number of seconds to look back for metrics prior
                         to start of run (default $metrics_epoch)
@@ -604,9 +607,11 @@ function process_runtimeclass() {
 
 function set_metrics_file() {
     metrics_file=${1:-}
-    if [[ -z "$metrics_file" || $metrics_file == 1 ]] ; then
-	metrics_file="$__libdir__/$default_metrics_file"
-    fi
+    case "$metrics_file" in
+	default|1|"$default_metrics_file") metrics_file="$__libdir__/$default_metrics_file" ;;
+	''|0|none) metrics_file=							    ;;
+	*)										    ;;
+    esac
 }
 
 function inject_error() {
@@ -915,6 +920,14 @@ function create_sync_service() {
 # Logging
 ################################################################
 
+function supports_metrics() {
+    if ((metrics_support < 0)) ; then
+	metrics_support=1
+	"$OC" get pod -n openshift-monitoring prometheus-k8s-0 >/dev/null 2>&1 || metrics_support=0
+    fi
+    ((metrics_support > 0))
+}
+
 function get_pod_timestamp() {
     local format=${1:-%s.%N}
     shift
@@ -922,8 +935,12 @@ function get_pod_timestamp() {
 }
 
 function get_prometheus_pod_timestamp() {
-    local format=${1:-%s.%N}
-    get_pod_timestamp '%s.%N' -n openshift-monitoring prometheus-k8s-0 -c prometheus
+    if supports_metrics ; then
+	local format=${1:-%s.%N}
+	get_pod_timestamp '%s.%N' -n openshift-monitoring prometheus-k8s-0 -c prometheus
+    else
+	return 1
+    fi
 }
 
 function readable_timestamp() {
@@ -933,21 +950,28 @@ function readable_timestamp() {
 
 function set_start_timestamps() {
     local -i retries=5
-    while ((retries-- > 0)) ; do
+    if supports_metrics ; then
+	while ((retries-- > 0)) ; do
+	    first_start_timestamp=$(date +%s.%N)
+	    if prometheus_exact_starting_timestamp=$(get_prometheus_pod_timestamp '%s.%N') ; then
+		prometheus_starting_timestamp=${prometheus_exact_starting_timestamp%%.*}
+		second_start_timestamp=$(date +%s.%N)
+		return 0
+	    fi
+	    if ((retries > 0)) ; then
+		warn "Fetch timestamp failed! $retries attempt(s) left"
+		sleep 5
+	    else
+		warn "Unable to retrieve Prometheus timestamp (hard error)"
+	    fi
+	done
+	return 1
+    else
 	first_start_timestamp=$(date +%s.%N)
-	if prometheus_exact_starting_timestamp=$(get_prometheus_pod_timestamp '%s.%N') ; then
-	    prometheus_starting_timestamp=${prometheus_exact_starting_timestamp%%.*}
-	    second_start_timestamp=$(date +%s.%N)
-	    return 0
-	fi
-	if ((retries > 0)) ; then
-	    warn "Fetch timestamp failed! $retries attempt(s) left"
-	    sleep 5
-	else
-	    warn "Unable to retrieve Prometheus timestamp (hard error)"
-	fi
-    done
-    return 1
+	prometheus_start_timestamp=$first_start_timestamp
+	prometheus_exact_starting_timestamp=$first_start_timestamp
+	second_start_timestamp=$first_start_timestamp
+    fi
 }
 
 function get_pod_and_local_timestamps() {
@@ -985,7 +1009,7 @@ EOF
 }
 
 function start_prometheus_snapshot() {
-    ((doit)) || return 0
+    if ((!doit)) || ! supports_metrics ; then return 0; fi
     echo "Starting Prometheus snapshot" | echo_if_desired 1>&2
     _OC delete pod -n openshift-monitoring prometheus-k8s-0
     local -i retry=12
@@ -1005,7 +1029,7 @@ function start_prometheus_snapshot() {
 }
 
 function retrieve_prometheus_snapshot() {
-    ((doit)) || return 0
+    if ((!doit)) || ! supports_metrics ; then return 0; fi
     echo "Retrieving Prometheus snapshot" | echo_if_desired 1>&2
     local dir=${1:-$artifactdir}
     sleep 60
@@ -1104,7 +1128,7 @@ function _monitor_pods() {
 	else
 	    # Timestamp
 	    local timestamp=$status
-	    # If 
+	    # If
 	    if [[ -z "${injected_errors[timeout]:-}" ]] && ! supports_api -w "$requested_workload" supports_reporting ; then
 		if (( ${#running_pods[@]} + finished_pod_count > 0 && other_pod_count == 0 )) ; then
 		    sleep "$workload_run_time"
@@ -1355,7 +1379,7 @@ function _report_runtime_classes() {
 }
 
 function _extract_metrics() {
-    if [[ -r "$metrics_file" ]] ; then
+    if supports_metrics && [[ -r "$metrics_file" ]] ; then
 	cat <<EOF
 ,
 "metrics": $("${__topdir__}/prom-extract" --define "namespace_re=${basename}-.*" -m "$metrics_file" --metrics-only --start_time="$prometheus_starting_timestamp" --epoch="$metrics_epoch" --post-settling-time=0)
@@ -2411,7 +2435,7 @@ function create_standard_deployment() {
     if (($# != 5)) ; then
 	fatal "Usage: create_standard_deployment <args> namespace instance secret_count replicas containers"
     fi
-    
+
     case "${deployment_type,,}" in
 	pod)
 	    create_pod_deployment "$@"
@@ -2995,6 +3019,8 @@ trap "remove_tmpdir; exit 1" TERM INT HUP
 cb_tempdir=$(umask 77; mktemp -d -p /tmp -t cbtmp_XXXXXXXX) || fatal "Can't create temporary directory"
 
 load_workloads "$__workloaddir__"
+
+set_metrics_file default
 
 while getopts ":B:Eef:Hhno:P:Qqv-:" opt ; do
     case "$opt" in
