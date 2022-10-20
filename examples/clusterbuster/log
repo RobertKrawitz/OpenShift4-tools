@@ -2,9 +2,13 @@
 # clusterbuster -f log
 
 precleanup
-workload=log
+workload=logger
 precleanup=1
 no-report-object-creation
 replicas=8
 namespaces=1
 exit_at_end
+log_bytes_per_line=128
+log_lines_per_io=16
+log_xfer_count=16
+log_delay=0.25

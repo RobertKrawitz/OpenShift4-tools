@@ -86,39 +86,40 @@ class FilesAnalysisBase(ClusterBusterAnalyzeOne):
                                             detail2['ratio'] = detail2['kata'] / detail2['runc']
                                 if len(detail_row.keys()) > 0:
                                     detail[case_label] = detail_row
-        for runtime, data1 in summary.items():
-            answer[runtime] = dict()
-            for op, data2 in data1.items():
-                answer[runtime][op] = dict()
-                for subop, data3 in data2.items():
-                    answer[runtime][op][subop] = exp(summary[runtime][op][subop] / count[runtime][op][subop])
-        answer['ratio'] = dict()
-        for op, data1 in answer['runc'].items():
-            answer['ratio'][op] = dict()
-            for subop, data2 in data1.items():
-                answer['ratio'][op][subop] = answer['kata'][op][subop] / answer['runc'][op][subop]
-        answer['min_ratio'] = dict()
-        answer['max_ratio'] = dict()
-        for op in known_ops.keys():
-            if op not in times:
-                continue
-            if op not in answer['min_ratio']:
-                answer['min_ratio'][op] = dict()
-                answer['max_ratio'][op] = dict()
-            for subop in known_subops.keys():
-                if subop not in times[op]:
+        if summary.keys():
+            for runtime, data1 in summary.items():
+                answer[runtime] = dict()
+                for op, data2 in data1.items():
+                    answer[runtime][op] = dict()
+                    for subop, data3 in data2.items():
+                        answer[runtime][op][subop] = exp(summary[runtime][op][subop] / count[runtime][op][subop])
+            answer['ratio'] = dict()
+            for op, data1 in answer['runc'].items():
+                answer['ratio'][op] = dict()
+                for subop, data2 in data1.items():
+                    answer['ratio'][op][subop] = answer['kata'][op][subop] / answer['runc'][op][subop]
+            answer['min_ratio'] = dict()
+            answer['max_ratio'] = dict()
+            for op in known_ops.keys():
+                if op not in times:
                     continue
-                min_ratio = None
-                max_ratio = None
-                for i in range(len(times[op][subop]['kata'])):
-                    if times[op][subop]['kata'][i] > 0 and times[op][subop]['runc'][i] > 0:
-                        ratio = times[op][subop]['kata'][i] / times[op][subop]['runc'][i]
-                        if min_ratio is None or ratio < min_ratio:
-                            min_ratio = ratio
-                        if max_ratio is None or ratio > max_ratio:
-                            max_ratio = ratio
-                answer['min_ratio'][op][subop] = min_ratio
-                answer['max_ratio'][op][subop] = max_ratio
+                if op not in answer['min_ratio']:
+                    answer['min_ratio'][op] = dict()
+                    answer['max_ratio'][op] = dict()
+                for subop in known_subops.keys():
+                    if subop not in times[op]:
+                        continue
+                    min_ratio = None
+                    max_ratio = None
+                    for i in range(len(times[op][subop]['kata'])):
+                        if times[op][subop]['kata'][i] > 0 and times[op][subop]['runc'][i] > 0:
+                            ratio = times[op][subop]['kata'][i] / times[op][subop]['runc'][i]
+                            if min_ratio is None or ratio < min_ratio:
+                                min_ratio = ratio
+                            if max_ratio is None or ratio > max_ratio:
+                                max_ratio = ratio
+                    answer['min_ratio'][op][subop] = min_ratio
+                    answer['max_ratio'][op][subop] = max_ratio
         if report_summary:
             if report_detail:
                 return answer, detail

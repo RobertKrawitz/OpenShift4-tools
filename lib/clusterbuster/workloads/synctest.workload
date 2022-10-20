@@ -24,7 +24,10 @@ declare -g ___synctest_cluster_count=1
 declare -g ___synctest_sleep=0
 
 function synctest_arglist() {
-    mk_yaml_args "$___synctest_count" "$___synctest_cluster_count" "$___synctest_sleep" "$processes_per_pod"
+    local mountdir=$1; shift
+    while [[ "$1" != '--' ]] ; do shift; done; shift
+    mk_yaml_args "python3" "${mountdir}synctest.py" "$@" \
+		 "$___synctest_count" "$___synctest_cluster_count" "$___synctest_sleep" "$processes_per_pod"
 }
 
 function synctest_create_deployment() {
@@ -34,18 +37,18 @@ function synctest_create_deployment() {
     local replicas=${4:-1}
     local containers_per_pod=${5:-1}
     local -i instance
-    create_sync_service_if_needed "$namespace" "$(((___synctest_count * ___synctest_cluster_count) + 2))" \
+    create_sync_service "$namespace" \
 				  "$((containers_per_pod * replicas * processes_per_pod * count))" \
 				  "$((containers_per_pod * replicas * count))"
-    for instance in $(seq $first_deployment $((count + first_deployment - 1))) ; do
-	create_standard_deployment -a synctest_arglist -e synctest.pl \
+    for instance in $(seq "$first_deployment" $((count + first_deployment - 1))) ; do
+	create_standard_deployment -a synctest_arglist \
 				   "$namespace" "$instance" "$secret_count" "$replicas" "$containers_per_pod"
     done
 }
 
 function synctest_list_configmaps() {
     cat <<EOF
-${__podfile_dir__}/synctest.pl
+${__podfile_dir__}/synctest.py
 EOF
 }
 
@@ -70,7 +73,6 @@ EOF
 function synctest_process_options() {
     local opt
     local -a unknown_opts=()
-    local ftest
     for opt in "$@" ; do
 	read -r noptname1 noptname optvalue <<< "$(parse_option "$opt")"
 	case "$noptname1" in

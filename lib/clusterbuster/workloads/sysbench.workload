@@ -25,8 +25,12 @@ declare -Ag ___sysbench_fileio_tests=()
 declare -g ___sysbench_fileio_test_string='seqwr,seqrd,rndwr,rndrd'
 
 function sysbench_arglist() {
+    local mountdir=$1; shift
+    while [[ "$1" != '--' ]] ; do shift; done; shift
     local workdir=${common_workdir:-${emptydirs[0]:-/tmp}}
-    mk_yaml_args "$processes_per_pod" "$workdir" "$workload_run_time" \
+    mk_yaml_args "python3" "${mountdir}sysbench.py" "$@" \
+		 "$processes_per_pod" "$workdir" "$workload_run_time" \
+		 "svc-${namespace}-sysbench-${instance}-${replica:-1}-dc" "$drop_cache_port" \
 		 "${___sysbench_generic_options[*]:-}" "fileio" \
 		 "${___sysbench_fileio_options[*]:-}" "${!___sysbench_fileio_tests[*]}"
 }
@@ -38,18 +42,19 @@ function sysbench_create_deployment() {
     local replicas=${4:-1}
     local containers_per_pod=${5:-1}
     local -i instance
-    create_sync_service_if_needed "$namespace" "$(( (${#___sysbench_fileio_tests[@]} * 3) + 2))" \
+    create_sync_service "$namespace" \
 				  "$((containers_per_pod * processes_per_pod * replicas * count))" \
 				  "$((containers_per_pod * replicas * count))"
-    for instance in $(seq $first_deployment $((count + first_deployment - 1))) ; do
-	create_standard_deployment -a sysbench_arglist -e sysbench.pl \
+    for instance in $(seq "$first_deployment" $((count + first_deployment - 1))) ; do
+	create_drop_cache_deployment "$namespace" "$workload" "$instance" "$replicas"
+	create_standard_deployment -a sysbench_arglist -e sysbench.py -p \
 				   "$namespace" "$instance" "$secret_count" "$replicas" "$containers_per_pod"
     done
 }
 
 function sysbench_list_configmaps() {
     cat <<EOF
-${__podfile_dir__}/sysbench.pl
+${__podfile_dir__}/sysbench.py
 EOF
 }
 

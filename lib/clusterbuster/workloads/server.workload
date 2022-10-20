@@ -19,19 +19,38 @@
 ################################################################
 
 declare -ig ___msg_size=32768
+declare -g ___server_interface=
+declare -gir ___server_port=30000
+declare -gir ___server_port_addrs=24
 
 function server_server_arglist() {
-    mk_yaml_args "$port" "$___msg_size" "$(ts)" "$((containers_per_pod * replicas_per_server))"
+    local mountdir=$1; shift
+    while [[ "$1" != '--' ]] ; do shift; done; shift
+    mk_yaml_args "python3" "${mountdir}server.py" "$@" \
+		 "$___server_port" "$___msg_size" "$((containers_per_pod * replicas_per_server))"
+}
+
+function _server_create_security_context() {
+    cat <<EOF
+securityContext:
+  sysctls:
+  - name: net.ipv4.ip_local_port_range
+    value: $___server_port $((___server_port + ___server_port_addrs))
+EOF
 }
 
 function server_client_arglist() {
+    local mountdir=$1; shift
     local namespace=$1
     local instance=$2
+    while [[ "$1" != '--' ]] ; do shift; done; shift
     if [[ $target_data_rate != 0 && $target_data_rate != '' && $workload_run_time_max -eq 0 && bytes_transfer_max -eq 0 ]] ; then
 	bytes_transfer=$default_bytes_transfer
 	bytes_transfer_max=$default_bytes_transfer
     fi
-    mk_yaml_args "svc-${namespace}-server-server-$instance" "$port" "$target_data_rate" "$bytes_transfer" \
+    mk_yaml_args "python3" "${mountdir}client.py" "$@" \
+		 "${___server_interface:+${___server_interface}@}${namespace}-server-server-${instance}-1" \
+		 "$___server_port" "$target_data_rate" "$bytes_transfer" \
 		 "$bytes_transfer_max" "$___msg_size" "$workload_run_time" "$workload_run_time_max"
 }
 
@@ -43,25 +62,29 @@ function server_create_deployment() {
     local containers_per_pod=${5:-1}
     local replicas_per_server=$replicas
     local -i instance
-    create_sync_service_if_needed "$namespace" 2 "$((containers_per_pod * replicas * count))"
+    create_sync_service "$namespace" "$((containers_per_pod * replicas * count))" "$(((containers_per_pod * replicas * count)+count))"
 
-    for instance in $(seq $first_deployment $((count + first_deployment - 1))) ; do
-	create_service "$namespace" "${namespace}-server-server-${instance}" "$port"
-	create_standard_deployment -w server-server -p -c server -e server.pl \
-				   -A "$(create_affinity_yaml ${namespace}-server-client-${instance})" \
+    for instance in $(seq "$first_deployment" $((count + first_deployment - 1))) ; do
+	if [[ -z "${___server_interface}" ]] ; then
+	    create_service -k replica -e "$namespace" "${namespace}-server-server-${instance}-1" $(seq "$___server_port" $((___server_port + ___server_port_addrs)))
+	fi
+	create_standard_deployment -w server-server -p -c server \
+				   -A "$(create_affinity_yaml "${namespace}-server-client-${instance}")" \
 				   -a server_server_arglist \
+				   -S "$(_uperf_create_security_context)" \
 				   "$namespace" "$instance" "$secret_count" 1 1
-	create_standard_deployment -w server-client -e client.pl \
-				   -A "$(create_affinity_yaml ${namespace}-server-server-${instance})" \
+	create_standard_deployment -w server-client \
+				   -A "$(create_affinity_yaml "${namespace}-server-server-${instance}")" \
 				   -a server_client_arglist \
+				   -S "$(_uperf_create_security_context)" \
 				   "$namespace" "$instance" "$secret_count" "$replicas" "$containers_per_pod"
     done
 }
 
 function server_list_configmaps() {
     cat <<EOF
-${__podfile_dir__}/client.pl
-${__podfile_dir__}/server.pl
+${__podfile_dir__}/client.py
+${__podfile_dir__}/server.py
 EOF
 }
 
@@ -76,6 +99,8 @@ function server_calculate_logs_required() {
 function server_help_options() {
     cat <<'EOF'
     Client/server Options:
+       --uperf-interface=<interface>
+                       Specify the network interface to use.
        --msgsize       Message size in data transfer
        --pin_node=server=<node>
                        Specify node to which the server is bound.
@@ -92,11 +117,11 @@ EOF
 function server_process_options() {
     local opt
     local -a unknown_opts=()
-    local ftest
     for opt in "$@" ; do
 	read -r noptname1 noptname optvalue <<< "$(parse_option "$opt")"
 	case "$noptname1" in
-	    msgsize) ___msg_size=$optvalue ;;
+	    msgsize) ___msg_size=$optvalue		;;
+	    serverint*) ___server_interface=$optvalue	;;
 	    *) unknown_opts+=("$noptname ($noptname1)")	;;
 	esac
     done
@@ -115,7 +140,8 @@ function server_supports_reporting() {
 
 function server_report_options() {
     cat <<EOF
-"msg_size": $___msg_size
+"msg_size": $___msg_size,
+"interface": "${___server_interface}"
 EOF
 }
 
