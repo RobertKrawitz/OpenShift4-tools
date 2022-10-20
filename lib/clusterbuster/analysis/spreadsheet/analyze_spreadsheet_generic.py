@@ -17,7 +17,7 @@ from ..summary.analyze_generic import ClusterBusterAnalyzeSummaryGeneric
 
 
 class SpreadsheetAnalysis(ClusterBusterAnalyzeSummaryGeneric):
-    def __init__(self, workload: str, data: dict, metadata: dict, dimensions: list, variables: list, filters: dict=None):
+    def __init__(self, workload: str, data: dict, metadata: dict, dimensions: list, variables: list, filters: dict = None):
         self._sp_dimensions = dimensions
         self._sp_variables = variables
         analysis_vars = [v['var'] for v in self._sp_variables]

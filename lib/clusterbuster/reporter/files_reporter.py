@@ -23,7 +23,8 @@ class files_reporter(ClusterBusterReporter):
         self._file_operations = ['create', 'read', 'remove']
         self._add_timeline_vars(['create.operation', 'read.operation', 'remove.operation'])
         self._add_accumulators(['create.user_cpu_time', 'create.system_cpu_time', 'create.cpu_time', 'create.operations',
-                                'read.user_cpu_time', 'read.system_cpu_time', 'read.cpu_time', 'read.operations', 'read.total_files', 'read.data_size', 'read.data_rate',
+                                'read.user_cpu_time', 'read.system_cpu_time', 'read.cpu_time', 'read.operations',
+                                'read.total_files', 'read.data_size', 'read.data_rate',
                                 'remove.user_cpu_time', 'remove.system_cpu_time', 'remove.cpu_time', 'remove.operations',
                                 'summary.total_dirs', 'summary.total_files', 'summary.data_size'])
         self._set_header_components(['namespace', 'pod', 'container', 'process_id'])
@@ -43,7 +44,7 @@ class files_reporter(ClusterBusterReporter):
             if op == 'read':
                 dest[cop]['Total Files'] = sop['total_files']
                 dest[cop]['Total Data'] = self._prettyprint(sop['data_size'], base=1024, suffix="B", precision=3)
-                dest[cop]['IO Throughput'] = self._prettyprint(sop['data_rate'], precision=3, base=1024, suffix="B/sec");
+                dest[cop]['IO Throughput'] = self._prettyprint(sop['data_rate'], precision=3, base=1024, suffix="B/sec")
 
     def _generate_summary(self, results: dict):
         # I'd like to do this, but if the nodes are out of sync time-wise, this will not

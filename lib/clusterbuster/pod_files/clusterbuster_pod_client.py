@@ -117,7 +117,8 @@ class clusterbuster_pod_client(cb_util):
                         if not self.__reported_results:
                             end_time = self._adjusted_time()
                             user, system = self._cputimes(user, system)
-                            self._report_results(start_time, end_time, start_time - end_time, user, system, {'Note': 'No results provided'})
+                            self._report_results(start_time, end_time, start_time - end_time,
+                                                 user, system, {'Note': 'No results provided'})
                         self._timestamp(f"{os.getpid()} complete")
                         self.__finish()
                     except Exception as err:

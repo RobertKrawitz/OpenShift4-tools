@@ -33,14 +33,18 @@ uuid: {self._metadata['uuid']}
             if runtime in data and 'first_pod_start' in data[runtime]:
                 return data[runtime]['last_pod_start'] - data[runtime]['first_pod_start']
 
-        answer += self._analyze_variables(self._data, ['iterations_sec', 'iterations_cpu_sec'], 'CPU (K ops/sec)', divisor=1000, integer=True)
+        answer += self._analyze_variables(self._data, ['iterations_sec', 'iterations_cpu_sec'],
+                                          'CPU (K ops/sec)', divisor=1000, integer=True)
         answer += self._analyze_variables(self._data, 'first_pod_start', 'First pod start (sec)', integer=False, difference=True)
         answer += self._analyze_variables(self._data, 'last_pod_start', 'Last pod start (sec)', integer=False, difference=True)
-        answer += self._analyze_variables(self._data, 'memory_per_pod', 'Memory/pod (MiB)', divisor=1048576, integer=False, ratio=False, difference=True)
-        answer += self._analyze_variables(self._data, None, 'Last N-1 Pod Start Interval', valfunc=pod_start_delta, integer=False, ratio=True, difference=True)
+        answer += self._analyze_variables(self._data, 'memory_per_pod', 'Memory/pod (MiB)',
+                                          divisor=1048576, integer=False, ratio=False, difference=True)
+        answer += self._analyze_variables(self._data, None, 'Last N-1 Pod Start Interval',
+                                          valfunc=pod_start_delta, integer=False, ratio=True, difference=True)
         return answer
 
-    def _analyze_variables(self, data: dict, columns, header: str, divisor = 1.0, valfunc = None, integer: bool=True, ratio: bool=True, difference: bool=False):
+    def _analyze_variables(self, data: dict, columns, header: str, divisor=1.0, valfunc=None,
+                           integer: bool = True, ratio: bool = True, difference: bool = False):
         if not isinstance(columns, list):
             columns = [columns]
         pcolumns = []

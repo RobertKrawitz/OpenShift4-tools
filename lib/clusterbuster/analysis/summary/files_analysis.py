@@ -25,7 +25,7 @@ class FilesAnalysisBase(ClusterBusterAnalyzeOne):
     def __init__(self, workload: str, data: dict, metadata: dict):
         super().__init__(workload, data, metadata)
 
-    def Analyze(self, report_summary: bool=True, report_detail: bool=False):
+    def Analyze(self, report_summary: bool = True, report_detail: bool = False):
         detail = dict()
         answer = {
             'workload': self._workload,
@@ -45,7 +45,7 @@ class FilesAnalysisBase(ClusterBusterAnalyzeOne):
                             for direct, data6 in data5.items():
                                 if direct == 0:
                                     continue
-                                case_label=f'Pods: {pods}, Dirs: {dirs}, Files: {files}, Blocksize: {blocksize}, Filesize: {filesize}'
+                                case_label = f'Pods: {pods}, Dirs: {dirs}, Files: {files}, Blocksize: {blocksize}, Filesize: {filesize}'
                                 detail_row = dict()
                                 for runtime, data7 in data6.items():
                                     if runtime not in summary:
@@ -128,6 +128,7 @@ class FilesAnalysisBase(ClusterBusterAnalyzeOne):
         else:
             if report_detail:
                 return detail
+
 
 class files_analysis(FilesAnalysisBase):
     def __init__(self, workload: str, data: dict, metadata: dict):

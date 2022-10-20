@@ -22,6 +22,6 @@ class uperf_analysis(ClusterBusterAnalyzeSummaryGeneric):
     """
 
     def __init__(self, workload: str, data: dict, metadata: dict):
-        dimensions = ['By Pod Count', 'By Message Size', 'By Threads' ]
+        dimensions = ['By Pod Count', 'By Message Size', 'By Threads']
         variables = ['rate', 'avg_time_op']
         ClusterBusterAnalyzeSummaryGeneric.__init__(self, workload, data, metadata, dimensions, variables)

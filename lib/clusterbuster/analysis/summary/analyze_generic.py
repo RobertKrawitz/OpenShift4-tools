@@ -134,10 +134,10 @@ class ClusterBusterAnalyzeSummaryGeneric(ClusterBusterAnalyzeOne):
                                 self.__accumulate(accumulator, runtime, dimension, dim_value, var, datum)
                             self.__accumulate(accumulator, runtime, 'Overall', True, var, datum)
                     if 'kata' in detail_row[var] and 'runc' in detail_row[var] and detail_row[var]['kata'] > 0 and detail_row[var]['runc'] > 0:
-                        detail_row[var]['ratio' ] = detail_row[var]['kata'] / detail_row[var]['runc']
+                        detail_row[var]['ratio'] = detail_row[var]['kata'] / detail_row[var]['runc']
                 detail[out_case_name] = detail_row
 
-    def Analyze(self, report_summary: bool=True, report_detail: bool=False):
+    def Analyze(self, report_summary: bool = True, report_detail: bool = False):
         accumulator = dict()
         detail = dict()
         self.__analyze_one(accumulator, detail, self._data, dict(), self._dimensions)

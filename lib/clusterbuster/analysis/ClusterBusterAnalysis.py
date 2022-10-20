@@ -142,7 +142,7 @@ class ClusterBusterAnalysis:
                         report[workload] = i[1](workload, workload_data, metadata).Analyze()
                         if report_type is None:
                             report_type = type(report[workload])
-                        elif report_type != type(report[workload]):
+                        elif report_type is not type(report[workload]):
                             raise TypeError(f"Incompatible report types for {workload}: expect {report_type}, found {type(report[workload])}")
             except Exception as exc:
                 raise(exc)
