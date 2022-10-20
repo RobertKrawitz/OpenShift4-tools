@@ -154,6 +154,7 @@ declare -i liveness_probe_frequency=0
 declare -i liveness_probe_sleep_time=0
 declare -i metrics_support=-1
 declare pod_prefix=
+declare -r arch=$(uname -m)
 
 declare -r sync_flag_file="/tmp/syncfile";
 declare -r sync_error_file="/tmp/syncerror";
@@ -164,7 +165,7 @@ declare xuuid=$uuid
 
 declare kata_runtime_class=kata
 declare image_pull_policy=
-declare container_image=quay.io/rkrawitz/bench-army-knife
+declare container_image=quay.io/rkrawitz/clusterbuster:${arch}-latest
 
 declare accumulateddata=
 declare -a plurals=('s' '')
@@ -1234,7 +1235,7 @@ function _log_helper() {
     fi
     until [[ $("$OC" get pod -ojsonpath='{.status.phase}' "$@" 2>/dev/null) != 'Running' ]] ; do
 	# Need to produce periodic output to stderr to prevent oc exec connection from prematurely terminating
-	"$OC" exec --stdin=false "$@" -- sh -c "while [[ ! -f '$sync_flag_file' ]] ; do sleep 5; echo KEEPALIVE 1>&2; done; jq -rS . '$sync_flag_file'" 2>/dev/null && break
+	"$OC" exec --stdin=false "$@" -- sh -c "while [[ ! -f '$sync_flag_file' ]] ; do sleep 5; echo KEEPALIVE 1>&2; done; cat '$sync_flag_file'" 2>/dev/null && break
 	sleep 5
     done
     # Tell the pod monitor to stop.
