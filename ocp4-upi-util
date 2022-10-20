@@ -264,13 +264,6 @@ address=/api.${ocp4_domain}/${ip_base}.${prov_host}
 address=/api-int.${ocp4_domain}/${ip_base}.${prov_host}
 address=/.apps.${ocp4_domain}/${ip_base}.${prov_host}
 EOF
-
-    for i in $(seq 0 "$((master_count - 1))") ; do
-	cat <<EOF
-address=/etcd-${i}.${ocp4_domain}/${ip_base}.$((master_base+i))
-srv-host=_etcd-server-ssl._tcp.${ocp4_domain},etcd-${i}.${ocp4_domain}.,2380,0,10
-EOF
-    done
 }
 
 function generate_service() {
@@ -283,23 +276,23 @@ function generate_service() {
     case "$name" in
 	master)
 	    cat <<EOF
-    server           bootstrap ${ip_base}.$((bootstrap_host)):${port} check
+    server           bootstrap ${ip_base}.$((bootstrap_host)):${port} check inter 1s backup
 EOF
 	    for i in $(seq 0 "$((master_count - 1))") ; do
 		cat <<EOF
-    server           master-${i} ${ip_base}.$((master_base+i)):${port} check
+    server           master-${i} ${ip_base}.$((master_base+i)):${port} check inter 1s
 EOF
 	    done
 	    ;;
 	worker)
 	    for i in $(seq 0 "$((infra_count - 1))") ; do
 		cat <<EOF
-    server           infra-${i} ${ip_base}.$((infra_base+i)):${port} check
+    server           infra-${i} ${ip_base}.$((infra_base+i)):${port} check inter 1s
 EOF
 	    done
 	    for i in $(seq 0 "$((worker_count - 1))") ; do
 		cat <<EOF
-    server           worker-${i} ${ip_base}.$((worker_base+i)):${port} check
+    server           worker-${i} ${ip_base}.$((worker_base+i)):${port} check inter 1s
 EOF
 	    done
 	    ;;
@@ -346,6 +339,11 @@ frontend http
     bind             *:80
     default_backend  http
 
+frontend ingress
+    mode             http
+    bind             *:1936
+    default_backend  ingress
+
 backend kapi
     mode             tcp
     balance          roundrobin
@@ -365,6 +363,11 @@ backend http
     mode             http
     balance          roundrobin
 $(generate_service worker 80 "$master_count" "$worker_count" "$infra_count")
+
+backend ingress
+    mode             http
+    balance          roundrobin
+$(generate_service worker 1936 "$master_count" "$worker_count" "$infra_count")
 EOF
 }
 
@@ -1364,7 +1367,10 @@ function do_install_2() {
     echo "*** Installing master(s)"
     master_install
     echo "*** Destroying bootstrap"
+    sed -i -e "/bootstrap ${bootstrap_prefix}/d" /etc/haproxy/haproxy.cfg
+    systemctl restart haproxy
     bootstrap_destroy
+    echo "*** Starting worker(s)"
     start_workers
     # We don't invoke setup_chrony with arguments,
     # but command line use might.
