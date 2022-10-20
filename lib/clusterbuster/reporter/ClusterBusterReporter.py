@@ -25,7 +25,6 @@ import base64
 import importlib
 import inspect
 import traceback
-from pprint import pp
 from .metrics.PrometheusMetrics import PrometheusMetrics
 
 
@@ -39,7 +38,7 @@ class ClusterBusterReporter:
         if format == 'none' or format is None:
             return
         if format == 'raw-python':
-            pp(jdata, indent=2, width=-1)
+            print(jdata)
             return
         if format == 'raw':
             json.dump(jdata, sys.stdout, indent=2)
@@ -128,7 +127,7 @@ class ClusterBusterReporter:
     def print_report(items, format: str, outfile=sys.stdout, **kwargs):
         answers = ClusterBusterReporter.report(items, format, **kwargs)
         if format.endswith('python'):
-            pp(answers, indent=2, width=-1, stream=outfile)
+            print(answers, file=outfile)
         elif format.startswith('json'):
             json.dump(answers, outfile, indent=2)
         elif format != "none":
