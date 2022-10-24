@@ -52,7 +52,7 @@ function server_client_arglist() {
 	bytes_transfer_max=$default_bytes_transfer
     fi
     mk_yaml_args "python3" "${mountdir}client.py" "$@" \
-		 "${___server_interface_pod:+${server_interface_pod}@}${namespace}-server-server-${instance}-1" \
+		 "${___server_interface_pod:+${___server_interface_pod}@}${namespace}-server-server-${instance}-1" \
 		 "$___server_port" "$target_data_rate" "$bytes_transfer" \
 		 "$bytes_transfer_max" "$___msg_size" "$workload_run_time" "$workload_run_time_max"
 }
