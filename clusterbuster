@@ -44,6 +44,7 @@ done
 declare -i namespaces=1
 declare -i use_namespaces=1
 declare -i deps_per_namespace=1
+declare -i remove_namespaces=1
 declare -i secrets=0
 declare -i replicas=1
 declare -i parallel=1
@@ -273,6 +274,9 @@ EOF
        --precleanup     Clean up any prior objects
        --cleanup        Clean up generated objects unless there's a failure
        --cleanup-always Clean up generated objects even if there is a failure
+       --remove-namespaces=<1,0>
+                        Remove namespaces when cleaning up objects.  Only
+                        applies when using clusterbuster-created namespaces.
        --predelay=N     Delay for the specified time after workload
                         starts before it starts running.
        --postdelay=N    Delay for the specified time after workload
@@ -735,6 +739,7 @@ function process_option() {
 	precleanup)		    precleanup=$(bool "$optvalue")		;;
 	cleanup)		    cleanup=$(bool "$optvalue")			;;
 	cleanupalways)		    cleanup_always=$(bool "$optvalue")		;;
+	removenamespace*)	    remove_namespaces=$(bool "$optvalue")	;;
 	baseoffset)		    baseoffset=$optvalue			;;
 	# Synchronization
 	sync|syncstart)		    sync_start=$((1-sync_start))		;;
@@ -877,15 +882,27 @@ function __OC() {
 }
 
 function _OC() {
+    debug kubectl "$OC" "$@"
     if ! __OC "$@" ; then
 	fatal "__KUBEFAIL__ $OC $* failed!"
     fi
 }
 
 function ___OC() {
+    debug kubectl "$OC" "$@"
     if ! __OC "$@" ; then
 	fatal "$OC $* failed!"
     fi
+}
+
+function ____OC() {
+    debug kubectl "$OC" "$@"
+    "$OC" "$@"
+}
+
+function _____OC() {
+    debug kubectl "$OC" "$@"
+    "$OC" "$@"
 }
 
 ################################################################
@@ -923,7 +940,7 @@ function create_sync_service() {
 function supports_metrics() {
     if ((metrics_support < 0)) ; then
 	metrics_support=1
-	"$OC" get pod -n openshift-monitoring prometheus-k8s-0 >/dev/null 2>&1 || metrics_support=0
+	____OC get pod -n openshift-monitoring prometheus-k8s-0 >/dev/null 2>&1 || metrics_support=0
     fi
     ((metrics_support > 0))
 }
@@ -1053,7 +1070,7 @@ function ts() {
 }
 
 function run_status_monitor() {
-    (while : ; do sleep 1; printf '++Mark++ ++Mark+ %(%s)T%s' -1 $'\n'; done &); oc get pod "$@" -w -o jsonpath='{.metadata.namespace} {.metadata.name} {.status.phase}{"\n"}'
+    (while : ; do sleep 1; printf '++Mark++ ++Mark+ %(%s)T%s' -1 $'\n'; done &); ____OC get pod "$@" -w -o jsonpath='{.metadata.namespace} {.metadata.name} {.status.phase}{"\n"}'
 }
 
 function _monitor_pods() {
@@ -1105,7 +1122,7 @@ function _monitor_pods() {
 		    echo "Pod -n $namespace $name $status!" 1>&2
 		    echo "Tail end of logs:" 1>&2
 		    # TODO: Need to get logs from each container
-		    oc logs -n "$namespace" "$name" |tail -20 1>&2
+		    ____OC logs -n "$namespace" "$name" |tail -20 1>&2
 		    killthemall "Pod -n $namespace $name failed"
 		    return 1
 		    ;;
@@ -1193,16 +1210,16 @@ function _fail_helper()  {
     local faildata
     while : ; do
 	local podstatus
-	podstatus=$("$OC" get pod -ojsonpath='{.status.phase}' "$@" 2>/dev/null)
+	podstatus=$(____OC get pod -ojsonpath='{.status.phase}' "$@" 2>/dev/null)
 	case "$podstatus" in
 	    Succeeded|Terminated)
 		return
 		;;
 	    Running)
 		# Need to produce periodic output to stderr to prevent oc exec connection from prematurely terminating
-		faildata="$("$OC" exec --stdin=false "$@" -- sh -c "while [[ ! -f '$sync_error_file' ]] ; do sleep 5; echo KEEPALIVE 1>&2; done; cat '$sync_error_file'" 2>/dev/null)"
+		faildata="$(____OC exec --stdin=false "$@" -- sh -c "while [[ ! -f '$sync_error_file' ]] ; do sleep 5; echo KEEPALIVE 1>&2; done; cat '$sync_error_file'" 2>/dev/null)"
 		if [[ -n "$faildata" ]] ; then
-		    "$OC" exec --stdin=false "$@" -- sh -c "rm -f '$sync_error_file'"
+		    ____OC exec --stdin=false "$@" -- sh -c "rm -f '$sync_error_file'"
 		    echo "Run failed:" 1>&2
 		    echo "${faildata:-}" 1>&2
 		    killthemall "Run failed, exiting!"
@@ -1233,16 +1250,16 @@ function _log_helper() {
 	echo "*** Injecting forced timeout error"
 	sleep infinity
     fi
-    until [[ $("$OC" get pod -ojsonpath='{.status.phase}' "$@" 2>/dev/null) != 'Running' ]] ; do
+    until [[ $(____OC get pod -ojsonpath='{.status.phase}' "$@" 2>/dev/null) != 'Running' ]] ; do
 	# Need to produce periodic output to stderr to prevent oc exec connection from prematurely terminating
-	"$OC" exec --stdin=false "$@" -- sh -c "while [[ ! -f '$sync_flag_file' ]] ; do sleep 5; echo KEEPALIVE 1>&2; done; cat '$sync_flag_file'" 2>/dev/null && break
+	____OC exec --stdin=false "$@" -- sh -c "while [[ ! -f '$sync_flag_file' ]] ; do sleep 5; echo KEEPALIVE 1>&2; done; cat '$sync_flag_file'" 2>/dev/null && break
 	sleep 5
     done
     # Tell the pod monitor to stop.
     if [[ -n "${cb_tempdir:-}" ]] ; then
 	touch "$cb_tempdir/___run_complete"
     fi
-    "$OC" exec --stdin=false "$@" -- sh -c "rm -f '$sync_flag_file'" || killthemall "Can't terminate sync"
+    ____OC exec --stdin=false "$@" -- sh -c "rm -f '$sync_flag_file'" || killthemall "Can't terminate sync"
 }
 
 function _get_logs_poll() {
@@ -1404,7 +1421,7 @@ EOF
 
 function _get_kata_version() {
     local kata_version
-    kata_version=$(oc get csv  -n openshift-sandboxed-containers-operator -o jsonpath="{.items[0].spec.version}" 2>/dev/null)
+    kata_version=$(____OC get csv  -n openshift-sandboxed-containers-operator -o jsonpath="{.items[0].spec.version}")
     if [[ -n "$kata_version" ]] ; then
 	cat <<EOF
 "kata_version": "${kata_version:-}",
@@ -2672,7 +2689,7 @@ function drop_host_caches() {
 	done
 	nodes_to_drop=("${!tmp_nodes_to_drop[@]}")
     else
-	readarray -t nodes_to_drop <<< "$(oc get -l node-role.kubernetes.io/worker node -ojsonpath="{range .items[*]}{.metadata.name}{'\n'}{end}")"
+	readarray -t nodes_to_drop <<< "$(____OC get -l node-role.kubernetes.io/worker node -ojsonpath="{range .items[*]}{.metadata.name}{'\n'}{end}")"
     fi
     for n in "${nodes_to_drop[@]}" ; do
 	((report_object_creation)) && echo "Dropping buffer cache: $n"
@@ -2728,13 +2745,13 @@ function _do_cleanup_1() {
 	exec >/dev/null
 	exec 2>/dev/null
 	# shellcheck disable=SC2086
-	"$OC" delete "${1:-ns}" -l "$basename" $ltimeout
+	____OC delete "${@:-ns}" -l "$basename" $ltimeout
     elif ((report_object_creation)) ; then
 	# shellcheck disable=SC2086
-	__OC delete "${1:-ns}" -l "$basename" $ltimeout 1>&2
+	__OC delete "${@:-ns}" -l "$basename" $ltimeout 1>&2
     else
 	# shellcheck disable=SC2086
-	__OC delete "${1:-ns}" -l "$basename" $ltimeout >/dev/null 2>&1
+	__OC delete "${@:-ns}" -l "$basename" $ltimeout 2>&1 |grep 'DEBUG kubectl:' 1>&2
     fi
 }
 
@@ -2743,7 +2760,7 @@ function _do_cleanup() {
 	if [[ -n "$force_cleanup_timeout" ]] ; then
 	    warn "*** Cleanup failed, doing a force delete!"
 	    __OC delete deployment,replicaset,pod,configmap,secret,service -A  -l "$basename" --force --grace-period=0 1>&2
-	    if ((use_namespaces)) ; then
+	    if ((use_namespaces && remove_namespaces)) ; then
 		__OC delete namespace -l "$basename" --force --grace-period=0 1>&2
 	    fi
 	fi
@@ -2767,10 +2784,10 @@ function do_cleanup() {
     local objects_to_clean
     local objtype
     (( doit )) || return 0
-    if ((use_namespaces)) ; then
+    if ((use_namespaces && remove_namespaces)) ; then
 	objects_to_clean=namespace
     else
-	objects_to_clean="${deployment_type},configmap,secret,service"
+	objects_to_clean="-A ${deployment_type},configmap,secret,service,pod"
     fi
     if [[ -n "${injected_errors[precleanup]:-}" && $precleanup -gt 0 ]] ; then
 	warn "*** Injecting precleanup error ${inject_errors[precleanup]:-}"
@@ -2782,7 +2799,7 @@ function do_cleanup() {
 	sleep "${injected_errors[cleanup]:-}"
 	killthemall "Cleanup timed out!"
     fi
-    _do_cleanup $force "$objects_to_clean" || killthemall "Cleanup timed out!"
+    _do_cleanup $force $objects_to_clean || killthemall "Cleanup timed out!"
 }
 
 ################################################################
@@ -2841,7 +2858,7 @@ function do_logging() {
 	if [[ -n "$namespace" && -n "$pod" ]] ; then
 	    sync_pods+=("-n $namespace $pod")
 	fi
-    done <<< "$(oc get pod -A --no-headers -l "${basename}-sync=${uuid}")"
+    done <<< "$(____OC get pod -A --no-headers -l "${basename}-sync=${uuid}")"
     get_logs "${sync_pods[@]}" &
     local -i get_logs_pid=$!
     if ((timeout > 0)) ; then
@@ -2859,7 +2876,7 @@ function do_logging() {
 		    while read -r line ; do
 			read -r ns pod rest <<< "$line"
 			echo "$line" 1>&2
-			oc logs -n "$ns" "$pod" 1>&2
+			____OC logs -n "$ns" "$pod" 1>&2
 			echo 1>&2
 		    done
 		}
@@ -3127,4 +3144,4 @@ fi
 
 [[ -z "$*" ]] || warn "Warning: extraneous arguments $* after basename will be ignored!"
 
-run_clusterbuster_1
+(run_clusterbuster_1) 4>&2
