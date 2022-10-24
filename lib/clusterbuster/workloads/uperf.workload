@@ -24,7 +24,7 @@ declare -ga ___uperf_protos=(tcp)
 declare -ga ___uperf_nthrs=(1)
 declare -ag ___uperf_tests=()
 declare -gir ___uperf_port=30000
-declare -gir ___uperf_port_addrs=24
+declare -gi ___uperf_port_addrs=24
 declare -gi ___uperf_ramp_time=3
 declare -g ___uperf_interface=
 declare -g ___uperf_interface_pod=
@@ -36,12 +36,14 @@ function uperf_server_arglist() {
 }
 
 function _uperf_create_security_context() {
-    cat <<EOF
+    if [[ -z "$___uperf_interface_pod" ]] ; then
+	cat <<EOF
 securityContext:
   sysctls:
   - name: net.ipv4.ip_local_port_range
     value: $___uperf_port $((___uperf_port + ___uperf_port_addrs))
 EOF
+    fi
 }
 
 function uperf_client_arglist() {
@@ -59,6 +61,9 @@ function uperf_create_deployment() {
     local replicas=${4:-1}
     local containers_per_pod=${5:-1}
     local -i instance
+    if ((((replicas * containers_per_pod * processes_per_pod) + 4) > ___uperf_port_addrs)) ; then
+	___uperf_port_addrs=$(((replicas * containers_per_pod * processes_per_pod) + 4))
+    fi
     container_image="quay.io/rkrawitz/clusterbuster-workloads:${arch}-latest"
     create_sync_service "$namespace" "$((containers_per_pod * replicas * count))" "$(( (containers_per_pod * replicas * count) + count))"
 
