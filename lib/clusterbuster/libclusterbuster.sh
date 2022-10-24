@@ -48,7 +48,7 @@ function debug() {
     local condition=${1:-}
     shift
     if test_debug "$condition" ; then
-	echo "*** DEBUG $condition:" "${@@Q}" |timestamp 1>&2
+	echo "*** DEBUG $condition:" "${@@Q}" |timestamp 1>&4
     fi
     return 0
 }
@@ -122,9 +122,11 @@ function parse_option() {
     optvalue=${option#*=}
     noptname=${optname//-/_}
     if [[ $option != *'='* ]] ; then
-	if [[ $noptname = "no_"* || $optname = "dont_"* ]] ; then
+	if [[ $noptname = "no_"* || $optname = "dont_"* || $noptname = "no-"* || $optname = "dont-"* ]] ; then
 	    noptname=${noptname#dont_}
 	    noptname=${noptname#no_}
+	    noptname=${noptname#dont-}
+	    noptname=${noptname#no-}
 	    optvalue=0
 	else
 	    optvalue=1
