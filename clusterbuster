@@ -900,9 +900,9 @@ function ____OC() {
     "$OC" "$@"
 }
 
-function _____OC() {
-    debug kubectl "$OC" "$@"
-    "$OC" "$@"
+function namespace_exists() {
+    local ns=$1
+    ____OC get ns "$ns" >/dev/null 2>&1
 }
 
 ################################################################
@@ -1420,12 +1420,14 @@ EOF
 }
 
 function _get_kata_version() {
-    local kata_version
-    kata_version=$(____OC get csv  -n openshift-sandboxed-containers-operator -o jsonpath="{.items[0].spec.version}")
-    if [[ -n "$kata_version" ]] ; then
-	cat <<EOF
+    if namespace_exists openshift-sandboxed-containers-operator ; then
+	local kata_version
+	kata_version=$(____OC get csv -n openshift-sandboxed-containers-operator -o jsonpath="{.items[0].spec.version}")
+	if [[ -n "$kata_version" ]] ; then
+	    cat <<EOF
 "kata_version": "${kata_version:-}",
 EOF
+	fi
     fi
 }
 
@@ -2175,7 +2177,7 @@ function create_namespace() {
     shift $((OPTIND-1))
     local namespace=$1
     if ((use_namespaces)) ; then
-	create_object $force -t namespace "$namespace" <<EOF
+	namespace_exists "$namespace" || create_object $force -t namespace "$namespace" <<EOF
 apiVersion: v1
 kind: Namespace
 metadata:
