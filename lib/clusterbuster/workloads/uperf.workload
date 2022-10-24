@@ -24,9 +24,10 @@ declare -ga ___uperf_protos=(tcp)
 declare -ga ___uperf_nthrs=(1)
 declare -ag ___uperf_tests=()
 declare -gir ___uperf_port=30000
-declare -gir ___uperf_port_addrs=24
+declare -gi ___uperf_port_addrs=24
 declare -gi ___uperf_ramp_time=3
 declare -g ___uperf_interface=
+declare -g ___uperf_interface_pod=
 
 function uperf_server_arglist() {
     local mountdir=$1; shift
@@ -35,19 +36,21 @@ function uperf_server_arglist() {
 }
 
 function _uperf_create_security_context() {
-    cat <<EOF
+    if [[ -z "$___uperf_interface_pod" ]] ; then
+	cat <<EOF
 securityContext:
   sysctls:
   - name: net.ipv4.ip_local_port_range
     value: $___uperf_port $((___uperf_port + ___uperf_port_addrs))
 EOF
+    fi
 }
 
 function uperf_client_arglist() {
     local mountdir=$1; shift
     while [[ "$1" != '--' ]] ; do shift; done; shift
-    mk_yaml_args "python3" "${mountdir}uperf-client.py" "$@" \
-		 "$workload_run_time" "$___uperf_ramp_time" "${___uperf_interface:+${___uperf_interface}@}${namespace}-uperf-server-${instance}-1" \
+    mk_yaml_args "python3" "${mountdir}uperf-client.py" "$@" "$workload_run_time" "$___uperf_ramp_time" \
+		 "${___uperf_interface_pod:+${___uperf_interface_pod}@}${namespace}-uperf-server-${instance}-1" \
 		 "$___uperf_port" "${___uperf_tests[@]}"
 }
 
@@ -58,6 +61,9 @@ function uperf_create_deployment() {
     local replicas=${4:-1}
     local containers_per_pod=${5:-1}
     local -i instance
+    if ((((replicas * containers_per_pod * processes_per_pod) + 4) > ___uperf_port_addrs)) ; then
+	___uperf_port_addrs=$(((replicas * containers_per_pod * processes_per_pod) + 4))
+    fi
     container_image="quay.io/rkrawitz/clusterbuster-workloads:${arch}-latest"
     create_sync_service "$namespace" "$((containers_per_pod * replicas * count))" "$(( (containers_per_pod * replicas * count) + count))"
 
@@ -103,8 +109,10 @@ function uperf_help_options() {
                        Specify node to which the server is bound.
        --uperf-ramp-time=<sec>
                        Specify the ramp time for uperf.
-       --uperf-interface=<interface>
-                       Specify the network interface to use.
+       --uperf-interface=<interface[=pod_interface]>
+                       Specify the network interface to use.  Optional
+                       pod interface is the name of the interface on the
+                       pod (normally net1).
      The following options take a comma-separated list of each
      value to test.  The outer product of all specified tests
      is run.
@@ -138,7 +146,17 @@ function uperf_process_options() {
 	    uperfproto*) ___uperf_protos=(${optvalue//,/ })	   ;;
 	    uperfnthr*) ___uperf_nthrs=(${optvalue//,/ })	   ;;
 	    uperframp*) ___uperf_ramp_time=$optvalue		   ;;
-	    uperfint*) ___uperf_interface=$optvalue		   ;;
+	    uperfint*)
+		___uperf_interface=$optvalue
+		if [[ $___uperf_interface = *'='* ]] ; then
+		    ___uperf_interface_pod=${___uperf_interface#*=}
+		    ___uperf_interface=${___uperf_interface%%=*}
+		fi
+		if [[ -z "$___uperf_interface_pod" && $___uperf_interface != eth0 ]] ; then
+		    ___uperf_interface_pod=net1
+		fi
+		pod_annotations+=("k8s.v1.cni.cncf.io/networks: $___uperf_interface")
+		;;
 	    *) unknown_opts+=("$noptname ($noptname1)")		   ;;
 	esac
     done

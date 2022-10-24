@@ -2504,7 +2504,6 @@ apiVersion: v1
 kind: Pod
 metadata:
   name: $(mkpodname "${namespace}")
-$(indent 2 standard_pod_metadata_yaml "$namespace" sync)
 $(indent 2 standard_deployment_metadata_yaml "$namespace" sync)
 $(indent 2 standard_labels_yaml 'sync' "$namespace")
   selector:
@@ -2787,7 +2786,7 @@ function do_cleanup() {
     if ((use_namespaces && remove_namespaces)) ; then
 	objects_to_clean=namespace
     else
-	objects_to_clean="-A ${deployment_type},configmap,secret,service,pod"
+	objects_to_clean="-A deployment,replicaset,configmap,secret,service,pod"
     fi
     if [[ -n "${injected_errors[precleanup]:-}" && $precleanup -gt 0 ]] ; then
 	warn "*** Injecting precleanup error ${inject_errors[precleanup]:-}"
