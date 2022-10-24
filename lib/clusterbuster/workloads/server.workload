@@ -121,7 +121,10 @@ function server_process_options() {
 	read -r noptname1 noptname optvalue <<< "$(parse_option "$opt")"
 	case "$noptname1" in
 	    msgsize) ___msg_size=$optvalue		;;
-	    serverint*) ___server_interface=$optvalue	;;
+	    serverint*)
+		___server_interface=$optvalue
+		pod_annotations+=("k8s.v1.cni.cncf.io/networks: $___server_interface")
+		;;
 	    *) unknown_opts+=("$noptname ($noptname1)")	;;
 	esac
     done

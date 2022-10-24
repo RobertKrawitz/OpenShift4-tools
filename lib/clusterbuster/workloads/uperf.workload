@@ -138,7 +138,10 @@ function uperf_process_options() {
 	    uperfproto*) ___uperf_protos=(${optvalue//,/ })	   ;;
 	    uperfnthr*) ___uperf_nthrs=(${optvalue//,/ })	   ;;
 	    uperframp*) ___uperf_ramp_time=$optvalue		   ;;
-	    uperfint*) ___uperf_interface=$optvalue		   ;;
+	    uperfint*)
+		___uperf_interface=$optvalue
+		pod_annotations+=("k8s.v1.cni.cncf.io/networks: $___uperf_interface")
+		;;
 	    *) unknown_opts+=("$noptname ($noptname1)")		   ;;
 	esac
     done
