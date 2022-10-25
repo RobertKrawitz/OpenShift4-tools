@@ -73,11 +73,12 @@ Metric\tMin ratio\tAvg ratio\tMax ratio
 {name}{unit}
 {dimension.replace('By ', '')}\tKata\trunc\tratio
 """
-                for value in data[var]['kata'].keys():
-                    answer += '\t'.join([str(value),
-                                         self.print_safe(data[var], 'kata', value, multiplier),
-                                         self.print_safe(data[var], 'runc', value, multiplier),
-                                         self.print_safe(data[var], 'ratio', value)]) + "\n"
+                if 'kata' in data[var]:
+                    for value in data[var]['kata'].keys():
+                        answer += '\t'.join([str(value),
+                                             self.print_safe(data[var], 'kata', value, multiplier),
+                                             self.print_safe(data[var], 'runc', value, multiplier),
+                                             self.print_safe(data[var], 'ratio', value)]) + "\n"
             for v in self._sp_variables:
                 var = v['var']
                 name = v.get('name', var)
@@ -85,11 +86,12 @@ Metric\tMin ratio\tAvg ratio\tMax ratio
 {name} (Ratio)
 {dimension.replace('By ', '')}\tMin ratio\tAvg ratio\tMax ratio
 """
-                for value in data[var]['kata'].keys():
-                    answer += '\t'.join([str(value),
-                                         self.print_safe(data[var], 'min_ratio', value),
-                                         self.print_safe(data[var], 'ratio', value),
-                                         self.print_safe(data[var], 'max_ratio', value)]) + "\n"
+                if 'kata' in data[var]:
+                    for value in data[var]['kata'].keys():
+                        answer += '\t'.join([str(value),
+                                             self.print_safe(data[var], 'min_ratio', value),
+                                             self.print_safe(data[var], 'ratio', value),
+                                             self.print_safe(data[var], 'max_ratio', value)]) + "\n"
         return answer + '\n\n'
 
     def Analyze(self, report_detail=True):
