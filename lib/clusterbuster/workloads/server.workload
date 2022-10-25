@@ -65,6 +65,18 @@ function server_create_deployment() {
     local containers_per_pod=${5:-1}
     local replicas_per_server=$replicas
     local -i instance
+    if [[ -n "$___server_interface" ]] ; then
+	if [[ $___server_interface = *'='* ]] ; then
+	    ___server_interface_pod=${___server_interface#*=}
+	    ___server_interface=${___server_interface%%=*}
+	fi
+	if [[ -z "$___server_interface_pod" && $___server_interface != eth0 ]] ; then
+	    ___server_interface_pod=net1
+	fi
+	if [[ ${pod_annotations[*]} != *"k8s.v1.cni.cncf.io/networks"* ]] ; then
+	    pod_annotations+=("k8s.v1.cni.cncf.io/networks: $___server_interface")
+	fi
+    fi
     if ((((replicas * containers_per_pod * processes_per_pod) + 4) > ___server_port_addrs)) ; then
 	___server_port_addrs=$(((replicas * containers_per_pod * processes_per_pod) + 4))
     fi
@@ -129,17 +141,7 @@ function server_process_options() {
 	read -r noptname1 noptname optvalue <<< "$(parse_option "$opt")"
 	case "$noptname1" in
 	    msgsize) ___msg_size=$optvalue		;;
-	    serverint*)
-		___server_interface=$optvalue
-		if [[ $___server_interface = *'='* ]] ; then
-		    ___server_interface_pod=${___server_interface%%=*}
-		    ___server_interface=${___server_interface#*=}
-		fi
-		if [[ -z "$___server_interface_pod" && $___server_interface != eth0 ]] ; then
-		    ___server_interface_pod=net1
-		fi
-		pod_annotations+=("k8s.v1.cni.cncf.io/networks: $___server_interface")
-		;;
+	    serverint*) ___server_interface=$optvalue	;;
 	    *) unknown_opts+=("$noptname ($noptname1)")	;;
 	esac
     done

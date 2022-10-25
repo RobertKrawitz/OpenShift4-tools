@@ -61,6 +61,18 @@ function uperf_create_deployment() {
     local replicas=${4:-1}
     local containers_per_pod=${5:-1}
     local -i instance
+    if [[ -n "$___uperf_interface" ]] ; then
+	if [[ $___uperf_interface = *'='* ]] ; then
+	    ___uperf_interface_pod=${___uperf_interface#*=}
+	    ___uperf_interface=${___uperf_interface%%=*}
+	fi
+	if [[ -z "$___uperf_interface_pod" && $___uperf_interface != eth0 ]] ; then
+	    ___uperf_interface_pod=net1
+	fi
+	if [[ ${pod_annotations[*]} != *"k8s.v1.cni.cncf.io/networks"* ]] ; then
+	    pod_annotations+=("k8s.v1.cni.cncf.io/networks: $___uperf_interface")
+	fi
+    fi
     if ((((replicas * containers_per_pod * processes_per_pod) + 4) > ___uperf_port_addrs)) ; then
 	___uperf_port_addrs=$(((replicas * containers_per_pod * processes_per_pod) + 4))
     fi
@@ -146,17 +158,7 @@ function uperf_process_options() {
 	    uperfproto*) ___uperf_protos=(${optvalue//,/ })	   ;;
 	    uperfnthr*) ___uperf_nthrs=(${optvalue//,/ })	   ;;
 	    uperframp*) ___uperf_ramp_time=$optvalue		   ;;
-	    uperfint*)
-		___uperf_interface=$optvalue
-		if [[ $___uperf_interface = *'='* ]] ; then
-		    ___uperf_interface_pod=${___uperf_interface#*=}
-		    ___uperf_interface=${___uperf_interface%%=*}
-		fi
-		if [[ -z "$___uperf_interface_pod" && $___uperf_interface != eth0 ]] ; then
-		    ___uperf_interface_pod=net1
-		fi
-		pod_annotations+=("k8s.v1.cni.cncf.io/networks: $___uperf_interface")
-		;;
+	    uperfint*) ___uperf_interface=$optvalue		   ;;
 	    *) unknown_opts+=("$noptname ($noptname1)")		   ;;
 	esac
     done
