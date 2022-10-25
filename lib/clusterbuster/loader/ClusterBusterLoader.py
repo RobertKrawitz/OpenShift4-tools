@@ -48,7 +48,7 @@ class LoadOneReport:
             answer['metadata']['start_time'] = self._metadata['cluster_start_time']
             answer['metadata']['uuid'] = self._metadata['uuid']
             answer['metadata']['server_version'] = self._metadata['kubernetes_version']['serverVersion']
-            answer['metadata']['openshift_version'] = self._metadata['kubernetes_version']['openshiftVersion']
+            answer['metadata']['openshift_version'] = self._metadata['kubernetes_version'].get('openshiftVersion', 'Unknown')
             answer['metadata']['run_host'] = self._metadata['runHost']
             answer['metadata']['kata_version'] = self._metadata.get('kata_version')
         else:

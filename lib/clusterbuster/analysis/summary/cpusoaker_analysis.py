@@ -82,14 +82,14 @@ class cpusoaker_analysis(ClusterBusterAnalyzeOne):
             answer[runtime]['Fastest pod start'] = min_pod_start_time[runtime]
             answer[runtime]['Slowest pod start'] = max_pod_start_time[runtime]
             answer[runtime]['Last n-1 pod start time'] = last_pod_start[runtime][min_max_pods] - first_pod_start[runtime][min_max_pods]
-        answer['Ratio pod starts/sec'] = pods_sec['kata'][min_max_pods] / pods_sec['runc'][min_max_pods]
-        answer['Ratio iterations/CPU sec'] = iterations_cpu_sec['kata'][min_max_pods] / iterations_sec['runc'][min_max_pods]
-        answer['Ratio iterations/CPU sec'] = iterations_cpu_sec['kata'][min_max_pods] / iterations_cpu_sec['runc'][min_max_pods]
-        answer['Ratio fastest pod start time'] = min_pod_start_time['kata'] / min_pod_start_time['runc']
-        answer['Ratio slowest pod start time'] = max_pod_start_time['kata'] / max_pod_start_time['runc']
-        answer['Ratio last n-1 pod start time'] = answer['kata']['Last n-1 pod start time'] / answer['runc']['Last n-1 pod start time']
-        answer['Kata first pod start overhead'] = min_pod_start_time['kata'] - min_pod_start_time['runc']
         try:
+            answer['Ratio pod starts/sec'] = pods_sec['kata'][min_max_pods] / pods_sec['runc'][min_max_pods]
+            answer['Ratio iterations/CPU sec'] = iterations_cpu_sec['kata'][min_max_pods] / iterations_sec['runc'][min_max_pods]
+            answer['Ratio iterations/CPU sec'] = iterations_cpu_sec['kata'][min_max_pods] / iterations_cpu_sec['runc'][min_max_pods]
+            answer['Ratio fastest pod start time'] = min_pod_start_time['kata'] / min_pod_start_time['runc']
+            answer['Ratio slowest pod start time'] = max_pod_start_time['kata'] / max_pod_start_time['runc']
+            answer['Ratio last n-1 pod start time'] = answer['kata']['Last n-1 pod start time'] / answer['runc']['Last n-1 pod start time']
+            answer['Kata first pod start overhead'] = min_pod_start_time['kata'] - min_pod_start_time['runc']
             answer['Kata memory overhead/pod'] = memory['kata'][min_max_pods] - memory['runc'][min_max_pods]
         except Exception:
             pass
