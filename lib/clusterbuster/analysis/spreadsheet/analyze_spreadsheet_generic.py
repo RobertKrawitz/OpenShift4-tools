@@ -14,6 +14,7 @@
 # limitations under the License.
 
 from ..summary.analyze_generic import ClusterBusterAnalyzeSummaryGeneric
+import sys
 
 
 class SpreadsheetAnalysis(ClusterBusterAnalyzeSummaryGeneric):
@@ -30,14 +31,35 @@ class SpreadsheetAnalysis(ClusterBusterAnalyzeSummaryGeneric):
         except Exception:
             return 'N/A'
 
-    def _analyze_one(self, dimension, data):
-        def print_safe(data: dict, d1, d2, multiplier: float = 1):
-            try:
-                val = data[d1][d2]
-                return self._prettyprint(val * multiplier, precision=3, base=0)
-            except Exception:
-                return 'N/A'
+    def __analyze_one_runc_only(self, dimension, data):
+        answer = ""
+        if dimension == 'Overall':
+            answer += """Total
+Metric\tvalue
+"""
+            for v in self._sp_variables:
+                var = v['var']
+                name = v.get('name', var)
+                multiplier = v.get('multiplier', 1)
+                answer += '\t'.join([name,
+                                     self.print_safe(data[var], 'runc', True, multiplier)]) + "\n"
+        else:
+            answer += dimension
+            for v in self._sp_variables:
+                var = v['var']
+                name = v.get('name', var)
+                unit = v.get('unit', '')
+                multiplier = v.get('multiplier', 1)
+                answer += f"""
+{name}{unit}
+{dimension.replace('By ', '')}\tvalue
+"""
+                for value in data[var]['runc'].keys():
+                    answer += '\t'.join([str(value),
+                                         self.print_safe(data[var], 'runc', value, multiplier)]) + "\n"
+        return answer + '\n\n'
 
+    def __analyze_one_kata(self, dimension, data):
         answer = ""
         if dimension == 'Overall':
             answer += """Total
@@ -93,6 +115,12 @@ Metric\tMin ratio\tAvg ratio\tMax ratio
                                              self.print_safe(data[var], 'ratio', value),
                                              self.print_safe(data[var], 'max_ratio', value)]) + "\n"
         return answer + '\n\n'
+
+    def _analyze_one(self, dimension, data):
+        for v in self._sp_variables:
+            if 'kata' in data[v['var']]:
+                return self.__analyze_one_kata(dimension, data)
+        return self.__analyze_one_runc_only(dimension, data)
 
     def Analyze(self, report_detail=True):
         report, detail = super().Analyze(report_detail=report_detail)
