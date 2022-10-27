@@ -119,6 +119,10 @@ function files_process_options() {
     fi
 }
 
+function files_namespace_policy() {
+    echo privileged
+}
+
 function files_supports_reporting() {
     :
 }
