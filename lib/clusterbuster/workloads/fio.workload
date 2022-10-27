@@ -265,4 +265,8 @@ function fio_report_options() {
 EOF
 }
 
+function fio_namespace_policy() {
+    echo privileged
+}
+
 register_workload fio

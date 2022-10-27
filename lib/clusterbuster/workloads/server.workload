@@ -35,6 +35,7 @@ function _server_create_security_context() {
     if [[ -z "$___server_interface_pod" ]] ; then
 	cat <<EOF
 securityContext:
+$(indent 2 default_security_context_content)
   sysctls:
   - name: net.ipv4.ip_local_port_range
     value: $___server_port $((___server_port + ___server_port_addrs))
