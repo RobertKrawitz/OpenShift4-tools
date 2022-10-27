@@ -36,10 +36,12 @@ function uperf_server_arglist() {
 }
 
 function _uperf_create_security_context() {
-    if [[ -z "$___uperf_interface_pod" ]] ; then
-	cat <<EOF
+    cat <<EOF
 securityContext:
 $(indent 2 default_security_context_content)
+EOF
+    if [[ -z "$___uperf_interface_pod" ]] ; then
+	cat <<EOF
   sysctls:
   - name: net.ipv4.ip_local_port_range
     value: $___uperf_port $((___uperf_port + ___uperf_port_addrs))
