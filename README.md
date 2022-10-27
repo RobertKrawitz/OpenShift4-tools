@@ -63,6 +63,9 @@ etc. OpenShift 4 clusters.
 
 - **clusterbuster** -- generate pods, namespaces, and secrets to stress
   test a cluster.  See [documentation](docs/clusterbuster.md)
+  
+- **force-pull-clusterbuster-image** - force-pull the ClusterBuster
+  images so that they are present on all nodes in a cluster.
 
 ## Data reporting utilities
 
