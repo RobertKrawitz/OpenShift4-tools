@@ -63,17 +63,19 @@ class uperf_client(clusterbuster_pod_client):
         cases = dict()
         elapsed_time = 0
         for test in self.tests:
-            [test_type, proto, size, nthr] = re.split(r'[,\s]+', test)
+            [test_type, proto, size, nthr, count] = re.split(r'[,\s]+', test)
             size = int(size)
             nthr = int(nthr)
-            base_test_name = f"{proto}-{test_type}-{size}B-{nthr}i"
+            count = int(count)
+            base_test_name = f"{proto}-{test_type}-{size}B-{nthr}i-{count}c"
             options = {
                 'srvhost': self.srvhost,
                 'proto': proto,
                 'test_type': test_type,
                 'size': size,
                 'runtime': self.runtime + (2 * self.ramp_time),
-                'nthr': nthr
+                'nthr': nthr,
+                'count': count
                 }
             test_template = os.path.join(self.podfile_dir, f"uperf-{test_type}.xml")
             testfile = "/tmp/uperf-test.xml"
@@ -84,6 +86,7 @@ class uperf_client(clusterbuster_pod_client):
                 'test_type': test_type,
                 'message_size': size,
                 'thread_count': nthr,
+                'count': count,
                 'test_name': test_name
                 }
             failed = False

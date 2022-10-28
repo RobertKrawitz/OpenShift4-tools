@@ -25,10 +25,11 @@ class uperf_loader(LoadOneReport):
         job_metadata = self._metadata['workload_metadata']['jobs'][job_name]
         msgsize = job_metadata['msgsize']
         threads = job_metadata['nthr']
+        stream_write_count = job_metadata.get('stream_write_count', 256)
         op = job_metadata['test_type']
         job = self._summary['results'][job_name]['summary']
 
-        self._MakeHierarchy(self._answer, ['uperf', self._count, msgsize, threads, self._runtime_env])
+        self._MakeHierarchy(self._answer, ['uperf', self._count, msgsize, threads, stream_write_count, self._runtime_env])
         root = self._answer['uperf'][self._count][msgsize][threads][self._runtime_env]
         try:
             root[f'cpu_util_{op}'] = self._metrics['CPU utilization']['Total'][f'instance: {self._client_pin_node}']

@@ -30,16 +30,18 @@ class uperf_analysis(ClusterBusterAnalyzeOne):
             for msgsize, data2 in data1.items():
                 for threads, data3 in data2.items():
                     for runtime, data4 in data3.items():
-                        answer = dict()
-                        answer['uuid'] = self._metadata['uuid']
-                        answer['test_description'] = dict()
-                        answer['test_description']['pods'] = pods
-                        answer['test_description']['workload'] = 'uperf'
-                        answer['test_description']['msgsize'] = msgsize
-                        answer['test_description']['threads'] = threads
-                        answer['test_description']['runtime'] = runtime
-                        answer['test_description']['name'] = f'uperf_{runtime}_pods_{pods}_msgsize_{msgsize}_threads_{threads}'
-                        for key, item in data4.items():
-                            answer[key] = item
-                        answers.append(answer)
+                        for stream_write_count, data5 in data4.items():
+                            answer = dict()
+                            answer['uuid'] = self._metadata['uuid']
+                            answer['test_description'] = dict()
+                            answer['test_description']['pods'] = pods
+                            answer['test_description']['workload'] = 'uperf'
+                            answer['test_description']['msgsize'] = msgsize
+                            answer['test_description']['threads'] = threads
+                            answer['test_description']['runtime'] = runtime
+                            answer['test_description']['stream_write_count'] = stream_write_count
+                            answer['test_description']['name'] = f'uperf_{runtime}_pods_{pods}_msgsize_{msgsize}_threads_{threads}_streamwrites_{stream_write_count}'
+                            for key, item in data5.items():
+                                answer[key] = item
+                            answers.append(answer)
         return answers

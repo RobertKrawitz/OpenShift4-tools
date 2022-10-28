@@ -23,6 +23,7 @@ declare -ga ___uperf_test_types=(stream)
 declare -ga ___uperf_protos=(tcp)
 declare -ga ___uperf_nthrs=(1)
 declare -ag ___uperf_tests=()
+declare -ga ___uperf_stream_counts=(256)
 declare -gir ___uperf_port=30000
 declare -gi ___uperf_port_addrs=24
 declare -gi ___uperf_ramp_time=3
@@ -139,6 +140,8 @@ function uperf_help_options() {
                        Protocol (tcp or udp).
        --uperf-nthr=<n>
                        Number of threads to be tested.
+       --uperf-stream-count=<counts>
+		       Number of consecutive streaming writes.
 EOF
 }
 
@@ -160,6 +163,7 @@ function uperf_process_options() {
 	    uperftesttype*) ___uperf_test_types=(${optvalue//,/ }) ;;
 	    uperfproto*) ___uperf_protos=(${optvalue//,/ })	   ;;
 	    uperfnthr*) ___uperf_nthrs=(${optvalue//,/ })	   ;;
+	    uperf*writ*) ___uperf_stream_counts=(${optvalue//,/ }) ;;
 	    uperframp*) ___uperf_ramp_time=$optvalue		   ;;
 	    uperfint*) ___uperf_interface=$optvalue		   ;;
 	    *) unknown_opts+=("$noptname ($noptname1)")		   ;;
@@ -178,11 +182,14 @@ function uperf_process_options() {
     local testtype
     local proto
     local -i nthr
+    local -i count
     for testtype in "${___uperf_test_types[@]}" ; do
 	for proto in "${___uperf_protos[@]}" ; do
 	    for msgsize in "${___uperf_msg_sizes[@]}" ; do
 		for nthr in "${___uperf_nthrs[@]}" ; do
-		    ___uperf_tests+=("${testtype},${proto},${msgsize},${nthr}")
+		    for count in "${___uperf_stream_counts[@]}" ; do
+			___uperf_tests+=("${testtype},${proto},${msgsize},${nthr},${count}")
+		    done
 		done
 	    done
 	done
@@ -200,6 +207,7 @@ function uperf_generate_metadata() {
     local testtype
     local proto
     local -i nthr
+    local -i count
     echo '"run_time": ' $((workload_run_time - (2 * ___uperf_ramp_time))) ,
     echo '"ramp_time": ' $___uperf_ramp_time ,
     echo '"jobs": {'
@@ -207,16 +215,19 @@ function uperf_generate_metadata() {
 	for proto in "${___uperf_protos[@]}" ; do
 	    for msgsize in "${___uperf_msg_sizes[@]}" ; do
 		for nthr in "${___uperf_nthrs[@]}" ; do
-		    jobs+=("$(cat <<EOF
-$(printf '"%04d-%s-%s-%dB-%di"' $((jobidx)) "$proto" "$testtype" "$msgsize" "$nthr"): {
+		    for count in "${___uperf_stream_counts[@]}" ; do
+			jobs+=("$(cat <<EOF
+$(printf '"%04d-%s-%s-%dB-%di-%dc"' $((jobidx)) "$proto" "$testtype" "$msgsize" "$nthr" "$count"): {
   "test_type": "$testtype",
   "proto": "$proto",
   "msgsize": $msgsize,
-  "nthr": $nthr
+  "nthr": $nthr,
+  "stream_write_count": $count
 }
 EOF
 )")
-		    jobidx=$((jobidx+1))
+			jobidx=$((jobidx+1))
+		    done
 		done
 	    done
 	done
@@ -251,6 +262,7 @@ function uperf_report_options() {
 "test_types": $(__uperf_stringify -s "${___uperf_test_types[@]}"),
 "protocols": $(__uperf_stringify -s "${___uperf_protos[@]}"),
 "nthrs": $(__uperf_stringify -n "${___uperf_nthrs[@]}"),
+"stream_write_count": $(__uperf_stringify -n "${___uperf_stream_counts[@]}"),
 "ramp_time": ${___uperf_ramp_time},
 "interface": "${___uperf_interface}"
 EOF

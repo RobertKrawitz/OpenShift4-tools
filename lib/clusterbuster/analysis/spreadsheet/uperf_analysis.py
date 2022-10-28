@@ -22,7 +22,7 @@ class uperf_analysis(SpreadsheetAnalysis):
     """
 
     def __init__(self, workload: str, data: dict, metadata: dict):
-        dimensions = ['By Pod Count', 'By Message Size', 'By Threads']
+        dimensions = ['By Pod Count', 'By Message Size', 'By Threads', 'By Write Stream Count']
         variables = [
             {
              'var': 'rate',

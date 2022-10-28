@@ -1,11 +1,11 @@
 <?xml version="1.0"?>
-<profile name="%{proto}-%{test_type}-%{size}B-%{nthr}i">
+<profile name="%{proto}-%{test_type}-%{size}B-%{nthr}i-%{count}c">
 <group nthreads="%{nthr}">
   <transaction iterations="1">
     <flowop type="connect" options="remotehost=%{srvhost} protocol=%{proto}"/>
   </transaction>
   <transaction duration="%{runtime}">
-    <flowop type="write" options="count=256 size=%{size}"/>
+    <flowop type="write" options="count=%{count} size=%{size}"/>
   </transaction>
   <transaction iterations="1">
     <flowop type="disconnect" />
