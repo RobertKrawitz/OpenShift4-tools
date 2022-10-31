@@ -61,6 +61,7 @@ declare client_image=
 declare local_toolsdir=
 declare install_device=install_device
 declare -i install_retries=2	# Many bare metal nodes take a long time to POST
+declare -i install_dependencies=1
 platform=$(uname -i)
 
 # shellcheck disable=SC2155
@@ -642,8 +643,6 @@ function check_packages() {
 	echo "Installing ${required_rpms[*]}"
 	dnf -y install "${required_rpms[@]}"
     fi
-    systemctl enable libvirtd
-    systemctl start libvirtd
 }
 
 function pre_setup() {
@@ -651,7 +650,9 @@ function pre_setup() {
     [[ -d "$cachedir" ]] || mkdir -p "$cachedir"
     setenforce 0 || true
     grep -q SELINUX=disabled /etc/selinux/config || sed -i s/^SELINUX=.*/SELINUX=disabled/ /etc/selinux/config
-    check_packages
+    if ((install_dependencies)) ; then check_packages; fi
+    systemctl enable libvirtd
+    systemctl start libvirtd
     sed -i s/Listen\ 80/Listen\ ${pxe_port}/ /etc/httpd/conf/httpd.conf
     [[ -f "$ocp4_public_key" ]] || ssh-keygen -t rsa -b 4096 -f "${ocp4_public_key%.pub}" -N "" -q
     setup_bm_if
