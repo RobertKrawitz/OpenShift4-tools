@@ -85,7 +85,10 @@ class sysbench_client(clusterbuster_pod_client):
         self._timestamp(f'Running {" ".join(args)}')
         data_start_time = self._adjusted_time()
         user, sys = self._cputimes()
-        op_answer = {}
+        op_answer = {
+            'op_start': self._adjusted_time(),
+            'workload': self.workload
+            }
         with subprocess.Popen(args, stdout=subprocess.PIPE) as run:
             line = run.stdout.readline().decode('ascii')
             while line:
@@ -117,13 +120,14 @@ class sysbench_client(clusterbuster_pod_client):
             status = run.poll()
             if status:
                 raise Exception(f"Sysbench failed: {status}")
+        op_answer['op_end'] = self._adjusted_time()
         data_end_time = self._adjusted_time()
         elapsed_time = data_end_time - data_start_time
         user, sys = self._cputimes(user, sys)
         op_answer['user_cpu_time'] = user
         op_answer['sys_cpu_time'] = sys
         extras = {
-            'workloads': {0: op_answer}
+            'workloads': {self.workload: op_answer}
             }
         self._report_results(data_start_time, data_end_time, elapsed_time, user, sys, extras)
 
@@ -153,12 +157,14 @@ class sysbench_client(clusterbuster_pod_client):
                 op_user, op_sys = self._cputimes()
                 args = self.build_sysbench_cmd('run', f'--file-test-mode={test}', f'--file-io-mode={mode}')
                 self._timestamp(f'Running {" ".join(args)}')
+                op_answer = {
+                    'final_fsync_enabled': 'Disabled',
+                    'io_mode': 'unknown',
+                    'workload': test,
+                    'rdwr_ratio': 1,
+                    'op_start': self._adjusted_time()
+                    }
                 with subprocess.Popen(args, stdout=subprocess.PIPE) as run:
-                    op_answer = {
-                        'final_fsync_enabled': 'Disabled',
-                        'io_mode': 'unknown',
-                        'rdwr_ratio': 1
-                        }
                     line = run.stdout.readline().decode('ascii')
                     while line:
                         line = line.strip().lower()
@@ -202,12 +208,13 @@ class sysbench_client(clusterbuster_pod_client):
                     status = run.poll()
                     if status:
                         raise Exception(f"Sysbench failed: {status}")
+                op_answer['op_end'] = self._adjusted_time()
                 op_answer['user_cpu_time'], op_answer['sys_cpu_time'] = self._cputimes(op_user, op_sys)
                 self._sync_to_controller(f'{test}+{mode}+finish')
                 args = self.build_sysbench_cmd('cleanup', f'--file-test-mode={test}', f'--file-io-mode={mode}')
                 self._timestamp(f'Cleanup {" ".join(args)}')
                 subprocess.run(args, check=True)
-                op_answers[test] = op_answer
+                op_answers[f'fileio+{test}+{mode}'] = op_answer
         data_end_time = self._adjusted_time()
         elapsed_time = data_end_time - data_start_time
         user, sys = self._cputimes(user, sys)

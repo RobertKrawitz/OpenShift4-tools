@@ -30,22 +30,28 @@ class sysbench_reporter(ClusterBusterReporter):
             self.__initialize_simple(jdata)
 
     def __initialize_fileio(self, jdata):
-        self._sysbench_operations = jdata['metadata']['options']['workloadOptions']['sysbench_fileio_tests']
+        if 'sysbench_fileio_modes' in jdata['metadata']['options']['workloadOptions']:
+            self._sysbench_operations = [f'fileio+{test}+{mode}' for test in jdata['metadata']['options']['workloadOptions']['sysbench_fileio_tests'] for mode in jdata['metadata']['options']['workloadOptions']['sysbench_fileio_modes']]
+        else:
+            self._sysbench_operations = jdata['metadata']['options']['workloadOptions']['sysbench_fileio_tests']
         self._sysbench_vars_to_copy = ['filesize:precision=3:suffix=B:base=1024',
                                        'blocksize:precision=3:suffix=B:base=1024', 'rdwr_ratio',
                                        'fsync_frequency', 'final_fsync_enabled', 'io_mode']
         accumulators = []
         vars_to_copy = []
+        timeline_vars = []
         for op in self._sysbench_operations:
             workload = f'workloads.{op}'
             for var in ['elapsed_time', 'user_cpu_time', 'sys_cpu_time',
                         'read_ops', 'write_ops', 'fsync_ops',
                         'mean_latency_sec', 'max_latency_sec', 'p95_latency_sec', 'files']:
                 accumulators.append(f'{workload}.{var}')
+            timeline_vars.append(f'{workload}.op')
             for var in self._sysbench_vars_to_copy:
                 vars_to_copy.append(f'{workload}.{re.sub(r":.*", "", var)}')
         self._add_accumulators(accumulators)
         self._add_fields_to_copy(vars_to_copy)
+        self._add_timeline_vars(timeline_vars)
 
     def __initialize_simple(self, jdata):
         self._sysbench_operations = jdata['Results']['worker_results'][0]['workloads'].keys()
@@ -90,7 +96,7 @@ class sysbench_reporter(ClusterBusterReporter):
         for op in self._sysbench_operations:
             pop = f'workload: {op}'
             dest[pop] = {}
-            dest[pop]['Elapsed Time'] = self._fformat(source[op]['elapsed_time'], 3)
+            dest[pop]['Elapsed Time'] = self._fformat(source[op]['op_elapsed_time'], 3)
             dest[pop]['CPU Time'] = self._fformat(source[op]['user_cpu_time'] + source[op]['sys_cpu_time'], 3)
             for var in ['read_ops:precision=3:suffix=ops:base=1000:integer=1',
                         'write_ops:precision=3:suffix=ops:base=1000:integer=1',
