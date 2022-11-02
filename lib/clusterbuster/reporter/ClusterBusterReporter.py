@@ -299,10 +299,10 @@ class ClusterBusterReporter:
             rowhash['container'] = row['container']
             rowhash['node'] = self.__find_node_for_pod(namespace=row['namespace'], pod=row['pod'])
             rowhash['process_id'] = row['process_id']
-            for field_to_copy in self._fields_to_copy:
-                self.__copy_field(field_to_copy, row, self._summary, rowhash)
             for var in self._timeline_vars:
                 self.__update_timeline_val(var, row, self._summary)
+            for field_to_copy in self._fields_to_copy:
+                self.__copy_field(field_to_copy, row, self._summary, rowhash)
             for accumulator in self._accumulator_vars:
                 self.__update_accumulator_val(accumulator, row, self._summary, rowhash)
 
@@ -737,6 +737,8 @@ class ClusterBusterReporter:
                 tvar = f'{mvar}_elapsed_time'
                 svar = f'{mvar}_start'
                 evar = f'{mvar}_end'
+                if tvar not in row and svar in row and evar in row:
+                    row[tvar] = row[evar] - row[svar]
             if f'first_{var}' not in summary or row_val < summary[f'first_{var}']:
                 summary[f'first_{var}'] = row_val
                 if var.endswith('_start'):
