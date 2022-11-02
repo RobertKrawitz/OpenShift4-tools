@@ -2446,12 +2446,12 @@ spec:
       instance: ${namespace}-${workload}-${instance}
   strategy:
     type: RollingUpdate
+${security_context:+$(indent 2 <<< "$security_context")}
   template:
     metadata:
 $(indent 6 standard_labels_yaml -l "$workload" "$namespace" "$instance")
 $(indent 6 standard_pod_metadata_yaml "$namespace" client)
 $(indent 4 create_spec -A "$affinity_yaml" -c "$node_class" "$@")
-${security_context:+$(indent 6 <<< "$security_context")}
 EOF
 }
 
