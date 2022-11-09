@@ -2457,9 +2457,9 @@ EOF
 function create_vm_spec() {
     local image=${default_vm_image}
     local vmname
-    local cores=1
-    local sockets=1
-    local threads=1
+    local -i cores=1
+    local -i sockets=1
+    local -i threads=1
     local mem=1024
     local grace=30
     local OPT
