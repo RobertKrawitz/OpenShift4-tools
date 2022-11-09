@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/bin/bash
 # Copyright 2022 Robert Krawitz/Red Hat
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,15 +13,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .analyze_generic import ClusterBusterAnalyzeSummaryGeneric
+declare OC=${OC:-${KUBECTL:-}}
+OC=${OC:-$(type -p oc)}
+OC=${OC:-$(type -p kubectl)}	# kubectl might not work, though...
 
+declare images=("quay.io/rkrawitz/clusterbuster:$(uname -m)-latest" "quay.io/rkrawitz/clusterbuster-workloads:$(uname -m)-latest")
 
-class uperf_analysis(ClusterBusterAnalyzeSummaryGeneric):
-    """
-    Analyze uperf data
-    """
+if [[ -n "$*" ]] ; then
+    images=("$@")
+fi
 
-    def __init__(self, workload: str, data: dict, metadata: dict):
-        dimensions = ['By Pod Count', 'By Message Size', 'By Threads']
-        variables = ['rate', 'avg_time_op']
-        ClusterBusterAnalyzeSummaryGeneric.__init__(self, workload, data, metadata, dimensions, variables)
+images=("${images[@]/#/podman pull }")
+command=$(IFS=';'; echo "${images[*]}")
+
+for n in $("${OC}" get node --no-headers |awk '{print $1}') ; do
+    "${OC}" debug --no-stdin=true --no-tty=true node/"$n" -- chroot /host sh -c "$command" &
+done
+wait

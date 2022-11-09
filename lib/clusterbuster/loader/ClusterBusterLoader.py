@@ -30,9 +30,9 @@ class LoadOneReport:
             self._summary = self._report['summary']
             self._metrics = self._summary['metrics']
         except Exception:
-            if not getattr(self, '_report', False):
+            if getattr(self, '_report', None) is None:
                 self._report = {}
-            if not getattr(self, '_answer', False):
+            if getattr(self, '_answer', None) is None:
                 self._answer = {}
             if 'metadata' not in self._report:
                 self._metadata = {}
@@ -48,7 +48,7 @@ class LoadOneReport:
             answer['metadata']['start_time'] = self._metadata['cluster_start_time']
             answer['metadata']['uuid'] = self._metadata['uuid']
             answer['metadata']['server_version'] = self._metadata['kubernetes_version']['serverVersion']
-            answer['metadata']['openshift_version'] = self._metadata['kubernetes_version']['openshiftVersion']
+            answer['metadata']['openshift_version'] = self._metadata['kubernetes_version'].get('openshiftVersion', 'Unknown')
             answer['metadata']['run_host'] = self._metadata['runHost']
             answer['metadata']['kata_version'] = self._metadata.get('kata_version')
         else:
@@ -102,7 +102,7 @@ class ClusterBusterLoader:
                 continue
             if os.path.isdir(d):
                 dirs.append(d)
-                if  os.path.isfile(os.path.join(d, "clusterbuster-ci-results.json")):
+                if os.path.isfile(os.path.join(d, "clusterbuster-ci-results.json")):
                     with open(os.path.join(d, "clusterbuster-ci-results.json")) as f:
                         dir_status = json.load(f)
                         if 'result' not in self.status or dir_status.get('result', 'FAIL') != 'PASS':

@@ -34,6 +34,7 @@ etc. OpenShift 4 clusters.
 
 - **ocp4-upi-util**: OpenShift 4.x UPI installer wrapper, currently for
   baremetal hosts supporting IPMI.  Needs more documentation.
+  Examples in `examples/ocp4-upi-util`.
 
 - **waitfor-pod**: wait for a specified pod to make its appearance (used
   as a helper by `oinst`).
@@ -62,6 +63,9 @@ etc. OpenShift 4 clusters.
 
 - **clusterbuster** -- generate pods, namespaces, and secrets to stress
   test a cluster.  See [documentation](docs/clusterbuster.md)
+  
+- **force-pull-clusterbuster-image** - force-pull the ClusterBuster
+  images so that they are present on all nodes in a cluster.
 
 ## Data reporting utilities
 

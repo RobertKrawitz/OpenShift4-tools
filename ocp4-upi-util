@@ -19,6 +19,11 @@ declare ocp4_pull_secret=${OCP4_PULL_SECRET:-$HOME/.docker/config.json}
 declare ocp4_public_key=${OCP4_PUBLIC_KEY:-$HOME/.ssh/id_rsa.pub}
 declare command=$0
 
+if [[ -z "${KUBECONFIG:-}" ]] ; then
+    echo "KUBECONFIG must be set (recommend $HOME/ocp4-upi-install-1/auth/kubeconfig)"
+    exit 1
+fi
+
 # The following can be overridden in the config file if needed.
 declare bootstrap_prefix=192.168.222
 declare bootstrap_ipaddr
@@ -34,11 +39,11 @@ declare cluster_basedomain
 declare cluster_name
 declare cluster_network_bridge_name=baremetal
 declare cluster_install_dir=${KUBECONFIG:+${KUBECONFIG/\/auth\/kubeconfig/}}
-declare filesystems_json="$HOME"/filesystems.json
+declare filesystem_json=
 declare -i masters_schedulable=0
 declare -i infra_count=0
 declare -i master_as_infra=0
-declare -r cachedir="$HOME/.cache/ocp4_install"
+declare -r cachedir="$HOME/.cache/ocp4_upi_install"
 declare bootstrap_mac=52:54:00:f9:8e:41
 declare -a mgmt_masters=()
 declare -a master_macs=()
@@ -50,6 +55,13 @@ declare bare_metal_interface=
 declare -i do_install_kata=0
 declare -i do_install_cnv=0
 declare -i apply_kata_workaround=1
+declare platform
+declare installer_image=
+declare client_image=
+declare local_toolsdir=
+declare install_device=install_device
+declare -i install_retries=2	# Many bare metal nodes take a long time to POST
+platform=$(uname -i)
 
 # shellcheck disable=SC2155
 declare -r command_help=$(cat <<'EOF'
@@ -158,6 +170,16 @@ Usage: $command -c <configfile> [options]$cmdmsg args...
         bootstrap_mac         MAC address of bootstrap VM
                               (default 52:54:00:f9:8e:41)
         cluster_host_prefix   32 - desired bare metal network size (default 23)
+	filesystem_json	      File containing code to modify the filesystem
+			      layout
+        install_device        Device (without /dev) to install to (default sda)
+        install_retries       Number of times to retry waiting for bootstrap
+                              to complete; needed for bare metal nodes that
+                              take a long time to boot.  Default 2 (90 minutes)
+        client_image          Path to local client image .tgz to be used for oc
+        installer_image       Path to local installer image .tgz
+        loal_toolsdir         Location of client_image and installer_image.
+                              Must match the version to be installed.
 
 $command_help
 EOF
@@ -206,7 +228,9 @@ EOF
     done
     cat <<EOF
 #interface=baremetal
-dhcp-range=${ip_base}.${host_base},${ip_base}.${host_max}
+#dhcp-range=${ip_base}.${host_base},${ip_base}.${host_max}
+dhcp-range=192.168.222.0,static
+dhcp-ignore=tag:!known
 dhcp-no-override
 dhcp-authoritative
 dhcp-lease-max=41
@@ -226,21 +250,20 @@ EOF
 	printf "dhcp-host=%s,${ip_base}.%d,worker-%d\n" "$arg" $((worker_base+i)) "$i"
 	i=$((i+1))
     done
+    tftproot=/var/lib/tftpboot
+    if [[ $platform = aarch64 ]] ; then
+	bootfile=BOOTAA64.EFI
+    else
+	bootfile=lpxelinux.0
+    fi
     cat <<EOF
 enable-tftp
-tftp-root=/var/lib/tftpboot
-dhcp-boot=lpxelinux.0
+tftp-root=$tftproot
+dhcp-boot=$bootfile
 address=/api.${ocp4_domain}/${ip_base}.${prov_host}
 address=/api-int.${ocp4_domain}/${ip_base}.${prov_host}
 address=/.apps.${ocp4_domain}/${ip_base}.${prov_host}
 EOF
-
-    for i in $(seq 0 "$((master_count - 1))") ; do
-	cat <<EOF
-address=/etcd-${i}.${ocp4_domain}/${ip_base}.$((master_base+i))
-srv-host=_etcd-server-ssl._tcp.${ocp4_domain},etcd-${i}.${ocp4_domain}.,2380,0,10
-EOF
-    done
 }
 
 function generate_service() {
@@ -253,23 +276,23 @@ function generate_service() {
     case "$name" in
 	master)
 	    cat <<EOF
-    server           bootstrap ${ip_base}.$((bootstrap_host)):${port} check
+    server           bootstrap ${ip_base}.$((bootstrap_host)):${port} check inter 1s backup
 EOF
 	    for i in $(seq 0 "$((master_count - 1))") ; do
 		cat <<EOF
-    server           master-${i} ${ip_base}.$((master_base+i)):${port} check
+    server           master-${i} ${ip_base}.$((master_base+i)):${port} check inter 1s
 EOF
 	    done
 	    ;;
 	worker)
 	    for i in $(seq 0 "$((infra_count - 1))") ; do
 		cat <<EOF
-    server           infra-${i} ${ip_base}.$((infra_base+i)):${port} check
+    server           infra-${i} ${ip_base}.$((infra_base+i)):${port} check inter 1s
 EOF
 	    done
 	    for i in $(seq 0 "$((worker_count - 1))") ; do
 		cat <<EOF
-    server           worker-${i} ${ip_base}.$((worker_base+i)):${port} check
+    server           worker-${i} ${ip_base}.$((worker_base+i)):${port} check inter 1s
 EOF
 	    done
 	    ;;
@@ -316,6 +339,11 @@ frontend http
     bind             *:80
     default_backend  http
 
+frontend ingress
+    mode             http
+    bind             *:1936
+    default_backend  ingress
+
 backend kapi
     mode             tcp
     balance          roundrobin
@@ -335,6 +363,11 @@ backend http
     mode             http
     balance          roundrobin
 $(generate_service worker 80 "$master_count" "$worker_count" "$infra_count")
+
+backend ingress
+    mode             http
+    balance          roundrobin
+$(generate_service worker 1936 "$master_count" "$worker_count" "$infra_count")
 EOF
 }
 
@@ -451,6 +484,12 @@ EOF
 
 function generate_pxelinux_cfg() {
     local node_type=${1:-master}
+    local installdev
+    if [[ $node_type = bootstrap ]] ; then
+	installdev=sda
+    else
+	installdev=$install_device
+    fi
     shift
     cat <<EOF
 DEFAULT pxeboot
@@ -458,8 +497,26 @@ TIMEOUT 20
 PROMPT 0
 LABEL pxeboot
     KERNEL http://${bootstrap_ipaddr}:${pxe_port}/ocp4-upi/rhcos-installer-kernel
-    APPEND rdblacklist=megaraid_sas ip=dhcp rd.neednet=1 initrd=http://${bootstrap_ipaddr}:${pxe_port}/ocp4-upi/rhcos-installer-initramfs.img console=tty0 console=ttyS0 coreos.inst=yes coreos.inst.install_dev=sda coreos.inst.image_url=http://${bootstrap_ipaddr}:${pxe_port}/ocp4-upi/rhcos-metal-bios.raw.gz coreos.inst.ignition_url=http://${bootstrap_ipaddr}:${pxe_port}/ocp4-upi/${node_type}.ign $*
+    APPEND rdblacklist=megaraid_sas ip=dhcp rd.neednet=1 initrd=http://${bootstrap_ipaddr}:${pxe_port}/ocp4-upi/rhcos-installer-initramfs.img console=tty0 console=ttyS0 coreos.inst=yes coreos.inst.install_dev=/dev/${installdev} coreos.inst.image_url=http://${bootstrap_ipaddr}:${pxe_port}/ocp4-upi/rhcos-metal-bios.raw.gz coreos.inst.ignition_url=http://${bootstrap_ipaddr}:${pxe_port}/ocp4-upi/${node_type}.ign $*
     SYSAPPEND 2
+EOF
+}
+
+function generate_grub_cfg() {
+    local node_type=${1:-master}
+    local installdev
+    if [[ $node_type = bootstrap ]] ; then
+	installdev=sda
+    else
+	installdev=$install_device
+    fi
+    shift
+    cat <<EOF
+set timeout=10
+menuentry 'Install CoreOS' {
+  linux rhcos-installer-kernel rdblacklist=megaraid_sas ip=dhcp coreos.inst.install_dev=/dev/${installdev} nomodeset rd.neednet=1 coreos.inst=yes coreos.inst.image_url=http://${bootstrap_ipaddr}:${pxe_port}/ocp4-upi/rhcos-metal-bios.raw.gz coreos.inst.ignition_url=http://${bootstrap_ipaddr}:${pxe_port}/ocp4-upi/${node_type}.ign $*
+  initrd rhcos-installer-initramfs.img
+}
 EOF
 }
 
@@ -474,16 +531,30 @@ function setup_tftpboot() {
 	macs+=("$arg")
     done
     local m
-    for m in "${macs[@]}" ; do
-	local file="/var/lib/tftpboot/pxelinux.cfg/01-${m//:/-}"
-	echo "Configuring $m as $ntype: $file"
-	generate_pxelinux_cfg "$ntype" "$@" > "$file"
-    done
+    if [[ $platform = aarch64 ]] ; then
+	for m in "${macs[@]}" ; do
+	    local file="/var/lib/tftpboot/grub.cfg-01-${m//:/-}"
+	    echo "Configuring $m as $ntype: $file"
+	    generate_grub_cfg "$ntype" "$@" > "$file"
+	done
+	cp /boot/efi/EFI/BOOT/BOOTAA64.EFI /var/lib/tftpboot
+	cp /boot/efi/EFI/redhat/grubaa64.efi /var/lib/tftpboot
+	chmod 644 /var/lib/tftpboot/BOOTAA64.EFI /var/lib/tftpboot/grubaa64.efi
+	chmod 644 "$tftproot/$bootfile" "$tftproot/grubaa64.efi"
+    else
+	for m in "${macs[@]}" ; do
+	    local file="/var/lib/tftpboot/pxelinux.cfg/01-${m//:/-}"
+	    echo "Configuring $m as $ntype: $file"
+	    generate_pxelinux_cfg "$ntype" "$@" > "$file"
+	done
+	cp -p /tftpboot/lpxelinux.0 /var/lib/tftpboot
+	cp -p /tftpboot/ldlinux.c32 /var/lib/tftpboot
+    fi
 }
 
 function setup_bm_if() {
     ip addr show dev "${cluster_network_bridge_name}" >/dev/null 2>&1 && return
-    [[ -n "$bare_metal_interface" ]] && {
+    [[ -n "$bare_metal_interface" ]] || {
 	fatal "No bare metal interface defined in bare_metal_interface"
     }
     nmcli con down "$bare_metal_interface"
@@ -496,9 +567,29 @@ function setup_bm_if() {
     nmcli con up "$bare_metal_interface"
 }
 
+function setup_virt_net() {
+    if ! virsh net-info ocp4-upi >/dev/null 2>&1 ; then
+	tnetfile=$(mktemp net-ocp4-upi.XXXXXXXX)
+	cat > "$tnetfile" <<\EOF
+<network>
+  <name>ocp4-upi</name>
+  <forward mode='bridge'/>
+  <bridge name='baremetal'/>
+</network>
+EOF
+	virsh net-define "$tnetfile"
+	rm -f "$tnetfile"
+	virsh net-start ocp4-upi
+	virsh net-autostart ocp4-upi
+    fi
+}
+
 function setup_iptables() {
     # shellcheck disable=SC2155
     local now=$(date)
+    echo "*** Disabling firewall"
+    systemctl stop firewalld
+    systemctl disable firewalld
     cat > /etc/sysconfig/iptables <<EOF
 # Generated by iptables-save v1.8.4 on ${now}
 *filter
@@ -509,16 +600,16 @@ COMMIT
 # Completed on ${now}
 # Generated by iptables-save ${now}
 *nat
-:PREROUTING ACCEPT [19706105:1351513100]
-:INPUT ACCEPT [19316913:1327483195]
-:POSTROUTING ACCEPT [10198181:615920995]
-:OUTPUT ACCEPT [10198181:615920995]
--A POSTROUTING -s ${bootstrap_net} -d 224.0.0.0/24 -j RETURN
--A POSTROUTING -s ${bootstrap_net} -d 255.255.255.255/32 -j RETURN
--A POSTROUTING -s ${bootstrap_net} ! -d ${bootstrap_net} -p tcp -j MASQUERADE --to-ports 1024-65535
--A POSTROUTING -s ${bootstrap_net} ! -d ${bootstrap_net} -p udp -j MASQUERADE --to-ports 1024-65535
--A POSTROUTING -s ${bootstrap_net} ! -d ${bootstrap_net} -j MASQUERADE
--A POSTROUTING -s ${bootstrap_net} ! -d ${bootstrap_net} -o $public_interface -j MASQUERADE
+:PREROUTING ACCEPT [0:0]
+:INPUT ACCEPT [0:0]
+:POSTROUTING ACCEPT [0:0]
+:OUTPUT ACCEPT [0:0]
+-A POSTROUTING -s 192.168.222.0/24 -d 224.0.0.0/24 -j RETURN
+-A POSTROUTING -s 192.168.222.0/24 -d 255.255.255.255/32 -j RETURN
+-A POSTROUTING -s 192.168.222.0/24 ! -d 192.168.222.0/24 -p tcp -j MASQUERADE --to-ports 1024-65535
+-A POSTROUTING -s 192.168.222.0/24 ! -d 192.168.222.0/24 -p udp -j MASQUERADE --to-ports 1024-65535
+-A POSTROUTING -s 192.168.222.0/24 ! -d 192.168.222.0/24 -j MASQUERADE
+-A POSTROUTING -s 192.168.222.0/24 ! -d 192.168.222.0/24 -o enp2s0f0 -j MASQUERADE
 COMMIT
 # Completed on ${now}
 # Generated by iptables-save v1.8.4 on ${now}
@@ -536,22 +627,28 @@ EOF
 }
 
 function check_packages() {
-    if [[ -z "$(dnf -q group list -C --installed 'Virtualization Host')" ]] ; then
-	dnf -y groupinstall 'Virtualization Host'
-    fi
+    dnf -y groupinstall 'Virtualization Host' || yum module install virt
     local -a required_rpms=()
     local rpm
-    for rpm in wget virt-install jq podman git python3-pyyaml qemu-kvm syslinux virt-manager virt-viewer xorg-x11-xauth xinetd syslinux-tftpboot haproxy httpd perl perl-JSON ipmitool ; do
+    if [[ $platform = aarch64 ]] ; then
+	platform_packages=(shim-aa64 grub2-efi-aa64)
+    else
+	platform_packages=()
+    fi
+    for rpm in wget virt-install jq podman git python3-pyyaml qemu-kvm virt-manager virt-viewer xorg-x11-xauth xinetd syslinux-tftpboot haproxy httpd perl perl-JSON ipmitool python3-magic "${platform_packages[@]}" ; do
 	rpm --quiet -q "$rpm" || required_rpms+=("$rpm")
     done
     if [[ -n "${!required_rpms[*]}" ]] ; then
 	echo "Installing ${required_rpms[*]}"
 	dnf -y install "${required_rpms[@]}"
     fi
+    systemctl enable libvirtd
+    systemctl start libvirtd
 }
 
 function pre_setup() {
     cd ~
+    [[ -d "$cachedir" ]] || mkdir -p "$cachedir"
     setenforce 0 || true
     grep -q SELINUX=disabled /etc/selinux/config || sed -i s/^SELINUX=.*/SELINUX=disabled/ /etc/selinux/config
     check_packages
@@ -582,7 +679,6 @@ function try_to_download() {
     local -a registry_hosts=(openshift-release.apps.ci.l2s4.p1.openshiftapps.com openshift-release-artifacts.apps.ci.l2s4.p1.openshiftapps.com)
     local target=$1; shift
     local host
-    [[ -d "$cachedir" ]] || mkdir "$cachedir"
     for host in "${registry_hosts[@]}" ; do
 	wget -P "$cachedir" "$@" "https://${host}/${target}" && return 0
     done
@@ -590,17 +686,33 @@ function try_to_download() {
 }
 
 function fetch_tools_if_needed() {
-    if [[ -f "$cachedir/openshift-client-linux-${VERSION}.tar.gz" &&
-	      -f "$cachedir/openshift-install-linux-${VERSION}.tar.gz" ]] ; then
+    local client_filename=openshift-client-linux-${VERSION}.tar.gz
+    local installer_filename=openshift-install-linux-${VERSION}.tar.gz
+    if [[ -d "$local_toolsdir" ]] ; then
+	if [[ -z "$installer_image" ]] ; then
+	    installer_image="${local_toolsdir}/$installer_filename"
+	fi
+	if [[ -z "$client_image" ]] ; then
+	    client_image="${local_toolsdir}/$client_filename"
+	fi
+    fi
+    if [[ -n "$installer_image" && -f "$installer_image" ]] ; then
+	cp -p "$installer_image" "$cachedir/$installer_filename"
+    fi
+    if [[ -n "$client_image" && -f "$client_image" ]] ; then
+	cp -p "$client_image" "$cachedir/$client_filename"
+    fi
+    if [[ -f "$cachedir/$client_filename" &&
+	      -f "$cachedir/$installer_filename" ]] ; then
 	return 0
     elif [[ -n "$(type -p oc)" ]] && (cd "$cachedir" && oc adm release extract --tools "$VERSION") ; then
 	return 0
     else
-	[[ -f "$cachedir/openshift-client-linux-${VERSION}.tar.gz" ]] || try_to_download "${VERSION}/openshift-client-linux-${VERSION}.tar.gz" -nv -N || {
+	[[ -f "$cachedir/$client_filename" ]] || try_to_download "${VERSION}/$client_filename" -nv -N || {
 		echo "Can't download client for $VERSION"
 		return 1
 	    }
-	[[ -f "$cachedir/openshift-install-linux-${VERSION}.tar.gz" ]] || try_to_download "${VERSION}/openshift-install-linux-${VERSION}.tar.gz" -nv -N || {
+	[[ -f "$cachedir/$installer_filename" ]] || try_to_download "${VERSION}/$installer_filename" -nv -N || {
 		echo "Can't download installer for $VERSION"
 		return 1
 	    }
@@ -625,8 +737,14 @@ function setup_install_1() {
     [[ -d "$cluster_install_dir" ]] && rm -rf "$cluster_install_dir"
     mkdir "$cluster_install_dir"
     setup_dnsmasq
+    setup_virt_net
     fetch_tools_if_needed || return 1
     cd "$cluster_install_dir"
+    if [[ ! -f "$cluster_install_dir/filetranspile" ]] ; then
+	wget -q -P "$cluster_install_dir" https://raw.githubusercontent.com/ashcrow/filetranspiler/1.1.3/filetranspile
+	chmod +x "$cluster_install_dir/filetranspile"
+    fi
+    set +x
     tar -C "$cluster_install_dir" -xzf "$cachedir/openshift-client-linux-${VERSION}.tar.gz"
     tar -C "$cluster_install_dir" -xzf "$cachedir/openshift-install-linux-${VERSION}.tar.gz"
     PATH="${cluster_install_dir}:$PATH"
@@ -646,12 +764,12 @@ function setup_install_1() {
 	paths[initramfs]=$(get_key "$installer_data" .images.initramfs.path '.images."live-initramfs".path')
 	paths[rootfs]=$(get_key "$installer_data" '.images."live-rootfs".path')
     else
-	baseURI=https://mirror.openshift.com/pub/openshift-v4/dependencies/rhcos/$RELEASE/latest
+	baseURI=https://mirror.openshift.com/pub/openshift-v4/${platform}/dependencies/rhcos/$RELEASE/latest
 	echo "Using fallback $baseURI"
-	paths[bios]=rhcos-metal.x86_64.raw.gz
-	paths[kernel]=rhcos-live-kernel-x86_64
-	paths[initramfs]=rhcos-live-initramfs.x86_64.img
-	paths[rootfs]=rhcos-live-rootfs.x86_64.img
+	paths[bios]=rhcos-metal."${platform}".raw.gz
+	paths[kernel]=rhcos-live-kernel-"${platform}"
+	paths[initramfs]=rhcos-live-initramfs."${platform}".img
+	paths[rootfs]=rhcos-live-rootfs."${platform}".img
     fi
 
     fn[bios]="rhcos-metal-bios.raw.gz"
@@ -668,7 +786,7 @@ function setup_install_1() {
     fi
 
     for f in "${!fn[@]}" ; do
-	rm -f "/var/www/html/ocp4-upi/${fn[$f]}"
+	rm -f "/var/www/html/ocp4-upi/${fn[$f]}" "/var/lib/tftpboot/${fn[$f]}"
 	if [[ -n "${paths[$f]:-}" ]] ; then
 	    dest="/var/www/html/ocp4-upi/${paths[$f]}"
 	    if [[ ! -f "/var/www/html/ocp4-upi/${paths[$f]}" ]] ; then
@@ -679,6 +797,7 @@ function setup_install_1() {
 		fi
 	    fi
 	    ln -s "$dest" "/var/www/html/ocp4-upi/${fn[$f]}"
+	    cp -p "$dest" "/var/lib/tftpboot/${fn[$f]}"
 	fi
     done
     systemctl restart httpd
@@ -703,20 +822,34 @@ EOF
 	cp -p "${i}.ign" "${i}.ign.orig"
 	filetranspile -i "${i}.ign.orig" -f ./lab -o "${i}.ign"
     done
-    if [[ -n "$filesystems_json" && -f "$filesystems_json" ]] ; then
-	for i in master worker; do
-	    jq -c ".systemd? += $(jq .systemd < "$filesystems_json") | .storage? += $(jq .storage < "$filesystems_json")" < "${i}.ign" > "${i}.ign.tmp" && mv -f "${i}.ign.tmp" "${i}.ign"
-	done
+    if [[ -n "$filesystem_json" ]] ; then
+	if [[ -r "$filesystem_json" && -f "$filesystem_json" ]] ; then
+	    jq -c . < "$filesystem_json" >/dev/null 2>&1 || fatal "Cannot parse filesystem JSON in $filesystem_json"
+	    jq -c .storage < "$filesystem_json" >/dev/null 2>&1 || fatal "Cannot find storage JSON in $filesystem_json"
+	    jq -c .systemd < "$filesystem_json" >/dev/null 2>&1 || fatal "Cannot find systemd JSON in $filesystem_json"
+	    for i in master worker; do
+		jq -c ".systemd? += $(jq .systemd < "$filesystem_json") | .storage? += $(jq .storage < "$filesystem_json")" < "${i}.ign" > "${i}.ign.tmp" && mv -f "${i}.ign.tmp" "${i}.ign"
+	    done
+	else
+	    fatal "Cannot read $filesystem_json"
+	fi
     fi
     for i in master worker bootstrap ; do
 	cp "$cluster_install_dir/$i.ign" /var/www/html/ocp4-upi
 	chmod 644 /var/www/html/ocp4-upi/"$i.ign"
     done
-    mkdir -p /var/lib/tftpboot/pxelinux.cfg
-    for m in "${master_macs[@]}" "${worker_macs[@]}" ; do
-	m=${m//:/-}
-	rm -f "/var/lib/tftpboot/pxelinux.cfg/01-$m"
-    done
+    if [[ $platform = aarch64 ]] ; then
+	for m in "${master_macs[@]}" "${worker_macs[@]}" ; do
+	    m=${m//:/-}
+	    rm -f "/var/lib/tftpboot/grub.cfg-01-$m"
+	done
+    else
+	mkdir -p /var/lib/tftpboot/pxelinux.cfg
+	for m in "${master_macs[@]}" "${worker_macs[@]}" ; do
+	    m=${m//:/-}
+	    rm -f "/var/lib/tftpboot/pxelinux.cfg/01-$m"
+	done
+    fi
     rootfs_arg=${paths[rootfs]:+"coreos.inst.insecure coreos.live.rootfs_url=http://${bootstrap_ipaddr}:${pxe_port}/ocp4-upi/rhcos-installer-rootfs"}
     setup_tftpboot master "${master_macs[@]}" -- "$rootfs_arg"
     setup_tftpboot worker "${worker_macs[@]}" -- "$rootfs_arg"
@@ -861,7 +994,7 @@ function bootstrap_destroy() {
     echo "Please ignore any errors below this line."
     echo "========================================="
     virsh destroy ocp4-upi-bootstrap || echo "(ignoring)"
-    virsh undefine ocp4-upi-bootstrap || echo "(ignoring)"
+    virsh undefine --nvram ocp4-upi-bootstrap || echo "(ignoring)"
     virsh vol-delete --pool default ocp4-upi-bootstrap.qcow2 || echo "(ignoring)"
     echo "========================================="
     echo "Please ignore any errors above this line."
@@ -869,11 +1002,27 @@ function bootstrap_destroy() {
 
 function bootstrap_install() {
     bootstrap_destroy
-    doit virt-install -n ocp4-upi-bootstrap --pxe --os-type=Linux --os-variant=rhel8.1 --ram=8192 --vcpus=4 --network network=ocp4-upi,mac="$bootstrap_mac" --disk size=120,bus=scsi,sparse=yes --check disk_size=off --noautoconsole --wait -1
+    if [[ $platform = aarch64 ]] ; then
+	doit virt-install -n ocp4-upi-bootstrap --pxe --os-type=Linux --os-variant=rhel8.1 --cpu=host-passthrough --ram=8192 --vcpus=4 --network network=ocp4-upi,mac="$bootstrap_mac" --disk size=120,bus=scsi,sparse=yes --check disk_size=off --noautoconsole --wait -1 </dev/null
+    else
+	doit virt-install -n ocp4-upi-bootstrap --pxe --os-type=Linux --os-variant=rhel8.1 --cpu=host-passthrough --ram=8192 --vcpus=4 --network network=ocp4-upi,mac="$bootstrap_mac" --disk size=120,bus=scsi,sparse=yes --check disk_size=off --noautoconsole --wait -1 </dev/null
+    fi
+}
+
+function _master_install() {
+    cd "$cluster_install_dir"
+    while ((install_retries-- >= 0)) ; do
+	if ./openshift-install wait-for bootstrap-complete ; then
+	    return 0
+	fi
+	echo "**** Installer failed, retrying $install_retries time(s)"
+    done
+    echo "***** Wait for bootstrap complete failed!" 1>&2
+    return 1
 }
 
 function master_install() {
-    (cd "$cluster_install_dir" && ./openshift-install wait-for bootstrap-complete --log-level debug)
+    (_master_install)
 }
 
 function approve_csrs() {
@@ -1218,7 +1367,10 @@ function do_install_2() {
     echo "*** Installing master(s)"
     master_install
     echo "*** Destroying bootstrap"
+    sed -i -e "/bootstrap ${bootstrap_prefix}/d" /etc/haproxy/haproxy.cfg
+    systemctl restart haproxy
     bootstrap_destroy
+    echo "*** Starting worker(s)"
     start_workers
     # We don't invoke setup_chrony with arguments,
     # but command line use might.
@@ -1272,13 +1424,14 @@ function do_install() {
 #################################################################
 declare -a cmdline_vars=()
 
-while getopts 'c:i:k:p:e:' opt ; do
+while getopts 'c:i:k:p:e:t:' opt ; do
     case "$opt" in
-	c) config_file="$OPTARG" ;;
+	c) config_file="$OPTARG"	 ;;
 	i) cluster_install_dir="$OPTARG" ;;
 	k) ocp4_public_key="$OPTARG"     ;;
 	p) ocp4_pull_secret="$OPTARG"    ;;
 	e) cmdline_vars+=("$OPTARG")     ;;
+	t) local_toolsdir="$OPTARG"	 ;;
 	*) usage                         ;;
     esac
 done

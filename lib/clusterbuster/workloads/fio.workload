@@ -54,6 +54,7 @@ function fio_create_deployment() {
     local replicas=${4:-1}
     local containers_per_pod=${5:-1}
     local -i instance
+    container_image="quay.io/rkrawitz/clusterbuster-workloads:${arch}-latest"
     create_sync_service "$namespace" "$((containers_per_pod * processes_per_pod * replicas * count))" \
 				  "$((containers_per_pod * replicas * count))"
     for instance in $(seq "$first_deployment" $((count + first_deployment - 1))) ; do
@@ -262,6 +263,10 @@ function fio_report_options() {
 "fio_filesize": $___fio_filesize,
 "fio_workdir": "$___fio_workdir"
 EOF
+}
+
+function fio_namespace_policy() {
+    echo privileged
 }
 
 register_workload fio

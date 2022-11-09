@@ -19,20 +19,21 @@
 ################################################################
 
 # Sysbench options
-declare -ag ___sysbench_generic_options=()
-declare -ag ___sysbench_fileio_options=()
-declare -Ag ___sysbench_fileio_tests=()
-declare -g ___sysbench_fileio_test_string='seqwr,seqrd,rndwr,rndrd'
+declare -gA ___sysbench_options=()
+declare -g ___sysbench_workload=fileio
+declare -g ___sysbench_fileio_test_string='seqwr seqrd rndwr rndrd'
+declare -g ___sysbench_fileio_mode_string='sync'
 
 function sysbench_arglist() {
     local mountdir=$1; shift
     while [[ "$1" != '--' ]] ; do shift; done; shift
     local workdir=${common_workdir:-${emptydirs[0]:-/tmp}}
     mk_yaml_args "python3" "${mountdir}sysbench.py" "$@" \
-		 "$processes_per_pod" "$workdir" "$workload_run_time" \
 		 "svc-${namespace}-sysbench-${instance}-${replica:-1}-dc" "$drop_cache_port" \
-		 "${___sysbench_generic_options[*]:-}" "fileio" \
-		 "${___sysbench_fileio_options[*]:-}" "${!___sysbench_fileio_tests[*]}"
+		 "$processes_per_pod" "$workdir" "$workload_run_time" "$___sysbench_workload" \
+		 "${___sysbench_fileio_test_string:+$___sysbench_fileio_test_string}" \
+		 "${___sysbench_fileio_mode_string:+$___sysbench_fileio_mode_string}" \
+		 "${___sysbench_options[@]}"
 }
 
 function sysbench_create_deployment() {
@@ -42,11 +43,14 @@ function sysbench_create_deployment() {
     local replicas=${4:-1}
     local containers_per_pod=${5:-1}
     local -i instance
+    container_image="quay.io/rkrawitz/clusterbuster-workloads:${arch}-latest"
     create_sync_service "$namespace" \
-				  "$((containers_per_pod * processes_per_pod * replicas * count))" \
-				  "$((containers_per_pod * replicas * count))"
+			"$((containers_per_pod * processes_per_pod * replicas * count))" \
+			"$((containers_per_pod * replicas * count))"
     for instance in $(seq "$first_deployment" $((count + first_deployment - 1))) ; do
-	create_drop_cache_deployment "$namespace" "$workload" "$instance" "$replicas"
+	if [[ $___sysbench_workload = fileio ]] ; then
+	    create_drop_cache_deployment "$namespace" "$workload" "$instance" "$replicas"
+	fi
 	create_standard_deployment -a sysbench_arglist -e sysbench.py -p \
 				   "$namespace" "$instance" "$secret_count" "$replicas" "$containers_per_pod"
     done
@@ -68,47 +72,57 @@ function sysbench_calculate_logs_required() {
 
 function sysbench_help_options() {
     cat <<'EOF'
-    Sysbench General Options:
-       --sysbench-generic-options=<options>
-                        Space or comma separated generic Sysbench options
+    Sysbench Options:
+       --sysbench-workload=<workload>
+			Which sysbench workload to run (fileio, cpu, memory,
+			threads, mutex; oltp is not currently supported)
        --sysbench-fileio-tests=<modes>
                         Space or comma separated list of file test modes
-                        to use (seqwr, seqrewr, seqrd, rndrd, rndwr, rndrw)
-                        If multiple modes are specified, modes are
-                        spread around.
-       --sysbench-fileio-options=<options>
-                        Space or comma separated fileio Sysbench options
+                        to use (seqwr, seqrewr, seqrd, rndrd, rndwr, rndrw).
+       All other options prefixed with "--sysbench-" are treated as sysbench
+       options, with the "sysbench" prefix removed.
 EOF
 }
 
 function sysbench_document() {
     cat <<'EOF'
 * sysbench: scriptable multi-threaded benchmark tool based on LuaJIT.
-  Currently supports only file I/O operations.
+  Currently supports cpu, fileio, memory, mutex, and threads workloads.
   See https://github.com/akopytov/sysbench
 EOF
+}
+
+function _sysbench_set_option() {
+    local option=$1
+    local value=${2:-}
+    local val="${value/sysbench-/--}"
+    if [[ $value = *'='?* ]] ; then
+	___sysbench_options["$option"]="$val"
+    else
+	if [[ -n "${___sysbench_options[$option]}" ]] ; then
+	    unset ___sysbench_options["$option"]
+	fi
+    fi
 }
 
 function sysbench_process_options() {
     local opt
     local -a unknown_opts=()
-    local ftest
     for opt in "$@" ; do
 	read -r noptname1 noptname optvalue <<< "$(parse_option "$opt")"
 	case "$noptname1" in
 	# Sysbench options
-	    sysbenchgenericoptions)     ___sysbench_generic_options+=(${optvalue//,/ })	;;
-	    sysbenchfileiooptions)      ___sysbench_fileio_options+=(${optvalue//,/ })	;;
-	    sysbenchfileiotests)	___sysbench_fileio_test_string=$optvalue	;;
-	    *) 				unknown_opts+=("$noptname ($noptname1)")	;;
+	    sysbenchworkload)	 ___sysbench_workload=$optvalue 		   ;;
+	    sysbenchfileiotest*) ___sysbench_fileio_test_string="${optvalue//,/ }" ;;
+	    sysbenchfileiomode*) ___sysbench_fileio_mode_string="${optvalue//,/ }" ;;
+	    sysbenchtime)	set_runtime "$optvalue"				   ;;
+	    sysbench*)		 _sysbench_set_option "$noptname1" "$opt"	   ;;
+	    *) 			unknown_opts+=("$noptname ($noptname1)")	   ;;
 	esac
     done
     if [[ -n "${unknown_opts[*]:-}" ]] ; then
 	warn "Notice: the following options are not known: ${unknown_opts[*]}"
     fi
-    for ftest in ${___sysbench_fileio_test_string//,/ } ; do
-	___sysbench_fileio_tests[$ftest]=1
-    done
 }
 
 function sysbench_supports_reporting() {
@@ -116,10 +130,15 @@ function sysbench_supports_reporting() {
 }
 
 function sysbench_report_options() {
+    if [[ $___sysbench_workload = fileio ]] ; then
+	cat <<EOF
+"sysbench_fileio_tests": [$(quote_list ${___sysbench_fileio_test_string//,/ })],
+"sysbench_fileio_modes": [$(quote_list ${___sysbench_fileio_mode_string//,/ })],
+EOF
+    fi
     cat <<EOF
-"sysbench_generic_options": [$(quote_list "${___sysbench_generic_options[@]}")],
-"sysbench_fileio_options": [$(quote_list "${___sysbench_fileio_options[@]}")],
-"sysbench_fileio_tests": [$(quote_list ${___sysbench_fileio_test_string//,/ })]
+"sysbench_workload": "$___sysbench_workload",
+"sysbench_options": [$(quote_list "${___sysbench_options[@]}")]
 EOF
 }
 

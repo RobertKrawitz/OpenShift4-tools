@@ -1,0 +1,54 @@
+{
+  "storage": {
+    "disks": [
+      {
+        "device": "/dev/sdb",
+        "wipeTable": true,
+        "partitions": [
+          {
+            "label": "ETCD",
+            "size": 20971520
+          },
+          {
+            "label": "CTNR",
+            "size": 0
+          }
+        ]
+      }
+    ],
+    "filesystems": [
+      {
+        "name": "etcd",
+        "mount": {
+          "device": "/dev/disk/by-partlabel/ETCD",
+          "format": "xfs",
+          "wipeFilesystem": true,
+          "label": "ETCD"
+        }
+      },
+      {
+        "name": "ctnr",
+        "mount": {
+          "device": "/dev/disk/by-partlabel/CTNR",
+          "format": "xfs",
+          "wipeFilesystem": true,
+          "label": "CTNR"
+        }
+      }
+    ]
+  },
+  "systemd": {
+    "units": [
+      {
+        "name": "var-lib-etcd.mount",
+        "enabled": true,
+        "contents": "[Mount]\nWhat=/dev/disk/by-partlabel/ETCD\nType=xfs\nOptions=defaults\n[Install]\nWantedBy=local-fs.target"
+      },
+      {
+        "name": "var-lib-containers.mount",
+        "enabled": true,
+        "contents": "[Mount]\nWhat=/dev/disk/by-partlabel/CTNR\nType=xfs\nOptions=defaults\n[Install]\nWantedBy=local-fs.target"
+      }
+    ]
+  }
+}

@@ -33,14 +33,18 @@ uuid: {self._metadata['uuid']}
             if runtime in data and 'first_pod_start' in data[runtime]:
                 return data[runtime]['last_pod_start'] - data[runtime]['first_pod_start']
 
-        answer += self._analyze_variables(self._data, ['iterations_sec', 'iterations_cpu_sec'], 'CPU (K ops/sec)', divisor=1000, integer=True)
+        answer += self._analyze_variables(self._data, ['iterations_sec', 'iterations_cpu_sec'],
+                                          'CPU (K ops/sec)', divisor=1000, integer=True)
         answer += self._analyze_variables(self._data, 'first_pod_start', 'First pod start (sec)', integer=False, difference=True)
         answer += self._analyze_variables(self._data, 'last_pod_start', 'Last pod start (sec)', integer=False, difference=True)
-        answer += self._analyze_variables(self._data, 'memory_per_pod', 'Memory/pod (MiB)', divisor=1048576, integer=False, ratio=False, difference=True)
-        answer += self._analyze_variables(self._data, None, 'Last N-1 Pod Start Interval', valfunc=pod_start_delta, integer=False, ratio=True, difference=True)
+        answer += self._analyze_variables(self._data, 'memory_per_pod', 'Memory/pod (MiB)',
+                                          divisor=1048576, integer=False, ratio=False, difference=True)
+        answer += self._analyze_variables(self._data, None, 'Last N-1 Pod Start Interval',
+                                          valfunc=pod_start_delta, integer=False, ratio=True, difference=True)
         return answer
 
-    def _analyze_variables(self, data: dict, columns, header: str, divisor = 1.0, valfunc = None, integer: bool=True, ratio: bool=True, difference: bool=False):
+    def _analyze_variables(self, data: dict, columns, header: str, divisor=1.0, valfunc=None,
+                           integer: bool = True, ratio: bool = True, difference: bool = False):
         if not isinstance(columns, list):
             columns = [columns]
         pcolumns = []
@@ -68,32 +72,35 @@ uuid: {self._metadata['uuid']}
 """
         rows = []
         for pods, data1 in data.items():
-            row = [str(pods)]
-            for column in columns:
-                if valfunc is not None:
-                    runc_value = valfunc(data1, 'runc', column)
-                    kata_value = valfunc(data1, 'kata', column)
-                else:
-                    if 'runc' in data1:
-                        runc_value = data1['runc'][column] / divisor
+            try:
+                row = [str(pods)]
+                for column in columns:
+                    if valfunc is not None:
+                        runc_value = valfunc(data1, 'runc', column)
+                        kata_value = valfunc(data1, 'kata', column)
                     else:
-                        runc_value = None
-                    if 'kata' in data1:
-                        kata_value = data1['kata'][column] / divisor
+                        if 'runc' in data1:
+                            runc_value = data1['runc'][column] / divisor
+                        else:
+                            runc_value = None
+                        if 'kata' in data1:
+                            kata_value = data1['kata'][column] / divisor
+                        else:
+                            kata_value = None
+                    if kata_value:
+                        row.append(self._prettyprint(kata_value, base=0, integer=integer))
                     else:
-                        kata_value = None
-                if kata_value:
-                    row.append(self._prettyprint(kata_value, base=0, integer=integer))
-                else:
-                    row.append('')
-                if runc_value:
-                    row.append(self._prettyprint(runc_value, base=0, integer=integer))
-                else:
-                    row.append('')
-                if runc_value is not None and kata_value is not None:
-                    if ratio:
-                        row.append(self._prettyprint(kata_value / runc_value, base=0, precision=3))
-                    if difference:
-                        row.append(self._prettyprint(kata_value - runc_value, base=0, integer=integer, precision=3))
-            rows.append('\t'.join(row))
+                        row.append('')
+                    if runc_value:
+                        row.append(self._prettyprint(runc_value, base=0, integer=integer))
+                    else:
+                        row.append('')
+                    if runc_value is not None and kata_value is not None:
+                        if ratio:
+                            row.append(self._prettyprint(kata_value / runc_value, base=0, precision=3))
+                        if difference:
+                            row.append(self._prettyprint(kata_value - runc_value, base=0, integer=integer, precision=3))
+                rows.append('\t'.join(row))
+            except Exception:
+                pass
         return answer + '\n'.join(rows) + '\n'
