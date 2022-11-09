@@ -2455,43 +2455,39 @@ EOF
 }
 
 function create_vm_spec() {
-    local image
+    local image=${default_vm_image}
     local vmname
-    local cores
-    local sockets
-    local threads
-    local mem
-    local grace
+    local cores=1
+    local sockets=1
+    local threads=1
+    local mem=1024
+    local grace=30
     local OPT
     local OPTIND=1
     local OPTARG
     while getopts ':n:c:s:t:m:g:i:-' OPT; do
         case "$OPT" in
         '?') fatal "Unknown option -$OPTARG" ;;
-         : ) fatal "Option -$OPTARG requires a value" ;;
-         - ) break ;; # end options with --
-         n ) vmname=$OPTARG ;;
-         c ) cores=$OPTARG ;;
-         s ) sockets=$OPTARG ;;
-         t ) threads=$OPTARG ;;
-         m ) mem=$OPTARG ;;
-         g ) grace=$OPTARG ;;
-         i ) image=$OPTARG ;;
-         * ) fatal "Unhandled option -$OPT"
+         :) fatal "Option -$OPTARG requires a value" ;;
+         n) vmname=$OPTARG ;;
+         c) cores=$OPTARG ;;
+         s) sockets=$OPTARG ;;
+         t) threads=$OPTARG ;;
+         m) mem=$OPTARG ;;
+         g) grace=$OPTARG ;;
+         i) image=$OPTARG ;;
+         *) fatal "Unhandled option -$OPT"
         esac
     done
     shift $((OPTIND-1))
-    [[ -z $vmname ]] && fatal "vmname is required"
-    image=${image:-$default_vm_image}
-    cores=${cores:-1}; sockets=${sockets:-1}; threads=${threads:-1}
-    mem=${mem:-1024}; grace=${grace:-30}
+    [[ -n "$vmname" ]] || fatal "vmname is required"
     cat <<EOF
 spec:
   running: true
   template:
     metadata:
       labels:
-        kubevirt-vm: $vmname
+        kubevirt-vm: "$vmname"
     spec:
       domain:
         cpu:
@@ -2511,7 +2507,6 @@ spec:
         - name: containerdisk
           containerDisk:
             image: $image
-status: {}
 EOF
 }
 
@@ -2580,9 +2575,6 @@ function create_standard_deployment() {
 	pod)
 	    create_pod_deployment "$@"
 	    ;;
-        vm)
-            create_vm_deployment "$@"
-            ;;
 	replicaset|deployment)
 	    if ((allow_replica_controller)) ; then
 		create_replication_deployment "$@"
@@ -2590,6 +2582,9 @@ function create_standard_deployment() {
 		create_pod_deployment "$@"
 	    fi
 	    ;;
+        vm)
+            create_vm_deployment "$@"
+            ;;
 	*)
 	    fatal "Unknown deployment type $deployment_type"
 	    ;;
