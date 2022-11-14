@@ -59,7 +59,7 @@ declare platform
 declare installer_image=
 declare client_image=
 declare local_toolsdir=
-declare install_device=install_device
+declare install_device=sda
 declare -i install_retries=2	# Many bare metal nodes take a long time to POST
 platform=$(uname -i)
 
