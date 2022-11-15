@@ -180,7 +180,11 @@ declare force_cleanup_timeout=
 declare default_namespace_policy=restricted
 
 # vm related variables
-declare default_vm_image='quay.io/kubevirt/fedora-container-disk-images:35'
+declare -i cores=1
+declare -i threads=1
+declare -i sockets=1
+declare grace_period=30
+declare image='quay.io/kubevirt/fedora-container-disk-images:35'
 
 declare OC=${OC:-${KUBECTL:-}}
 OC=${OC:-$(type -p oc)}
@@ -719,6 +723,12 @@ function process_option() {
 		*) affinity=0         ;;
 	    esac
 	    ;;
+        # vm specs
+        cores)                      cores=$optvalue                             ;;
+        sockets)                    sockets=$optvalue                           ;;
+        threads)                    threads=$optvalue                           ;;
+        grace)                      grace_period=$optvalue                      ;;
+        image)                      image=$optvalue                             ;;
 	# Object creation
 	obj*spercall)		    objs_per_call=$optvalue			;;
 	parallel)		    parallel=$optvalue				;;
@@ -2444,9 +2454,9 @@ apiVersion: kubevirt.io/v1alpha3
 kind: VirtualMachine
 metadata:
   labels:
-    app: $name
-    kubevirt-vm: $vmname
-  name: $vmname
+    app: "$name"
+    kubevirt-vm: "$vmname"
+  name: "$vmname"
 $(indent 2 standard_deployment_metadata_yaml "$namespace" client)
 $(indent 2 standard_pod_metadata_yaml "$namespace" client)
 $(create_vm_spec -n "$vmname")
@@ -2455,31 +2465,12 @@ EOF
 }
 
 function create_vm_spec() {
-    local image=${default_vm_image}
-    local vmname
-    local -i cores=1
-    local -i sockets=1
-    local -i threads=1
-    local mem=1024
-    local grace=30
-    local OPT
-    local OPTIND=1
-    local OPTARG
-    while getopts ':n:c:s:t:m:g:i:-' OPT; do
-        case "$OPT" in
-        '?') fatal "Unknown option -$OPTARG" ;;
-         :) fatal "Option -$OPTARG requires a value" ;;
-         n) vmname=$OPTARG ;;
-         c) cores=$OPTARG ;;
-         s) sockets=$OPTARG ;;
-         t) threads=$OPTARG ;;
-         m) mem=$OPTARG ;;
-         g) grace=$OPTARG ;;
-         i) image=$OPTARG ;;
-         *) fatal "Unhandled option -$OPT"
+    local vmname="fedora"
+    while getopts 'n:' opt; do
+        case "$opt" in
+            n) vmname=$OPTARG ;;
         esac
     done
-    shift $((OPTIND-1))
     [[ -n "$vmname" ]] || fatal "vmname is required"
     cat <<EOF
 spec:
@@ -2499,10 +2490,8 @@ spec:
             - name: containerdisk
               disk:
                 bus: virtio
-        resources:
-          requests:
-            memory: ${mem}Mi
-      terminationGracePeriodSeconds: $grace
+$(indent 8 container_resources_yaml)
+      terminationGracePeriodSeconds: $grace_period
       volumes:
         - name: containerdisk
           containerDisk:
