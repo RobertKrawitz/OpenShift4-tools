@@ -40,9 +40,9 @@ declare cluster_name
 declare cluster_network_bridge_name=baremetal
 declare cluster_install_dir=${KUBECONFIG:+${KUBECONFIG/\/auth\/kubeconfig/}}
 declare filesystem_json=
-declare -i masters_schedulable=0
+declare -i masters_schedulable=1
 declare -i infra_count=0
-declare -i master_as_infra=0
+declare -i master_as_infra=-1
 declare -r cachedir="$HOME/.cache/ocp4_upi_install"
 declare bootstrap_mac=52:54:00:f9:8e:41
 declare -a mgmt_masters=()
@@ -60,6 +60,7 @@ declare installer_image=
 declare client_image=
 declare local_toolsdir=
 declare install_device=sda
+declare -a fixed_infra_nodes=()
 declare -i install_retries=2	# Many bare metal nodes take a long time to POST
 platform=$(uname -i)
 
@@ -91,6 +92,7 @@ declare -r command_help=$(cat <<'EOF'
         poweroff_workers         Power off all workers
         poweroff_master <index>  Power off specified master (by index)
         poweroff_worker <index>  Power off specified woerker (by index)
+        start_workers            Start the worker nodes
 EOF
 	)
 
@@ -159,14 +161,16 @@ Usage: $command -c <configfile> [options]$cmdmsg args...
                               disabled on all nodes
         infra_count           Number of dedicated infrastructure nodes
                               (default 0)
-        master_as_infra       Use the first master as an infrastructure node
-                              (default 0).  This is in addition to any
-                              explicit infra nodes.
+        master_as_infra<=node>
+                              Use a master node as a dedicated infra node.
+                              If no node is specified, the first master (0)
+                              is used.  -1 (default) means no infra node
+                              used.
         do_install_kata       Install OpenShift sandboxed containers
 	apply_kata_workaround Apply 4.8 workaround for sandboxed containers
                               not adding additional CPUs correctly
         masters_schedulable   Allow user pods to be scheduled on master nodes
-                              (default 0)
+                              (default 1)
         bootstrap_mac         MAC address of bootstrap VM
                               (default 52:54:00:f9:8e:41)
         cluster_host_prefix   32 - desired bare metal network size (default 23)
@@ -272,6 +276,9 @@ function generate_service() {
     local -i master_count=$3
     local -i worker_count=$4
     local -i infra_count=$5
+    if [[ $name = worker && $worker_count -eq 0 ]] ; then
+	name=master
+    fi
     local -i i
     case "$name" in
 	master)
@@ -290,6 +297,13 @@ EOF
     server           infra-${i} ${ip_base}.$((infra_base+i)):${port} check inter 1s
 EOF
 	    done
+	    if ((masters_schedulable)) ; then
+		for i in $(seq 0 "$((master_count - 1))") ; do
+		    cat <<EOF
+    server           master-${i} ${ip_base}.$((master_base+i)):${port} check inter 1s
+EOF
+		done
+	    fi
 	    for i in $(seq 0 "$((worker_count - 1))") ; do
 		cat <<EOF
     server           worker-${i} ${ip_base}.$((worker_base+i)):${port} check inter 1s
@@ -1030,8 +1044,8 @@ function approve_csrs() {
 }
 
 function get_infra_nodes() {
-    if ((master_as_infra)) ; then
-	oc get node --no-headers -oname |grep 'node/master'
+    if ((master_as_infra >= 0)) ; then
+	oc get node --no-headers -oname |grep 'node/master' | head -n $((master_as_infra+1)) |tail -1
     else
 	oc get node --no-headers -oname |grep 'node/infra'
     fi
@@ -1066,7 +1080,7 @@ EOF
 }
 
 function setup_infra() {
-    (( infra_count <= 0 && master_as_infra <= 0 )) && return
+    (( infra_count <= 0 && master_as_infra < 0 )) && return
     echo "*** Labeling infra nodes"
     local node
     while read -r node ; do
@@ -1281,22 +1295,18 @@ function install_cnv() {
 }
 
 function start_workers() {
-    (( ${#mgmt_workers[@]} <= 0 )) && return
-    echo "*** Starting workers"
-    pxe_workers
-    echo "*** Waiting for workers to become ready"
-    while : ; do
-	# shellcheck disable=SC2155
-	local readyNodes=$(oc get nodes |grep worker |grep -v -c NotReady)
-	if [[ -n "$readyNodes" && $readyNodes -eq ${#mgmt_workers[@]} ]] ; then
-	    break
-	fi
-	approve_csrs
-	sleep 1
-    done
-    setup_infra
-    install_kata_internal
-    install_cnv_internal
+    if (( ${#mgmt_workers[@]} > 0)) ; then
+	local readyNodes
+	echo "*** Starting workers"
+	pxe_workers
+	echo "*** Waiting for workers to become ready"
+	while : ; do
+	    readyNodes=$(oc get nodes --no-headers -lnode-role.kubernetes.io/worker= -lnode-role.kubernetes.io/master!= 2>/dev/null |grep -v -c NotReady; true)
+	    if ((readyNodes == ${#mgmt_workers[@]})) ; then return; fi
+	    approve_csrs
+	    sleep 1
+	done
+    fi
 }
 
 # If this is called from the command line it will get passed any arguments.
@@ -1372,6 +1382,9 @@ function do_install_2() {
     bootstrap_destroy
     echo "*** Starting worker(s)"
     start_workers
+    setup_infra
+    install_kata_internal
+    install_cnv_internal
     # We don't invoke setup_chrony with arguments,
     # but command line use might.
     # shellcheck disable=SC2119
@@ -1485,7 +1498,7 @@ function check_macaddr() {
 
 (( ${#mgmt_masters[@]} == 1 || ${#mgmt_masters[@]} == 3 )) || fatal "Configuration must have 1 or 3 masters, actual ${#mgmt_masters[@]}"
 (( ${#mgmt_masters[@]} == ${#master_macs[@]} )) || fatal "Configuration must have same number of mgmt_masters as master_macs"
-(( ${#worker_macs[@]} > infra_count )) || fatal "Configuration must have at least 1 worker_macs in addition to infra nodes"
+(( infra_count == 0 || ${#worker_macs[@]} > infra_count )) || fatal "Configuration must have at least 1 worker_macs in addition to infra nodes"
 (( ${#worker_macs[@]} == ${#mgmt_workers[@]} )) || fatal "Configuration must have as many worker_macs as mgmt_workers, actual ${#worker_macs[@]} and ${#mgmt_workers[@]}"
 bootstrap_mac=${bootstrap_mac,,}
 master_macs=("${master_macs[@],,}")
