@@ -63,7 +63,7 @@ etc. OpenShift 4 clusters.
 
 - **clusterbuster** -- generate pods, namespaces, and secrets to stress
   test a cluster.  See [documentation](docs/clusterbuster.md)
-  
+
 - **force-pull-clusterbuster-image** - force-pull the ClusterBuster
   images so that they are present on all nodes in a cluster.
 
@@ -85,9 +85,40 @@ etc. OpenShift 4 clusters.
     Prometheus query API, while `prometheus-client` is a Prometheus
     provider.
 
+	Newer versions of `prometheus-api-client` may require versions of
+    `pandas` newer than you can run.  If so, you will need to install
+    `prometheus_api_client==0.4.2`.
+
+	Note that `prometheus-api-client` does not install all of its
+    dependencies.  If `pip3 install prometheus-api-client==0.4.2`
+    fails, you will need to install the following dependencies, either
+    via your system packages or via `pip` (system packages may not
+    always provide new enough dependencies).
+
+	- A C++ compiler gcc-c++ or llvm)
+	- pandas==1.1.5
+	- cython
+	- numpy
+
   - **openshift-client**: not currently packaged.  This can be
     installed via `pip3 install openshift-client`.  It provides much
     of the OpenShift client API.
+
+    Note that `openshift-client` cannot and/or does not install all
+    needed dependencies.  If `pip3 install openshift-client` fails,
+    please ensure that the following dependencies are installed (this
+    is current for RHEL 8.x and should be similar for other
+    distributions):
+
+	  - A C compiler (gcc or llvm)
+	  - python3-libs
+	  - rust
+	  - setuptools-rust
+	  - python3-wheel
+	  - python3-pip-wheel
+	  - cryptography
+	  - cargo
+	  - python3-devel
 
   Usage:
 
