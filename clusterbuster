@@ -180,11 +180,11 @@ declare force_cleanup_timeout=
 declare default_namespace_policy=restricted
 
 # vm related variables
-declare -i cores=1
-declare -i threads=1
-declare -i sockets=1
-declare grace_period=30
-declare image='quay.io/kubevirt/fedora-container-disk-images:35'
+declare -i vm_cores=1
+declare -i vm_threads=1
+declare -i vm_sockets=1
+declare vm_grace_period=30
+declare vm_image='quay.io/kubevirt/fedora-container-disk-images:35'
 
 declare OC=${OC:-${KUBECTL:-}}
 OC=${OC:-$(type -p oc)}
@@ -724,11 +724,11 @@ function process_option() {
 	    esac
 	    ;;
         # vm specs
-        cores)                      cores=$optvalue                             ;;
-        sockets)                    sockets=$optvalue                           ;;
-        threads)                    threads=$optvalue                           ;;
-        grace)                      grace_period=$optvalue                      ;;
-        image)                      image=$optvalue                             ;;
+        vmcores)                    vm_cores=$optvalue                          ;;
+        vmsockets)                  vm_sockets=$optvalue                        ;;
+        vmthreads)                  vm_threads=$optvalue                        ;;
+        vmgraceperiod)              vm_grace_period=$optvalue                   ;;
+        vmimage)                    vm_image=$optvalue                          ;;
 	# Object creation
 	obj*spercall)		    objs_per_call=$optvalue			;;
 	parallel)		    parallel=$optvalue				;;
@@ -2465,7 +2465,7 @@ EOF
 }
 
 function create_vm_spec() {
-    local vmname="fedora"
+    local vmname="$basename"
     while getopts 'n:' opt; do
         case "$opt" in
             n) vmname=$OPTARG ;;
@@ -2482,20 +2482,20 @@ spec:
     spec:
       domain:
         cpu:
-          cores: $cores
-          sockets: $sockets
-          threads: $threads
+          cores: $vm_cores
+          sockets: $vm_sockets
+          threads: $vm_threads
         devices:
           disks:
             - name: containerdisk
               disk:
                 bus: virtio
 $(indent 8 container_resources_yaml)
-      terminationGracePeriodSeconds: $grace_period
+      terminationGracePeriodSeconds: $vm_grace_period
       volumes:
         - name: containerdisk
           containerDisk:
-            image: $image
+            image: $vm_image
 EOF
 }
 

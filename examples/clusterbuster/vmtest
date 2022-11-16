@@ -6,7 +6,7 @@ no-report-object-creation
 replicas=2
 deployment_type=vm
 requests=memory=2Gi
-cores=2
+vmcores=2
 namespaces=1
 workload=classic
 exit_at_end
