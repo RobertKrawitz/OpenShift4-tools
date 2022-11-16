@@ -69,6 +69,7 @@ class files_client(clusterbuster_pod_client):
         return ops
 
     def readthem(self, pid: int, oktofail: bool = False):
+        dbuf = ''
         ops = 0
         for bdir in self.dir_list:
             direc = f"{bdir}/p{pid}/{self._container()}"
@@ -79,13 +80,13 @@ class files_client(clusterbuster_pod_client):
                 for fileidx in range(self.files_per_dir):
                     filename = f"{dirname}/{fileidx}"
                     try:
-                        if self.o_direct:
+                        if self.o_direct and self.block_count > 0 and self.blocksize > 0:
                             fd = os.open(filename, self.flags | os.O_RDONLY)
                             ops = ops + 1
-                            for block in range(self.block_count):
-                                with mmap.mmap(fd, self.blocksize, offset=block * self.blocksize,
-                                               access=mmap.ACCESS_READ) as mm:
-                                    mm.read(self.blocksize)
+                            with mmap.mmap(fd, 0, prot=mmap.PROT_READ) as mm:
+                                for block in range(self.block_count):
+                                    tmp = mm.read(self.blocksize)
+                                    dbuf += str(tmp[-1:])
                                     ops = ops + 1
                             os.close(fd)
                         else:
