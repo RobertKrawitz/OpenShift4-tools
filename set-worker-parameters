@@ -48,7 +48,7 @@ while getopts "fhp:b:q:X:" opt ; do
     case "$opt" in
 	f) force=1				   ;;
 	p) args[maxPods]="$OPTARG"; argsSet=1      ;;
-	b) args[KubaAPIBurst]="$OPTARG"; argsSet=1 ;;
+	b) args[KubeAPIBurst]="$OPTARG"; argsSet=1 ;;
 	q) args[KubeAPIQPS]="$OPTARG"; argsSet=1   ;;
 	X)
 	    option=${OPTARG%%=*}
