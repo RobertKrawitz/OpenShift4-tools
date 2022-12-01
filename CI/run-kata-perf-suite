@@ -308,7 +308,12 @@ function set_pin_nodes() {
     if [[ -z "$client_pin_node" || -z "$server_pin_node" || -z "$sync_pin_node" ]] ; then
 	local -a nodes
 	# shellcheck disable=SC2207
-	nodes=($("${OC}" get node -l node-role.kubernetes.io/worker= -o jsonpath='{.items[*].metadata.name}'))
+	nodes=($("${OC}" get node -l node-role.kubernetes.io/worker=,node-role.kubernetes.io/master!= -o jsonpath='{.items[*].metadata.name}'))
+	# Don't try to use master nodes unless there aren't at least two workers.
+	if ((${#nodes[@]} < 2)) ; then
+	    # shellcheck disable=SC2207
+	    nodes=($("${OC}" get node -l node-role.kubernetes.io/worker= -o jsonpath='{.items[*].metadata.name}'))
+	fi
 	local -i node_count=${#nodes[@]}
 	if ((node_count < 1)) ; then
 	    finis "No nodes found!"
@@ -386,6 +391,7 @@ function monitor_1() {
     # safely exit.
     sleep "$timeout" &
     local sleep_pid=$!
+    # shellcheck disable=SC2064
     trap "if [[ -n '$sleep_pid' ]] ; then kill '$sleep_pid'; fi; exit" TERM INT
     wait "$sleep_pid"
     kill -USR1 $$
@@ -500,6 +506,7 @@ function process_option() {
     local noptname
     local noptname1
     local optvalue
+    # shellcheck disable=SC2034
     read -r noptname1 noptname optvalue <<< "$(parse_option "$option")"
     optvalue=$(splitarg "$optvalue")
     # shellcheck disable=SC2206
