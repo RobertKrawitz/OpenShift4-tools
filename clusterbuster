@@ -862,7 +862,7 @@ function generate_environment() {
 function namespace_policy() {
     local policy
     policy=$(call_api -w "$requested_workload" -s namespace_policy)
-    echo ${policy:-${default_namespace_policy}}
+    echo "${policy:-${default_namespace_policy}}"
 }
 
 ################################################################
@@ -959,10 +959,11 @@ function get_pod_timestamp() {
 }
 
 function get_prometheus_pod_timestamp() {
+    local format=${1:-%s.%N}
     if supports_metrics ; then
-	local format=${1:-%s.%N}
-	get_pod_timestamp '%s.%N' -n openshift-monitoring prometheus-k8s-0 -c prometheus
+	get_pod_timestamp "$format" -n openshift-monitoring prometheus-k8s-0 -c prometheus
     else
+	date "+$format"
 	return 1
     fi
 }
@@ -1326,7 +1327,7 @@ function get_logs_poll() {
     local tfile
     tfile=$(mktemp ${cb_tempdir:+-p "$cb_tempdir"} -t '_clusterbusterlogs.XXXXXXXXXX') || fatal "Cannot create temporary file"
     trap 'if [[ -n "${tfile:-}" && -f "$tfile" ]] ; then rm -f "$tfile"; unset tfile; fi; echo "Status: Fail"; return 1' INT TERM HUP USR1
-    _get_logs_poll "$@" > "$tfile"
+    _get_logs_poll "$*" > "$tfile"
     local status=$?
     if ((status == 0)) ; then
 	echo -n '"Results":'; cat < "$tfile"; echo ','
@@ -1405,7 +1406,6 @@ function _report_runtime_classes() {
 function _extract_metrics() {
     if supports_metrics && [[ -r "$metrics_file" ]] ; then
 	cat <<EOF
-,
 "metrics": $("${__topdir__}/prom-extract" --define "namespace_re=${basename}-.*" -m "$metrics_file" --metrics-only --start_time="$prometheus_starting_timestamp" --epoch="$metrics_epoch" --post-settling-time=0)
 EOF
     fi
@@ -1426,51 +1426,72 @@ function _report_liveness_probe() {
 EOF
 }
 
-function _get_kata_version() {
-    if namespace_exists openshift-sandboxed-containers-operator ; then
-	local kata_version
-	kata_version=$(____OC get csv -n openshift-sandboxed-containers-operator -o jsonpath="{.items[0].spec.version}")
-	if [[ -n "$kata_version" ]] ; then
+function _get_csv_version() {
+    local product
+    local namespace=
+    local field='.spec.version'
+    local OPTARG
+    local OPTIND=0
+    local opt
+    while getopts 'n:f:' opt "$@" ; do
+	case "$opt" in
+	    n) namespace=$OPTARG ;;
+	    f) field=$OPTARG	 ;;
+	    *)			 ;;
+	esac
+    done
+    shift $((OPTIND-1))
+    local product=$1
+    namespace=${namespace:-openshift-${product}}
+    if namespace_exists "$namespace" ; then
+	local version
+	version=$(____OC get csv -n "$namespace" -o jsonpath="{.items[0]${field}}")
+	if [[ -n "$version" ]] ; then
 	    cat <<EOF
-"kata_version": "${kata_version:-}",
+"${product}_version": "${version:-}",
 EOF
 	fi
     fi
 }
 
-function _report_objects() {
+function _get_logs() {
     local first_local_ts
     local remote_ts
     local second_local_ts
-    # shellcheck disable=SC2206
-    local -a podname=($*)
-    read -r first_local_ts remote_ts second_local_ts <<< "$(get_pod_and_local_timestamps "$@")"
+    read -r first_local_ts remote_ts second_local_ts <<< "$(get_pod_and_local_timestamps "${@:2}")"
     if [[ -z "$remote_ts" ]] ; then
 	killthemall "Unable to retrieve sync timestamp"
     fi
     sync_ts_error_interval=$(bc <<< "$second_local_ts - $first_local_ts")
     sync_ts_delta=$(bc <<< "$second_local_ts - $first_local_ts")
-    cat <<EOF
+    echo '{'
+    indent 2 <<EOF
+$("$@"),
+$(_extract_metrics),
 "metadata": {
   "kind": "clusterbusterResults",
   "controller_first_start_timestamp": $first_start_timestamp,
   "prometheus_start_timestamp": $prometheus_exact_starting_timestamp,
   "controller_second_start_timestamp": $second_start_timestamp,
+  "controller_end_timestamp": $(date +%s.%N),
+  "controller_elapsed_time": $(bc <<< "$(date +%s.%N) - ${second_start_timestamp:-0}"),
   "cluster_start_time": "$(readable_timestamp "${prometheus_starting_timestamp}")",
   "job_name": "$job_name",
   "uuid": "$uuid",
   "workload": "$requested_workload",
   "workload_reporting_class": "$(_workload_reporting_class)",
-  "kubernetes_version": $(__OC version -ojson),
+  "kubernetes_version": $(indent_hang 2 __OC version -ojson),
   "command_line": [$(quote_list "${saved_argv[@]}")],
   "expanded_command_line": [$(quote_list "${processed_options[@]}")],
   "runHost": "$(hostname -f)",
-  "workload_metadata": {$(generate_workload_metadata)},
+  "workload_metadata": {$(indent_hang 2 generate_workload_metadata)},
   "controller_presync_timestamp": $first_local_ts,
   "sync_timestamp": $remote_ts,
   "controller_postsync_timestamp": $second_local_ts,
   "artifact_directory": "$artifactdir",
-  $(_get_kata_version)
+$(indent 2 _get_csv_version -n openshift-sandboxed-containers-operator kata)
+$(indent 2 _get_csv_version cnv)
+$(indent 2 _get_csv_version -f .spec.labels.full_version -n openshift-storage odf)
   "options": {
     "basename": "$basename",
     "containers_per_pod": $containers_per_pod,
@@ -1484,15 +1505,15 @@ function _report_objects() {
     "drop_cache": $drop_node_cache,
     "always_drop_cache": $drop_all_node_cache,
     "pin_nodes": {$(_report_pin_nodes)},
-$(indent 8 _report_volumes)
+$(indent 4 _report_volumes)
 $(indent 4 _report_liveness_probe)
     "secrets": $secrets,
     "replicas": $replicas,
     "container_image": "$container_image",
     "node_selector": "$node_selector",
-$(indent 8 container_resources_json)
+$(indent 4 container_resources_json)
     "runtime_classes": {$(_report_runtime_classes)},
-$(indent 8 _report_emptydirs)
+$(indent 4 _report_emptydirs)
     "target_data_rate": $target_data_rate,
     "workloadOptions": {
 $(indent 8 call_api -w "$requested_workload" "report_options")
@@ -1500,9 +1521,11 @@ $(indent 8 call_api -w "$requested_workload" "report_options")
   }
 },
 "nodes": $(__OC get nodes -ojson),
-"api_objects": $( __OC get all -A -l "${basename}-id=$uuid" -ojson |jq -r .items?),
-"csvs": $(__OC get csv -A -ojson | jq -r '[foreach .items[]? as $item ([[],[]];0; {name: $item.metadata.name, namespace: $item.metadata.namespace, version: $item.spec.version})]'),
+"api_objects": $(__OC get all -A -l "${basename}-id=$uuid" -ojson |jq -r .items?),
+"csvs": $(__OC get csv -A -ojson | jq -r '[foreach .items[]? as $item ([[],[]];0; {name: $item.metadata.name, namespace: $item.metadata.namespace, version: $item.spec.version})]')
 EOF
+    echo '}'
+    _retrieve_artifacts
 }
 
 function _retrieve_artifacts() {
@@ -1524,16 +1547,6 @@ function _retrieve_artifacts() {
     fi
 }
 
-function _get_logs() {
-    echo '{'
-    # shellcheck disable=SC2068
-    _report_objects ${@:2}
-    "$@"
-    _extract_metrics
-    echo '}'
-    _retrieve_artifacts
-}
-
 function print_report() {
     if [[ $report_format == raw ]] ; then
 	cat
@@ -1552,21 +1565,21 @@ function get_logs() {
 	log_cmd=true
     fi
     local report_cmd=cat
-    if supports_api -w "$requested_workload" supports_reporting ; then
-	if [[ -z "$*" ]] ; then
-	    echo "Workload $requested_workload does not support reporting" 1>&2
-	elif [[ -n "$artifactdir" ]] ; then
-	    _get_logs "$log_cmd" "$@" > "$artifactdir/clusterbuster-report.tmp.json" && {
-		mv "$artifactdir/clusterbuster-report.tmp.json" "$artifactdir/clusterbuster-report.json"
-		print_report < "$artifactdir/clusterbuster-report.json"
-	    }
+    if supports_api -w "$requested_workload" supports_reporting && [[ -n "$*" ]]; then
+	if [[ -n "$artifactdir" ]] ; then
+	    # Even if reporting fails, make sure we capture the JSON
+	    _get_logs "$log_cmd" "$@" > "$artifactdir/clusterbuster-report.tmp.json" &&
+		mv "$artifactdir/clusterbuster-report.tmp.json" "$artifactdir/clusterbuster-report.json" &&
+		print_report < "$artifactdir/clusterbuster-report.json" &&
+		return 0
+	    return 1
 	else
 	    _get_logs "$log_cmd" "$@" | print_report
+	    return $((PIPESTATUS[0] || PIPESTATUS[1]))
 	fi
     else
 	echo "Workload $requested_workload does not support reporting" 1>&2
     fi
-    return $((PIPESTATUS[0] || PIPESTATUS[1]))
 }
 
 ################################################################
@@ -1595,8 +1608,16 @@ EOF
 function _indent() {
     local -i column="$1"
     local line
-    while IFS='' read -r 'line' ; do
-	[[ -z "$line" ]] || printf "%${column}s%s\n" ' ' "$line"
+    local first=1
+    while IFS='' read -r line ; do
+	if [[ -n "$line" ]] ; then
+	    if [[ -n "${hang_indent:-}" && $first -eq 1 ]] ; then
+		echo "$line"
+		first=0
+	    else
+		printf "%${column}s%s\n" '' "$line"
+	    fi
+	fi
     done
 }
 
@@ -1609,6 +1630,10 @@ function indent() {
     else
 	_indent "$column"
     fi
+}
+
+function indent_hang() {
+    hang_indent=1 indent "$@"
 }
 
 function mkpodname() {
@@ -2441,17 +2466,18 @@ $(indent 2 standard_deployment_metadata_yaml "$namespace" client)
 $(indent 2 standard_labels_yaml -l "$workload" "$namespace" "$instance")
 spec:
   replicas: $replicas
+$(indent 2 <<< "${security_context:-}")
   selector:
     matchLabels:
       instance: ${namespace}-${workload}-${instance}
   strategy:
     type: RollingUpdate
-${security_context:+$(indent 2 <<< "$security_context")}
   template:
     metadata:
 $(indent 6 standard_labels_yaml -l "$workload" "$namespace" "$instance")
 $(indent 6 standard_pod_metadata_yaml "$namespace" client)
 $(indent 4 create_spec -A "$affinity_yaml" -c "$node_class" "$@")
+$(indent 6 <<< "${security_context:-}")
 EOF
 }
 
@@ -2545,14 +2571,7 @@ $(indent 2 standard_labels_yaml 'sync' "$namespace")
     matchLabels:
       app: ${namespace}
 $(create_container_function=create_container_sync create_spec -P -c sync -r '' "$namespace" 0 0 "$@")
-  securityContext:
-    allowPrivilegeEscalation: False
-    capabilities:
-      drop:
-      - ALL
-    runAsNonRoot: True
-    seccompProfile:
-      type: RuntimeDefault
+$(indent 2 default_security_context)
   restartPolicy: Never
 EOF
 }
@@ -2613,9 +2632,7 @@ $(indent 2 standard_labels_yaml -s dc "$workload" "$namespace" "$instance" "$rep
     matchLabels:
       replica: ${namespace}-${workload}-${instance}-${replica}
   securityContext:
-    seccompProfile: RuntimeDefault
     privileged: True
-    allowPrivilegeEscalation: False
 $(create_container_function=create_container_drop_cache create_spec -P -c drop-cache -r '' "$namespace" "$instance" 0)
   - name: "proc-sys-vm"
     hostPath:
@@ -2843,6 +2860,7 @@ function do_cleanup() {
 	sleep "${injected_errors[cleanup]:-}"
 	killthemall "Cleanup timed out!"
     fi
+    # shellcheck disable=SC2086
     _do_cleanup $force $objects_to_clean || killthemall "Cleanup timed out!"
 }
 
@@ -2898,9 +2916,16 @@ function do_logging() {
     local namespace
     local pod
     local ignore
+    local namespace_retrieved=
     while read -r namespace pod ignore ; do
 	if [[ -n "$namespace" && -n "$pod" ]] ; then
-	    sync_pods+=("-n $namespace $pod")
+	    if [[ -z "$namespace_retrieved" ]] ; then
+		namespace_retrieved=$namespace
+		sync_pods+=("-n" "$namespace")
+	    elif [[ "$namespace" != "$namespace_retrieved" ]] ; then
+		killthemall "Namespace mismatch: $namespace vs $namespace_retrieved"
+	    fi
+	    sync_pods+=("$pod")
 	fi
     done <<< "$(____OC get pod -A --no-headers -l "${basename}-sync=${uuid}")"
     get_logs "${sync_pods[@]}" &
