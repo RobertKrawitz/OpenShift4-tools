@@ -62,6 +62,7 @@ declare -i take_prometheus_snapshot=0
 declare unique_job_prefix=
 declare snapshot_date_format='%Y_%m_%dT%H_%M_%S%z'
 declare prometheus_snapshot_start_ts=
+declare job_delay=0
 
 declare -a runtimeclasses=('' 'kata')
 declare -a extra_clusterbuster_args=()
@@ -442,6 +443,7 @@ $(_document_workloads)
                                 Comma-separated list of runtime classes to test.
                                 Default is <empty> (i. e. default) and kata.
         --cleanup               Clean up all pods after last run.
+        --job-delay=N           Delay N seconds between jobs (default $job_delay)
         --restart               Restart any failed or incomplete jobs from a
                                 prior run.  Default is no.  Can only be used
                                 with identical parameters to previous run.
@@ -526,6 +528,7 @@ function process_option() {
 	uuid) uuid=$optvalue								;;
 	prometheussnapshot) take_prometheus_snapshot=$(bool "$optvalue")		;;
 	uniqueprefix) unique_job_prefix=$(bool -Y "$optvalue")				;;
+	jobdelay) job_delay=$optvalue							;;
 
 	# Unknown option -- can we delegate?
 	*)
@@ -671,6 +674,7 @@ function run_clusterbuster_1() {
     local -i status=0
     local -i job_start
     local -i job_end
+    sleep "$job_delay"
     job_start=$(date +%s)
     echo
     echo "*** Running $jobname at $(date -Is -u)"
