@@ -63,6 +63,7 @@ declare unique_job_prefix=
 declare snapshot_date_format='%Y_%m_%dT%H_%M_%S%z'
 declare prometheus_snapshot_start_ts=
 declare job_delay=0
+declare -i pinjobs=1
 
 declare -a runtimeclasses=('' 'kata')
 declare -a extra_clusterbuster_args=()
@@ -156,6 +157,7 @@ function report_ci_results() {
 	return
     fi
     local OPTIND=0
+    local OPTARG
     local status=
     local -i start_timestamp=${starting_timestamp:-0}
     local -i end_timestamp=-1
@@ -306,6 +308,7 @@ function splitarg() {
 }
 
 function set_pin_nodes() {
+    if ((! pin_jobs)) ; then return; fi
     if [[ -z "$client_pin_node" || -z "$server_pin_node" || -z "$sync_pin_node" ]] ; then
 	local -a nodes
 	# shellcheck disable=SC2207
@@ -425,6 +428,7 @@ $(_document_workloads)
                                 specified node.  Class is optional; if
                                 specified, it should be either client,
                                 server, or pin.
+        --no-pin-nodes          Do not pin jobs to nodes.
         --runtime=seconds       Run the job for the given number of seconds,
                                 if applicable (this does not apply to the
                                 files test).  May be overridden by
@@ -512,6 +516,8 @@ function process_option() {
 	clientpin*) client_pin_node=$optvalue						;;
 	serverpin*) server_pin_node=$optvalue						;;
 	syncpin*) sync_pin_node=$optvalue						;;
+	nopinnode) pin_jobs=0								;;
+	pinnode*) pin_jobs=$(bool "$optvalue")						;;
 	pin*) set_pin_node "$optvalue"							;;
 	jobruntime|runtime) job_runtime=$optvalue					;;
 	jobtimeout|timeout) job_timeout=$optvalue					;;
@@ -633,6 +639,7 @@ function doit() {
 
 function run_clusterbuster_1() {
     local OPTIND=0
+    local OPTARG
     local opt
     local -i error_is_failure=1
     local jobdir=
