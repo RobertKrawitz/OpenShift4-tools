@@ -912,6 +912,14 @@ function namespace_exists() {
     ____OC get ns "$ns" >/dev/null 2>&1
 }
 
+function object_exists() {
+    ____OC get "$@" >/dev/null 2>&1
+}
+
+function delete_object_safe() {
+    object_exists "$@" && _OC delete "$@"
+}
+
 ################################################################
 # Synchronization between worker pods
 ################################################################
@@ -2188,6 +2196,7 @@ function _create_object_from_file() {
 	[[ -r "$file" ]] || fatal "Can't read file $file!"
     done
     # shellcheck disable=SC2046
+    delete_object_safe "$objtype" $(_ns) "$objname"
     _OC create "$objtype" $(_ns) "$objname" "${@/#/--from-file=}" || killthemall "Unable to create object $objtype/$namespace:$objname"
     # shellcheck disable=SC2046
     _OC label "$objtype" $(_ns) "$objname" "${basename}base=true" 'clusterbusterbase=true' "${basename}-uuid=${uuid}" "${basename}-id=$uuid" "${basename}=true" || killthemall "Unable to label $objtype/$namespace:$objname"
@@ -3018,9 +3027,9 @@ function run_clusterbuster_2() {
 	do_cleanup -p 1>&2 || return 1
     fi
     if ((cleanup_always)) ; then
-	trap 'killthemall "Cleaning up"; wait; remove_tmpdir; doit=1; do_cleanup -f; exit 1' TERM INT HUP
+	trap 'echo "Cleaning up" 1>&2; remove_tmpdir; doit=1; do_cleanup -f; killthemall ''; wait; remove_tmpdir; doit=1; do_cleanup -f; exit 1' TERM INT HUP
     else
-	trap 'killthemall "Not cleaning up"; wait; remove_tmpdir; exit 1' TERM HUP INT
+	trap 'remove_tmpdir; killthemall "Not cleaning up"; wait; exit 1' TERM HUP INT
     fi
     if [[ $doit -gt 0 ]] ; then
 	if [[ -n "${artifactdir:-}" && $take_prometheus_snapshot -gt 0 ]] ; then
