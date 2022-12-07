@@ -125,8 +125,6 @@ declare configmap_mount_dir=/etc/clusterbuster
 declare system_configmap_mount_dir=/var/lib/clusterbuster
 declare -i has_system_configmap=0
 declare node_selector='node-role.kubernetes.io/worker'
-declare -i pbench_controller_port=0
-declare pbench_controller_address=
 declare -i processes_per_pod=1
 declare -i emptydir_volumes=0
 declare -i take_prometheus_snapshot=0
@@ -476,13 +474,6 @@ $(print_workloads_supporting_reporting '                        - ')
        --parallel_deployments=N
        --wait_secrets   Wait for secrets to be created (default 1)
 
-    Using PBench:
-       If pbench is to be used, both arguments below must be provided.
-       --pbench_controller_address=address
-                        Use the specified address to connect to the controller.
-       --pbench_controller_port=port
-                        Use the specified port to connect to the controller.
-
 Workload-specific options:
 $(_help_options_workloads)
 
@@ -678,8 +669,6 @@ function process_option() {
 	namespaces)		    namespaces=$optvalue			;;
 	nodeselector)		    node_selector=$optvalue			;;
 	volume)			    parse_volume_spec "$optvalue"		;;
-	pbenchcontrolleraddress)    pbench_controller_address=$optvalue		;;
-	pbenchcontrollerport)	    pbench_controller_port=$optvalue		;;
 	processes|processesperpod)  processes_per_pod=$optvalue			;;
 	jobfile)		    process_job_file "$optvalue"		;;
 	pinnode)		    process_pin_node "$optvalue"		;;
@@ -1920,46 +1909,6 @@ EOF
     fi
 }
 
-function pbench_agent_yaml() {
-    if (( pbench_controller_port > 0 )) ; then
-	# This isn't ideal, as there still can be collisions.
-	# Without a port server, this is certainly the most
-	# expeditious.
-	local ssh_port=0
-	while (( ssh_port < 2023 )) ; do
-	    ssh_port=$RANDOM
-	done
-	cat <<EOF
-- name: "pbench-agent"
-  image: "$container_image"
-  ${image_pull_policy:+imagePullPolicy: $image_pull_policy}
-  securityContext:
-    privileged: false
-    capabilities:
-      add:
-      - AUDIT_WRITE
-  env:
-  - name: VERBOSE
-    value: "0"
-  command:
-  - "/usr/local/bin/run-pbench-agent-container"
-  args:
-  - "$pbench_controller_port"
-  - "$pbench_controller_address"
-#hostPID: true
-serviceAccount: pbench
-EOF
-    fi
-}
-
-function privilege_yaml() {
-    if (( pbench_controller_port > 0)) ; then
-	cat <<EOF
-openshift.io/scc: privileged
-EOF
-    fi
-}
-
 function namespace_yaml() {
     local namespace=$1
     (( use_namespaces )) && echo "namespace: \"$namespace\""
@@ -1994,7 +1943,6 @@ function standard_deployment_metadata_yaml() {
     local namespace=${1:-}
     local class=${2:-client}
     namespace_yaml "$namespace"
-    privilege_yaml
 }
 
 function standard_pod_metadata_yaml() {
@@ -2391,15 +2339,12 @@ function create_spec() {
     local OPTARG
     local ns_yaml=${node_selector:+"nodeSelector:${nl}  $node_selector: \"\""}
     local runtime_class
-    local use_pbench=1
     local opt
     while getopts "A:c:r:Pp" opt "$@" ; do
 	case "$opt" in
 	    A) affinity_yaml=$OPTARG ;;
 	    c) node_class=$OPTARG    ;;
 	    r) runtime_class=$OPTARG ;;
-	    P) use_pbench=	     ;;
-	    p) use_pbench=1	     ;;
 	    *)                       ;;
 	esac
     done
@@ -2428,7 +2373,6 @@ spec:
 $(indent 2 <<< "$affinity_yaml")
 $(indent 2 tolerations_yaml ${tolerations+"${tolerations[@]}"})
 ${runtime_class:+$(indent 2 <<< "runtimeClassName: \"$runtime_class\"")}
-${use_pbench:+$(indent 2 <<< "$(pbench_agent_yaml)")}
   containers:
 $(indent 2 "$create_container_function" "$@")
 $(indent 2 volumes_yaml "$namespace" "$instance" "$secret_count")
@@ -3184,14 +3128,6 @@ esac
 
 if [[ -z $OC && $doit -gt 0 ]] ; then
     fatal "Cannot find oc or kubectl command, exiting!"
-fi
-
-if [[ -z "$pbench_controller_address" && $pbench_controller_port -ne 0 ]] ; then
-    fatal "Both pbench_controller_address and pbench_controller_port must be specified"
-fi
-
-if [[ -n "$pbench_controller_address" && $pbench_controller_port -eq 0 ]] ; then
-    fatal "Both pbench_controller_address and pbench_controller_port must be specified"
 fi
 
 resource_validation_failed=0
