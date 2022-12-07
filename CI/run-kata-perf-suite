@@ -63,7 +63,7 @@ declare unique_job_prefix=
 declare snapshot_date_format='%Y_%m_%dT%H_%M_%S%z'
 declare prometheus_snapshot_start_ts=
 declare job_delay=0
-declare -i pinjobs=1
+declare -i pin_jobs=1
 
 declare -a runtimeclasses=('' 'kata')
 declare -a extra_clusterbuster_args=()
