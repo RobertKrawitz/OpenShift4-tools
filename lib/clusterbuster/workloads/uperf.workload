@@ -27,7 +27,10 @@ declare -gir ___uperf_port=30000
 declare -gi ___uperf_port_addrs=24
 declare -gi ___uperf_ramp_time=3
 declare -g ___uperf_interface=
-declare -g ___uperf_interface_pod=
+declare -g ___uperf_interface_server=
+declare -g ___uperf_interface_client=
+declare -g ___uperf_interface_pod_server=
+declare -g ___uperf_interface_pod_client=
 
 function uperf_server_arglist() {
     local mountdir=$1; shift
@@ -40,7 +43,7 @@ function _uperf_create_security_context() {
 securityContext:
 $(indent 2 default_security_context_content)
 EOF
-    if [[ -z "$___uperf_interface_pod" ]] ; then
+    if [[ -z "$___uperf_interface_pod_server" ]] ; then
 	cat <<EOF
   sysctls:
   - name: net.ipv4.ip_local_port_range
@@ -52,8 +55,9 @@ EOF
 function uperf_client_arglist() {
     local mountdir=$1; shift
     while [[ "$1" != '--' ]] ; do shift; done; shift
+    # We need the address of the server, hence using $uperf_interface_pod_server
     mk_yaml_args "python3" "${mountdir}uperf-client.py" "$@" "$workload_run_time" "$___uperf_ramp_time" \
-		 "${___uperf_interface_pod:+${___uperf_interface_pod}@}${namespace}-uperf-server-${instance}-1" \
+		 "${___uperf_interface_pod_server:+${___uperf_interface_pod_server}@}${namespace}-uperf-server-${instance}-1" \
 		 "$___uperf_port" "${___uperf_tests[@]}"
 }
 
@@ -64,17 +68,31 @@ function uperf_create_deployment() {
     local replicas=${4:-1}
     local containers_per_pod=${5:-1}
     local -i instance
+    local server_annotation
+    local client_annotation
     if [[ -n "$___uperf_interface" ]] ; then
-	if [[ $___uperf_interface = *'='* ]] ; then
-	    ___uperf_interface_pod=${___uperf_interface#*=}
-	    ___uperf_interface=${___uperf_interface%%=*}
+	___uperf_interface_server=${___uperf_interface_server:-$___uperf_interface}
+	___uperf_interface_client=${___uperf_interface_client:-$___uperf_interface}
+    fi
+    if [[ -n "$___uperf_interface_client" ]] ; then
+	if [[ $___uperf_interface_client = *'='* ]] ; then
+	    ___uperf_interface_pod_client=${___uperf_interface_client#*=}
+	    ___uperf_interface_client=${___uperf_interface_client%%=*}
 	fi
-	if [[ -z "$___uperf_interface_pod" && $___uperf_interface != eth0 ]] ; then
-	    ___uperf_interface_pod=net1
+	if [[ -z "$___uperf_interface_pod_client" && $___uperf_interface_client != eth0 ]] ; then
+	    ___uperf_interface_pod_client=net1
 	fi
-	if [[ ${pod_annotations[*]} != *"k8s.v1.cni.cncf.io/networks"* ]] ; then
-	    pod_annotations+=("k8s.v1.cni.cncf.io/networks: $___uperf_interface")
+	client_annotation="k8s.v1.cni.cncf.io/networks: $___uperf_interface_client"
+    fi
+    if [[ -n "$___uperf_interface_server" ]] ; then
+	if [[ $___uperf_interface_server = *'='* ]] ; then
+	    ___uperf_interface_pod_server=${___uperf_interface_server#*=}
+	    ___uperf_interface_server=${___uperf_interface_server%%=*}
 	fi
+	if [[ -z "$___uperf_interface_pod_server" && $___uperf_interface_server != eth0 ]] ; then
+	    ___uperf_interface_pod_server=net1
+	fi
+	server_annotation="k8s.v1.cni.cncf.io/networks: $___uperf_interface_server"
     fi
     if ((((replicas * containers_per_pod * processes_per_pod) + 4) > ___uperf_port_addrs)) ; then
 	___uperf_port_addrs=$(((replicas * containers_per_pod * processes_per_pod) + 4))
@@ -89,11 +107,13 @@ function uperf_create_deployment() {
 	create_standard_deployment -w uperf-server -p -c server \
 				   -A "$(create_affinity_yaml "${namespace}-uperf-client-${instance}")" \
 				   -a uperf_server_arglist \
+				   ${server_annotation:+-N "$server_annotation"} \
 				   -S "$(_uperf_create_security_context)" \
 				   "$namespace" "$instance" "$secret_count" 1 1
 	create_standard_deployment -w uperf-client \
 				   -A "$(create_affinity_yaml "${namespace}-uperf-server-${instance}")" \
 				   -a uperf_client_arglist \
+				   ${client_annotation:+-N "$client_annotation"} \
 				   -S "$(_uperf_create_security_context)" \
 				   "$namespace" "$instance" "$secret_count" "$replicas" "$containers_per_pod"
     done
@@ -122,12 +142,18 @@ function uperf_help_options() {
     Uperf Options:
        --pin_node=server=<node>
                        Specify node to which the server is bound.
+       --pin_node=client=<node>
+                       Specify node to which the client is bound.
        --uperf-ramp-time=<sec>
                        Specify the ramp time for uperf.
        --uperf-interface=<interface[=pod_interface]>
                        Specify the network interface to use.  Optional
                        pod interface is the name of the interface on the
                        pod (normally net1).
+       --uperf-interface-server=<interface[=pod_interface]>
+       --uperf-interface-client=<interface[=pod_interface]>
+                       Specify the interfaces for client and server
+                       separately.
      The following options take a comma-separated list of each
      value to test.  The outer product of all specified tests
      is run.
@@ -161,7 +187,9 @@ function uperf_process_options() {
 	    uperfproto*) ___uperf_protos=(${optvalue//,/ })	   ;;
 	    uperfnthr*) ___uperf_nthrs=(${optvalue//,/ })	   ;;
 	    uperframp*) ___uperf_ramp_time=$optvalue		   ;;
-	    uperfint*) ___uperf_interface=$optvalue		   ;;
+	    uperfinterface) ___uperf_interface=$optvalue	   ;;
+	    uperfinterfaces*) ___uperf_interface_server=$optvalue  ;;
+	    uperfinterfacec*) ___uperf_interface_client=$optvalue  ;;
 	    *) unknown_opts+=("$noptname ($noptname1)")		   ;;
 	esac
     done
@@ -252,7 +280,8 @@ function uperf_report_options() {
 "protocols": $(__uperf_stringify -s "${___uperf_protos[@]}"),
 "nthrs": $(__uperf_stringify -n "${___uperf_nthrs[@]}"),
 "ramp_time": ${___uperf_ramp_time},
-"interface": "${___uperf_interface}"
+"server_interface": "${___uperf_interface_server}",
+"client_interface": "${___uperf_interface_client}"
 EOF
 }
 

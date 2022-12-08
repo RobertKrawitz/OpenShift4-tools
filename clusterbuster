@@ -1639,6 +1639,16 @@ function mkpodname() {
     echo "${podname//_/-}"
 }
 
+function get_pin_node() {
+    if [[ -n "${1:-}" ]] ; then
+	if [[ -n "${pin_nodes[$1]:-}" ]] ; then
+	    echo "${pin_nodes[$1]}"
+	elif [[ -n "${pin_nodes[default]:-}" ]] ; then
+	    echo "${pin_nodes[default]}"
+	fi
+    fi
+}
+
 function tolerations_yaml() {
     local toleration
     (( ${#tolerations[@]} )) || return
@@ -2340,6 +2350,7 @@ function create_spec() {
     local ns_yaml=${node_selector:+"nodeSelector:${nl}  $node_selector: \"\""}
     local runtime_class
     local opt
+    local pin_node
     while getopts "A:c:r:Pp" opt "$@" ; do
 	case "$opt" in
 	    A) affinity_yaml=$OPTARG ;;
@@ -2351,10 +2362,9 @@ function create_spec() {
     shift $((OPTIND-1))
     (( $# >= 3 )) || fatal "Usage: create_spec namespace instance secret_count args..."
     # Node specifiers override affinity
-    if [[ -n "$node_class" && -n "${pin_nodes[$node_class]:-}" ]] ; then
-	affinity_yaml="nodeSelector:${nl}  kubernetes.io/hostname: \"${pin_nodes[$node_class]}\""
-    elif [[ -n "${pin_nodes[default]:-}" ]] ; then
-	affinity_yaml="nodeSelector:${nl}  kubernetes.io/hostname: \"${pin_nodes[default]}\""
+    pin_node=$(get_pin_node "$node_class")
+    if [[ -n "${pin_node:-}" ]] ; then
+	affinity_yaml="nodeSelector:${nl}  kubernetes.io/hostname: \"$pin_node\""
     fi
     if [[ -z "${runtime_class+x}" ]] ; then
 	if [[ -n "$node_class" && -n "${runtime_classes[$node_class]:-}" ]] ; then
@@ -2446,14 +2456,16 @@ function create_standard_deployment() {
     local deployment_type=$deployment_type
     local arglist_function=
     local create_container_function=create_standard_containers
+    local pod_annotations=("${pod_annotations[@]}")
     security_context="$(default_security_context)"
-    while getopts 'A:w:S:pc:d:e:C:a:' opt "$@" ; do
+    while getopts 'A:w:S:pc:d:e:C:a:N:' opt "$@" ; do
 	case "$opt" in
 	    A) affinity_yaml="$OPTARG"		   ;;
 	    a) arglist_function="$OPTARG"	   ;;
 	    C) create_container_function="$OPTARG" ;;
 	    c) node_class="$OPTARG"		   ;;
 	    d) deployment_type="$OPTARG"	   ;;
+	    N) pod_annotations+=("$OPTARG")	   ;;
 	    p) allow_replica_controller=0	   ;;
 	    S) security_context="$OPTARG"	   ;;
 	    w) workload="$OPTARG"	  	   ;;
