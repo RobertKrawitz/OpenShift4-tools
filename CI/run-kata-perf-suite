@@ -307,17 +307,24 @@ function splitarg() {
     echo "${*//,/ }"
 }
 
+function get_available_nodes() {
+    local -a nodes
+    local role
+    for role in 'node-role.kubernetes.io/clusterbuster=' 'node-role.kubernetes.io/worker=,node-role.kubernetes.io/master!=' 'node-role.kubernetes.io/worker=' ; do
+	readarray -d ' ' -t nodes < <("${OC}" get node -l "$role" -o jsonpath='{.items[*].metadata.name}')
+	if ((${#nodes[@]} >= 2)) ; then
+	    echo "${nodes[*]}"
+	    return
+	fi
+    done
+    echo "${nodes[*]}"
+}
+
 function set_pin_nodes() {
     if ((! pin_jobs)) ; then return; fi
     if [[ -z "$client_pin_node" || -z "$server_pin_node" || -z "$sync_pin_node" ]] ; then
 	local -a nodes
-	# shellcheck disable=SC2207
-	nodes=($("${OC}" get node -l node-role.kubernetes.io/worker=,node-role.kubernetes.io/master!= -o jsonpath='{.items[*].metadata.name}'))
-	# Don't try to use master nodes unless there aren't at least two workers.
-	if ((${#nodes[@]} < 2)) ; then
-	    # shellcheck disable=SC2207
-	    nodes=($("${OC}" get node -l node-role.kubernetes.io/worker= -o jsonpath='{.items[*].metadata.name}'))
-	fi
+	readarray -d ' ' -t nodes < <(get_available_nodes)
 	local -i node_count=${#nodes[@]}
 	if ((node_count < 1)) ; then
 	    finis "No nodes found!"
@@ -515,7 +522,6 @@ function process_option() {
     # shellcheck disable=SC2034
     read -r noptname1 noptname optvalue <<< "$(parse_option "$option")"
     optvalue=$(splitarg "$optvalue")
-    # shellcheck disable=SC2206
     case "$noptname1" in
 	help*) help									;;
 	debug*) debugonly="$(bool "$optvalue")"						;;
