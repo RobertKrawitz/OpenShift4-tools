@@ -142,4 +142,12 @@ EOF
 EOF
 }
 
+function sysbench_namespace_policy() {
+    if [[ ${___sysbench_workload:-fileio} = fileio ]] ; then
+	echo privileged
+    else
+	echo restricted
+    fi
+}
+
 register_workload sysbench
