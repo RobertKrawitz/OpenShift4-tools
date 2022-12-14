@@ -1328,6 +1328,8 @@ function get_logs_poll() {
     local status=$?
     if ((status == 0)) ; then
 	echo -n '"Results":'; cat < "$tfile"
+    else
+	echo -n '"Results": {}'
     fi
     if [[ -n "${tfile:-}" && -f "$tfile" ]] ; then
 	rm -f "$tfile"
@@ -1514,7 +1516,8 @@ EOF
 function _report_failure() {
     cat <<EOF
 {
-$(indent 2 _report_metadata_and_objects FAIL)
+  "Results": {},
+$(indent 2 _report_metadata_and_objects Fail)
 }
 EOF
 }
@@ -1536,13 +1539,10 @@ function _get_logs() {
     trap 'if [[ -n "$tfile2" && -f "$tfile2" ]] ; then rm -f "$tfile1" "$tfile2" ; fi; if ((! reported)) ; then echo "Generating failure report" 1>&2; _report_failure; reported=1; fi; _retrieve_artifacts; return 1' TERM
     tfile1=$(mktemp ${cb_tempdir:+-p "$cb_tempdir"} -t '_clusterbusterlogs1.XXXXXXXXXX') || fatal "Cannot create temporary file"
     tfile2=$(mktemp ${cb_tempdir:+-p "$cb_tempdir"} -t '_clusterbusterlogs2.XXXXXXXXXX') || fatal "Cannot create temporary file"
-    "$@" > "$tfile1" && {
-	status=Success
-	echo ',' >> "$tfile1"
-    }
+    "$@" > "$tfile1" && status=Success
     cat > "$tfile2" <<EOF
 {
-$(indent 2 < "$tfile1")
+$(indent 2 < "$tfile1"),
 $(indent 2 _report_metadata_and_objects "$status")
 }
 EOF
