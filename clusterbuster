@@ -863,10 +863,17 @@ function generate_environment() {
 
 function namespace_policy() {
     local policy
-    policy=$(call_api -w "$requested_workload" -s namespace_policy)
+    if [[ $(type -t "deployment_type_${deployment_type,,}_policy") = function ]] ; then
+        policy=$("deployment_type_${deployment_type,,}_policy")
+    else
+        policy=$(call_api -w "$requested_workload" -s namespace_policy)
+    fi
     echo "${policy:-${default_namespace_policy}}"
 }
 
+function deployment_type_vm_policy() {
+    echo privileged
+}
 ################################################################
 # Helpers
 ################################################################
