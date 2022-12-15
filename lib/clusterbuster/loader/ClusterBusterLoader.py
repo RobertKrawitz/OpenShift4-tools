@@ -18,74 +18,8 @@ import inspect
 import os
 import json
 import sys
+from datetime import datetime
 from lib.clusterbuster.reporter.ClusterBusterReporter import ClusterBusterReporter
-
-
-class LoadOneReport:
-    def __init__(self, report: dict, answer: dict):
-        try:
-            self._report = report
-            self._answer = answer
-            self._metadata = self._report['metadata']
-            self._summary = self._report['summary']
-            self._metrics = self._summary['metrics']
-        except Exception:
-            if getattr(self, '_report', None) is None:
-                self._report = {}
-            if getattr(self, '_answer', None) is None:
-                self._answer = {}
-            if 'metadata' not in self._report:
-                self._metadata = {}
-            if 'summary' not in self._report:
-                self._summary = {
-                    'results': {},
-                    'metrics': {}
-                    }
-            if 'metrics' not in self._summary:
-                self._metrics = {}
-        if 'metadata' not in answer or 'uuid' not in answer['metadata']:
-            answer['metadata'] = dict()
-            answer['metadata']['start_time'] = self._metadata['cluster_start_time']
-            answer['metadata']['uuid'] = self._metadata['uuid']
-            answer['metadata']['server_version'] = self._metadata['kubernetes_version']['serverVersion']
-            answer['metadata']['openshift_version'] = self._metadata['kubernetes_version'].get('openshiftVersion', 'Unknown')
-            answer['metadata']['run_host'] = self._metadata['runHost']
-            answer['metadata']['kata_version'] = self._metadata.get('kata_version')
-        else:
-            if self._metadata['cluster_start_time'] < answer['metadata']['start_time']:
-                answer['metadata']['start_time'] = self._metadata['cluster_start_time']
-                if self._metadata['uuid'] != answer['metadata']['uuid']:
-                    raise Exception(f"Mismatched uuid: {self._metadata['uuid']}, {answer['metadata']['uuid']}")
-                if self._metadata['runHost'] != answer['metadata']['run_host']:
-                    raise Exception(f"Mismatched run_host: {self._metadata['runHost']}, {answer['metadata']['run_host']}")
-                if self._metadata['kubernetes_version']['openshiftVersion'] != answer['metadata']['openshift_version']:
-                    raise Exception(f"Mismatched openshift_version: {self._metadata['kubernetes_version']['openshiftVersion']}, {answer['metadata']['openshift_version']}")
-                if self._metadata['kubernetes_version']['serverVersion'] != answer['metadata']['server_version']:
-                    raise Exception(f"Mismatched server_version: {self._metadata['kubernetes_version']['serverVersion']}, {answer['metadata']['server_version']}")
-                if self._metadata.get('kata_version') != answer['metadata']['kata_version']:
-                    raise Exception(f"Mismatched kata_version: {self._metadata.get('kata_version')}, {answer['metadata']['kata_version']}")
-        if self._metadata['kind'] != 'clusterbusterResults':
-            raise Exception("Invalid results file")
-        if 'runtime_class' in self._metadata and self._metadata['runtime_class'] == 'kata':
-            self._runtime_env = 'kata'
-        else:
-            self._runtime_env = 'runc'
-        try:
-            self._client_pin_node = self._metadata['options']['pin_nodes']['client']
-        except Exception:
-            self._client_pin_node = None
-        self._count = self._summary['total_instances']
-        self._workload = self._metadata['workload']
-
-    def _MakeHierarchy(self, hierarchy: dict, keys: list):
-        key = keys.pop(0)
-        if key not in hierarchy:
-            hierarchy[key] = dict()
-        if keys:
-            self._MakeHierarchy(hierarchy[key], keys)
-
-    def Load(self):
-        pass
 
 
 class ClusterBusterLoader:
@@ -93,39 +27,43 @@ class ClusterBusterLoader:
     Analyze ClusterBuster reports
     """
 
-    def __init__(self, dirs_and_files: list):
-        self.reports = ClusterBusterReporter.report(dirs_and_files, format="json-summary")
-        dirs = []
-        self.status = {}
-        for d in dirs_and_files:
-            if d in dirs:
-                continue
-            if os.path.isdir(d):
-                dirs.append(d)
-                if os.path.isfile(os.path.join(d, "clusterbuster-ci-results.json")):
-                    with open(os.path.join(d, "clusterbuster-ci-results.json")) as f:
-                        dir_status = json.load(f)
-                        if 'result' not in self.status or dir_status.get('result', 'FAIL') != 'PASS':
-                            self.status['result'] = dir_status['result']
-                        if 'job_start' not in self.status or dir_status['job_start'] < self.status['job_start']:
-                            self.status['job_start'] = dir_status['job_start']
-                        if 'job_end' not in self.status or dir_status['job_end'] > self.status['job_end']:
-                            self.status['job_end'] = dir_status['job_end']
-                        self.status['job_runtime'] = self.status.get('job_runtime', 0) + dir_status['job_runtime']
-                        if 'ran' not in self.status:
-                            self.status['ran'] = dir_status['ran']
-                        else:
-                            self.status['ran'].extend(dir_status['ran'])
-                        if 'failed' not in self.status:
-                            self.status['failed'] = dir_status['failed']
-                        else:
-                            self.status['failed'].extend(dir_status['failed'])
-                else:
-                    print(f'Summary {os.path.join(d, "clusterbuster-ci-results.json")} expected but not present', file=sys.stderr)
+    def __init__(self, dirs: list):
+        self.reports = ClusterBusterReporter.report(dirs, format="json-summary")
+        self.status = {
+            'result': None,
+            'ran': [],
+            'failed': [],
+            'job_start': None,
+            'job_end': None,
+            'job_runtime': None
+            }
+        for directory in dirs:
+            if os.path.isdir(directory):
+                run_start = None
+                run_end = None
+                for report in self.reports:
+                    if 'metadata' in report:
+                        metadata = report['metadata']
+                        if 'controller_second_start_timestamp' in metadata:
+                            job_start = metadata['controller_second_start_timestamp']
+                            job_end = metadata['controller_end_timestamp']
+                            if run_start is None or job_start < run_start:
+                                run_start = job_start
+                                self.status['job_start'] = datetime.strftime(datetime.fromtimestamp(job_start), '%Y-%m-%dT%T+00:00')
+                            if run_end is None or job_end > run_end:
+                                run_end = job_end
+                                self.status['job_end'] = datetime.strftime(datetime.fromtimestamp(job_end), '%Y-%m-%dT%T+00:00')
+                            self.status['job_runtime'] = round(run_end - run_start)
+                            if report['Status'] == 'Pass' or report['Status'] == 'Success':
+                                self.status['ran'].append(metadata['job_name'])
+                            elif report['Status'] == 'Fail':
+                                self.status['failed'].append(metadata['job_name'])
+                            elif report['Status'] != 'No Result':
+                                raise ValueError(f'Status should be Pass, Fail, or No Result; actual was {report["Status"]}')
             else:
-                print(f'{d}: not a directory')
-        if not self.status:
-            print(f'Unable to load {dirs_and_files}', file=sys.stderr)
+                print(f'{directory}: not a directory')
+            if not self.status['job_runtime']:
+                print(f'Unable to load {directory}', file=sys.stderr)
 
     def Load(self):
         answer = dict()

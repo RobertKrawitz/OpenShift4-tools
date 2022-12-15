@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .ClusterBusterLoader import LoadOneReport
+from .LoadOneReport import LoadOneReport
 
 
 class cpusoaker_loader(LoadOneReport):

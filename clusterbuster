@@ -154,6 +154,7 @@ declare -i liveness_probe_sleep_time=0
 declare -i metrics_support=-1
 declare pod_prefix=
 declare -r arch=$(uname -m)
+declare failure_status=Fail
 
 declare -r sync_flag_file="/tmp/syncfile";
 declare -r sync_error_file="/tmp/syncerror";
@@ -321,6 +322,9 @@ $(print_workloads_supporting_reporting '                        - ')
        --metrics-epoch=<seconds>
                         Number of seconds to look back for metrics prior
                         to start of run (default $metrics_epoch)
+       --failure-status=<status>
+                        Failures should be reported as specified rather 
+                        than "Fail"
 
     Workload sizing options:
        --containers_per_pod=N
@@ -650,6 +654,7 @@ function process_option() {
 	predelay)		    predelay=$optvalue				;;
 	postdelay)		    postdelay=$optvalue				;;
 	timeout)		    timeout=$optvalue				;;
+	failurestatus)		    failure_status=$optvalue			;;
 	# Basic options
 	jobname)		    job_name=$optvalue				;;
 	workload)		    requested_workload=$optvalue		;;
@@ -1329,6 +1334,7 @@ function get_logs_poll() {
     if ((status == 0)) ; then
 	echo -n '"Results":'; cat < "$tfile"
     else
+	echo "Collecting error report" 1>&2
 	echo -n '"Results": {}'
     fi
     if [[ -n "${tfile:-}" && -f "$tfile" ]] ; then
@@ -1451,7 +1457,13 @@ EOF
 }
 
 function _report_metadata_and_objects() {
+    function readable_timestamp_report() {
+	local rawtime=${1:-}
+	date -u '+%Y-%m-%dT%T%:z' ${rawtime:+"--date=@$rawtime"}
+    }
     local status=$1
+    local enddate=
+    enddate=$(date +%s.%N)
     cat <<EOF
 "Status": "$status",
 "metadata": {
@@ -1459,8 +1471,8 @@ function _report_metadata_and_objects() {
   "controller_first_start_timestamp": $first_start_timestamp,
   "prometheus_start_timestamp": $prometheus_exact_starting_timestamp,
   "controller_second_start_timestamp": $second_start_timestamp,
-  "controller_end_timestamp": $(date +%s.%N),
-  "controller_elapsed_time": $(bc <<< "$(date +%s.%N) - ${second_start_timestamp:-0}"),
+  "controller_end_timestamp": $enddate,
+  "controller_elapsed_time": $(bc <<< "$enddate - ${second_start_timestamp:-0}"),
   "cluster_start_time": "$(readable_timestamp "${prometheus_starting_timestamp}")",
   "job_name": "$job_name",
   "uuid": "$uuid",
@@ -1517,7 +1529,7 @@ function _report_failure() {
     cat <<EOF
 {
   "Results": {},
-$(indent 2 _report_metadata_and_objects Fail)
+$(indent 2 _report_metadata_and_objects "$failure_status")
 }
 EOF
 }
@@ -1526,7 +1538,7 @@ function _get_logs() {
     local first_local_ts
     local remote_ts
     local second_local_ts
-    local status=Fail
+    local status=$failure_status
     read -r first_local_ts remote_ts second_local_ts <<< "$(get_pod_and_local_timestamps "${@:2}")"
     if [[ -z "$remote_ts" ]] ; then
 	killthemall "Unable to retrieve sync timestamp"
@@ -1536,7 +1548,7 @@ function _get_logs() {
     local -i reported=0
     local tfile1=
     local tfile2=
-    trap 'if [[ -n "$tfile2" && -f "$tfile2" ]] ; then rm -f "$tfile1" "$tfile2" ; fi; if ((! reported)) ; then echo "Generating failure report" 1>&2; _report_failure; reported=1; fi; _retrieve_artifacts; return 1' TERM
+    trap 'if [[ -n "$tfile2" && -f "$tfile2" ]] ; then rm -f "$tfile1" "$tfile2" ; fi; if ((! reported)) ; _report_failure; reported=1; fi; _retrieve_artifacts; return 1' TERM
     tfile1=$(mktemp ${cb_tempdir:+-p "$cb_tempdir"} -t '_clusterbusterlogs1.XXXXXXXXXX') || fatal "Cannot create temporary file"
     tfile2=$(mktemp ${cb_tempdir:+-p "$cb_tempdir"} -t '_clusterbusterlogs2.XXXXXXXXXX') || fatal "Cannot create temporary file"
     "$@" > "$tfile1" && status=Success

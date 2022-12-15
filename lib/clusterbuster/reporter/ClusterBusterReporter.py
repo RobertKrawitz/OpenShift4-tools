@@ -1023,6 +1023,7 @@ class ClusterBusterReporter:
                 'metadata': self._jdata['metadata'],
                 'rows': self._rows
                 }
+        answer['Status'] = self._jdata['Status']
         return answer
 
     def __create_text_report(self):
