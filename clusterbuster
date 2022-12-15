@@ -1172,7 +1172,7 @@ function _monitor_pods() {
 			local p_pods=pods
 			if ((pod_progress_timeout-timestamp == 1)) ; then p_seconds=second; fi
 			if ((${#starting_pods[@]} == 1)) ; then p_pods=pod; fi
-			echo "${#starting_pods[@]} $p_pods pending (will retry $((pod_progress_timeout-timestamp)) $p_seconds)" | echo_if_desired 1>&2
+			echo -ne "${#starting_pods[@]} $p_pods pending (will retry $((pod_progress_timeout-timestamp)) $p_seconds)\r" | echo_if_desired 1>&2
 		    fi
 		fi
 	    fi
@@ -1327,10 +1327,9 @@ function get_logs_poll() {
     _get_logs_poll "$*" > "$tfile"
     local status=$?
     if ((status == 0)) ; then
-	echo -n '"Results":'; cat < "$tfile"; echo ','
-	echo '"Status": "Success"'
+	echo -n '"Results":'; cat < "$tfile"
     else
-	echo '"Status": "Fail"'
+	echo -n '"Results": {}'
     fi
     if [[ -n "${tfile:-}" && -f "$tfile" ]] ; then
 	rm -f "$tfile"
@@ -1451,20 +1450,10 @@ EOF
     fi
 }
 
-function _get_logs() {
-    local first_local_ts
-    local remote_ts
-    local second_local_ts
-    read -r first_local_ts remote_ts second_local_ts <<< "$(get_pod_and_local_timestamps "${@:2}")"
-    if [[ -z "$remote_ts" ]] ; then
-	killthemall "Unable to retrieve sync timestamp"
-    fi
-    sync_ts_error_interval=$(bc <<< "$second_local_ts - $first_local_ts")
-    sync_ts_delta=$(bc <<< "$second_local_ts - $first_local_ts")
-    echo '{'
-    indent 2 <<EOF
-$("$@"),
-$(_extract_metrics),
+function _report_metadata_and_objects() {
+    local status=$1
+    cat <<EOF
+"Status": "$status",
 "metadata": {
   "kind": "clusterbusterResults",
   "controller_first_start_timestamp": $first_start_timestamp,
@@ -1517,11 +1506,49 @@ $(indent 8 call_api -w "$requested_workload" "report_options")
     }
   }
 },
+$(indent 2 _extract_metrics),
 "nodes": $(__OC get nodes -ojson),
 "api_objects": $(__OC get all -A -l "${basename}-id=$uuid" -ojson |jq -r .items?),
 "csvs": $(__OC get csv -A -ojson | jq -r '[foreach .items[]? as $item ([[],[]];0; {name: $item.metadata.name, namespace: $item.metadata.namespace, version: $item.spec.version})]')
 EOF
-    echo '}'
+}
+
+function _report_failure() {
+    cat <<EOF
+{
+  "Results": {},
+$(indent 2 _report_metadata_and_objects Fail)
+}
+EOF
+}
+
+function _get_logs() {
+    local first_local_ts
+    local remote_ts
+    local second_local_ts
+    local status=Fail
+    read -r first_local_ts remote_ts second_local_ts <<< "$(get_pod_and_local_timestamps "${@:2}")"
+    if [[ -z "$remote_ts" ]] ; then
+	killthemall "Unable to retrieve sync timestamp"
+    fi
+    sync_ts_error_interval=$(bc <<< "$second_local_ts - $first_local_ts")
+    sync_ts_delta=$(bc <<< "$second_local_ts - $first_local_ts")
+    local -i reported=0
+    local tfile1=
+    local tfile2=
+    trap 'if [[ -n "$tfile2" && -f "$tfile2" ]] ; then rm -f "$tfile1" "$tfile2" ; fi; if ((! reported)) ; then echo "Generating failure report" 1>&2; _report_failure; reported=1; fi; _retrieve_artifacts; return 1' TERM
+    tfile1=$(mktemp ${cb_tempdir:+-p "$cb_tempdir"} -t '_clusterbusterlogs1.XXXXXXXXXX') || fatal "Cannot create temporary file"
+    tfile2=$(mktemp ${cb_tempdir:+-p "$cb_tempdir"} -t '_clusterbusterlogs2.XXXXXXXXXX') || fatal "Cannot create temporary file"
+    "$@" > "$tfile1" && status=Success
+    cat > "$tfile2" <<EOF
+{
+$(indent 2 < "$tfile1"),
+$(indent 2 _report_metadata_and_objects "$status")
+}
+EOF
+    ((reported)) || cat "$tfile2"
+    reported=1
+    rm -f "$tfile1" "$tfile2"
     _retrieve_artifacts
 }
 
@@ -1602,30 +1629,22 @@ $(indent 2 default_security_context_content)
 EOF
 }
 
-function _indent() {
-    local -i column="$1"
-    local line
-    local first=1
-    while IFS='' read -r line ; do
-	if [[ -n "$line" ]] ; then
-	    if [[ -n "${hang_indent:-}" && $first -eq 1 ]] ; then
-		echo "$line"
-		first=0
-	    else
-		printf "%${column}s%s\n" '' "$line"
-	    fi
-	fi
-    done
-}
-
 function indent() {
     local -i column="$1"
+    local -a cmd
     shift
-    if [[ -n "$*" ]] ; then
-	# "$@" | _indent "$column" strips whitespace with bash 4.2
-	_indent "$column" < <("$@")
+    local str
+    str=$(printf "%${column}s" '')
+    if [[ -n "${hang_indent:-}" ]] ; then
+	# shellcheck disable=SC2016
+	cmd=(awk '/./ {if (a == 0) {print} else {print "'"$str"'", $0}; a = 1}')
     else
-	_indent "$column"
+	cmd=(sed -e '/^$/d' -e "s/^/${str}/")
+    fi
+    if [[ -n "$*" ]] ; then
+	"$@" | "${cmd[@]}"
+    else
+	"${cmd[@]}"
     fi
 }
 
@@ -2155,6 +2174,7 @@ function _create_object_from_file() {
     done
     # shellcheck disable=SC2046
     delete_object_safe "$objtype" $(_ns) "$objname"
+    # shellcheck disable=SC2046
     _OC create "$objtype" $(_ns) "$objname" "${@/#/--from-file=}" || killthemall "Unable to create object $objtype/$namespace:$objname"
     # shellcheck disable=SC2046
     _OC label "$objtype" $(_ns) "$objname" "${basename}base=true" 'clusterbusterbase=true' "${basename}-uuid=${uuid}" "${basename}-id=$uuid" "${basename}=true" || killthemall "Unable to label $objtype/$namespace:$objname"
