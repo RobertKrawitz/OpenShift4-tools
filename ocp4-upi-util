@@ -40,9 +40,9 @@ declare cluster_name
 declare cluster_network_bridge_name=baremetal
 declare cluster_install_dir=${KUBECONFIG:+${KUBECONFIG/\/auth\/kubeconfig/}}
 declare filesystem_json=
-declare -i masters_schedulable=0
+declare -i masters_schedulable=1
 declare -i infra_count=0
-declare -i master_as_infra=0
+declare -i master_as_infra=-1
 declare -r cachedir="$HOME/.cache/ocp4_upi_install"
 declare bootstrap_mac=52:54:00:f9:8e:41
 declare -a mgmt_masters=()
@@ -60,7 +60,12 @@ declare installer_image=
 declare client_image=
 declare local_toolsdir=
 declare install_device=sda
+declare -a fixed_infra_nodes=()
 declare -i install_retries=2	# Many bare metal nodes take a long time to POST
+declare -ra commands_not_requiring_config_file=(install_cnv install_kata)
+declare -i require_config_file=1
+declare kata_install_label=
+declare kata_config_name=example-kataconfig
 platform=$(uname -i)
 
 # shellcheck disable=SC2155
@@ -91,6 +96,7 @@ declare -r command_help=$(cat <<'EOF'
         poweroff_workers         Power off all workers
         poweroff_master <index>  Power off specified master (by index)
         poweroff_worker <index>  Power off specified woerker (by index)
+        start_workers            Start the worker nodes
 EOF
 	)
 
@@ -159,14 +165,16 @@ Usage: $command -c <configfile> [options]$cmdmsg args...
                               disabled on all nodes
         infra_count           Number of dedicated infrastructure nodes
                               (default 0)
-        master_as_infra       Use the first master as an infrastructure node
-                              (default 0).  This is in addition to any
-                              explicit infra nodes.
+        master_as_infra<=node>
+                              Use a master node as a dedicated infra node.
+                              If no node is specified, the first master (0)
+                              is used.  -1 (default) means no infra node
+                              used.
         do_install_kata       Install OpenShift sandboxed containers
 	apply_kata_workaround Apply 4.8 workaround for sandboxed containers
                               not adding additional CPUs correctly
         masters_schedulable   Allow user pods to be scheduled on master nodes
-                              (default 0)
+                              (default 1)
         bootstrap_mac         MAC address of bootstrap VM
                               (default 52:54:00:f9:8e:41)
         cluster_host_prefix   32 - desired bare metal network size (default 23)
@@ -272,6 +280,9 @@ function generate_service() {
     local -i master_count=$3
     local -i worker_count=$4
     local -i infra_count=$5
+    if [[ $name = worker && $worker_count -eq 0 ]] ; then
+	name=master
+    fi
     local -i i
     case "$name" in
 	master)
@@ -290,6 +301,13 @@ EOF
     server           infra-${i} ${ip_base}.$((infra_base+i)):${port} check inter 1s
 EOF
 	    done
+	    if ((masters_schedulable)) ; then
+		for i in $(seq 0 "$((master_count - 1))") ; do
+		    cat <<EOF
+    server           master-${i} ${ip_base}.$((master_base+i)):${port} check inter 1s
+EOF
+		done
+	    fi
 	    for i in $(seq 0 "$((worker_count - 1))") ; do
 		cat <<EOF
     server           worker-${i} ${ip_base}.$((worker_base+i)):${port} check inter 1s
@@ -1030,8 +1048,8 @@ function approve_csrs() {
 }
 
 function get_infra_nodes() {
-    if ((master_as_infra)) ; then
-	oc get node --no-headers -oname |grep 'node/master'
+    if ((master_as_infra >= 0)) ; then
+	oc get node --no-headers -oname |grep 'node/master' | head -n $((master_as_infra+1)) |tail -1
     else
 	oc get node --no-headers -oname |grep 'node/infra'
     fi
@@ -1066,7 +1084,7 @@ EOF
 }
 
 function setup_infra() {
-    (( infra_count <= 0 && master_as_infra <= 0 )) && return
+    (( infra_count <= 0 && master_as_infra < 0 )) && return
     echo "*** Labeling infra nodes"
     local node
     while read -r node ; do
@@ -1155,22 +1173,44 @@ function generate_kata_operator_yaml() {
     generate_operator_yaml "sandboxed-containers-operator"
 }
 
-function install_kata_internal() {
-    (( do_install_kata <= 0 )) && return
-    if oc get kataconfig example-kataconfig >/dev/null 2>&1 ; then
-	echo '*** Kata already installed'
-    fi
-    echo '*** Installing Kata'
-    oc apply -f - <<< "$(generate_kata_operator_yaml)"
-    # Wait for kataconfig to exist as a CRD.
-    # Probably should have a timeout here.
-    until oc get kataconfig -A >/dev/null 2>&1 ; do sleep 1; done
-    until oc apply -f - <<'EOF'
+function generate_kata_yaml() {
+    cat <<EOF
 apiVersion: kataconfiguration.openshift.io/v1
 kind: KataConfig
 metadata:
-  name: example-kataconfig
+  name: $kata_config_name
 EOF
+    if [[ -n "$kata_install_label" ]] ; then
+	local label=$kata_install_label
+	if [[ $label = *'='* ]] ; then
+	    :
+	elif [[ $label = *'/'* ]] ; then
+	    label="${label}="
+	else
+	    label="node-role.kubernetes.io/${label}="
+	fi
+	local value=${label#*=}
+	label=${label%%=*}
+	cat << EOF
+spec:
+  kataConfigPoolSelector:
+    matchLabels:
+      $label: '$value'
+EOF
+    fi
+}
+
+function install_kata_internal() {
+    (( do_install_kata <= 0 )) && return
+    if oc get kataconfig "$kata_config_name" >/dev/null 2>&1 ; then
+	echo '*** Kata already installed'
+    fi
+    echo '*** Installing Kata'
+    oc apply -f - < <(generate_kata_operator_yaml)
+    # Wait for kataconfig to exist as a CRD.
+    # Probably should have a timeout here.
+    until oc get kataconfig -A >/dev/null 2>&1 ; do sleep 1; done
+    until oc apply -f - < <(generate_kata_yaml)
     do
 	sleep 5
     done
@@ -1193,13 +1233,14 @@ EOF
 	    sleep 5
 	    continue
 	}
+	totalCount=$(oc get kataconfig example-kataconfig -ojsonpath='{.status.totalNodesCount}') || true
+	echo -ne "    Waiting for all nodes to become ready (${readyCount:-0} / $totalCount)...\r"
 	if [[ -n $readyCount && $readyCount -ne $lastCount ]] ; then
-	    echo "    Waiting for all nodes to become ready ($readyCount / $totalCount)..."
 	    lastCount=$readyCount
 	fi
 	sleep 5
     done
-    echo "    Done"
+    echo -e "\n    Done"
     echo '*** Kata installed successfully'
     if (( apply_kata_workaround )) ; then
 	# shellcheck disable=SC2155
@@ -1281,22 +1322,18 @@ function install_cnv() {
 }
 
 function start_workers() {
-    (( ${#mgmt_workers[@]} <= 0 )) && return
-    echo "*** Starting workers"
-    pxe_workers
-    echo "*** Waiting for workers to become ready"
-    while : ; do
-	# shellcheck disable=SC2155
-	local readyNodes=$(oc get nodes |grep worker |grep -v -c NotReady)
-	if [[ -n "$readyNodes" && $readyNodes -eq ${#mgmt_workers[@]} ]] ; then
-	    break
-	fi
-	approve_csrs
-	sleep 1
-    done
-    setup_infra
-    install_kata_internal
-    install_cnv_internal
+    if (( ${#mgmt_workers[@]} > 0)) ; then
+	local readyNodes
+	echo "*** Starting workers"
+	pxe_workers
+	echo "*** Waiting for workers to become ready"
+	while : ; do
+	    readyNodes=$(oc get nodes --no-headers -lnode-role.kubernetes.io/worker= -lnode-role.kubernetes.io/master!= 2>/dev/null |grep -v -c NotReady; true)
+	    if ((readyNodes == ${#mgmt_workers[@]})) ; then return; fi
+	    approve_csrs
+	    sleep 1
+	done
+    fi
 }
 
 # If this is called from the command line it will get passed any arguments.
@@ -1372,6 +1409,9 @@ function do_install_2() {
     bootstrap_destroy
     echo "*** Starting worker(s)"
     start_workers
+    setup_infra
+    install_kata_internal
+    install_cnv_internal
     # We don't invoke setup_chrony with arguments,
     # but command line use might.
     # shellcheck disable=SC2119
@@ -1446,17 +1486,25 @@ if [[ ${command##*/} = ocp4-upi-util ]] ; then
     shift
 fi
 
+for cmd in "${commands_not_requiring_config_file[@]}" ; do
+    if [[ $command = "$cmd" ]] ; then
+	require_config_file=0
+	break
+    fi
+done
+
 if [[ -z "${config_file:-}" ]] ; then
     # shellcheck disable=SC2016
-    fatal 'Config file must be specified, either with -c or $OCP4_CONFIG_FILE'
+    if ((require_config_file)) ; then
+	fatal 'Config file must be specified, either with -c or $OCP4_CONFIG_FILE'
+    fi
+else
+    if [[ ! -r "$config_file" ]] ; then
+	fatal "Cannot read config file $config_file"
+    fi
+    # shellcheck disable=SC1090
+    . "$config_file" || fatal "Unable to process config file $config_file"
 fi
-
-if [[ ! -r "$config_file" ]] ; then
-    fatal "Cannot read config file $config_file"
-fi
-
-# shellcheck disable=SC1090
-. "$config_file" || fatal "Unable to process config file $config_file"
 
 declare var=
 for var in "${cmdline_vars[@]}" ; do
@@ -1483,26 +1531,31 @@ function check_macaddr() {
     done
 }
 
-(( ${#mgmt_masters[@]} == 1 || ${#mgmt_masters[@]} == 3 )) || fatal "Configuration must have 1 or 3 masters, actual ${#mgmt_masters[@]}"
-(( ${#mgmt_masters[@]} == ${#master_macs[@]} )) || fatal "Configuration must have same number of mgmt_masters as master_macs"
-(( ${#worker_macs[@]} > infra_count )) || fatal "Configuration must have at least 1 worker_macs in addition to infra nodes"
-(( ${#worker_macs[@]} == ${#mgmt_workers[@]} )) || fatal "Configuration must have as many worker_macs as mgmt_workers, actual ${#worker_macs[@]} and ${#mgmt_workers[@]}"
-bootstrap_mac=${bootstrap_mac,,}
-master_macs=("${master_macs[@],,}")
-worker_macs=("${worker_macs[@],,}")
-check_macaddr "$bootstrap_mac"
-check_macaddr "${master_macs[@]}"
-check_macaddr "${worker_macs[@]}"
-[[ -n "$public_interface" ]] || fatal "public_interface must be specified"
-[[ -n "$bare_metal_interface" ]] || fatal "bare_metal_interface must be specified"
-[[ -n "$cluster_domain" ]] || fatal "cluster_domain must be specified"
-[[ -n "$IPMI_USER" ]] || warning "IPMI_USER is not specified; IPMI may not work correctly."
-[[ -n "$IPMI_PASSWORD" ]] || fatal "IPMI_PASSWORD is not specified; IPMI may not work correctly."
+if ((require_config_file)) ; then
+    (( ${#mgmt_masters[@]} == 1 || ${#mgmt_masters[@]} == 3 )) || fatal "Configuration must have 1 or 3 masters, actual ${#mgmt_masters[@]}"
+    (( ${#mgmt_masters[@]} == ${#master_macs[@]} )) || fatal "Configuration must have same number of mgmt_masters as master_macs"
+    (( infra_count == 0 || ${#worker_macs[@]} > infra_count )) || fatal "Configuration must have at least 1 worker_macs in addition to infra nodes"
+    (( ${#worker_macs[@]} == ${#mgmt_workers[@]} )) || fatal "Configuration must have as many worker_macs as mgmt_workers, actual ${#worker_macs[@]} and ${#mgmt_workers[@]}"
+    bootstrap_mac=${bootstrap_mac,,}
+    master_macs=("${master_macs[@],,}")
+    worker_macs=("${worker_macs[@],,}")
+    check_macaddr "$bootstrap_mac"
+    check_macaddr "${master_macs[@]}"
+    check_macaddr "${worker_macs[@]}"
+    [[ -n "$public_interface" ]] || fatal "public_interface must be specified"
+    [[ -n "$bare_metal_interface" ]] || fatal "bare_metal_interface must be specified"
+    [[ -n "$cluster_domain" ]] || fatal "cluster_domain must be specified"
+    [[ -n "$IPMI_USER" ]] || warning "IPMI_USER is not specified; IPMI may not work correctly."
+    [[ -n "$IPMI_PASSWORD" ]] || fatal "IPMI_PASSWORD is not specified; IPMI may not work correctly."
 
-[[ -r "$ocp4_pull_secret" ]] || fatal "No pull secret!"
-[[ -r "$ocp4_public_key" ]] || fatal "No public key!"
+    [[ -r "$ocp4_pull_secret" ]] || fatal "No pull secret!"
+    [[ -r "$ocp4_public_key" ]] || fatal "No public key!"
+fi
 
 for cmd in "${simple_commands[@]}" ; do
-    if [[ $command = "$cmd" ]] ; then "$command" "$@"; exit $?; fi
+    if [[ $command = "$cmd" ]] ; then
+	"$command" "$@"
+	exit $?
+    fi
 done
 fatal "Unknown command $command!"

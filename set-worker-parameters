@@ -1,12 +1,35 @@
 #!/bin/bash
 
-declare -a workers
+# Copyright 2020-2022 Robert Krawitz/Red Hat
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Unfortunate that there's no way to tell shellcheck to always source
+# specific files.
+# shellcheck disable=SC2034
+
+# See the bash change log, differences between 4.4-beta2 and 4.4-rc2:
+# a.  Using ${a[@]} or ${a[*]} with an array without any assigned elements when
+#     the nounset option is enabled no longer throws an unbound variable error.
 
 declare -A args
 declare argsSet=0
 declare oconfig
 declare -r configName='set-max-pods'
 declare -i force=0
+declare -i waitOnly=0
+declare -i oldGeneration=0
+declare -i newGeneration=0
 
 function help() {
     cat <<EOF
@@ -23,9 +46,9 @@ EOF
 
 while getopts "fhp:b:q:X:" opt ; do
     case "$opt" in
-	f) force=0				   ;;
+	f) force=1				   ;;
 	p) args[maxPods]="$OPTARG"; argsSet=1      ;;
-	b) args[KubaAPIBurst]="$OPTARG"; argsSet=1 ;;
+	b) args[KubeAPIBurst]="$OPTARG"; argsSet=1 ;;
 	q) args[KubeAPIQPS]="$OPTARG"; argsSet=1   ;;
 	X)
 	    option=${OPTARG%%=*}
@@ -63,19 +86,19 @@ function test_unchanged() {
 	    echo "$k $v (unchanged)"
 	fi
     done
-    if (( !changed && !force )) ; then
-	echo "*** Kubeconfig is unchanged, not updating"
-	exit 0
+    if ((! changed)) ; then
+	if ((force)) ; then
+	    waitOnly=1
+	else
+	    echo "*** Kubeconfig is unchanged, not updating"
+	    exit 0
+	fi
     fi
 }
 
 
 oconfig="$(oc get kubeletconfig.machineconfiguration.openshift.io/$configName -ojson 2>/dev/null | jq '.spec.kubeletConfig')"
 test_unchanged "$oconfig"
-
-readarray -t workers <<< "$(oc get nodes -l node-role.kubernetes.io/worker --no-headers=true -o name)"
-workers=("${workers[@]#node/}")
-declare -i totalnodes=${#workers[@]}
 
 function get_machine_status() {
     oc get machineconfigpool worker -ojson | jq -r '[.metadata.name, (.metadata.generation | tostring), ([foreach .status.conditions[] as $cond ([[],[]];0; if ($cond.status == "True") then $cond.type else null end)] | flatten | map (select (. != null)) | join(" ")), (.status.machineCount | tostring), (.status.degradedMachineCount | tostring), (.status.readyMachineCount | tostring), (.status.unavailableMachineCount | tostring), (.status.updatedMachineCount | tostring)] | join("|")'
@@ -99,6 +122,7 @@ if [[ $(oc get machineconfigpool worker -o json | jq -r '.metadata.labels."custo
     oc label --overwrite machineconfigpool worker custom-kubelet=large-pods
 fi
 
+oldGeneration=$(oc get mcp worker -ojsonpath='{.status.observedGeneration}')
 oc apply -f - <<EOF
 apiVersion: machineconfiguration.openshift.io/v1
 kind: KubeletConfig
@@ -116,26 +140,28 @@ $(for arg in "${!args[@]}" ; do
 done)
 EOF
 
+if ((! waitOnly)) ; then
+    while : ; do
+	newGeneration=$(oc get mcp worker -ojsonpath='{.status.observedGeneration}')
+	if ((newGeneration != oldGeneration)) ; then break; fi
+	sleep 1
+    done
+fi
+
 declare -i start
-declare -i phase=0
 declare -i readycount=0
 
 start=$(tsec)
 
-while : ; do 
+while : ; do
     # shellcheck disable=SC2034
     IFS='|' read -r name generation status count degradedcount readycount unavailable updatedcount < <(get_machine_status)
-    if [[ $status = *'Degraded' ]] ; then
+    if [[ ${status,,} = *'degraded' ]] ; then
 	echo "Machine config is degraded!"
 	exit 1
-    elif [[ $status = Updating ]] ; then
-	phase=$((phase + 1))
     fi
-    if (( phase == 0 )) ; then
-	readycount=0
-    fi
-    echo -en "\r($(ptime "$start")) Waiting for nodes to become ready ($readycount / $totalnodes)..."
-    if ((readycount == totalnodes)) ; then
+    echo -en "\r($(ptime "$start")) Waiting for nodes to become ready ($readycount / $count)..."
+    if [[ ${status,,} = updated ]] ; then
 	echo 'ready!'
 	break
     fi

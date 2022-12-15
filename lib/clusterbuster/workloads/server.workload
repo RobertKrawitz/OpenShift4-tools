@@ -21,6 +21,10 @@
 declare -ig ___msg_size=32768
 declare -g ___server_interface=
 declare -g ___server_interface_pod=
+declare -g ___server_interface_server=
+declare -g ___server_interface_client=
+declare -g ___server_interface_pod_server=
+declare -g ___server_interface_pod_client=
 declare -gir ___server_port=30000
 declare -gi ___server_port_addrs=24
 
@@ -32,7 +36,7 @@ function server_server_arglist() {
 }
 
 function _server_create_security_context() {
-    if [[ -z "$___server_interface_pod" ]] ; then
+    if [[ -z "$___server_interface_pod_server" ]] ; then
 	cat <<EOF
 securityContext:
 $(indent 2 default_security_context_content)
@@ -66,17 +70,31 @@ function server_create_deployment() {
     local containers_per_pod=${5:-1}
     local replicas_per_server=$replicas
     local -i instance
+    local server_annotation
+    local client_annotation
     if [[ -n "$___server_interface" ]] ; then
-	if [[ $___server_interface = *'='* ]] ; then
-	    ___server_interface_pod=${___server_interface#*=}
-	    ___server_interface=${___server_interface%%=*}
+	___server_interface_server=${___server_interface_server:-$___server_interface}
+	___server_interface_client=${___server_interface_client:-$___server_interface}
+    fi
+    if [[ -n "$___server_interface_client" ]] ; then
+	if [[ $___server_interface_client = *'='* ]] ; then
+	    ___server_interface_pod_client=${___server_interface_client#*=}
+	    ___server_interface_client=${___server_interface_client%%=*}
 	fi
-	if [[ -z "$___server_interface_pod" && $___server_interface != eth0 ]] ; then
-	    ___server_interface_pod=net1
+	if [[ -z "$___server_interface_pod_client" && $___server_interface_client != eth0 ]] ; then
+	    ___server_interface_pod_client=net1
 	fi
-	if [[ ${pod_annotations[*]} != *"k8s.v1.cni.cncf.io/networks"* ]] ; then
-	    pod_annotations+=("k8s.v1.cni.cncf.io/networks: $___server_interface")
+	client_annotation="k8s.v1.cni.cncf.io/networks: $___server_interface_client"
+    fi
+    if [[ -n "$___server_interface_server" ]] ; then
+	if [[ $___server_interface_server = *'='* ]] ; then
+	    ___server_interface_pod_server=${___server_interface_server#*=}
+	    ___server_interface_server=${___server_interface_server%%=*}
 	fi
+	if [[ -z "$___server_interface_pod_server" && $___server_interface_server != eth0 ]] ; then
+	    ___server_interface_pod_server=net1
+	fi
+	server_annotation="k8s.v1.cni.cncf.io/networks: $___server_interface_server"
     fi
     if ((((replicas * containers_per_pod * processes_per_pod) + 4) > ___server_port_addrs)) ; then
 	___server_port_addrs=$(((replicas * containers_per_pod * processes_per_pod) + 4))
@@ -90,11 +108,13 @@ function server_create_deployment() {
 	create_standard_deployment -w server-server -p -c server \
 				   -A "$(create_affinity_yaml "${namespace}-server-client-${instance}")" \
 				   -a server_server_arglist \
+				   ${server_annotation:+-N "$server_annotation"} \
 				   -S "$(_server_create_security_context)" \
 				   "$namespace" "$instance" "$secret_count" 1 1
 	create_standard_deployment -w server-client \
 				   -A "$(create_affinity_yaml "${namespace}-server-server-${instance}")" \
 				   -a server_client_arglist \
+				   ${client_annotation:+-N "$client_annotation"} \
 				   -S "$(_server_create_security_context)" \
 				   "$namespace" "$instance" "$secret_count" "$replicas" "$containers_per_pod"
     done
@@ -125,6 +145,12 @@ function server_help_options() {
        --msgsize       Message size in data transfer
        --pin_node=server=<node>
                        Specify node to which the server is bound.
+       --pin_node=client=<node>
+                       Specify node to which the client is bound.
+       --server-interface-server=<interface[=pod_interface]>
+       --server-interface-client=<interface[=pod_interface]>
+                       Specify the interfaces for client and server
+                       separately.
 EOF
 }
 
@@ -141,9 +167,11 @@ function server_process_options() {
     for opt in "$@" ; do
 	read -r noptname1 noptname optvalue <<< "$(parse_option "$opt")"
 	case "$noptname1" in
-	    msgsize) ___msg_size=$optvalue		;;
-	    serverint*) ___server_interface=$optvalue	;;
-	    *) unknown_opts+=("$noptname ($noptname1)")	;;
+	    msgsize) ___msg_size=$optvalue			    ;;
+	    serverinterface) ___server_interface=$optvalue	    ;;
+	    serverinterfaces*) ___server_interface_server=$optvalue ;;
+	    serverinterfacec*) ___server_interface_client=$optvalue ;;
+	    *) unknown_opts+=("$noptname ($noptname1)")		    ;;
 	esac
     done
     if [[ -n "${unknown_opts[*]:-}" ]] ; then
@@ -163,6 +191,8 @@ function server_report_options() {
     cat <<EOF
 "msg_size": $___msg_size,
 "interface": "${___server_interface}"
+"server_interface": "${___server_interface_server}",
+"client_interface": "${___server_interface_client}"
 EOF
 }
 
