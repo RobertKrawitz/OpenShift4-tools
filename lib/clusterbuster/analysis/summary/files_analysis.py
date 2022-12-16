@@ -15,7 +15,6 @@
 
 from ..ClusterBusterAnalysis import ClusterBusterAnalyzeOne
 from math import log, exp
-import sys
 
 
 class FilesAnalysisBase(ClusterBusterAnalyzeOne):

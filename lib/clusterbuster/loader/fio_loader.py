@@ -35,19 +35,19 @@ class fio_loader(LoadOneReport):
                 print(f'Cannot load fio results for {self._metadata["job_name"]}/{job}', file=sys.stderr)
                 continue
             result = self._summary['results'][job]['job_results']
-            self._MakeHierarchy(self._answer, ['fio', self._count, ioengine, iodepth, fdatasync,
-                                               direct, pattern, blocksize, self._runtime_env, 'total'])
-            root = self._answer['fio'][self._count][ioengine][iodepth][fdatasync][direct][pattern][blocksize][self._runtime_env]
+            answer = {
+                'total': {}
+                }
             for op, data in result.items():
                 if 'data_rate' in result[op]:
-                    self._MakeHierarchy(root, [op])
-                    root[op]['throughput'] = result[op]['data_rate']
-                    if 'throughput' not in root['total']:
-                        root['total']['throughput'] = 0
-                    root['total']['throughput'] += result[op]['data_rate']
+                    self._MakeHierarchy(answer, [op, 'throughput'], result[op]['data_rate'])
+                    if 'throughput' not in answer['total']:
+                        answer['total']['throughput'] = 0
+                    answer['total']['throughput'] += result[op]['data_rate']
                 if 'io_rate' in result[op]:
-                    self._MakeHierarchy(root, [op])
-                    if 'iops' not in root['total']:
-                        root['total']['iops'] = 0
-                    root[op]['iops'] = result[op]['io_rate']
-                    root['total']['iops'] += result[op]['io_rate']
+                    self._MakeHierarchy(answer, [op, 'iops'], result[op]['io_rate'])
+                    if 'iops' not in answer['total']:
+                        answer['total']['iops'] = 0
+                    answer['total']['iops'] += result[op]['io_rate']
+            self._MakeHierarchy(self._answer, ['fio', self._count, ioengine, iodepth, fdatasync,
+                                               direct, pattern, blocksize, self._runtime_env], answer)

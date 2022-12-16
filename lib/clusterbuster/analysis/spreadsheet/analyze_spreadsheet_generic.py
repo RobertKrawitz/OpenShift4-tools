@@ -14,8 +14,6 @@
 # limitations under the License.
 
 from ..summary.analyze_generic import ClusterBusterAnalyzeSummaryGeneric
-import sys
-
 
 class SpreadsheetAnalysis(ClusterBusterAnalyzeSummaryGeneric):
     def __init__(self, workload: str, data: dict, metadata: dict, dimensions: list, variables: list, filters: dict = None):

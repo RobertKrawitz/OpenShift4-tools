@@ -16,7 +16,6 @@
 import importlib
 import inspect
 import os
-import json
 import sys
 from datetime import datetime
 from lib.clusterbuster.reporter.ClusterBusterReporter import ClusterBusterReporter
@@ -75,6 +74,9 @@ class ClusterBusterLoader:
                 continue
             for i in inspect.getmembers(imported_lib):
                 if i[0] == f'{workload}_loader':
-                    i[1](report, answer).Load()
+                    try:
+                        i[1](report, answer).Load()
+                    except Exception:
+                        print(f'Loading report {report["metadata"]["RunArtifactDir"]} failed: {sys.exc_info()}', file=sys.stderr)
         answer['status'] = self.status
         return answer

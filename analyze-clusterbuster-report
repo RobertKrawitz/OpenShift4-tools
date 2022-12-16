@@ -37,8 +37,6 @@ if args.list_formats:
 
 
 def analyze_clusterbuster_1(f, data):
-    json.dump(data, f, indent=2)
-    return
     report = ClusterBusterAnalysis(data, report_type=args.report_type).Analyze()
     if isinstance(report, str):
         print(report, file=f)
@@ -85,19 +83,14 @@ def create_report_spec(arg: str):
         for pattern in job_patterns:
             run_name += f'-{pattern.lstrip(" -_").rstrip(" -_")}'
     if os.path.isdir(dirname):
-        files = [os.path.join(dirname, f) for f in os.listdir(dirname)]
-        dirs = []
-        dirs = [os.path.realpath(d) for d in files if (matches_patterns(d, job_patterns) and
-                                                       os.path.isdir(d) and
-                                                       os.path.isfile(os.path.join(d, "clusterbuster-report.json")))]
+        dirs = [os.path.realpath(os.path.join(dirname, d)) for d in os.listdir(dirname) if (matches_patterns(d, job_patterns) and
+                                                                                            os.path.isdir(os.path.join(dirname, d)) and
+                                                                                            os.path.isfile(os.path.join(dirname, d, "clusterbuster-report.json")))]
         if not dirs:
             print(f"No matching subdirectories found under {dirname} ({arg})", sys.stderr)
             return None
         for d in dirs:
-            if d in known_subdirs:
-                raise ValueError(f"Directory {d} already used in report {known_subdirs[d]}")
-            else:
-                known_subdirs[d] = arg
+            known_subdirs[d] = arg
         answer['dirs'] = dirs
         answer['run_name'] = run_name
     else:
@@ -126,7 +119,6 @@ def analyze_clusterbuster(f):
         analyze_clusterbuster_1(f, ClusterBusterLoader(report['dirs']).Load())
 
 
-print(args.files, file=sys.stderr)
 try:
     if args.outfile and args.outfile != '-':
         with open(args.outfile, 'w') as f:

@@ -30,11 +30,11 @@ class files_loader(LoadOneReport):
         blocksize = job_metadata['file_block_size']
         blocks = job_metadata['file_size']
         direct = job_metadata['files_direct']
-        self._MakeHierarchy(self._answer, ['files', self._count, dirs, files, blocksize, blocks, direct, self._runtime_env])
-        root = self._answer['files'][self._count][dirs][files][blocksize][blocks][direct][self._runtime_env]
+        answer = {}
         for op in ['create', 'read', 'remove']:
-            self._MakeHierarchy(root, [op])
-            root[op]['elapsed_time'] = self._summary[op]['operation_elapsed_time']
-            root[op]['cpu_time'] = self._summary[op]['cpu_time']
-            root[op]['cpu_utilization'] = root[op]['cpu_time'] / root[op]['elapsed_time']
-        root['read']['io_throughput'] = self._summary['read']['data_rate']
+            self._MakeHierarchy(answer, [op])
+            answer[op]['elapsed_time'] = self._summary[op]['operation_elapsed_time']
+            answer[op]['cpu_time'] = self._summary[op]['cpu_time']
+            answer[op]['cpu_utilization'] = answer[op]['cpu_time'] / answer[op]['elapsed_time']
+        answer['read']['io_throughput'] = self._summary['read']['data_rate']
+        self._MakeHierarchy(self._answer, ['files', self._count, dirs, files, blocksize, blocks, direct, self._runtime_env], answer)

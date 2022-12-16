@@ -34,7 +34,8 @@ class ClusterBusterReporter:
     """
 
     @staticmethod
-    def report_one(jdata: dict, format: str, **kwargs):
+    def report_one(item: str, jdata: dict, format: str, **kwargs):
+        jdata['metadata']['RunArtifactDir'] = item
         if format == 'none' or format is None:
             return
         if format == 'raw-python':
@@ -57,7 +58,7 @@ class ClusterBusterReporter:
         try:
             imported_lib = importlib.import_module(f'..{workload}_reporter', __name__)
         except Exception:
-            print(f'Warning: no handler for workload {workload}, issuing generic summary report ({traceback.format_exc()})', file=sys.stderr)
+            print(f'Warning: no handler for workload {workload}, issuing generic summary report', file=sys.stderr)
             return ClusterBusterReporter(jdata, format).create_report()
         for i in inspect.getmembers(imported_lib):
             if i[0] == f'{workload}_reporter':
@@ -99,7 +100,7 @@ class ClusterBusterReporter:
         for item in ClusterBusterReporter.enumerate_dirs(items):
             with open(item) as f:
                 try:
-                    answers.append(ClusterBusterReporter.report_one(json.load(f), format, **kwargs))
+                    answers.append(ClusterBusterReporter.report_one(os.path.dirname(item), json.load(f), format, **kwargs))
                 except Exception:
                     print(f'Unable to load {item}: {traceback.format_exc()}', file=sys.stderr)
         for item in items:

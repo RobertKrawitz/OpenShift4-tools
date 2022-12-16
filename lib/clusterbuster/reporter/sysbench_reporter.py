@@ -16,7 +16,6 @@
 
 import re
 from .ClusterBusterReporter import ClusterBusterReporter
-import sys
 
 
 class sysbench_reporter(ClusterBusterReporter):
@@ -31,7 +30,9 @@ class sysbench_reporter(ClusterBusterReporter):
 
     def __initialize_fileio(self, jdata):
         if 'sysbench_fileio_modes' in jdata['metadata']['options']['workloadOptions']:
-            self._sysbench_operations = [f'fileio+{test}+{mode}' for test in jdata['metadata']['options']['workloadOptions']['sysbench_fileio_tests'] for mode in jdata['metadata']['options']['workloadOptions']['sysbench_fileio_modes']]
+            self._sysbench_operations = [f'fileio+{test}+{mode}'
+                                         for test in jdata['metadata']['options']['workloadOptions']['sysbench_fileio_tests']
+                                         for mode in jdata['metadata']['options']['workloadOptions']['sysbench_fileio_modes']]
         else:
             self._sysbench_operations = jdata['metadata']['options']['workloadOptions']['sysbench_fileio_tests']
         self._sysbench_vars_to_copy = ['filesize:precision=3:suffix=B:base=1024',
@@ -86,9 +87,11 @@ class sysbench_reporter(ClusterBusterReporter):
                 self._copy_formatted_value(var, dest[pop], source[op])
             for var in self._sysbench_vars_to_copy:
                 self._copy_formatted_value(var, dest[pop], source[op])
-            source[op]['events_rate'] = self._safe_div(source[op]['total_events'], self._summary['data_run_interval'], number_only=True)
-            dest[pop]['events_rate'] = self._prettyprint(self._safe_div(source[op]['total_events'], self._summary['data_run_interval']),
-                                                           precision=3, base=1000, suffix='events/sec')
+            source[op]['events_rate'] = self._safe_div(source[op]['total_events'],
+                                                       self._summary['data_run_interval'], number_only=True)
+            dest[pop]['events_rate'] = self._prettyprint(self._safe_div(source[op]['total_events'],
+                                                                        self._summary['data_run_interval']),
+                                                         precision=3, base=1000, suffix='events/sec')
 
     def __update_report_fileio(self, dest: dict, source: dict, sample_row: dict = None):
         if sample_row is None:
