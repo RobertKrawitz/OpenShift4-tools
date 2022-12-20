@@ -13,12 +13,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .LoadOneReport import LoadOneReport
+from .ClusterBusterLoader import LoadOneReport
 
 
 class uperf_loader(LoadOneReport):
-    def __init__(self, report: dict, answer: dict):
-        LoadOneReport.__init__(self, report, answer)
+    def __init__(self, name: str, report: dict, data: dict):
+        LoadOneReport.__init__(self, name, report, data)
 
     def Load(self):
         job_name = sorted(self._metadata['workload_metadata']['jobs'].keys())[0]
@@ -39,4 +39,4 @@ class uperf_loader(LoadOneReport):
             answer['ops_sec'] = job['ops_rate']
             answer['avg_time_op'] = job['total']['avg_time_avg']
             answer['max_time_op'] = job['total']['max_time_max']
-        self._MakeHierarchy(self._answer, ['uperf', self._count, msgsize, threads, self._runtime_env], answer)
+        self._MakeHierarchy(self._data, ['uperf', self._count, msgsize, threads, self._name], answer)

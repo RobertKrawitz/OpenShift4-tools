@@ -23,32 +23,41 @@ class ClusterBusterAnalyzeSummaryGeneric(ClusterBusterAnalyzeOne):
     """
 
     def __init__(self, workload: str, data: dict, metadata: dict, dimensions: list, variables: list,
-                 filters: dict = None, runtimes: list = ['kata', 'runc']):
+                 filters: dict = None, runs: list = None, baseline: str = None):
         ClusterBusterAnalyzeOne.__init__(self, workload, data, metadata)
         self._dimensions = dimensions
         self._variables = variables
-        self._runtimes = runtimes
+        if runs:
+            self._runs = runs
+        else:
+            self._runs = metadata['jobs'].keys()
+        if baseline:
+            self._baseline = baseline
+        else:
+            self._baseline = metadata['baseline']
+        if self._baseline not in self._runs:
+            raise ValueError(f"Baseline run {self._baseline} must be in run list {self._runs}")
         self._filters = filters
 
     def _retrieve_datum(self, var: str, value: dict):
         return value.get(var, 0)
 
-    def __accumulate(self, accumulator: dict, runtime: str, dimension: str, dim_value: str, variable: str, var_value: float):
+    def __accumulate(self, accumulator: dict, run: str, dimension: str, dim_value: str, variable: str, var_value: float):
         if dimension not in accumulator:
             accumulator[dimension] = {}
         if variable not in accumulator[dimension]:
             accumulator[dimension][variable] = {}
         if dim_value not in accumulator[dimension][variable]:
             accumulator[dimension][variable][dim_value] = {}
-        if runtime not in accumulator[dimension][variable][dim_value]:
-            accumulator[dimension][variable][dim_value][runtime] = {
+        if run not in accumulator[dimension][variable][dim_value]:
+            accumulator[dimension][variable][dim_value][run] = {
                 'sum': 0,
                 'count': 0,
                 'values': [],
                 }
-        accumulator[dimension][variable][dim_value][runtime]['values'].append(var_value)
-        accumulator[dimension][variable][dim_value][runtime]['sum'] += log(var_value)
-        accumulator[dimension][variable][dim_value][runtime]['count'] += 1
+        accumulator[dimension][variable][dim_value][run]['values'].append(var_value)
+        accumulator[dimension][variable][dim_value][run]['sum'] += log(var_value)
+        accumulator[dimension][variable][dim_value][run]['count'] += 1
 
     def __report_one_dimension(self, accumulator: dict):
         answer = dict()
@@ -58,41 +67,37 @@ class ClusterBusterAnalyzeSummaryGeneric(ClusterBusterAnalyzeOne):
             if variable not in answer:
                 answer[variable] = {}
             for key, value in accumulator[variable].items():
-                for runtime in self._runtimes:
-                    if runtime not in value:
+                for run in self._runs:
+                    if run not in value:
                         continue
-                    value1 = value[runtime]
+                    value1 = value[run]
                     if 'count' not in value1 or value1['count'] == 0:
                         continue
-                    if runtime not in answer[variable]:
-                        answer[variable][runtime] = {}
-                    answer[variable][runtime][key] = exp(value1['sum'] / value1['count'])
-                if 'kata' in answer[variable] and 'runc' in answer[variable] and key in answer[variable]['kata'] and key in answer[variable]['runc']:
-                    ratio = answer[variable]['kata'][key] / answer[variable]['runc'][key]
-                    if 'ratio' not in answer[variable]:
-                        answer[variable]['ratio'] = {}
-                    answer[variable]['ratio'][key] = ratio
-                min_ratio = None
-                max_ratio = None
-                for i in range(len(value['runc']['values'])):
-                    if 'kata' not in value or i >= len(value['kata']['values']):
-                        continue
-                    ratio = value['kata']['values'][i] / value['runc']['values'][i]
-                    if min_ratio is None or ratio < min_ratio:
-                        min_ratio = ratio
-                    if max_ratio is None or ratio > max_ratio:
-                        max_ratio = ratio
-                    if 'max_ratio' not in answer[variable]:
-                        answer[variable]['min_ratio'] = {}
-                        answer[variable]['max_ratio'] = {}
-                    answer[variable]['min_ratio'][key] = min_ratio
-                    answer[variable]['max_ratio'][key] = max_ratio
+                    if run not in answer[variable]:
+                        answer[variable][run] = {}
+                    if key not in answer[variable][run]:
+                        answer[variable][run][key] = {}
+                    answer[variable][run][key]['value'] = exp(value1['sum'] / value1['count'])
+                    if run != self._baseline and run in answer[variable] and self._baseline in answer[variable] and key in answer[variable][run] and key in answer[variable][self._baseline]:
+                        ratio = answer[variable][run][key]['value'] / answer[variable][self._baseline][key]['value']
+                        answer[variable][run][key]['ratio'] = ratio
+                        min_ratio = None
+                        max_ratio = None
+                        for i in range(len(value[self._baseline]['values'])):
+                            if run not in value or i >= len(value[run]['values']):
+                                continue
+                            ratio = value[run]['values'][i] / value[self._baseline]['values'][i]
+                            if min_ratio is None or ratio < min_ratio:
+                                min_ratio = ratio
+                            if max_ratio is None or ratio > max_ratio:
+                                max_ratio = ratio
+                            answer[variable][run][key]['min_ratio'] = min_ratio
+                            answer[variable][run][key]['max_ratio'] = max_ratio
         return answer
 
     def __report(self, accumulator: dict):
         answer = {
             'workload': self._workload,
-            'uuid': self._metadata['uuid']
             }
         for dimension in self._dimensions:
             if dimension in accumulator:
@@ -123,18 +128,19 @@ class ClusterBusterAnalyzeSummaryGeneric(ClusterBusterAnalyzeOne):
             else:
                 detail_row = dict()
                 for var in self._variables:
-                    detail_row[var] = dict()
+                    detail_row[var] = {}
                     ratio = {}
-                    for runtime, data in value.items():
+                    for run, data in value.items():
+                        detail_row[var][run] = {}
                         datum = self._retrieve_datum(var, data)
-                        detail_row[var][runtime] = datum
+                        detail_row[var][run]['value'] = datum
                         if (datum > 0):
-                            ratio[runtime] = datum
+                            ratio[run] = datum
                             for dimension, dim_value in values.items():
-                                self.__accumulate(accumulator, runtime, dimension, dim_value, var, datum)
-                            self.__accumulate(accumulator, runtime, 'Overall', True, var, datum)
-                    if 'kata' in detail_row[var] and 'runc' in detail_row[var] and detail_row[var]['kata'] > 0 and detail_row[var]['runc'] > 0:
-                        detail_row[var]['ratio'] = detail_row[var]['kata'] / detail_row[var]['runc']
+                                self.__accumulate(accumulator, run, dimension, dim_value, var, datum)
+                            self.__accumulate(accumulator, run, 'Overall', 'Total', var, datum)
+                        if run != self._baseline and run in detail_row[var] and self._baseline in detail_row[var] and detail_row[var][run]['value'] > 0 and detail_row[var][self._baseline]['value'] > 0:
+                            detail_row[var][run]['ratio'] = detail_row[var][run]['value'] / detail_row[var][self._baseline]['value']
                 detail[out_case_name] = detail_row
 
     def Analyze(self, report_summary: bool = True, report_detail: bool = False):

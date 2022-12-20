@@ -13,14 +13,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .LoadOneReport import LoadOneReport
+from .ClusterBusterLoader import LoadOneReport
 
 
 class cpusoaker_loader(LoadOneReport):
-    def __init__(self, report: dict, answer: dict):
-        LoadOneReport.__init__(self, report, answer)
+    def __init__(self, name: str, report: dict, data: dict):
+        LoadOneReport.__init__(self, name, report, data)
 
     def Load(self):
+        if not self._summary['total_pods']:
+            return
         answer = {
             'start_rate': self._summary['pod_start_rate'],
             'first_pod_start': self._summary['first_pod_start_time'],
@@ -34,4 +36,4 @@ class cpusoaker_loader(LoadOneReport):
         except Exception:
             pass
         answer['pod_starts_per_second'] = self._count / answer['last_pod_start']
-        self._MakeHierarchy(self._answer, ['cpusoaker', self._count, self._runtime_env], answer)
+        self._MakeHierarchy(self._data, ['cpusoaker', self._count, self._name], answer)

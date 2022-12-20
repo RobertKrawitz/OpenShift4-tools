@@ -13,13 +13,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .LoadOneReport import LoadOneReport
+from .ClusterBusterLoader import LoadOneReport
 import sys
 
 
 class fio_loader(LoadOneReport):
-    def __init__(self, report: dict, answer: dict):
-        LoadOneReport.__init__(self, report, answer)
+    def __init__(self, name: str, report: dict, data: dict):
+        LoadOneReport.__init__(self, name, report, data)
 
     def Load(self):
         jobs = sorted(self._metadata['workload_metadata']['jobs'])
@@ -49,5 +49,5 @@ class fio_loader(LoadOneReport):
                     if 'iops' not in answer['total']:
                         answer['total']['iops'] = 0
                     answer['total']['iops'] += result[op]['io_rate']
-            self._MakeHierarchy(self._answer, ['fio', self._count, ioengine, iodepth, fdatasync,
-                                               direct, pattern, blocksize, self._runtime_env], answer)
+            self._MakeHierarchy(self._data, ['fio', self._count, ioengine, iodepth, fdatasync,
+                                             direct, pattern, blocksize, self._name], answer)

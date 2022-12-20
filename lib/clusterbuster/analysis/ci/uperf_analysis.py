@@ -30,7 +30,6 @@ class uperf_analysis(ClusterBusterAnalyzeOne):
             for msgsize, data2 in data1.items():
                 for threads, data3 in data2.items():
                     answer = dict()
-                    answer['uuid'] = self._metadata['uuid']
                     answer['test_description'] = dict()
                     answer['test_description']['pods'] = pods
                     answer['test_description']['workload'] = 'uperf'

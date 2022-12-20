@@ -15,6 +15,7 @@
 
 from ..summary.analyze_generic import ClusterBusterAnalyzeSummaryGeneric
 
+
 class SpreadsheetAnalysis(ClusterBusterAnalyzeSummaryGeneric):
     def __init__(self, workload: str, data: dict, metadata: dict, dimensions: list, variables: list, filters: dict = None):
         self._sp_dimensions = dimensions
@@ -123,7 +124,6 @@ Metric\tMin ratio\tAvg ratio\tMax ratio
     def Analyze(self, report_detail=True):
         report, detail = super().Analyze(report_detail=report_detail)
         answer = f"""Workload: {report['workload']}
-uuid: {report['uuid']}
 
 """
         for var, data in report.items():

@@ -29,7 +29,8 @@ parser.add_argument('--list_formats', action='store_true', help='List available 
 parser.add_argument('--kata', action='store_true', help='Compare Kata with non-Kata results')
 parser.add_argument("-r", "--report-type", default=None, type=str, metavar='format',
                     choices=analysis_formats, help=f'Analysis format: one of {", ".join(analysis_formats)}')
-parser.add_argument("files", metavar='file', type=str, nargs='*', help='Files to process')
+parser.add_argument("-w", "--workload", type=str, help='Workloads to process', action='append')
+parser.add_argument("files", metavar='file', type=str, nargs='+', help='Files to process')
 args = parser.parse_args()
 if args.list_formats:
     print('\n'.join(sorted(analysis_formats)))
@@ -44,79 +45,18 @@ def analyze_clusterbuster_1(f, data):
         json.dump(report, fp=f, indent=2)
 
 
-known_subdirs = {}
-
-
-def matches_patterns(f: str, patterns: list):
-    if patterns:
-        for pattern in patterns:
-            if not re.search(pattern, f):
-                return False
-    return True
-
-
-def create_report_spec(arg: str):
-    answer = {}
-    dirname = None
-    job_patterns = []
-    run_name = None
-    for component in arg.split(':'):
-        pair = component.split('=', 1)
-        if len(pair) == 1:
-            dirname = pair[0]
-        else:
-            key, value = pair
-            key = key.lower()
-            if key.startswith('dir'):
-                dirname = value
-            elif key == 'job_pattern':
-                job_patterns.append(value)
-            elif key == 'name':
-                run_name = value
-            else:
-                raise ValueError(f"Unexpected key {key} in name {arg}")
-    if dirname is None:
-        raise ValueError(f"No directory name found in {arg}")
-    if run_name is None:
-        run_name = dirname.rstrip('/').split('/')[-1]
-    if job_patterns:
-        for pattern in job_patterns:
-            run_name += f'-{pattern.lstrip(" -_").rstrip(" -_")}'
-    if os.path.isdir(dirname):
-        dirs = [os.path.realpath(os.path.join(dirname, d)) for d in os.listdir(dirname) if (matches_patterns(d, job_patterns) and
-                                                                                            os.path.isdir(os.path.join(dirname, d)) and
-                                                                                            os.path.isfile(os.path.join(dirname, d, "clusterbuster-report.json")))]
-        if not dirs:
-            print(f"No matching subdirectories found under {dirname} ({arg})", sys.stderr)
-            return None
-        for d in dirs:
-            known_subdirs[d] = arg
-        answer['dirs'] = dirs
-        answer['run_name'] = run_name
-    else:
-        raise ValueError(f"{dirname}: Not a directory")
-    return answer
-
-
 def analyze_clusterbuster(f):
     reports = {}
     dir_args = []
     if args.kata:
         for arg in args.files:
-            dir_args.append(f'{arg}:job_pattern=-runc-')
-            dir_args.append(f'{arg}:job_pattern=-kata-')
+            dir_args.append(f'{arg}:job_pattern=-runc-:name_suffix=runc')
+            dir_args.append(f'{arg}:job_pattern=-kata-:name_suffix=kata')
     else:
         dir_args = args.files
-    for arg in dir_args:
-        spec = create_report_spec(arg)
-        if spec is not None:
-            if spec['run_name'] in reports:
-                raise ValueError(f'Duplicate report name {spec["run_name"]}')
-            reports[spec['run_name']] = spec
-    if not reports:
-        raise ValueError("No reports found")
-    for report in reports.values():
-        analyze_clusterbuster_1(f, ClusterBusterLoader(report['dirs']).Load())
+    if args.workload:
+        dir_args = [f'{f}:job_pattern=^({"|".join(args.workload)})-' for f in dir_args]
+    analyze_clusterbuster_1(f, ClusterBusterLoader().loadFromSpecs(dir_args))
 
 
 try:

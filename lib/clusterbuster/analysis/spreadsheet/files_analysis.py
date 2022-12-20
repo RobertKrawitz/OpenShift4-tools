@@ -26,7 +26,6 @@ class files_analysis(FilesAnalysisBase):
 
     def __analyze_kata(self, report, detail):
         answer = f"""Workload: {report['workload']}
-uuid: {report['uuid']}
 Times in seconds
 
 Op\tKata\trunc\tratio

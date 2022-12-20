@@ -28,7 +28,6 @@ class cpusoaker_analysis(ClusterBusterAnalyzeOne):
         answers = list()
         for pods, data1 in self._data.items():
             answer = dict()
-            answer['uuid'] = self._metadata['uuid']
             answer['test_description'] = dict()
             answer['test_description']['workload'] = 'cpusoaker'
             answer['test_description']['pods'] = pods

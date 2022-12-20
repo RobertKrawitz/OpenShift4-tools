@@ -23,11 +23,11 @@ class cpusoaker_analysis(ClusterBusterAnalyzeOne):
 
     def __init__(self, workload: str, data: dict, metadata: dict):
         ClusterBusterAnalyzeOne.__init__(self, workload, data, metadata)
+        self._baseline = self._metadata['baseline']
 
     def Analyze(self):
         answer = {
             'workload': self._workload,
-            'uuid': self._metadata['uuid']
             }
         max_pods = dict()
         memory = dict()
@@ -67,30 +67,31 @@ class cpusoaker_analysis(ClusterBusterAnalyzeOne):
                 iterations_cpu_sec[runtime][pods] = data2['iterations_cpu_sec']
         min_max_pods = None
         for runtime in max_pods:
-            answer[f'Max Pods {runtime}'] = max_pods[runtime]
+            answer[runtime] = dict()
+            answer[runtime]['Max Pods'] = max_pods[runtime]
             if min_max_pods is None or max_pods[runtime] < min_max_pods:
                 min_max_pods = max_pods[runtime]
         for runtime in max_pods:
-            answer[runtime] = dict()
             answer[runtime]['Pod starts/sec'] = pods_sec[runtime][min_max_pods]
             answer[runtime]['Iterations/sec'] = iterations_sec[runtime][min_max_pods]
             answer[runtime]['Iterations/CPU sec'] = iterations_cpu_sec[runtime][min_max_pods]
             try:
-                answer[runtime]['Per-pod memory'] = memory[runtime][min_max_pods]
+                answer[runtime]['Per-pod memory'] = int(memory[runtime][min_max_pods])
             except Exception:
                 pass
             answer[runtime]['Fastest pod start'] = min_pod_start_time[runtime]
             answer[runtime]['Slowest pod start'] = max_pod_start_time[runtime]
             answer[runtime]['Last n-1 pod start time'] = last_pod_start[runtime][min_max_pods] - first_pod_start[runtime][min_max_pods]
-        try:
-            answer['Ratio pod starts/sec'] = pods_sec['kata'][min_max_pods] / pods_sec['runc'][min_max_pods]
-            answer['Ratio iterations/CPU sec'] = iterations_cpu_sec['kata'][min_max_pods] / iterations_sec['runc'][min_max_pods]
-            answer['Ratio iterations/CPU sec'] = iterations_cpu_sec['kata'][min_max_pods] / iterations_cpu_sec['runc'][min_max_pods]
-            answer['Ratio fastest pod start time'] = min_pod_start_time['kata'] / min_pod_start_time['runc']
-            answer['Ratio slowest pod start time'] = max_pod_start_time['kata'] / max_pod_start_time['runc']
-            answer['Ratio last n-1 pod start time'] = answer['kata']['Last n-1 pod start time'] / answer['runc']['Last n-1 pod start time']
-            answer['Kata first pod start overhead'] = min_pod_start_time['kata'] - min_pod_start_time['runc']
-            answer['Kata memory overhead/pod'] = memory['kata'][min_max_pods] - memory['runc'][min_max_pods]
-        except Exception:
-            pass
+            if runtime != self._baseline:
+                try:
+                    answer[runtime]['Ratio pod starts/sec'] = pods_sec[runtime][min_max_pods] / pods_sec[self._baseline][min_max_pods]
+                    answer[runtime]['Ratio iterations/CPU sec'] = iterations_cpu_sec[runtime][min_max_pods] / iterations_sec[self._baseline][min_max_pods]
+                    answer[runtime]['Ratio iterations/CPU sec'] = iterations_cpu_sec[runtime][min_max_pods] / iterations_cpu_sec[self._baseline][min_max_pods]
+                    answer[runtime]['Ratio fastest pod start time'] = min_pod_start_time[runtime] / min_pod_start_time[self._baseline]
+                    answer[runtime]['Ratio slowest pod start time'] = max_pod_start_time[runtime] / max_pod_start_time[self._baseline]
+                    answer[runtime]['Ratio last n-1 pod start time'] = answer[runtime]['Last n-1 pod start time'] / answer[self._baseline]['Last n-1 pod start time']
+                    answer[runtime]['First pod start overhead'] = min_pod_start_time[runtime] - min_pod_start_time[self._baseline]
+                    answer[runtime]['Memory overhead/pod'] = int(memory[runtime][min_max_pods] - memory[self._baseline][min_max_pods])
+                except Exception:
+                    pass
         return answer

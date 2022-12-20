@@ -13,12 +13,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .LoadOneReport import LoadOneReport
+from .ClusterBusterLoader import LoadOneReport
 
 
 class files_loader(LoadOneReport):
-    def __init__(self, report: dict, answer: dict):
-        LoadOneReport.__init__(self, report, answer)
+    def __init__(self, name: str, report: dict, data: dict):
+        LoadOneReport.__init__(self, name, report, data)
 
     def Load(self):
         if 'workload_metadata' in self._metadata and 'dirs_per_volume' in self._metadata['workload_metadata']:
@@ -37,4 +37,4 @@ class files_loader(LoadOneReport):
             answer[op]['cpu_time'] = self._summary[op]['cpu_time']
             answer[op]['cpu_utilization'] = answer[op]['cpu_time'] / answer[op]['elapsed_time']
         answer['read']['io_throughput'] = self._summary['read']['data_rate']
-        self._MakeHierarchy(self._answer, ['files', self._count, dirs, files, blocksize, blocks, direct, self._runtime_env], answer)
+        self._MakeHierarchy(self._data, ['files', self._count, dirs, files, blocksize, blocks, direct, self._name], answer)

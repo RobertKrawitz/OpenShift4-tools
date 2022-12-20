@@ -24,12 +24,12 @@ class FilesAnalysisBase(ClusterBusterAnalyzeOne):
 
     def __init__(self, workload: str, data: dict, metadata: dict):
         super().__init__(workload, data, metadata)
+        self._baseline = self._metadata['baseline']
 
     def Analyze(self, report_summary: bool = True, report_detail: bool = False):
         detail = dict()
         answer = {
             'workload': self._workload,
-            'uuid': self._metadata['uuid'],
             }
         summary = dict()
         count = dict()
@@ -37,7 +37,6 @@ class FilesAnalysisBase(ClusterBusterAnalyzeOne):
         times = dict()
         known_ops = dict()
         known_subops = dict()
-        known_runtimes = dict()
         for pods, data1 in self._data.items():
             for dirs, data2 in data1.items():
                 for files, data3 in data2.items():
@@ -49,7 +48,6 @@ class FilesAnalysisBase(ClusterBusterAnalyzeOne):
                                 case_label = f'Pods: {pods}, Dirs: {dirs}, Files: {files}, Blocksize: {blocksize}, Filesize: {filesize}'
                                 detail_row = dict()
                                 for runtime, data7 in data6.items():
-                                    known_runtimes[runtime] = True
                                     if runtime not in summary:
                                         summary[runtime] = dict()
                                         count[runtime] = dict()
@@ -78,48 +76,49 @@ class FilesAnalysisBase(ClusterBusterAnalyzeOne):
                                                     count[runtime][op][subop] = 0
                                                 count[runtime][op][subop] += 1
                                                 summary[runtime][op][subop] += log(val)
-                                for op, detail1 in detail_row.items():
-                                    for subop, detail2 in detail1.items():
-                                        if 'kata' in detail2 and 'runc' in detail2 and detail2['kata'] > 0 and detail2['runc'] > 0:
-                                            detail2['ratio'] = detail2['kata'] / detail2['runc']
-                                if len(detail_row.keys()) > 0:
-                                    detail[case_label] = detail_row
+                                    if runtime != self._baseline:
+                                        for op, detail1 in detail_row.items():
+                                            for subop, detail2 in detail1.items():
+                                                detail2['ratio'] = detail2[runtime] / detail2[self._baseline]
+                                    if len(detail_row.keys()) > 0:
+                                        detail[case_label] = detail_row
         if summary.keys():
-            for runtime, data1 in summary.items():
-                answer[runtime] = dict()
+            for run, data1 in summary.items():
+                answer[run] = dict()
                 for op, data2 in data1.items():
-                    answer[runtime][op] = dict()
+                    answer[run][op] = dict()
                     for subop, data3 in data2.items():
-                        answer[runtime][op][subop] = exp(summary[runtime][op][subop] / count[runtime][op][subop])
-            if 'kata' in known_runtimes and 'runc' in known_runtimes:
-                answer['ratio'] = dict()
-                for op, data1 in answer['runc'].items():
-                    if op not in answer['ratio']:
-                        answer['ratio'][op] = dict()
+                        answer[run][op][subop] = exp(summary[run][op][subop] / count[run][op][subop])
+                if run == self._baseline:
+                    continue
+                answer[run]['ratio'] = dict()
+                for op, data1 in answer[self._baseline].items():
+                    if op not in answer[run]['ratio']:
+                        answer[run]['ratio'][op] = dict()
                     for subop, data2 in data1.items():
-                        answer['ratio'][op][subop] = answer['kata'][op][subop] / answer['runc'][op][subop]
-                answer['min_ratio'] = dict()
-                answer['max_ratio'] = dict()
+                        answer[run]['ratio'][op][subop] = answer[run][op][subop] / answer[self._baseline][op][subop]
+                answer[run]['min_ratio'] = dict()
+                answer[run]['max_ratio'] = dict()
                 for op in known_ops.keys():
                     if op not in times:
                         continue
-                    if op not in answer['min_ratio']:
-                        answer['min_ratio'][op] = dict()
-                        answer['max_ratio'][op] = dict()
+                    if op not in answer[run]['min_ratio']:
+                        answer[run]['min_ratio'][op] = dict()
+                        answer[run]['max_ratio'][op] = dict()
                     for subop in known_subops.keys():
                         if subop not in times[op]:
                             continue
                         min_ratio = None
                         max_ratio = None
-                        for i in range(len(times[op][subop]['kata'])):
-                            if times[op][subop]['kata'][i] > 0 and times[op][subop]['runc'][i] > 0:
-                                ratio = times[op][subop]['kata'][i] / times[op][subop]['runc'][i]
+                        for i in range(len(times[op][subop][self._baseline])):
+                            if times[op][subop][self._baseline][i] > 0 and times[op][subop][self._baseline][i] > 0:
+                                ratio = times[op][subop][run][i] / times[op][subop][self._baseline][i]
                                 if min_ratio is None or ratio < min_ratio:
                                     min_ratio = ratio
                                 if max_ratio is None or ratio > max_ratio:
                                     max_ratio = ratio
-                        answer['min_ratio'][op][subop] = min_ratio
-                        answer['max_ratio'][op][subop] = max_ratio
+                        answer[run]['min_ratio'][op][subop] = min_ratio
+                        answer[run]['max_ratio'][op][subop] = max_ratio
         if report_summary:
             if report_detail:
                 return answer, detail

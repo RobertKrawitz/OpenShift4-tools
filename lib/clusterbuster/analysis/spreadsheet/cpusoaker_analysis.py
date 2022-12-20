@@ -26,7 +26,6 @@ class cpusoaker_analysis(ClusterBusterAnalyzeOne):
 
     def Analyze(self):
         answer = f"""Workload: {self._workload}
-uuid: {self._metadata['uuid']}
 """
 
         def pod_start_delta(data: dict, runtime: str, col: str):
