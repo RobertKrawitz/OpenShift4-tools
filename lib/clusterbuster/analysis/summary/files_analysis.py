@@ -79,7 +79,8 @@ class FilesAnalysisBase(ClusterBusterAnalyzeOne):
                                     if runtime != self._baseline:
                                         for op, detail1 in detail_row.items():
                                             for subop, detail2 in detail1.items():
-                                                detail2['ratio'] = detail2[runtime] / detail2[self._baseline]
+                                                if self._baseline in detail2:
+                                                    detail2['ratio'] = detail2[runtime] / detail2[self._baseline]
                                     if len(detail_row.keys()) > 0:
                                         detail[case_label] = detail_row
         if summary.keys():
@@ -89,7 +90,7 @@ class FilesAnalysisBase(ClusterBusterAnalyzeOne):
                     answer[run][op] = dict()
                     for subop, data3 in data2.items():
                         answer[run][op][subop] = exp(summary[run][op][subop] / count[run][op][subop])
-                if run == self._baseline:
+                if run == self._baseline or self._baseline not in answer:
                     continue
                 answer[run]['ratio'] = dict()
                 for op, data1 in answer[self._baseline].items():

@@ -27,7 +27,7 @@ class fio_analysis(SpreadsheetAnalysis):
             {
              'var': 'throughput',
              'name': 'Throughput',
-             'Unit': ' (MB/sec)',
+             'unit': ' (MB/sec)',
              'multiplier': .000001
              },
             {

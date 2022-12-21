@@ -117,7 +117,7 @@ class ClusterBusterAnalysis:
 
     @staticmethod
     def list_analysis_formats():
-        return ['ci', 'spreadsheet', 'summary']
+        return ['ci', 'spreadsheet', 'summary', 'raw']
 
     def Analyze(self):
         report = dict()
@@ -128,6 +128,8 @@ class ClusterBusterAnalysis:
             metadata = self._data['metadata']
         if 'status' in self._data:
             status = self._data['status']
+        if self._report_type == 'raw':
+            return self._data
         for workload, workload_data in sorted(self._data.items()):
             if workload == 'metadata' or workload == 'status':
                 continue

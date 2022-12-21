@@ -82,7 +82,7 @@ class cpusoaker_analysis(ClusterBusterAnalyzeOne):
             answer[runtime]['Fastest pod start'] = min_pod_start_time[runtime]
             answer[runtime]['Slowest pod start'] = max_pod_start_time[runtime]
             answer[runtime]['Last n-1 pod start time'] = last_pod_start[runtime][min_max_pods] - first_pod_start[runtime][min_max_pods]
-            if runtime != self._baseline:
+            if runtime != self._baseline and self._baseline in answer:
                 try:
                     answer[runtime]['Ratio pod starts/sec'] = pods_sec[runtime][min_max_pods] / pods_sec[self._baseline][min_max_pods]
                     answer[runtime]['Ratio iterations/CPU sec'] = iterations_cpu_sec[runtime][min_max_pods] / iterations_sec[self._baseline][min_max_pods]

@@ -108,8 +108,10 @@ class LoadReportSet:
     """
 
     def __init__(self, dirs: list, name: str, answer: dict):
-        self.reports = ClusterBusterReporter.report(dirs, "json-summary")
-        self.status = {
+        self.reports = {}
+        if dirs:
+            self.reports = ClusterBusterReporter.report(dirs, "json-summary")
+        status = {
             'result': None,
             'ran': [],
             'failed': [],
@@ -129,17 +131,19 @@ class LoadReportSet:
                     job_end = metadata['controller_end_timestamp']
                     if run_start is None or job_start < run_start:
                         run_start = job_start
-                        self.status['job_start'] = datetime.strftime(datetime.fromtimestamp(job_start), '%Y-%m-%dT%T+00:00')
+                        status['job_start'] = datetime.strftime(datetime.fromtimestamp(job_start), '%Y-%m-%dT%T+00:00')
                     if run_end is None or job_end > run_end:
                         run_end = job_end
-                        self.status['job_end'] = datetime.strftime(datetime.fromtimestamp(job_end), '%Y-%m-%dT%T+00:00')
-                    self.status['job_runtime'] = round(run_end - run_start)
+                        status['job_end'] = datetime.strftime(datetime.fromtimestamp(job_end), '%Y-%m-%dT%T+00:00')
+                    status['job_runtime'] = round(run_end - run_start)
                     if report['Status'] == 'Pass' or report['Status'] == 'Success':
-                        self.status['ran'].append(f"{name}-{metadata['job_name']}")
+                        status['ran'].append(f"{name}-{metadata['job_name']}")
                     elif report['Status'] == 'Fail':
-                        self.status['failed'].append(metadata['job_name'])
+                        status['failed'].append(metadata['job_name'])
                     elif report['Status'] != 'No Result':
                         raise ValueError(f'Status should be Pass, Fail, or No Result; actual was {report["Status"]}')
+        status['result'] = 'PASS' if not status['failed'] else 'FAIL'
+        self.answer['status']['jobs'][self.name] = status
 
     def Load(self):
         for report in self.reports:
@@ -154,7 +158,6 @@ class LoadReportSet:
                         i[1](self.name, report, self.answer).Load()
                     except Exception:
                         print(f'Loading report {report["metadata"]["RunArtifactDir"]} failed: {sys.exc_info()}', file=sys.stderr)
-        self.answer['status'] = self.status
 
 
 class ClusterBusterLoader:
@@ -201,12 +204,14 @@ class ClusterBusterLoader:
             run_name = "-".join(name_suffixes)
         if os.path.isdir(dirname):
             dirs = [os.path.realpath(os.path.join(dirname, d))
-                    for d in os.listdir(dirname) if (self._matches_patterns(d, job_patterns) and
+                    for d in os.listdir(dirname) if (not self._matches_patterns(d, [r'\.(FAIL|tmp)']) and
+                                                     self._matches_patterns(d, job_patterns) and
                                                      os.path.isdir(os.path.join(dirname, d)) and
                                                      os.path.isfile(os.path.join(dirname, d, "clusterbuster-report.json")))]
             if not dirs:
                 print(f"No matching subdirectories found under {dirname} ({arg})", sys.stderr)
-                return None
+                dirs = []
+#                return None
             answer['dirs'] = dirs
             answer['run_name'] = run_name
         else:
@@ -216,7 +221,7 @@ class ClusterBusterLoader:
     def loadFromSpecs(self, specs: list):
         answer = {
                   'metadata': {'jobs': {}},
-                  'status': {}
+                  'status': {'jobs': {}}
                   }
         reports = {}
         for arg in specs:
@@ -228,5 +233,7 @@ class ClusterBusterLoader:
         if not reports:
             raise ValueError("No reports found")
         for name, report in reports.items():
+            if 'baseline' not in answer['metadata']:
+                answer['metadata']['baseline'] = name
             LoadReportSet(reports[name]['dirs'], name, answer).Load()
         return answer
