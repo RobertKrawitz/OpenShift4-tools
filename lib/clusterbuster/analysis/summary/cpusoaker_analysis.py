@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright 2022 Robert Krawitz/Red Hat
+# Copyright 2022-2023 Robert Krawitz/Red Hat
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -22,7 +22,7 @@ class cpusoaker_analysis(ClusterBusterAnalyzeOne):
     """
 
     def __init__(self, workload: str, data: dict, metadata: dict):
-        ClusterBusterAnalyzeOne.__init__(self, workload, data, metadata)
+        super().__init__(workload, data, metadata)
         self._baseline = self._metadata['baseline']
 
     def Analyze(self):
@@ -81,17 +81,26 @@ class cpusoaker_analysis(ClusterBusterAnalyzeOne):
                 pass
             answer[runtime]['Fastest pod start'] = min_pod_start_time[runtime]
             answer[runtime]['Slowest pod start'] = max_pod_start_time[runtime]
-            answer[runtime]['Last n-1 pod start time'] = last_pod_start[runtime][min_max_pods] - first_pod_start[runtime][min_max_pods]
+            answer[runtime]['Last n-1 pod start time'] = (last_pod_start[runtime][min_max_pods] -
+                                                          first_pod_start[runtime][min_max_pods])
             if runtime != self._baseline and self._baseline in answer:
                 try:
-                    answer[runtime]['Ratio pod starts/sec'] = pods_sec[runtime][min_max_pods] / pods_sec[self._baseline][min_max_pods]
-                    answer[runtime]['Ratio iterations/CPU sec'] = iterations_cpu_sec[runtime][min_max_pods] / iterations_sec[self._baseline][min_max_pods]
-                    answer[runtime]['Ratio iterations/CPU sec'] = iterations_cpu_sec[runtime][min_max_pods] / iterations_cpu_sec[self._baseline][min_max_pods]
-                    answer[runtime]['Ratio fastest pod start time'] = min_pod_start_time[runtime] / min_pod_start_time[self._baseline]
-                    answer[runtime]['Ratio slowest pod start time'] = max_pod_start_time[runtime] / max_pod_start_time[self._baseline]
-                    answer[runtime]['Ratio last n-1 pod start time'] = answer[runtime]['Last n-1 pod start time'] / answer[self._baseline]['Last n-1 pod start time']
-                    answer[runtime]['First pod start overhead'] = min_pod_start_time[runtime] - min_pod_start_time[self._baseline]
-                    answer[runtime]['Memory overhead/pod'] = int(memory[runtime][min_max_pods] - memory[self._baseline][min_max_pods])
+                    answer[runtime]['Ratio pod starts/sec'] = (pods_sec[runtime][min_max_pods] /
+                                                               pods_sec[self._baseline][min_max_pods])
+                    answer[runtime]['Ratio iterations/CPU sec'] = (iterations_cpu_sec[runtime][min_max_pods] /
+                                                                   iterations_sec[self._baseline][min_max_pods])
+                    answer[runtime]['Ratio iterations/CPU sec'] = (iterations_cpu_sec[runtime][min_max_pods] /
+                                                                   iterations_cpu_sec[self._baseline][min_max_pods])
+                    answer[runtime]['Ratio fastest pod start time'] = (min_pod_start_time[runtime] /
+                                                                       min_pod_start_time[self._baseline])
+                    answer[runtime]['Ratio slowest pod start time'] = (max_pod_start_time[runtime] /
+                                                                       max_pod_start_time[self._baseline])
+                    answer[runtime]['Ratio last n-1 pod start time'] = (answer[runtime]['Last n-1 pod start time'] /
+                                                                        answer[self._baseline]['Last n-1 pod start time'])
+                    answer[runtime]['First pod start overhead'] = (min_pod_start_time[runtime] -
+                                                                   min_pod_start_time[self._baseline])
+                    answer[runtime]['Memory overhead/pod'] = int(memory[runtime][min_max_pods] -
+                                                                 memory[self._baseline][min_max_pods])
                 except Exception:
                     pass
         return answer

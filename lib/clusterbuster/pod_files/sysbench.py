@@ -110,10 +110,12 @@ class sysbench_client(clusterbuster_pod_client):
                     pass
                 elif self.simple_check(r'95th percentile: *([0-9.]+)', line, op_answer, 'p95_latency_sec', is_float=True):
                     pass
-                elif self.simple_check(r'events .avg/stddev.:\s*([0-9.]+)/([0-9.]+)', line, op_answer, ['events_avg', 'events_stdev'],
+                elif self.simple_check(r'events .avg/stddev.:\s*([0-9.]+)/([0-9.]+)', line,
+                                       op_answer, ['events_avg', 'events_stdev'],
                                        matchidx=[1, 2], is_float=True):
                     pass
-                elif self.simple_check(r'execution time .avg/stddev.:\s*([0-9.]+)/([0-9.]+)', line, op_answer, ['time', 'time_stdev'],
+                elif self.simple_check(r'execution time .avg/stddev.:\s*([0-9.]+)/([0-9.]+)', line,
+                                       op_answer, ['time', 'time_stdev'],
                                        matchidx=[1, 2], is_float=True):
                     pass
                 line = run.stdout.readline().decode('ascii')
@@ -169,7 +171,8 @@ class sysbench_client(clusterbuster_pod_client):
                     while line:
                         line = line.strip().lower()
                         self._timestamp(line)
-                        if self.simple_check(rf'([0-9]+) *files, *{self.np}', line, op_answer, ['files', 'filesize'], matchidx=[1, 2]):
+                        if self.simple_check(rf'([0-9]+) *files, *{self.np}', line,
+                                             op_answer, ['files', 'filesize'], matchidx=[1, 2]):
                             pass
                         elif self.simple_check(rf'block size *{self.np}', line, op_answer, 'blocksize'):
                             pass

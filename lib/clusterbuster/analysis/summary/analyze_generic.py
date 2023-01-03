@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright 2022 Robert Krawitz/Red Hat
+# Copyright 2022-2023 Robert Krawitz/Red Hat
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -24,7 +24,7 @@ class ClusterBusterAnalyzeSummaryGeneric(ClusterBusterAnalyzeOne):
 
     def __init__(self, workload: str, data: dict, metadata: dict, dimensions: list, variables: list,
                  filters: dict = None, runs: list = None, baseline: str = None):
-        ClusterBusterAnalyzeOne.__init__(self, workload, data, metadata)
+        super().__init__(workload, data, metadata)
         self._dimensions = dimensions
         self._variables = variables
         if runs:
@@ -140,7 +140,8 @@ class ClusterBusterAnalyzeSummaryGeneric(ClusterBusterAnalyzeOne):
                                 self.__accumulate(accumulator, run, dimension, dim_value, var, datum)
                             self.__accumulate(accumulator, run, 'Overall', 'Total', var, datum)
                         if run != self._baseline and run in detail_row[var] and self._baseline in detail_row[var] and detail_row[var][run]['value'] > 0 and detail_row[var][self._baseline]['value'] > 0:
-                            detail_row[var][run]['ratio'] = detail_row[var][run]['value'] / detail_row[var][self._baseline]['value']
+                            detail_row[var][run]['ratio'] = (detail_row[var][run]['value'] /
+                                                             detail_row[var][self._baseline]['value'])
                 detail[out_case_name] = detail_row
 
     def Analyze(self, report_summary: bool = True, report_detail: bool = False):

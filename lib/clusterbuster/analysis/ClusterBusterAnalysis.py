@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright 2022 Robert Krawitz/Red Hat
+# Copyright 2022-2023 Robert Krawitz/Red Hat
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -24,6 +24,16 @@ class ClusterBusterAnalyzeOne:
         self._data = data
         self._metadata = metadata
 
+    def _safe_get(self, obj, keys: list, default=None):
+        try:
+            while keys:
+                key = keys[0]
+                obj = obj[key]
+                keys = keys[1:]
+            return obj
+        except Exception:
+            return default
+
     def _fformat(self, num: float, precision: float = 5):
         """
         Return a formatted version of a float.  If precision is 0, no decimal point is printed.
@@ -38,7 +48,8 @@ class ClusterBusterAnalyzeOne:
         except Exception:
             return num
 
-    def _prettyprint(self, num: float, precision: float = 5, integer: bool = False, base: int = 1000, suffix: str = ''):
+    def _prettyprint(self, num: float, precision: float = 5, integer: bool = False,
+                     base: int = None, suffix: str = '', multiplier: float = 1):
         """
         Return a pretty printed version of a float.
         Base 100:  print percent
@@ -57,10 +68,13 @@ class ClusterBusterAnalyzeOne:
         """
         if num is None:
             return 'None'
+        if base is None:
+            base = 1000
         try:
             num = float(num)
         except Exception:
             return str(num)
+        num *= multiplier
         if integer or num == 0:
             return str(int(num))
         elif base == 0:
@@ -77,7 +91,7 @@ class ClusterBusterAnalyzeOne:
             infix = 'i'
             base = 1024
         elif base != -10 or base != -1 or base != -1000:
-            raise(Exception(f'Illegal base {base} for prettyprint; must be 1000 or 1024'))
+            raise Exception(f'Illegal base {base} for prettyprint; must be 1000 or 1024')
         if base > 0 and abs(num) >= base ** 5:
             return f'{self._fformat(num / (base ** 5), precision=precision)} P{infix}{suffix}'
         elif base > 0 and abs(num) >= base ** 4:
@@ -147,7 +161,7 @@ class ClusterBusterAnalysis:
                         elif report_type is not type(report[workload]):
                             raise TypeError(f"Incompatible report types for {workload}: expect {report_type}, found {type(report[workload])}")
             except Exception as exc:
-                raise(exc)
+                raise exc
         if report_type == str:
             return '\n\n'.join([str(v) for v in report.values()])
         elif report_type == dict or report_type == list:

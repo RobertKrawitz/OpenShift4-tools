@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-# Copyright 2022 Robert Krawitz/Red Hat
+# Copyright 2022-2023 Robert Krawitz/Red Hat
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -517,7 +517,7 @@ class ClusterBusterReporter:
             infix = 'i'
             base = 1024
         elif base != -10 or base != -1 or base != -1000:
-            raise(Exception(f'Illegal base {base} for prettyprint; must be 1000 or 1024'))
+            raise Exception(f'Illegal base {base} for prettyprint; must be 1000 or 1024')
         if base > 0 and abs(num) >= base ** 5:
             return f'{self._fformat(num / (base ** 5), precision=precision)} P{infix}{suffix}'
         elif base > 0 and abs(num) >= base ** 4:

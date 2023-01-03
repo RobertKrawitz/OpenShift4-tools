@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright 2022 Robert Krawitz/Red Hat
+# Copyright 2022-2023 Robert Krawitz/Red Hat
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -19,7 +19,7 @@ import sys
 
 class fio_loader(LoadOneReport):
     def __init__(self, name: str, report: dict, data: dict):
-        LoadOneReport.__init__(self, name, report, data)
+        super().__init__(name, report, data)
 
     def Load(self):
         jobs = sorted(self._metadata['workload_metadata']['jobs'])

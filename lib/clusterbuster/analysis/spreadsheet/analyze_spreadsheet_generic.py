@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright 2022 Robert Krawitz/Red Hat
+# Copyright 2022-2023 Robert Krawitz/Red Hat
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -18,20 +18,13 @@ import re
 
 
 class SpreadsheetAnalysis(ClusterBusterAnalyzeSummaryGeneric):
-    def __init__(self, workload: str, data: dict, metadata: dict, dimensions: list, variables: list, filters: dict = None):
-        self._runs = metadata['jobs'].keys()
+    def __init__(self, workload: str, data: dict, metadata: dict, dimensions: list,
+                 variables: list, filters: dict = None):
         self._baseline = metadata['baseline']
         self._sp_dimensions = dimensions
         self._sp_variables = variables
         analysis_vars = [v['var'] for v in self._sp_variables]
-        ClusterBusterAnalyzeSummaryGeneric.__init__(self, workload, data, metadata, dimensions, analysis_vars, filters=filters)
-
-    def print_safe(self, data: dict, d1, d2, multiplier: float = 1, print_empty: bool = False):
-        try:
-            val = data[d1][d2]
-            return self._prettyprint(val * multiplier, precision=3, base=0)
-        except Exception:
-            return '' if print_empty else 'N/A'
+        super().__init__(workload, data, metadata, dimensions, analysis_vars, filters=filters)
 
     def _get_all_keys(self, data):
         value_hash = {}
@@ -55,14 +48,16 @@ class SpreadsheetAnalysis(ClusterBusterAnalyzeSummaryGeneric):
                     break
         return answer
 
+    def _get_run_data(self, v_data, key, metric):
+        return [self._safe_get(v_data, [run, key, metric], '') for run in self._runs]
+
     def _analyze_one_generic(self, dimension, data):
         tab = '\t'
         if dimension == 'Overall':
             answer = "Total:"
-            run_names = data[list(data.keys())[0]].keys()
             for metric in "value", "ratio", "max_ratio", "min_ratio":
                 answer += f"""
-{metric}{tab}{tab.join(run_names)}
+{metric}{tab}{tab.join(self._runs)}
 """
                 has_data_metric = True
                 for vn, v_data in data.items():
@@ -74,7 +69,6 @@ class SpreadsheetAnalysis(ClusterBusterAnalyzeSummaryGeneric):
                             break
                     if not has_data:
                         continue
-                    runs = v_data.keys()
                     for v in self._sp_variables:
                         if v['var'] == vn:
                             break
@@ -82,11 +76,14 @@ class SpreadsheetAnalysis(ClusterBusterAnalyzeSummaryGeneric):
                     if metric == 'value':
                         unit = v.get('unit', '')
                         multiplier = v.get('multiplier', 1)
+                        base = v.get('base', None)
                         answer += f'{name}{unit}{tab}'
-                        answer += tab.join([self._prettyprint(run['Total'].get(metric, '') * multiplier, precision=3, base=0) for run in v_data.values()])
+                        answer += tab.join([self._prettyprint(datum, multiplier=multiplier, base=base)
+                                            for datum in self._get_run_data(v_data, 'Total', metric)])
                     else:
                         answer += f'{name}{tab}'
-                        answer += tab.join([self._prettyprint(run['Total'].get(metric, ''), precision=3, base=0) for run in v_data.values()])
+                        answer += tab.join([self._prettyprint(datum, precision=3, base=0)
+                                            for datum in self._get_run_data(v_data, 'Total', metric)])
                     answer += "\n"
                 answer += "\n"
             if has_data_metric:
@@ -95,30 +92,30 @@ class SpreadsheetAnalysis(ClusterBusterAnalyzeSummaryGeneric):
                 return ''
         else:
             answer = f'{dimension}:'
+            answers = []
             for v in self._sp_variables:
-                answers = []
                 vn = v['var']
-                if not self._supports_variable(vn, data):
-                    continue
                 var = data[vn]
                 name = v.get('name', vn)
                 unit = v.get('unit', '')
                 multiplier = v.get('multiplier', 1)
+                base = v.get('base', None)
                 dim_name = dimension.replace('By ', '')
-                runs = data[vn].keys()
                 report_answer = f"""
 Operation: {name}{unit}
-{dim_name}{tab}{tab.join(runs)}
+{dim_name}{tab}{tab.join(self._runs)}
 """
                 for key in self._get_all_keys(var):
                     report_answer += f'{key}{tab}'
-                    report_answer += tab.join([self._prettyprint(var[run][key]["value"] * multiplier, precision=3, base=0) if key in var[run] and 'value' in var[run][key] else '' for run in runs]) + '\n'
+                    report_answer += tab.join([self._prettyprint(datum, multiplier=multiplier, base=base)
+                                               for datum in self._get_run_data(var, key, "value")]) + '\n'
                 answers.append(report_answer)
                 for op in 'ratio', 'min_ratio', 'max_ratio':
-                    report_answer = f"{op} {tab.join(runs)}" + '\n'
+                    report_answer = f"{op} {tab.join(self._runs)}" + '\n'
                     have_data = False
                     for key in self._get_all_keys(var):
-                        report_line = tab.join([self._prettyprint(var[run][key][op], precision=3, base=0) if key in var[run] and op in var[run][key] else '' for run in runs])
+                        report_line = tab.join([self._prettyprint(datum, precision=3, base=0)
+                                                for datum in self._get_run_data(var, key, op)]) + '\n'
                         if re.search(report_line, r'[0-9]'):
                             have_data = True
                             report_answer += f'{key}{tab}{report_line}' + '\n'
@@ -127,35 +124,34 @@ Operation: {name}{unit}
             answer += '\n'.join(answers)
             return answer + '\n\n'
 
+    def _print_safe(self, data: dict, d1, d2, d3, multiplier: float = 1):
+        try:
+            val = self._safe_get(data, [d1, d2, d3])
+            return self._prettyprint(val * multiplier, precision=3, base=0)
+        except Exception:
+            return ''
+
     def Analyze(self, report_detail=True):
         report, detail = super().Analyze(report_detail=report_detail)
         answer = f"""Workload: {report['workload']}
 
 """
+        tab = '\t'
         for var, data in report.items():
             if isinstance(data, dict):
                 answer += self._analyze_one_generic(var, data)
-        detail_vars = []
-        header1 = ''
-        header2 = 'Case\t'
+        answer += '\nMetric\tCase\t' + '\t'.join(self._runs) + '\n'
         for v in self._sp_variables:
-            if v.get('detail', True):
-                detail_vars.append(v)
-                var = v['var']
-                header1 += '\t' + v.get('name', var) + v.get('unit', '') + '\t\t'
-                header2 += '\tKata\trunc\tratio'
-        if len(detail_vars) >= 1:
-            answer += f"""
-{header1}
-{header2}
-"""
+            vn = v['var']
+            var = data[vn]
+            name = v.get('name', vn)
+            unit = v.get('unit', '')
+            multiplier = v.get('multiplier', 1)
+            answer += f'{name}{unit}'
             for case, row in detail.items():
-                answer += case
-                for v in detail_vars:
-                    var = v['var']
-                    multiplier = v.get('multiplier', 1)
-                    for rt in ['kata', 'runc']:
-                        answer += '\t' + self.print_safe(row, var, rt, multiplier)
-                    answer += '\t' + self.print_safe(row, var, 'ratio')
+                answer += f'{tab}{case}'
+                for run in self._runs:
+                    answer += '\t' + self._print_safe(row, vn, run, "value", multiplier)
                 answer += '\n'
+            answer += '\n'
         return answer
