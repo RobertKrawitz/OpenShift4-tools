@@ -95,6 +95,8 @@ class SpreadsheetAnalysis(ClusterBusterAnalyzeSummaryGeneric):
             answers = []
             for v in self._sp_variables:
                 vn = v['var']
+                if vn not in data:
+                    continue
                 var = data[vn]
                 name = v.get('name', vn)
                 unit = v.get('unit', '')
@@ -143,6 +145,8 @@ Operation: {name}{unit}
         answer += '\nMetric\tCase\t' + '\t'.join(self._runs) + '\n'
         for v in self._sp_variables:
             vn = v['var']
+            if vn not in data:
+                continue
             var = data[vn]
             name = v.get('name', vn)
             unit = v.get('unit', '')

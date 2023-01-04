@@ -128,7 +128,7 @@ class LoadReportSet:
                 metadata = report['metadata']
                 if 'controller_second_start_timestamp' in metadata:
                     job_start = metadata['controller_second_start_timestamp']
-                    job_end = metadata['controller_end_timestamp']
+                    job_end = metadata.get('controller_end_timestamp', 9999999999)
                     if run_start is None or job_start < run_start:
                         run_start = job_start
                         status['job_start'] = datetime.strftime(datetime.fromtimestamp(job_start), '%Y-%m-%dT%T+00:00')
