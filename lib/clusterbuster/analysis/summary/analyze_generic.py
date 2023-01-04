@@ -40,7 +40,7 @@ class ClusterBusterAnalyzeSummaryGeneric(ClusterBusterAnalyzeOne):
         self._filters = filters
 
     def _retrieve_datum(self, var: str, value: dict):
-        return value.get(var, 0)
+        return value.get(var, None)
 
     def __accumulate(self, accumulator: dict, run: str, dimension: str, dim_value: str, variable: str, var_value: float):
         if dimension not in accumulator:
@@ -133,15 +133,15 @@ class ClusterBusterAnalyzeSummaryGeneric(ClusterBusterAnalyzeOne):
                     for run, data in value.items():
                         detail_row[var][run] = {}
                         datum = self._retrieve_datum(var, data)
-                        detail_row[var][run]['value'] = datum
-                        if (datum > 0):
+                        if datum is not None and datum > 0:
+                            detail_row[var][run]['value'] = datum
                             ratio[run] = datum
                             for dimension, dim_value in values.items():
                                 self.__accumulate(accumulator, run, dimension, dim_value, var, datum)
                             self.__accumulate(accumulator, run, 'Overall', 'Total', var, datum)
-                        if run != self._baseline and run in detail_row[var] and self._baseline in detail_row[var] and detail_row[var][run]['value'] > 0 and detail_row[var][self._baseline]['value'] > 0:
-                            detail_row[var][run]['ratio'] = (detail_row[var][run]['value'] /
-                                                             detail_row[var][self._baseline]['value'])
+                            if run != self._baseline and run in detail_row[var] and self._baseline in detail_row[var] and detail_row[var][self._baseline]['value'] > 0:
+                                detail_row[var][run]['ratio'] = (detail_row[var][run]['value'] /
+                                                                 detail_row[var][self._baseline]['value'])
                 detail[out_case_name] = detail_row
 
     def Analyze(self, report_summary: bool = True, report_detail: bool = False):
