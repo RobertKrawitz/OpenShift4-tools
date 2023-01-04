@@ -28,15 +28,15 @@ class uperf_loader(LoadOneReport):
         op = job_metadata['test_type']
         job = self._summary['results'][job_name]['summary']
 
-        answer = {}
+        self._MakeHierarchy(self._data, ['uperf', self._count, msgsize, threads, self._name])
+        root = self._data['uperf'][self._count][msgsize][threads][self._name]
         try:
-            answer[f'cpu_util_{op}'] = self._metrics['CPU utilization']['Total'][f'instance: {self._client_pin_node}']
+            root[f'cpu_util_{op}'] = self._metrics['CPU utilization']['Total'][f'instance: {self._client_pin_node}']
         except Exception:
             pass
         if op == 'stream':
-            answer['rate'] = job['data_rate']
+            root['rate'] = job['data_rate']
         elif op == 'rr':
-            answer['ops_sec'] = job['ops_rate']
-            answer['avg_time_op'] = job['total']['avg_time_avg']
-            answer['max_time_op'] = job['total']['max_time_max']
-        self._MakeHierarchy(self._data, ['uperf', self._count, msgsize, threads, self._name], answer)
+            root['ops_sec'] = job['ops_rate']
+            root['avg_time_op'] = job['total']['avg_time_avg']
+            root['max_time_op'] = job['total']['max_time_max']

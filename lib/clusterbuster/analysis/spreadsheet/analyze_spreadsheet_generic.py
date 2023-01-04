@@ -25,6 +25,12 @@ class SpreadsheetAnalysis(ClusterBusterAnalyzeSummaryGeneric):
         self._sp_variables = variables
         analysis_vars = [v['var'] for v in self._sp_variables]
         super().__init__(workload, data, metadata, dimensions, analysis_vars, filters=filters)
+        self._op_map = {
+            'value': 'Value',
+            'ratio': 'Ratio',
+            'max_ratio': 'Max Ratio',
+            'min_ratio': 'Min Ratio'
+            }
 
     def _get_all_keys(self, data):
         value_hash = {}
@@ -56,8 +62,12 @@ class SpreadsheetAnalysis(ClusterBusterAnalyzeSummaryGeneric):
         if dimension == 'Overall':
             answer = "Total:"
             for metric in "value", "ratio", "max_ratio", "min_ratio":
+                if metric == 'value':
+                    runs = self._runs
+                else:
+                    runs = list(self._runs)[1:]
                 answer += f"""
-{metric}{tab}{tab.join(self._runs)}
+{self._op_map[metric]}{tab}{tab.join(runs)}
 """
                 has_data_metric = True
                 for vn, v_data in data.items():
@@ -81,7 +91,7 @@ class SpreadsheetAnalysis(ClusterBusterAnalyzeSummaryGeneric):
                         answer += tab.join([self._prettyprint(datum, multiplier=multiplier, base=base)
                                             for datum in self._get_run_data(v_data, 'Total', metric)])
                     else:
-                        answer += f'{name}{tab}'
+                        answer += f'{name}'
                         answer += tab.join([self._prettyprint(datum, precision=3, base=0)
                                             for datum in self._get_run_data(v_data, 'Total', metric)])
                     answer += "\n"
@@ -113,7 +123,7 @@ Operation: {name}{unit}
                                                for datum in self._get_run_data(var, key, "value")]) + '\n'
                 answers.append(report_answer)
                 for op in 'ratio', 'min_ratio', 'max_ratio':
-                    report_answer = f"{op} {tab.join(self._runs)}" + '\n'
+                    report_answer = f"{self._op_map[op]} {tab.join(self._runs)}" + '\n'
                     have_data = False
                     for key in self._get_all_keys(var):
                         report_line = tab.join([self._prettyprint(datum, precision=3, base=0)
@@ -142,7 +152,6 @@ Operation: {name}{unit}
         for var, data in report.items():
             if isinstance(data, dict):
                 answer += self._analyze_one_generic(var, data)
-        answer += '\nMetric\tCase\t' + '\t'.join(self._runs) + '\n'
         for v in self._sp_variables:
             vn = v['var']
             if vn not in data:
@@ -151,6 +160,7 @@ Operation: {name}{unit}
             name = v.get('name', vn)
             unit = v.get('unit', '')
             multiplier = v.get('multiplier', 1)
+            answer += '\nMetric\tCase\t' + '\t'.join(self._runs) + '\n'
             answer += f'{name}{unit}'
             for case, row in detail.items():
                 answer += f'{tab}{case}'

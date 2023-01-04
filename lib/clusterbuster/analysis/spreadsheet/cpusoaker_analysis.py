@@ -88,6 +88,6 @@ class cpusoaker_analysis(ClusterBusterAnalyzeOne):
                 if ratio:
                     row.append(self._prettyprint(run_ratio, base=0, precision=3))
                 if difference:
-                    row.append(self._prettyprint(run_delta, base=0, integer=integer, precision=3))
+                    row.append(self._prettyprint(run_delta, base=0, integer=integer, precision=3, multiplier=multiplier))
             rows.append('\t'.join(row))
         return answer + '\n'.join(rows) + '\n'

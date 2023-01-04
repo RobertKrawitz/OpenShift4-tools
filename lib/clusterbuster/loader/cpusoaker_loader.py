@@ -23,17 +23,16 @@ class cpusoaker_loader(LoadOneReport):
     def Load(self):
         if not self._summary['total_pods']:
             return
-        answer = {
-            'start_rate': self._summary['pod_start_rate'],
-            'first_pod_start': self._summary['first_pod_start_time'],
-            'last_pod_start': self._summary['last_pod_start_time'],
-            'iterations_cpu_sec': self._summary['work_iterations_cpu_sec'],
-            'iterations_sec': self._summary['work_iterations_sec'],
-            }
+        self._MakeHierarchy(self._data, ['cpusoaker', self._count, self._name])
+        root = self._data['cpusoaker'][self._count][self._name]
+        root['start_rate'] = self._summary['pod_start_rate']
+        root['first_pod_start'] = self._summary['first_pod_start_time']
+        root['last_pod_start'] = self._summary['last_pod_start_time']
+        root['iterations_cpu_sec'] = self._summary['work_iterations_cpu_sec']
+        root['iterations_sec'] = self._summary['work_iterations_sec']
         try:
-            answer['memory'] = self._metrics['Maximum memory working set'][f'node: {self._client_pin_node}']
-            answer['memory_per_pod'] = answer['memory'] / self._count
+            root['memory'] = self._metrics['Maximum memory working set'][f'node: {self._client_pin_node}']
+            root['memory_per_pod'] = root['memory'] / self._count
         except Exception:
             pass
-        answer['pod_starts_per_second'] = self._count / answer['last_pod_start']
-        self._MakeHierarchy(self._data, ['cpusoaker', self._count, self._name], answer)
+        root['pod_starts_per_second'] = self._count / root['last_pod_start']

@@ -29,14 +29,17 @@ class uperf_analysis(ClusterBusterAnalyzeOne):
         for pods, data1 in self._data.items():
             for msgsize, data2 in data1.items():
                 for threads, data3 in data2.items():
-                    answer = dict()
-                    answer['test_description'] = dict()
-                    answer['test_description']['pods'] = pods
-                    answer['test_description']['workload'] = 'uperf'
-                    answer['test_description']['msgsize'] = msgsize
-                    answer['test_description']['threads'] = threads
-                    answer['test_description']['name'] = f'uperf_pods_{pods}_msgsize_{msgsize}_threads_{threads}'
-                    for key, item in data3.items():
-                        answer[key] = item
-                    answers.append(answer)
+                    for run, data4 in data3.items():
+                        answer = {}
+                        answer['uuid'] = self._metadata['jobs'][run]['uuid']
+                        answer['test_description'] = dict()
+                        answer['test_description']['pods'] = pods
+                        answer['test_description']['workload'] = 'uperf'
+                        answer['test_description']['msgsize'] = msgsize
+                        answer['test_description']['threads'] = threads
+                        answer['test_description']['run'] = run
+                        answer['test_description']['name'] = f'uperf_{run}_pods_{pods}_msgsize_{msgsize}_threads_{threads}'
+                        for key, item in data4.items():
+                            answer[key] = item
+                        answers.append(answer)
         return answers
