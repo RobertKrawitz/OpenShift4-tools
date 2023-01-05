@@ -160,7 +160,8 @@ class uperf_client(clusterbuster_pod_client):
                     line = run.stdout.readline().decode('ascii')
                 status = run.poll()
                 if failed or status:
-                    raise Exception(f"Uperf failed: {status}")
+                    failure_message = f"Uperf failed: {status}"
+                    failed = True
             job_end_time = self._adjusted_time()
             data_end_time = job_end_time
             summary['raw_elapsed_time'] = last_time - first_time
