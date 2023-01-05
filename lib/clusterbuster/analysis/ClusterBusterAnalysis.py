@@ -134,6 +134,21 @@ class ClusterBusterAnalysis:
     def list_analysis_formats():
         return ['ci', 'spreadsheet', 'summary', 'raw']
 
+    def __postprocess(self, report, status, metadata):
+        import_module = None
+        try:
+            imported_lib = importlib.import_module(f'..{self._report_type}.analyze_postprocess', __name__)
+            for i in inspect.getmembers(imported_lib):
+                if i[0] == f'AnalyzePostprocess':
+                    import_module = i[1]
+                    break
+        except Exception:
+            pass
+        if import_module is not None:
+            return import_module(report, status, metadata).Postprocess()
+        else:
+            return report
+
     def Analyze(self):
         report = dict()
         metadata = dict()
@@ -164,7 +179,7 @@ class ClusterBusterAnalysis:
             except Exception as exc:
                 raise exc
         if report_type == str:
-            return '\n\n'.join([str(v) for v in report.values()])
+            return self.__postprocess('\n\n'.join([str(v) for v in report.values()]), status, metadata)
         elif report_type == dict or report_type == list:
             report['metadata'] = metadata
             for v in ['uuid', 'run_host', 'openshift_version', 'kata_version', 'cnv_version']:
@@ -175,6 +190,6 @@ class ClusterBusterAnalysis:
                     report['metadata'][v] = status[v]
             if 'failed' in status and len(status['failed']) > 0:
                 report['metadata']['failed'] = status['failed']
-            return report
+            return self.__postprocess(report, status, metadata)
         else:
             raise TypeError(f"Unexpected report type {report_type}, expect either str or dict")
