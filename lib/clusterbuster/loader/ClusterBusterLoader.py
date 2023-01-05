@@ -20,6 +20,7 @@ import sys
 import re
 from datetime import datetime
 from lib.clusterbuster.reporter.ClusterBusterReporter import ClusterBusterReporter
+import json
 
 
 class LoadOneReport:
@@ -107,8 +108,9 @@ class LoadReportSet:
     Analyze ClusterBuster reports
     """
 
-    def __init__(self, dirs: list, name: str, answer: dict):
+    def __init__(self, run: dict, name: str, answer: dict):
         self.reports = {}
+        dirs = run['dirs']
         if dirs:
             self.reports = ClusterBusterReporter.report(dirs, "json-summary")
         status = {
@@ -123,12 +125,15 @@ class LoadReportSet:
         self.name = name
         run_start = None
         run_end = None
-        for report in self.reports:
-            if 'metadata' in report:
-                metadata = report['metadata']
-                if 'controller_second_start_timestamp' in metadata:
+        if 'metadata' in run:
+            status = run['metadata']
+            status['ran'] = [os.path.basename(dirname.rstrip(os.sep)) for dirname in dirs]
+        else:
+            for report in self.reports:
+                if 'metadata' in report:
+                    metadata = report['metadata']
                     job_start = metadata['controller_second_start_timestamp']
-                    job_end = metadata.get('controller_end_timestamp', 9999999999)
+                    job_end = metadata.get('controller_end_timestamp', job_start)
                     if run_start is None or job_start < run_start:
                         run_start = job_start
                         status['job_start'] = datetime.strftime(datetime.fromtimestamp(job_start), '%Y-%m-%dT%T+00:00')
@@ -203,15 +208,22 @@ class ClusterBusterLoader:
                 name_suffixes.insert(0, run_name)
             run_name = "-".join(name_suffixes)
         if os.path.isdir(dirname):
+            if os.access(os.path.join(dirname, "clusterbuster-ci-results.json"), os.R_OK):
+                with open(os.path.join(dirname, "clusterbuster-ci-results.json")) as fp:
+                    jdata = json.load(fp)
+                basedirs = jdata['ran']
+                answer['metadata'] = jdata
+                del answer['metadata']['ran']
+            else:
+                basedirs = os.listdir(dirname)
             dirs = [os.path.realpath(os.path.join(dirname, d))
-                    for d in os.listdir(dirname) if (not self._matches_patterns(d, [r'\.(FAIL|tmp)']) and
-                                                     self._matches_patterns(d, job_patterns) and
-                                                     os.path.isdir(os.path.join(dirname, d)) and
-                                                     os.path.isfile(os.path.join(dirname, d, "clusterbuster-report.json")))]
+                    for d in basedirs if (not self._matches_patterns(d, [r'\.(FAIL|tmp)']) and
+                                          self._matches_patterns(d, job_patterns) and
+                                          os.path.isdir(os.path.join(dirname, d)) and
+                                          os.path.isfile(os.path.join(dirname, d, "clusterbuster-report.json")))]
             if not dirs:
                 print(f"No matching subdirectories found under {dirname} ({arg})", sys.stderr)
                 dirs = []
-#                return None
             answer['dirs'] = dirs
             answer['run_name'] = run_name
         else:
@@ -235,5 +247,5 @@ class ClusterBusterLoader:
         for name, report in reports.items():
             if 'baseline' not in answer['metadata']:
                 answer['metadata']['baseline'] = name
-            LoadReportSet(reports[name]['dirs'], name, answer).Load()
+            LoadReportSet(reports[name], name, answer).Load()
         return answer

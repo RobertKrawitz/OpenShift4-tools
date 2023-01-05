@@ -16,6 +16,7 @@
 import sys
 import importlib
 import inspect
+import json
 
 
 class ClusterBusterAnalyzeOne:
@@ -165,7 +166,7 @@ class ClusterBusterAnalysis:
         if report_type == str:
             return '\n\n'.join([str(v) for v in report.values()])
         elif report_type == dict or report_type == list:
-            report['metadata'] = dict()
+            report['metadata'] = metadata
             for v in ['uuid', 'run_host', 'openshift_version', 'kata_version', 'cnv_version']:
                 if v in metadata:
                     report['metadata'][v] = metadata[v]
