@@ -101,8 +101,8 @@ class ClusterBusterReporter:
             with open(item) as f:
                 try:
                     answers.append(ClusterBusterReporter.report_one(os.path.dirname(item), json.load(f), format, **kwargs))
-                except Exception:
-                    print(f'Unable to load {item}: {traceback.format_exc()}', file=sys.stderr)
+                except Exception as err:
+                    print(f'Unable to load {item}: {err}', file=sys.stderr)
         for item in items:
             jdata = dict()
             if isinstance(item, str):
@@ -110,13 +110,13 @@ class ClusterBusterReporter:
             if isinstance(item, io.TextIOBase):
                 try:
                     jdata = json.load(item)
-                except Exception:
-                    print(f'Unable to load {item}: {traceback.format_exc()}', file=sys.stderr)
+                except Exception as err:
+                    print(f'Unable to load {item}: {err}', file=sys.stderr)
             elif item is None:
                 try:
                     jdata = json.load(sys.stdin)
-                except Exception:
-                    print(f'Unable to load <stdin>: {traceback.format_exc()}', file=sys.stderr)
+                except Exception as err:
+                    print(f'Unable to load <stdin>: {err}', file=sys.stderr)
             elif isinstance(item, dict):
                 jdata = item
             else:
