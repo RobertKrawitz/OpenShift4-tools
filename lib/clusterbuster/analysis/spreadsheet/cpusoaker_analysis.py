@@ -77,7 +77,7 @@ class cpusoaker_analysis(ClusterBusterAnalyzeOne):
 {columns_txt}
 """
         rows = []
-        for pods, data1 in data.items():
+        for pods, data1 in sorted(list(data.items())):
             baseline_value = self.get_value(data1, runs[0], column, valfunc)
             row = [str(pods), self._prettyprint(baseline_value, base=0, integer=integer, multiplier=multiplier)]
             for run in runs[1:]:
