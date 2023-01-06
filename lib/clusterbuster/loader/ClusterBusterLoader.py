@@ -147,7 +147,10 @@ class LoadReportSet:
                         status['failed'].append(metadata['job_name'])
                     elif report['Status'] != 'No Result':
                         raise ValueError(f'Status should be Pass, Fail, or No Result; actual was {report["Status"]}')
-        status['result'] = 'PASS' if not status['failed'] else 'FAIL'
+        if status.get('result', None) is None:
+            status['result'] = 'PASS' if not status['failed'] else 'FAIL'
+        elif status['result'] == 'INCOMPLETE' and status['failed']:
+            status['result'] = 'FAIL INCOMPLETE'
         self.answer['status']['jobs'][self.name] = status
 
     def Load(self):
@@ -222,7 +225,7 @@ class ClusterBusterLoader:
                                           os.path.isdir(os.path.join(dirname, d)) and
                                           os.path.isfile(os.path.join(dirname, d, "clusterbuster-report.json")))]
             if not dirs:
-                print(f"No matching subdirectories found under {dirname} ({arg})", sys.stderr)
+                print(f"No matching subdirectories found in '{dirname}'", file=sys.stderr)
                 dirs = []
             answer['dirs'] = dirs
             answer['run_name'] = run_name

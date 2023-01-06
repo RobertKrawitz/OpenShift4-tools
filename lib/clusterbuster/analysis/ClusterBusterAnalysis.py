@@ -16,7 +16,6 @@
 import sys
 import importlib
 import inspect
-import json
 
 
 class ClusterBusterAnalyzeOne:
@@ -139,7 +138,7 @@ class ClusterBusterAnalysis:
         try:
             imported_lib = importlib.import_module(f'..{self._report_type}.analyze_postprocess', __name__)
             for i in inspect.getmembers(imported_lib):
-                if i[0] == f'AnalyzePostprocess':
+                if i[0] == 'AnalyzePostprocess':
                     import_module = i[1]
                     break
         except Exception:
@@ -191,5 +190,7 @@ class ClusterBusterAnalysis:
             if 'failed' in status and len(status['failed']) > 0:
                 report['metadata']['failed'] = status['failed']
             return self.__postprocess(report, status, metadata)
+        elif report_type is None:
+            return None
         else:
             raise TypeError(f"Unexpected report type {report_type}, expect either str or dict")

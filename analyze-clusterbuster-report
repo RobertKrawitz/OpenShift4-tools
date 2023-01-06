@@ -39,7 +39,10 @@ if args.list_formats:
 
 def analyze_clusterbuster_1(f, data):
     report = ClusterBusterAnalysis(data, report_type=args.report_type).Analyze()
-    if isinstance(report, str):
+    if report is None:
+        print("No report available", file=sys.stderr)
+        sys.exit(1)
+    elif isinstance(report, str):
         print(report, file=f)
     else:
         json.dump(report, fp=f, indent=2)

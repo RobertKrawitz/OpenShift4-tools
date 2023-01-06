@@ -24,7 +24,6 @@ import os
 import base64
 import importlib
 import inspect
-import traceback
 from .metrics.PrometheusMetrics import PrometheusMetrics
 
 
@@ -102,7 +101,7 @@ class ClusterBusterReporter:
                 try:
                     answers.append(ClusterBusterReporter.report_one(os.path.dirname(item), json.load(f), format, **kwargs))
                 except Exception as err:
-                    print(f'Unable to load {item}: {err}', file=sys.stderr)
+                    print(f'Warning (continuing): unable to load {item}: {err}', file=sys.stderr)
         for item in items:
             jdata = dict()
             if isinstance(item, str):
@@ -111,12 +110,12 @@ class ClusterBusterReporter:
                 try:
                     jdata = json.load(item)
                 except Exception as err:
-                    print(f'Unable to load {item}: {err}', file=sys.stderr)
+                    print(f'Warning (continuing): unable to load {item}: {err}', file=sys.stderr)
             elif item is None:
                 try:
                     jdata = json.load(sys.stdin)
                 except Exception as err:
-                    print(f'Unable to load <stdin>: {err}', file=sys.stderr)
+                    print(f'Warning (continuing): unable to load <stdin>: {err}', file=sys.stderr)
             elif isinstance(item, dict):
                 jdata = item
             else:

@@ -40,4 +40,3 @@ class AnalyzePostprocess:
                     metadata[job][var] = job_metadata[var]
         self._report['metadata'] = metadata
         return self._report
-            

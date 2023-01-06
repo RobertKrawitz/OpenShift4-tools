@@ -67,8 +67,8 @@ class FilesAnalysisBase(ClusterBusterAnalyzeOne):
                                             if subop not in times[op]:
                                                 times[op][subop] = dict()
                                             if runtime not in times[op][subop]:
-                                                times[op][subop][runtime] = list()
-                                            times[op][subop][runtime].append(val)
+                                                times[op][subop][runtime] = dict()
+                                            times[op][subop][runtime][case_label] = val
                                             if val > 0:
                                                 detail_row[op][subop][runtime] = val
                                                 if subop not in summary[runtime][op]:
@@ -87,39 +87,35 @@ class FilesAnalysisBase(ClusterBusterAnalyzeOne):
             for run, data1 in summary.items():
                 answer[run] = dict()
                 for op, data2 in data1.items():
-                    answer[run][op] = dict()
+                    if op not in answer[run]:
+                        answer[run][op] = dict()
                     for subop, data3 in data2.items():
-                        answer[run][op][subop] = exp(summary[run][op][subop] / count[run][op][subop])
+                        answer[run][op][subop] = {'value': exp(summary[run][op][subop] / count[run][op][subop])}
                 if run == self._baseline or self._baseline not in answer:
                     continue
-                answer[run]['ratio'] = dict()
                 for op, data1 in answer[self._baseline].items():
-                    if op not in answer[run]['ratio']:
-                        answer[run]['ratio'][op] = dict()
+                    if op not in answer[run]:
+                        answer[run][op] = dict()
                     for subop, data2 in data1.items():
-                        answer[run]['ratio'][op][subop] = answer[run][op][subop] / answer[self._baseline][op][subop]
-                answer[run]['min_ratio'] = dict()
-                answer[run]['max_ratio'] = dict()
+                        if subop in answer[run][op]:
+                            answer[run][op][subop]['ratio'] = answer[run][op][subop]['value'] / answer[self._baseline][op][subop]['value']
                 for op in known_ops.keys():
                     if op not in times:
                         continue
-                    if op not in answer[run]['min_ratio']:
-                        answer[run]['min_ratio'][op] = dict()
-                        answer[run]['max_ratio'][op] = dict()
                     for subop in known_subops.keys():
                         if subop not in times[op]:
                             continue
                         min_ratio = None
                         max_ratio = None
-                        for i in range(len(times[op][subop][self._baseline])):
-                            if times[op][subop][self._baseline][i] > 0 and times[op][subop][self._baseline][i] > 0:
-                                ratio = times[op][subop][run][i] / times[op][subop][self._baseline][i]
+                        for k, baseline in times[op][subop][self._baseline].items():
+                            if baseline > 0 and k in times[op][subop][run] and times[op][subop][run][k] > 0:
+                                ratio = baseline / times[op][subop][run][k]
                                 if min_ratio is None or ratio < min_ratio:
                                     min_ratio = ratio
                                 if max_ratio is None or ratio > max_ratio:
                                     max_ratio = ratio
-                        answer[run]['min_ratio'][op][subop] = min_ratio
-                        answer[run]['max_ratio'][op][subop] = max_ratio
+                        answer[run][op][subop]['min_ratio'] = min_ratio
+                        answer[run][op][subop]['max_ratio'] = max_ratio
         if report_summary:
             if report_detail:
                 return answer, detail

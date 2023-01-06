@@ -48,4 +48,3 @@ class AnalyzePostprocess:
                 elif job_metadata.get(var, None) is not None and job_metadata[var] != self._report['metadata'][var]:
                     raise Exception(f'Mismatched {var} in metadata!')
         return self._report
-            
