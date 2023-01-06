@@ -152,6 +152,8 @@ class ClusterBusterAnalysis:
         report = dict()
         metadata = dict()
         status = dict()
+        if self._data is None:
+            return None
         report_type = None
         if 'metadata' in self._data:
             metadata = self._data['metadata']

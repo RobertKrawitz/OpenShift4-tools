@@ -67,10 +67,6 @@ class cpusoaker_analysis(ClusterBusterAnalyzeOne):
         # This just gets too hairy with list comprehension
         for run in runs[1:]:
             columns_txt += f'{tab}{run}'
-            if ratio:
-                columns_txt += '\tratio'
-            if difference:
-                columns_txt += '\tdelta'
 
         answer = f"""
 {header}, N pods
@@ -79,15 +75,43 @@ class cpusoaker_analysis(ClusterBusterAnalyzeOne):
         rows = []
         for pods, data1 in sorted(list(data.items())):
             baseline_value = self.get_value(data1, runs[0], column, valfunc)
-            row = [str(pods), self._prettyprint(baseline_value, base=0, integer=integer, multiplier=multiplier)]
+            row = [str(pods), self._prettyprint(baseline_value, base=0, integer=integer, precision=3, multiplier=multiplier)]
             for run in runs[1:]:
                 run_value = self.get_value(data1, run, column, valfunc)
-                run_ratio = run_value / baseline_value if ratio and isnumber(baseline_value) and isnumber(run_value) else ''
-                run_delta = run_value - baseline_value if difference and isnumber(baseline_value) and isnumber(run_value) else ''
-                row.append(self._prettyprint(run_value,  base=0, integer=integer, multiplier=multiplier))
-                if ratio:
-                    row.append(self._prettyprint(run_ratio, base=0, precision=3))
-                if difference:
-                    row.append(self._prettyprint(run_delta, base=0, integer=integer, precision=3, multiplier=multiplier))
+                row.append(self._prettyprint(run_value,  base=0, integer=integer, precision=3, multiplier=multiplier))
             rows.append('\t'.join(row))
-        return answer + '\n'.join(rows) + '\n'
+        answer += '\n'.join(rows) + '\n'
+
+        if ratio:
+            answer += f"""
+{header}, N pods (ratio)
+{columns_txt}
+"""
+            rows = []
+            for pods, data1 in sorted(list(data.items())):
+                baseline_value = self.get_value(data1, runs[0], column, valfunc)
+                row = [str(pods), '']
+                for run in runs[1:]:
+                    run_value = self.get_value(data1, run, column, valfunc)
+                    run_ratio = run_value / baseline_value if isnumber(baseline_value) and isnumber(run_value) else ''
+                    row.append(self._prettyprint(run_ratio, base=0, precision=3))
+                rows.append('\t'.join(row))
+            answer += '\n'.join(rows) + '\n'
+
+        if difference:
+            answer += f"""
+{header}, N pods (delta)
+{columns_txt}
+"""
+            rows = []
+            for pods, data1 in sorted(list(data.items())):
+                baseline_value = self.get_value(data1, runs[0], column, valfunc)
+                row = [str(pods), '']
+                for run in runs[1:]:
+                    run_value = self.get_value(data1, run, column, valfunc)
+                    run_delta = run_value - baseline_value if isnumber(baseline_value) and isnumber(run_value) else ''
+                    row.append(self._prettyprint(run_delta, base=0, integer=integer, precision=3, multiplier=multiplier))
+                rows.append('\t'.join(row))
+            answer += '\n'.join(rows) + '\n'
+
+        return answer

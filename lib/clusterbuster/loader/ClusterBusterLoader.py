@@ -230,7 +230,8 @@ class ClusterBusterLoader:
             answer['dirs'] = dirs
             answer['run_name'] = run_name
         else:
-            raise ValueError(f"{dirname}: Not a directory")
+            print(f"{dirname}: Not a directory")
+            return None
         return answer
 
     def loadFromSpecs(self, specs: list):
@@ -246,7 +247,8 @@ class ClusterBusterLoader:
                     raise ValueError(f'Duplicate report name {spec["run_name"]}')
                 reports[spec['run_name']] = spec
         if not reports:
-            raise ValueError("No reports found")
+            print('No reports found', file=sys.stderr)
+            return None
         for name, report in reports.items():
             if 'baseline' not in answer['metadata']:
                 answer['metadata']['baseline'] = name
