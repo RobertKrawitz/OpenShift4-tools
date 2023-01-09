@@ -18,8 +18,8 @@ import argparse
 import json
 import re
 import os
-from lib.clusterbuster.analysis.ClusterBusterAnalysis import ClusterBusterAnalysis
-from lib.clusterbuster.loader.ClusterBusterLoader import ClusterBusterLoader
+from lib.clusterbuster.reporting.analysis.ClusterBusterAnalysis import ClusterBusterAnalysis
+from lib.clusterbuster.reporting.loader.ClusterBusterLoader import ClusterBusterLoader
 
 parser = argparse.ArgumentParser(description='Analyze ClusterBuster report')
 analysis_formats = ClusterBusterAnalysis.list_analysis_formats()
