@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright 2022 Robert Krawitz/Red Hat
+# Copyright 2022-2023 Robert Krawitz/Red Hat
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -17,8 +17,8 @@ from .ClusterBusterLoader import LoadOneReport
 
 
 class files_loader(LoadOneReport):
-    def __init__(self, report: dict, answer: dict):
-        LoadOneReport.__init__(self, report, answer)
+    def __init__(self, name: str, report: dict, data: dict):
+        super().__init__(name, report, data)
 
     def Load(self):
         if 'workload_metadata' in self._metadata and 'dirs_per_volume' in self._metadata['workload_metadata']:
@@ -30,8 +30,8 @@ class files_loader(LoadOneReport):
         blocksize = job_metadata['file_block_size']
         blocks = job_metadata['file_size']
         direct = job_metadata['files_direct']
-        self._MakeHierarchy(self._answer, ['files', self._count, dirs, files, blocksize, blocks, direct, self._runtime_env])
-        root = self._answer['files'][self._count][dirs][files][blocksize][blocks][direct][self._runtime_env]
+        self._MakeHierarchy(self._data, ['files', self._count, dirs, files, blocksize, blocks, direct, self._name])
+        root = self._data['files'][self._count][dirs][files][blocksize][blocks][direct][self._name]
         for op in ['create', 'read', 'remove']:
             self._MakeHierarchy(root, [op])
             root[op]['elapsed_time'] = self._summary[op]['operation_elapsed_time']

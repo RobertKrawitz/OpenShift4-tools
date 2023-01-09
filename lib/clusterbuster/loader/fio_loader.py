@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright 2022 Robert Krawitz/Red Hat
+# Copyright 2022-2023 Robert Krawitz/Red Hat
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -18,8 +18,8 @@ import sys
 
 
 class fio_loader(LoadOneReport):
-    def __init__(self, report: dict, answer: dict):
-        LoadOneReport.__init__(self, report, answer)
+    def __init__(self, name: str, report: dict, data: dict):
+        super().__init__(name, report, data)
 
     def Load(self):
         jobs = sorted(self._metadata['workload_metadata']['jobs'])
@@ -35,19 +35,17 @@ class fio_loader(LoadOneReport):
                 print(f'Cannot load fio results for {self._metadata["job_name"]}/{job}', file=sys.stderr)
                 continue
             result = self._summary['results'][job]['job_results']
-            self._MakeHierarchy(self._answer, ['fio', self._count, ioengine, iodepth, fdatasync,
-                                               direct, pattern, blocksize, self._runtime_env, 'total'])
-            root = self._answer['fio'][self._count][ioengine][iodepth][fdatasync][direct][pattern][blocksize][self._runtime_env]
+            self._MakeHierarchy(self._data, ['fio', self._count, ioengine, iodepth, fdatasync,
+                                             direct, pattern, blocksize, self._name, 'total'])
+            root = self._data['fio'][self._count][ioengine][iodepth][fdatasync][direct][pattern][blocksize][self._name]
             for op, data in result.items():
                 if 'data_rate' in result[op]:
-                    self._MakeHierarchy(root, [op])
-                    root[op]['throughput'] = result[op]['data_rate']
+                    self._MakeHierarchy(root, [op, 'throughput'], result[op]['data_rate'])
                     if 'throughput' not in root['total']:
                         root['total']['throughput'] = 0
                     root['total']['throughput'] += result[op]['data_rate']
                 if 'io_rate' in result[op]:
-                    self._MakeHierarchy(root, [op])
+                    self._MakeHierarchy(root, [op, 'iops'], result[op]['io_rate'])
                     if 'iops' not in root['total']:
                         root['total']['iops'] = 0
-                    root[op]['iops'] = result[op]['io_rate']
                     root['total']['iops'] += result[op]['io_rate']

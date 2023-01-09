@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright 2022 Robert Krawitz/Red Hat
+# Copyright 2022-2023 Robert Krawitz/Red Hat
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -27,19 +27,20 @@ class fio_analysis(SpreadsheetAnalysis):
             {
              'var': 'throughput',
              'name': 'Throughput',
-             'Unit': ' (MB/sec)',
+             'unit': ' (MB/sec)',
              'multiplier': .000001
              },
             {
              'var': 'iops',
              'name': 'IO/sec',
+             'base': 0,
              'detail': False
              }
              ]
         filters = {
             'By Direct': self.__filter_direct
             }
-        SpreadsheetAnalysis.__init__(self, workload, data, metadata, dimensions, variables, filters=filters)
+        super().__init__(workload, data, metadata, dimensions, variables, filters=filters)
 
     def __filter_direct(self, dimension, value):
         return value != 0

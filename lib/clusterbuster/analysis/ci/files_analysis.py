@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright 2022 Robert Krawitz/Red Hat
+# Copyright 2022-2023 Robert Krawitz/Red Hat
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -22,7 +22,7 @@ class files_analysis(ClusterBusterAnalyzeOne):
     """
 
     def __init__(self, workload: str, data: dict, metadata: dict):
-        ClusterBusterAnalyzeOne.__init__(self, workload, data, metadata)
+        super().__init__(workload, data, metadata)
 
     def Analyze(self):
         answers = list()
@@ -32,9 +32,9 @@ class files_analysis(ClusterBusterAnalyzeOne):
                     for blocksize, data4 in data3.items():
                         for filesize, data5 in data4.items():
                             for direct, data6 in data5.items():
-                                for runtime, data7 in data6.items():
+                                for run, data7 in data6.items():
                                     answer = dict()
-                                    answer['uuid'] = self._metadata['uuid']
+                                    answer['uuid'] = self._metadata['jobs'][run]['uuid']
                                     answer['test_description'] = dict()
                                     answer['test_description']['pods'] = pods
                                     answer['test_description']['dirs'] = dirs
@@ -43,8 +43,8 @@ class files_analysis(ClusterBusterAnalyzeOne):
                                     answer['test_description']['filesize'] = filesize
                                     answer['test_description']['blocksize'] = blocksize
                                     answer['test_description']['direct'] = direct
-                                    answer['test_description']['runtime'] = runtime
-                                    answer['test_description']['name'] = f'files_{runtime}_pods_{pods}_dirs_{dirs}_files_{files}_blocksize_{blocksize}_direct_{direct}'
+                                    answer['test_description']['runtime'] = run
+                                    answer['test_description']['name'] = f'files_pods_{pods}_dirs_{dirs}_files_{files}_blocksize_{blocksize}_direct_{direct}'
                                     for key, item in data7.items():
                                         answer[key] = item
                                     answers.append(answer)

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright 2022 Robert Krawitz/Red Hat
+# Copyright 2022-2023 Robert Krawitz/Red Hat
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -34,7 +34,8 @@ class uperf_analysis(SpreadsheetAnalysis):
              'var': 'avg_time_op',
              'name': 'Latency',
              'unit': ' (usec)',
+             'base': 0,
              'multiplier': 1000000
              }
              ]
-        SpreadsheetAnalysis.__init__(self, workload, data, metadata, dimensions, variables)
+        super().__init__(workload, data, metadata, dimensions, variables)

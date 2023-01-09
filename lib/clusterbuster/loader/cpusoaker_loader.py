@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright 2022 Robert Krawitz/Red Hat
+# Copyright 2022-2023 Robert Krawitz/Red Hat
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -17,12 +17,14 @@ from .ClusterBusterLoader import LoadOneReport
 
 
 class cpusoaker_loader(LoadOneReport):
-    def __init__(self, report: dict, answer: dict):
-        LoadOneReport.__init__(self, report, answer)
+    def __init__(self, name: str, report: dict, data: dict):
+        super().__init__(name, report, data)
 
     def Load(self):
-        self._MakeHierarchy(self._answer, ['cpusoaker', self._count, self._runtime_env])
-        root = self._answer['cpusoaker'][self._count][self._runtime_env]
+        if not self._summary['total_pods']:
+            return
+        self._MakeHierarchy(self._data, ['cpusoaker', self._count, self._name])
+        root = self._data['cpusoaker'][self._count][self._name]
         root['start_rate'] = self._summary['pod_start_rate']
         root['first_pod_start'] = self._summary['first_pod_start_time']
         root['last_pod_start'] = self._summary['last_pod_start_time']

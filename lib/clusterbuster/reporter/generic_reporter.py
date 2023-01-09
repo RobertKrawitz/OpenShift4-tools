@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-# Copyright 2022 Robert Krawitz/Red Hat
+# Copyright 2022-2023 Robert Krawitz/Red Hat
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -21,4 +21,4 @@ class generic_reporter(ClusterBusterReporter):
     # Not necessary to override anything; we're not adding anything on
     # top of the base class.
     def __init__(self, jdata: dict, report_format: str):
-        ClusterBusterReporter.__init__(self, jdata, report_format)
+        super().__init__(jdata, report_format)

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-# Copyright 2022 Robert Krawitz/Red Hat
+# Copyright 2022-2023 Robert Krawitz/Red Hat
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -47,7 +47,7 @@ class PrometheusMetrics:
                             if re.search(desired_value, vector['metric'][key]):
                                 new_results.append(vector)
                         else:
-                            raise(Exception(f'selector element {desired_value} should be list or string'))
+                            raise Exception(f'selector element {desired_value} should be list or string')
                 results = new_results
                 if len(results) == 0:
                     return new_results
@@ -133,9 +133,9 @@ class PrometheusMetrics:
             try:
                 return metric[key]
             except Exception:
-                raise(Exception(f"No value for '{key}' in metrics metadata"))
+                raise Exception(f"No value for '{key}' in metrics metadata")
         except Exception:
-            raise(Exception("metrics_results does not appear to be a valid metrics result"))
+            raise Exception("metrics_results does not appear to be a valid metrics result")
 
     def __safe_convert_to_float(self, result: str):
         """
@@ -157,7 +157,7 @@ class PrometheusMetrics:
         elif 'values' in metrics_results:
             raw_results = metrics_results['values']
         else:
-            raise(Exception("metrics_results does not appear to be a valid metrics result"))
+            raise Exception("metrics_results does not appear to be a valid metrics result")
         return [[elt[0], self.__safe_convert_to_float(elt[1])] for elt in raw_results]
 
     def get_max_value(self, values: list):

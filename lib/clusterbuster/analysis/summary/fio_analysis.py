@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright 2022 Robert Krawitz/Red Hat
+# Copyright 2022-2023 Robert Krawitz/Red Hat
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -27,7 +27,7 @@ class fio_analysis(ClusterBusterAnalyzeSummaryGeneric):
         filters = {
             'By Direct': self.__filter_direct
             }
-        ClusterBusterAnalyzeSummaryGeneric.__init__(self, workload, data, metadata, dimensions, variables, filters=filters)
+        super().__init__(workload, data, metadata, dimensions, variables, filters=filters)
 
     def __filter_direct(self, dimension, value):
         return value != 0

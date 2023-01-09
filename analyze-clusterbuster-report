@@ -16,6 +16,8 @@
 import sys
 import argparse
 import json
+import re
+import os
 from lib.clusterbuster.analysis.ClusterBusterAnalysis import ClusterBusterAnalysis
 from lib.clusterbuster.loader.ClusterBusterLoader import ClusterBusterLoader
 
@@ -24,30 +26,48 @@ analysis_formats = ClusterBusterAnalysis.list_analysis_formats()
 
 parser.add_argument("-o", "--outfile", default=None, type=str, metavar='file', help='Output filename')
 parser.add_argument('--list_formats', action='store_true', help='List available report formats')
+parser.add_argument('--kata', action='store_true', help='Compare Kata with non-Kata results')
 parser.add_argument("-r", "--report-type", default=None, type=str, metavar='format',
                     choices=analysis_formats, help=f'Analysis format: one of {", ".join(analysis_formats)}')
-parser.add_argument("files", metavar='file', type=str, nargs='*', help='Files to process')
+parser.add_argument("-w", "--workload", type=str, help='Workloads to process', action='append')
+parser.add_argument("files", metavar='file', type=str, nargs='+', help='Files to process')
 args = parser.parse_args()
 if args.list_formats:
     print('\n'.join(sorted(analysis_formats)))
     sys.exit(1)
 
 
-def do_analyze_clusterbuster(f, data):
+def analyze_clusterbuster_1(f, data):
     report = ClusterBusterAnalysis(data, report_type=args.report_type).Analyze()
-    if isinstance(report, str):
+    if report is None:
+        print("No report available", file=sys.stderr)
+        sys.exit(1)
+    elif isinstance(report, str):
         print(report, file=f)
     else:
         json.dump(report, fp=f, indent=2)
 
 
+def analyze_clusterbuster(f):
+    reports = {}
+    dir_args = []
+    if args.kata:
+        for arg in args.files:
+            dir_args.append(f'{arg}:job_pattern=-runc-:name_suffix=runc')
+            dir_args.append(f'{arg}:job_pattern=-kata-:name_suffix=kata')
+    else:
+        dir_args = args.files
+    if args.workload:
+        dir_args = [f'{f}:job_pattern=^({"|".join(args.workload)})-' for f in dir_args]
+    analyze_clusterbuster_1(f, ClusterBusterLoader().loadFromSpecs(dir_args))
+
+
 try:
-    data = ClusterBusterLoader(args.files).Load()
     if args.outfile and args.outfile != '-':
         with open(args.outfile, 'w') as f:
-            do_analyze_clusterbuster(f, data)
+            analyze_clusterbuster(f)
     else:
-        do_analyze_clusterbuster(sys.stdout, data)
+        analyze_clusterbuster(sys.stdout)
 except KeyboardInterrupt:
     sys.exit(1)
 except BrokenPipeError:

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-# Copyright 2022 Robert Krawitz/Red Hat
+# Copyright 2022-2023 Robert Krawitz/Red Hat
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -24,7 +24,6 @@ import os
 import base64
 import importlib
 import inspect
-import traceback
 from .metrics.PrometheusMetrics import PrometheusMetrics
 
 
@@ -34,7 +33,8 @@ class ClusterBusterReporter:
     """
 
     @staticmethod
-    def report_one(jdata: dict, format: str, **kwargs):
+    def report_one(item: str, jdata: dict, format: str, **kwargs):
+        jdata['metadata']['RunArtifactDir'] = item
         if format == 'none' or format is None:
             return
         if format == 'raw-python':
@@ -57,7 +57,7 @@ class ClusterBusterReporter:
         try:
             imported_lib = importlib.import_module(f'..{workload}_reporter', __name__)
         except Exception:
-            print(f'Warning: no handler for workload {workload}, issuing generic summary report ({traceback.format_exc()})', file=sys.stderr)
+            print(f'Warning: no handler for workload {workload}, issuing generic summary report', file=sys.stderr)
             return ClusterBusterReporter(jdata, format).create_report()
         for i in inspect.getmembers(imported_lib):
             if i[0] == f'{workload}_reporter':
@@ -99,9 +99,9 @@ class ClusterBusterReporter:
         for item in ClusterBusterReporter.enumerate_dirs(items):
             with open(item) as f:
                 try:
-                    answers.append(ClusterBusterReporter.report_one(json.load(f), format, **kwargs))
-                except Exception:
-                    print(f'Unable to load {item}: {traceback.format_exc()}', file=sys.stderr)
+                    answers.append(ClusterBusterReporter.report_one(os.path.dirname(item), json.load(f), format, **kwargs))
+                except Exception as err:
+                    print(f'Warning (continuing): unable to load {item}: {err}', file=sys.stderr)
         for item in items:
             jdata = dict()
             if isinstance(item, str):
@@ -109,18 +109,18 @@ class ClusterBusterReporter:
             if isinstance(item, io.TextIOBase):
                 try:
                     jdata = json.load(item)
-                except Exception:
-                    print(f'Unable to load {item}: {traceback.format_exc()}', file=sys.stderr)
+                except Exception as err:
+                    print(f'Warning (continuing): unable to load {item}: {err}', file=sys.stderr)
             elif item is None:
                 try:
                     jdata = json.load(sys.stdin)
-                except Exception:
-                    print(f'Unable to load <stdin>: {traceback.format_exc()}', file=sys.stderr)
+                except Exception as err:
+                    print(f'Warning (continuing): unable to load <stdin>: {err}', file=sys.stderr)
             elif isinstance(item, dict):
                 jdata = item
             else:
                 raise Exception(f"Unrecognized item {item}")
-            answers.append(ClusterBusterReporter.report_one(jdata, format, **kwargs))
+            answers.append(ClusterBusterReporter.report_one("N/A", jdata, format, **kwargs))
         return answers
 
     @staticmethod
@@ -516,7 +516,7 @@ class ClusterBusterReporter:
             infix = 'i'
             base = 1024
         elif base != -10 or base != -1 or base != -1000:
-            raise(Exception(f'Illegal base {base} for prettyprint; must be 1000 or 1024'))
+            raise Exception(f'Illegal base {base} for prettyprint; must be 1000 or 1024')
         if base > 0 and abs(num) >= base ** 5:
             return f'{self._fformat(num / (base ** 5), precision=precision)} P{infix}{suffix}'
         elif base > 0 and abs(num) >= base ** 4:
@@ -1023,6 +1023,7 @@ class ClusterBusterReporter:
                 'metadata': self._jdata['metadata'],
                 'rows': self._rows
                 }
+        answer['Status'] = self._jdata['Status']
         return answer
 
     def __create_text_report(self):

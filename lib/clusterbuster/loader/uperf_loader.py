@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright 2022 Robert Krawitz/Red Hat
+# Copyright 2022-2023 Robert Krawitz/Red Hat
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -17,8 +17,8 @@ from .ClusterBusterLoader import LoadOneReport
 
 
 class uperf_loader(LoadOneReport):
-    def __init__(self, report: dict, answer: dict):
-        LoadOneReport.__init__(self, report, answer)
+    def __init__(self, name: str, report: dict, data: dict):
+        super().__init__(name, report, data)
 
     def Load(self):
         job_name = sorted(self._metadata['workload_metadata']['jobs'].keys())[0]
@@ -28,8 +28,8 @@ class uperf_loader(LoadOneReport):
         op = job_metadata['test_type']
         job = self._summary['results'][job_name]['summary']
 
-        self._MakeHierarchy(self._answer, ['uperf', self._count, msgsize, threads, self._runtime_env])
-        root = self._answer['uperf'][self._count][msgsize][threads][self._runtime_env]
+        self._MakeHierarchy(self._data, ['uperf', self._count, msgsize, threads, self._name])
+        root = self._data['uperf'][self._count][msgsize][threads][self._name]
         try:
             root[f'cpu_util_{op}'] = self._metrics['CPU utilization']['Total'][f'instance: {self._client_pin_node}']
         except Exception:
