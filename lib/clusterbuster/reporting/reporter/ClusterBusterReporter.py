@@ -25,6 +25,7 @@ import base64
 import importlib
 import inspect
 from .metrics.PrometheusMetrics import PrometheusMetrics
+from ..prettyprint import fformat, prettyprint
 
 
 class ClusterBusterReporter:
@@ -456,13 +457,7 @@ class ClusterBusterReporter:
         :param num:
         :param precision:
         """
-        try:
-            if precision > 1:
-                return f'{num:.{precision}f}'
-            else:
-                return int(round(num))
-        except Exception:
-            return num
+        return fformat(num, precision=precision)
 
     def _prettyprint(self, num: float, precision: float = 5, integer: int = 0, base: int = 1024, suffix: str = ''):
         """
@@ -481,64 +476,11 @@ class ClusterBusterReporter:
         :param integer: print as integer
         :param suffix: trailing suffix (e. g. "B/sec")
         """
-        if num is None:
-            return 'None'
-        try:
-            num = float(num)
-        except Exception:
-            return str(num)
         if self._format.startswith('json'):
             return num
-        elif 'parseable' in self._format:
-            if integer != 0 or num == 0:
-                return str(int(num))
-            else:
-                if base == 100:
-                    precision += 2
-                elif abs(float(num)) < .000001:
-                    precision += 9
-                elif abs(float(num)) < .001:
-                    precision += 6
-                elif abs(float(num)) < 1:
-                    precision += 3
-                return self._fformat(num, precision=precision)
-        elif base == 0:
-            if suffix and suffix != '':
-                return f'{self._fformat(num, precision=precision)} {suffix}'
-            else:
-                return f'{self._fformat(num, precision=precision)}'
-        elif base == 100:
-            return f'{self._fformat(num * 100, precision=precision)} %'
-        elif base == 1000 or base == 10:
-            infix = ''
-            base = 1000
-        elif base == 1024 or base == 2:
-            infix = 'i'
+        if base is None:
             base = 1024
-        elif base != -10 or base != -1 or base != -1000:
-            raise Exception(f'Illegal base {base} for prettyprint; must be 1000 or 1024')
-        if base > 0 and abs(num) >= base ** 5:
-            return f'{self._fformat(num / (base ** 5), precision=precision)} P{infix}{suffix}'
-        elif base > 0 and abs(num) >= base ** 4:
-            return f'{self._fformat(num / (base ** 4), precision=precision)} T{infix}{suffix}'
-        elif base > 0 and abs(num) >= base ** 3:
-            return f'{self._fformat(num / (base ** 3), precision=precision)} G{infix}{suffix}'
-        elif base > 0 and abs(num) >= base ** 2:
-            return f'{self._fformat(num / (base ** 2), precision=precision)} M{infix}{suffix}'
-        elif base > 0 and abs(num) >= base ** 1:
-            return f'{self._fformat(num / base, precision=precision)} K{infix}{suffix}'
-        elif abs(num) >= 1 or num == 0:
-            if integer:
-                precision = 0
-            return f'{self._fformat(num, precision=precision)} {suffix}'
-        elif abs(num) >= 10 ** -3:
-            return f'{self._fformat(num * (1000), precision=precision)} m{suffix}'
-        elif abs(num) >= 10 ** -6:
-            return f'{self._fformat(num * (1000 ** 2), precision=precision)} u{suffix}'
-        elif abs(num) >= 10 ** -9:
-            return f'{self._fformat(num * (1000 ** 3), precision=precision)} n{suffix}'
-        else:
-            return f'{self._fformat(num * (1000 ** 4), precision=precision)} p{suffix}'
+        return prettyprint(num, precision=precision, integer=integer, base=base, suffix=suffix, parseable='parseable' in self._format)
 
     def _safe_div(self, num: float, denom: float, precision: int = None, as_string: bool = False,
                   number_only: bool = False):

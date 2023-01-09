@@ -14,6 +14,7 @@
 # limitations under the License.
 
 from ..ClusterBusterAnalysis import ClusterBusterAnalyzeOne
+from ...prettyprint import prettyprint
 
 
 class cpusoaker_analysis(ClusterBusterAnalyzeOne):
@@ -75,10 +76,10 @@ class cpusoaker_analysis(ClusterBusterAnalyzeOne):
         rows = []
         for pods, data1 in sorted(list(data.items())):
             baseline_value = self.get_value(data1, runs[0], column, valfunc)
-            row = [str(pods), self._prettyprint(baseline_value, base=0, integer=integer, precision=3, multiplier=multiplier)]
+            row = [str(pods), prettyprint(baseline_value, base=0, integer=integer, precision=3, multiplier=multiplier)]
             for run in runs[1:]:
                 run_value = self.get_value(data1, run, column, valfunc)
-                row.append(self._prettyprint(run_value,  base=0, integer=integer, precision=3, multiplier=multiplier))
+                row.append(prettyprint(run_value,  base=0, integer=integer, precision=3, multiplier=multiplier))
             rows.append('\t'.join(row))
         answer += '\n'.join(rows) + '\n'
 
@@ -94,7 +95,7 @@ class cpusoaker_analysis(ClusterBusterAnalyzeOne):
                 for run in runs[1:]:
                     run_value = self.get_value(data1, run, column, valfunc)
                     run_ratio = run_value / baseline_value if isnumber(baseline_value) and isnumber(run_value) else ''
-                    row.append(self._prettyprint(run_ratio, base=0, precision=3))
+                    row.append(prettyprint(run_ratio, base=0, precision=3))
                 rows.append('\t'.join(row))
             answer += '\n'.join(rows) + '\n'
 
@@ -110,7 +111,7 @@ class cpusoaker_analysis(ClusterBusterAnalyzeOne):
                 for run in runs[1:]:
                     run_value = self.get_value(data1, run, column, valfunc)
                     run_delta = run_value - baseline_value if isnumber(baseline_value) and isnumber(run_value) else ''
-                    row.append(self._prettyprint(run_delta, base=0, integer=integer, precision=3, multiplier=multiplier))
+                    row.append(prettyprint(run_delta, base=0, integer=integer, precision=3, multiplier=multiplier))
                 rows.append('\t'.join(row))
             answer += '\n'.join(rows) + '\n'
 

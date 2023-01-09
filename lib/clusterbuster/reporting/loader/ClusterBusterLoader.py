@@ -19,7 +19,7 @@ import os
 import sys
 import re
 from datetime import datetime
-from lib.clusterbuster.reporter.ClusterBusterReporter import ClusterBusterReporter
+from ..reporter.ClusterBusterReporter import ClusterBusterReporter
 import json
 
 
