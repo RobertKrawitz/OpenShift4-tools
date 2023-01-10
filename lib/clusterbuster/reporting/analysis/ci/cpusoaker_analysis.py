@@ -13,29 +13,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from ..ClusterBusterAnalysis import ClusterBusterAnalyzeOne
+from .analyze_ci_generic import CIAnalysis
 
 
-class cpusoaker_analysis(ClusterBusterAnalyzeOne):
+class cpusoaker_analysis(CIAnalysis):
     """
     Analyze cpusoaker data
     """
 
     def __init__(self, workload: str, data: dict, metadata: dict):
-        super().__init__(workload, data, metadata)
-
-    def Analyze(self):
-        answers = list()
-        for pods, data1 in self._data.items():
-            for run, data2 in data1.items():
-                answer = dict()
-                answer['uuid'] = self._metadata['jobs'][run]['uuid']
-                answer['test_description'] = dict()
-                answer['test_description']['workload'] = 'cpusoaker'
-                answer['test_description']['pods'] = pods
-                answer['test_description']['runtime'] = run
-                answer['test_description']['name'] = f'cpusoaker_{run}_pods_{pods}'
-                for key, item in data2.items():
-                    answer[key] = item
-                answers.append(answer)
-        return answers
+        super().__init__(workload, data, metadata,
+                         ['pods', 'runtime'])
