@@ -155,6 +155,7 @@ declare -i metrics_support=-1
 declare pod_prefix=
 declare -r arch=$(uname -m)
 declare failure_status=Fail
+declare -i host_network=0
 
 declare -r sync_flag_file="/tmp/syncfile";
 declare -r sync_error_file="/tmp/syncerror";
@@ -428,6 +429,8 @@ $(print_workloads_supporting_reporting '                        - ')
        --liveness-probe-sleep=<seconds>
                         Arrange for the liveness probe to sleep for specified
                         time.
+       --host-network=[0,1]
+			Use host networking.  Default ${host_network}
 
     Virtualization Options:
        --virtiofsd-writeback=[0,1]
@@ -697,6 +700,7 @@ function process_option() {
 	virtiofsdthread*)	    virtiofsd_threadpoolsize=$optvalue		;;
 	livenessprobeint*)	    liveness_probe_frequency=$optvalue		;;
 	livenessprobesleep*)	    liveness_probe_sleep_time=$optvalue		;;
+	hostnet*)		    host_network=$(bool "$optvalue")		;;
 	affinity)
 	    case "$optvalue" in
 		1|'') affinity=1      ;;
@@ -2374,6 +2378,12 @@ $(indent 2 list_ports "$@")
 EOF
 }
 
+function host_network_yaml() {
+    if ((host_network)) ; then
+	echo "hostNetwork: true"
+    fi
+}
+
 function create_spec() {
     local affinity_yaml=
     local node_class=client
@@ -2412,6 +2422,7 @@ function create_spec() {
     cat <<EOF
 spec:
   terminationGracePeriodSeconds: 1
+$(indent 2 host_network_yaml)
 $(indent 2 <<< "$affinity_yaml")
 $(indent 2 tolerations_yaml ${tolerations+"${tolerations[@]}"})
 ${runtime_class:+$(indent 2 <<< "runtimeClassName: \"$runtime_class\"")}
@@ -2567,7 +2578,7 @@ $(indent 2 standard_labels_yaml 'sync' "$namespace")
   selector:
     matchLabels:
       app: ${namespace}
-$(create_container_function=create_container_sync create_spec -P -c sync -r '' "$namespace" 0 0 "$@")
+$(create_container_function=create_container_sync host_network=0 create_spec -P -c sync -r '' "$namespace" 0 0 "$@")
 $(indent 2 default_security_context)
   restartPolicy: Never
 EOF
@@ -2630,7 +2641,7 @@ $(indent 2 standard_labels_yaml -s dc "$workload" "$namespace" "$instance" "$rep
       replica: ${namespace}-${workload}-${instance}-${replica}
   securityContext:
     privileged: True
-$(create_container_function=create_container_drop_cache create_spec -P -c drop-cache -r '' "$namespace" "$instance" 0)
+$(create_container_function=create_container_drop_cache host_network=0 create_spec -P -c drop-cache -r '' "$namespace" "$instance" 0)
   - name: "proc-sys-vm"
     hostPath:
       path: "/proc/sys/vm"
