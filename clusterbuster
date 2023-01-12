@@ -3211,6 +3211,10 @@ if [[ -n ${1:-} ]] ; then
     shift
 fi
 
+if ((host_network)) ; then
+    default_namespace_policy=privileged
+fi
+
 [[ -z "$*" ]] || warn "Warning: extraneous arguments $* after basename will be ignored!"
 
 (run_clusterbuster_1) 4>&2
