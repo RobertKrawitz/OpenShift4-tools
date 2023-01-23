@@ -21,6 +21,8 @@ declare -ga ___uperf_test_types=(stream rr)
 declare -gi ___uperf_job_runtime=0
 declare -gi ___uperf_job_timeout=0
 declare -g ___uperf_interface=
+declare -g ___uperf_interface_server=
+declare -g ___uperf_interface_client=
 
 function uperf_test() {
     local default_job_runtime=$1
@@ -44,6 +46,9 @@ function uperf_test() {
 				      --uperf_test_type="$test_type" \
 				      --uperf_proto=tcp \
 				      --uperf_nthr="$nthr" \
+				      ${uperf_interface:+--uperf_interface=$___uperf_interface:} \
+				      ${uperf_interface_server:+--uperf_interface_server=$___uperf_interface_server:} \
+				      ${uperf_interface_client:+--uperf_interface_client=$___uperf_interface_client:} \
 				      --uperf_interface="$___uperf_interface" \
 				      --pod-annotation="io.katacontainers.config.hypervisor.default_vcpus: \"$nthr\""
 		done
@@ -56,14 +61,14 @@ function uperf_process_option() {
     local opt=$1
     read -r noptname1 noptname optvalue <<< "$(parse_option "$opt")"
     case "$noptname1" in
-	uperfmsg*)     readarray -t ___uperf_msg_sizes <<< "$(parse_size "$optvalue")"	;;
-	uperfnthr*)    readarray -t ___uperf_nthrs <<< "$(parse_size "$optvalue")"	;;
-	uperfninst*)   readarray -t ___uperf_ninst <<< "$(parse_size "$optvalue")"	;;
-	uperftest*)    readarray -t ___uperf_test_types <<< "$(parse_size "$optvalue")"	;;
-	uperf*runtime) ___uperf_job_runtime=$optvalue					;;
-	uperf*timeout) ___uperf_job_timeout=$optvalue					;;
-	uperfint*)     ___uperf_interface=$optvalue					;;
-	*)	       return 1								;;
+	uperfmsg*)     readarray -t ___uperf_msg_sizes <<< "$(parse_size "$optvalue")"		;;
+	uperfnthr*)    readarray -t ___uperf_nthrs <<< "$(parse_size "$optvalue")"		;;
+	uperfninst*)   readarray -t ___uperf_ninst <<< "$(parse_size "$optvalue")"		;;
+	uperftest*)    readarray -t ___uperf_test_types <<< "$(parse_optvalues "$optvalue")"	;;
+	uperf*runtime) ___uperf_job_runtime=$optvalue						;;
+	uperf*timeout) ___uperf_job_timeout=$optvalue						;;
+	uperfint*)     ___uperf_interface=$optvalue						;;
+	*)	       return 1									;;
     esac
 }
 
@@ -87,8 +92,14 @@ function uperf_help_options() {
         --uperf-timeout=seconds
                                 Time the job out after specified time.  Default
                                 is the global timeout default.
-        --uperf-interface=interface
-                                Specify interface to be used for running uperf
+        --uperf-interface=<interface[=pod_interface]>
+                                Specify the network interface to use.  Optional
+                                pod interface is the name of the interface on
+                                the pod (normally net1).
+        --uperf-interface-server=<interface[=pod_interface]>
+        --uperf-interface-client=<interface[=pod_interface]>
+                                Specify the interfaces for client and server
+                                separately.
 EOF
 }
 

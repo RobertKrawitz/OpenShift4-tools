@@ -16,7 +16,7 @@
 
 import sys
 import argparse
-from lib.clusterbuster.reporter.ClusterBusterReporter import ClusterBusterReporter
+from lib.clusterbuster.reporting.reporter.ClusterBusterReporter import ClusterBusterReporter
 import traceback
 
 parser = argparse.ArgumentParser(description='Generate ClusterBuster report')

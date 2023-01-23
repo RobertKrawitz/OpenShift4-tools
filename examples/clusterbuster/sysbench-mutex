@@ -1,0 +1,10 @@
+# Run as
+# clusterbuster -f sysbench
+
+workload=sysbench
+sysbench-workload=mutex
+precleanup
+cleanup
+workloadruntime=10
+exit_at_end
+no-report-object-creation

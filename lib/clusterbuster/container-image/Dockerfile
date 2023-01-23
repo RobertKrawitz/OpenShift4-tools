@@ -6,3 +6,5 @@ RUN microdnf --setopt=install_weak_deps=0 install -y \
     && \
     microdnf -y clean all && \
     rm -rf /var/cache/yum
+
+USER 1000

@@ -125,8 +125,6 @@ declare configmap_mount_dir=/etc/clusterbuster
 declare system_configmap_mount_dir=/var/lib/clusterbuster
 declare -i has_system_configmap=0
 declare node_selector='node-role.kubernetes.io/worker'
-declare -i pbench_controller_port=0
-declare pbench_controller_address=
 declare -i processes_per_pod=1
 declare -i emptydir_volumes=0
 declare -i take_prometheus_snapshot=0
@@ -156,6 +154,7 @@ declare -i liveness_probe_sleep_time=0
 declare -i metrics_support=-1
 declare pod_prefix=
 declare -r arch=$(uname -m)
+declare failure_status=Fail
 
 declare -r sync_flag_file="/tmp/syncfile";
 declare -r sync_error_file="/tmp/syncerror";
@@ -323,6 +322,9 @@ $(print_workloads_supporting_reporting '                        - ')
        --metrics-epoch=<seconds>
                         Number of seconds to look back for metrics prior
                         to start of run (default $metrics_epoch)
+       --failure-status=<status>
+                        Failures should be reported as specified rather 
+                        than "Fail"
 
     Workload sizing options:
        --containers_per_pod=N
@@ -475,13 +477,6 @@ $(print_workloads_supporting_reporting '                        - ')
        --parallel_namespaces=N
        --parallel_deployments=N
        --wait_secrets   Wait for secrets to be created (default 1)
-
-    Using PBench:
-       If pbench is to be used, both arguments below must be provided.
-       --pbench_controller_address=address
-                        Use the specified address to connect to the controller.
-       --pbench_controller_port=port
-                        Use the specified port to connect to the controller.
 
 Workload-specific options:
 $(_help_options_workloads)
@@ -659,6 +654,7 @@ function process_option() {
 	predelay)		    predelay=$optvalue				;;
 	postdelay)		    postdelay=$optvalue				;;
 	timeout)		    timeout=$optvalue				;;
+	failurestatus)		    failure_status=$optvalue			;;
 	# Basic options
 	jobname)		    job_name=$optvalue				;;
 	workload)		    requested_workload=$optvalue		;;
@@ -678,8 +674,6 @@ function process_option() {
 	namespaces)		    namespaces=$optvalue			;;
 	nodeselector)		    node_selector=$optvalue			;;
 	volume)			    parse_volume_spec "$optvalue"		;;
-	pbenchcontrolleraddress)    pbench_controller_address=$optvalue		;;
-	pbenchcontrollerport)	    pbench_controller_port=$optvalue		;;
 	processes|processesperpod)  processes_per_pod=$optvalue			;;
 	jobfile)		    process_job_file "$optvalue"		;;
 	pinnode)		    process_pin_node "$optvalue"		;;
@@ -862,7 +856,7 @@ function generate_environment() {
 function namespace_policy() {
     local policy
     policy=$(call_api -w "$requested_workload" -s namespace_policy)
-    echo ${policy:-${default_namespace_policy}}
+    echo "${policy:-${default_namespace_policy}}"
 }
 
 ################################################################
@@ -912,6 +906,14 @@ function namespace_exists() {
     ____OC get ns "$ns" >/dev/null 2>&1
 }
 
+function object_exists() {
+    ____OC get "$@" >/dev/null 2>&1
+}
+
+function delete_object_safe() {
+    object_exists "$@" && _OC delete "$@"
+}
+
 ################################################################
 # Synchronization between worker pods
 ################################################################
@@ -959,10 +961,11 @@ function get_pod_timestamp() {
 }
 
 function get_prometheus_pod_timestamp() {
+    local format=${1:-%s.%N}
     if supports_metrics ; then
-	local format=${1:-%s.%N}
-	get_pod_timestamp '%s.%N' -n openshift-monitoring prometheus-k8s-0 -c prometheus
+	get_pod_timestamp "$format" -n openshift-monitoring prometheus-k8s-0 -c prometheus
     else
+	date "+$format"
 	return 1
     fi
 }
@@ -1174,7 +1177,7 @@ function _monitor_pods() {
 			local p_pods=pods
 			if ((pod_progress_timeout-timestamp == 1)) ; then p_seconds=second; fi
 			if ((${#starting_pods[@]} == 1)) ; then p_pods=pod; fi
-			echo "${#starting_pods[@]} $p_pods pending (will retry $((pod_progress_timeout-timestamp)) $p_seconds)" | echo_if_desired 1>&2
+			echo -ne "${#starting_pods[@]} $p_pods pending (will retry $((pod_progress_timeout-timestamp)) $p_seconds)\r" | echo_if_desired 1>&2
 		    fi
 		fi
 	    fi
@@ -1326,13 +1329,13 @@ function get_logs_poll() {
     local tfile
     tfile=$(mktemp ${cb_tempdir:+-p "$cb_tempdir"} -t '_clusterbusterlogs.XXXXXXXXXX') || fatal "Cannot create temporary file"
     trap 'if [[ -n "${tfile:-}" && -f "$tfile" ]] ; then rm -f "$tfile"; unset tfile; fi; echo "Status: Fail"; return 1' INT TERM HUP USR1
-    _get_logs_poll "$@" > "$tfile"
+    _get_logs_poll "$*" > "$tfile"
     local status=$?
     if ((status == 0)) ; then
-	echo -n '"Results":'; cat < "$tfile"; echo ','
-	echo '"Status": "Success"'
+	echo -n '"Results":'; cat < "$tfile"
     else
-	echo '"Status": "Fail"'
+	echo "Collecting error report" 1>&2
+	echo -n '"Results": {}'
     fi
     if [[ -n "${tfile:-}" && -f "$tfile" ]] ; then
 	rm -f "$tfile"
@@ -1405,7 +1408,6 @@ function _report_runtime_classes() {
 function _extract_metrics() {
     if supports_metrics && [[ -r "$metrics_file" ]] ; then
 	cat <<EOF
-,
 "metrics": $("${__topdir__}/prom-extract" --define "namespace_re=${basename}-.*" -m "$metrics_file" --metrics-only --start_time="$prometheus_starting_timestamp" --epoch="$metrics_epoch" --post-settling-time=0)
 EOF
     fi
@@ -1426,51 +1428,68 @@ function _report_liveness_probe() {
 EOF
 }
 
-function _get_kata_version() {
-    if namespace_exists openshift-sandboxed-containers-operator ; then
-	local kata_version
-	kata_version=$(____OC get csv -n openshift-sandboxed-containers-operator -o jsonpath="{.items[0].spec.version}")
-	if [[ -n "$kata_version" ]] ; then
+function _get_csv_version() {
+    local product
+    local namespace=
+    local field='.spec.version'
+    local OPTARG
+    local OPTIND=0
+    local opt
+    while getopts 'n:f:' opt "$@" ; do
+	case "$opt" in
+	    n) namespace=$OPTARG ;;
+	    f) field=$OPTARG	 ;;
+	    *)			 ;;
+	esac
+    done
+    shift $((OPTIND-1))
+    local product=$1
+    namespace=${namespace:-openshift-${product}}
+    if namespace_exists "$namespace" ; then
+	local version
+	version=$(____OC get csv -n "$namespace" -o jsonpath="{.items[0]${field}}")
+	if [[ -n "$version" ]] ; then
 	    cat <<EOF
-"kata_version": "${kata_version:-}",
+"${product}_version": "${version:-}",
 EOF
 	fi
     fi
 }
 
-function _report_objects() {
-    local first_local_ts
-    local remote_ts
-    local second_local_ts
-    # shellcheck disable=SC2206
-    local -a podname=($*)
-    read -r first_local_ts remote_ts second_local_ts <<< "$(get_pod_and_local_timestamps "$@")"
-    if [[ -z "$remote_ts" ]] ; then
-	killthemall "Unable to retrieve sync timestamp"
-    fi
-    sync_ts_error_interval=$(bc <<< "$second_local_ts - $first_local_ts")
-    sync_ts_delta=$(bc <<< "$second_local_ts - $first_local_ts")
+function _report_metadata_and_objects() {
+    function readable_timestamp_report() {
+	local rawtime=${1:-}
+	date -u '+%Y-%m-%dT%T%:z' ${rawtime:+"--date=@$rawtime"}
+    }
+    local status=$1
+    local enddate=
+    enddate=$(date +%s.%N)
     cat <<EOF
+"Status": "$status",
 "metadata": {
   "kind": "clusterbusterResults",
   "controller_first_start_timestamp": $first_start_timestamp,
   "prometheus_start_timestamp": $prometheus_exact_starting_timestamp,
   "controller_second_start_timestamp": $second_start_timestamp,
+  "controller_end_timestamp": $enddate,
+  "controller_elapsed_time": $(bc <<< "$enddate - ${second_start_timestamp:-0}"),
   "cluster_start_time": "$(readable_timestamp "${prometheus_starting_timestamp}")",
   "job_name": "$job_name",
   "uuid": "$uuid",
   "workload": "$requested_workload",
   "workload_reporting_class": "$(_workload_reporting_class)",
-  "kubernetes_version": $(__OC version -ojson),
+  "kubernetes_version": $(indent_hang 2 __OC version -ojson),
   "command_line": [$(quote_list "${saved_argv[@]}")],
   "expanded_command_line": [$(quote_list "${processed_options[@]}")],
   "runHost": "$(hostname -f)",
-  "workload_metadata": {$(generate_workload_metadata)},
+  "workload_metadata": {$(indent_hang 2 generate_workload_metadata)},
   "controller_presync_timestamp": $first_local_ts,
   "sync_timestamp": $remote_ts,
   "controller_postsync_timestamp": $second_local_ts,
   "artifact_directory": "$artifactdir",
-  $(_get_kata_version)
+$(indent 2 _get_csv_version -n openshift-sandboxed-containers-operator kata)
+$(indent 2 _get_csv_version cnv)
+$(indent 2 _get_csv_version -f .spec.labels.full_version -n openshift-storage odf)
   "options": {
     "basename": "$basename",
     "containers_per_pod": $containers_per_pod,
@@ -1484,25 +1503,65 @@ function _report_objects() {
     "drop_cache": $drop_node_cache,
     "always_drop_cache": $drop_all_node_cache,
     "pin_nodes": {$(_report_pin_nodes)},
-$(indent 8 _report_volumes)
+$(indent 4 _report_volumes)
 $(indent 4 _report_liveness_probe)
     "secrets": $secrets,
     "replicas": $replicas,
     "container_image": "$container_image",
     "node_selector": "$node_selector",
-$(indent 8 container_resources_json)
+$(indent 4 container_resources_json)
     "runtime_classes": {$(_report_runtime_classes)},
-$(indent 8 _report_emptydirs)
+$(indent 4 _report_emptydirs)
     "target_data_rate": $target_data_rate,
     "workloadOptions": {
 $(indent 8 call_api -w "$requested_workload" "report_options")
     }
   }
 },
+$(indent 2 _extract_metrics),
 "nodes": $(__OC get nodes -ojson),
-"api_objects": $( __OC get all -A -l "${basename}-id=$uuid" -ojson |jq -r .items?),
-"csvs": $(__OC get csv -A -ojson | jq -r '[foreach .items[]? as $item ([[],[]];0; {name: $item.metadata.name, namespace: $item.metadata.namespace, version: $item.spec.version})]'),
+"api_objects": $(__OC get all -A -l "${basename}-id=$uuid" -ojson |jq -r .items?),
+"csvs": $(__OC get csv -A -ojson | jq -r '[foreach .items[]? as $item ([[],[]];0; {name: $item.metadata.name, namespace: $item.metadata.namespace, version: $item.spec.version})]')
 EOF
+}
+
+function _report_failure() {
+    cat <<EOF
+{
+  "Results": {},
+$(indent 2 _report_metadata_and_objects "$failure_status")
+}
+EOF
+}
+
+function _get_logs() {
+    local first_local_ts
+    local remote_ts
+    local second_local_ts
+    local status=$failure_status
+    read -r first_local_ts remote_ts second_local_ts <<< "$(get_pod_and_local_timestamps "${@:2}")"
+    if [[ -z "$remote_ts" ]] ; then
+	killthemall "Unable to retrieve sync timestamp"
+    fi
+    sync_ts_error_interval=$(bc <<< "$second_local_ts - $first_local_ts")
+    sync_ts_delta=$(bc <<< "$second_local_ts - $first_local_ts")
+    local -i reported=0
+    local tfile1=
+    local tfile2=
+    trap 'if [[ -n "$tfile2" && -f "$tfile2" ]] ; then rm -f "$tfile1" "$tfile2" ; fi; if ((! reported)) ; _report_failure; reported=1; fi; _retrieve_artifacts; return 1' TERM
+    tfile1=$(mktemp ${cb_tempdir:+-p "$cb_tempdir"} -t '_clusterbusterlogs1.XXXXXXXXXX') || fatal "Cannot create temporary file"
+    tfile2=$(mktemp ${cb_tempdir:+-p "$cb_tempdir"} -t '_clusterbusterlogs2.XXXXXXXXXX') || fatal "Cannot create temporary file"
+    "$@" > "$tfile1" && status=Success
+    cat > "$tfile2" <<EOF
+{
+$(indent 2 < "$tfile1"),
+$(indent 2 _report_metadata_and_objects "$status")
+}
+EOF
+    ((reported)) || cat "$tfile2"
+    reported=1
+    rm -f "$tfile1" "$tfile2"
+    _retrieve_artifacts
 }
 
 function _retrieve_artifacts() {
@@ -1524,16 +1583,6 @@ function _retrieve_artifacts() {
     fi
 }
 
-function _get_logs() {
-    echo '{'
-    # shellcheck disable=SC2068
-    _report_objects ${@:2}
-    "$@"
-    _extract_metrics
-    echo '}'
-    _retrieve_artifacts
-}
-
 function print_report() {
     if [[ $report_format == raw ]] ; then
 	cat
@@ -1552,21 +1601,21 @@ function get_logs() {
 	log_cmd=true
     fi
     local report_cmd=cat
-    if supports_api -w "$requested_workload" supports_reporting ; then
-	if [[ -z "$*" ]] ; then
-	    echo "Workload $requested_workload does not support reporting" 1>&2
-	elif [[ -n "$artifactdir" ]] ; then
-	    _get_logs "$log_cmd" "$@" > "$artifactdir/clusterbuster-report.tmp.json" && {
-		mv "$artifactdir/clusterbuster-report.tmp.json" "$artifactdir/clusterbuster-report.json"
-		print_report < "$artifactdir/clusterbuster-report.json"
-	    }
+    if supports_api -w "$requested_workload" supports_reporting && [[ -n "$*" ]]; then
+	if [[ -n "$artifactdir" ]] ; then
+	    # Even if reporting fails, make sure we capture the JSON
+	    _get_logs "$log_cmd" "$@" > "$artifactdir/clusterbuster-report.tmp.json" &&
+		mv "$artifactdir/clusterbuster-report.tmp.json" "$artifactdir/clusterbuster-report.json" &&
+		print_report < "$artifactdir/clusterbuster-report.json" &&
+		return 0
+	    return 1
 	else
 	    _get_logs "$log_cmd" "$@" | print_report
+	    return $((PIPESTATUS[0] || PIPESTATUS[1]))
 	fi
     else
 	echo "Workload $requested_workload does not support reporting" 1>&2
     fi
-    return $((PIPESTATUS[0] || PIPESTATUS[1]))
 }
 
 ################################################################
@@ -1592,29 +1641,43 @@ $(indent 2 default_security_context_content)
 EOF
 }
 
-function _indent() {
-    local -i column="$1"
-    local line
-    while IFS='' read -r 'line' ; do
-	[[ -z "$line" ]] || printf "%${column}s%s\n" ' ' "$line"
-    done
-}
-
 function indent() {
     local -i column="$1"
+    local -a cmd
     shift
-    if [[ -n "$*" ]] ; then
-	# "$@" | _indent "$column" strips whitespace with bash 4.2
-	_indent "$column" < <("$@")
+    local str
+    str=$(printf "%${column}s" '')
+    if [[ -n "${hang_indent:-}" ]] ; then
+	# shellcheck disable=SC2016
+	cmd=(awk '/./ {if (a == 0) {print} else {print "'"$str"'", $0}; a = 1}')
     else
-	_indent "$column"
+	cmd=(sed -e '/^$/d' -e "s/^/${str}/")
     fi
+    if [[ -n "$*" ]] ; then
+	"$@" | "${cmd[@]}"
+    else
+	"${cmd[@]}"
+    fi
+}
+
+function indent_hang() {
+    hang_indent=1 indent "$@"
 }
 
 function mkpodname() {
     local podname
     podname="${pod_prefix}$(IFS=-; echo "$*")"
     echo "${podname//_/-}"
+}
+
+function get_pin_node() {
+    if [[ -n "${1:-}" ]] ; then
+	if [[ -n "${pin_nodes[$1]:-}" ]] ; then
+	    echo "${pin_nodes[$1]}"
+	elif [[ -n "${pin_nodes[default]:-}" ]] ; then
+	    echo "${pin_nodes[default]}"
+	fi
+    fi
 }
 
 function tolerations_yaml() {
@@ -1887,46 +1950,6 @@ EOF
     fi
 }
 
-function pbench_agent_yaml() {
-    if (( pbench_controller_port > 0 )) ; then
-	# This isn't ideal, as there still can be collisions.
-	# Without a port server, this is certainly the most
-	# expeditious.
-	local ssh_port=0
-	while (( ssh_port < 2023 )) ; do
-	    ssh_port=$RANDOM
-	done
-	cat <<EOF
-- name: "pbench-agent"
-  image: "$container_image"
-  ${image_pull_policy:+imagePullPolicy: $image_pull_policy}
-  securityContext:
-    privileged: false
-    capabilities:
-      add:
-      - AUDIT_WRITE
-  env:
-  - name: VERBOSE
-    value: "0"
-  command:
-  - "/usr/local/bin/run-pbench-agent-container"
-  args:
-  - "$pbench_controller_port"
-  - "$pbench_controller_address"
-#hostPID: true
-serviceAccount: pbench
-EOF
-    fi
-}
-
-function privilege_yaml() {
-    if (( pbench_controller_port > 0)) ; then
-	cat <<EOF
-openshift.io/scc: privileged
-EOF
-    fi
-}
-
 function namespace_yaml() {
     local namespace=$1
     (( use_namespaces )) && echo "namespace: \"$namespace\""
@@ -1961,7 +1984,6 @@ function standard_deployment_metadata_yaml() {
     local namespace=${1:-}
     local class=${2:-client}
     namespace_yaml "$namespace"
-    privilege_yaml
 }
 
 function standard_pod_metadata_yaml() {
@@ -2163,6 +2185,8 @@ function _create_object_from_file() {
 	[[ -r "$file" ]] || fatal "Can't read file $file!"
     done
     # shellcheck disable=SC2046
+    delete_object_safe "$objtype" $(_ns) "$objname"
+    # shellcheck disable=SC2046
     _OC create "$objtype" $(_ns) "$objname" "${@/#/--from-file=}" || killthemall "Unable to create object $objtype/$namespace:$objname"
     # shellcheck disable=SC2046
     _OC label "$objtype" $(_ns) "$objname" "${basename}base=true" 'clusterbusterbase=true' "${basename}-uuid=${uuid}" "${basename}-id=$uuid" "${basename}=true" || killthemall "Unable to label $objtype/$namespace:$objname"
@@ -2357,25 +2381,22 @@ function create_spec() {
     local OPTARG
     local ns_yaml=${node_selector:+"nodeSelector:${nl}  $node_selector: \"\""}
     local runtime_class
-    local use_pbench=1
     local opt
+    local pin_node
     while getopts "A:c:r:Pp" opt "$@" ; do
 	case "$opt" in
 	    A) affinity_yaml=$OPTARG ;;
 	    c) node_class=$OPTARG    ;;
 	    r) runtime_class=$OPTARG ;;
-	    P) use_pbench=	     ;;
-	    p) use_pbench=1	     ;;
 	    *)                       ;;
 	esac
     done
     shift $((OPTIND-1))
     (( $# >= 3 )) || fatal "Usage: create_spec namespace instance secret_count args..."
     # Node specifiers override affinity
-    if [[ -n "$node_class" && -n "${pin_nodes[$node_class]:-}" ]] ; then
-	affinity_yaml="nodeSelector:${nl}  kubernetes.io/hostname: \"${pin_nodes[$node_class]}\""
-    elif [[ -n "${pin_nodes[default]:-}" ]] ; then
-	affinity_yaml="nodeSelector:${nl}  kubernetes.io/hostname: \"${pin_nodes[default]}\""
+    pin_node=$(get_pin_node "$node_class")
+    if [[ -n "${pin_node:-}" ]] ; then
+	affinity_yaml="nodeSelector:${nl}  kubernetes.io/hostname: \"$pin_node\""
     fi
     if [[ -z "${runtime_class+x}" ]] ; then
 	if [[ -n "$node_class" && -n "${runtime_classes[$node_class]:-}" ]] ; then
@@ -2394,7 +2415,6 @@ spec:
 $(indent 2 <<< "$affinity_yaml")
 $(indent 2 tolerations_yaml ${tolerations+"${tolerations[@]}"})
 ${runtime_class:+$(indent 2 <<< "runtimeClassName: \"$runtime_class\"")}
-${use_pbench:+$(indent 2 <<< "$(pbench_agent_yaml)")}
   containers:
 $(indent 2 "$create_container_function" "$@")
 $(indent 2 volumes_yaml "$namespace" "$instance" "$secret_count")
@@ -2441,6 +2461,7 @@ $(indent 2 standard_deployment_metadata_yaml "$namespace" client)
 $(indent 2 standard_labels_yaml -l "$workload" "$namespace" "$instance")
 spec:
   replicas: $replicas
+$(indent 2 <<< "${security_context:-}")
   selector:
     matchLabels:
       instance: ${namespace}-${workload}-${instance}
@@ -2451,7 +2472,7 @@ spec:
 $(indent 6 standard_labels_yaml -l "$workload" "$namespace" "$instance")
 $(indent 6 standard_pod_metadata_yaml "$namespace" client)
 $(indent 4 create_spec -A "$affinity_yaml" -c "$node_class" "$@")
-${security_context:+$(indent 6 <<< "$security_context")}
+$(indent 6 <<< "${security_context:-}")
 EOF
 }
 
@@ -2467,14 +2488,16 @@ function create_standard_deployment() {
     local deployment_type=$deployment_type
     local arglist_function=
     local create_container_function=create_standard_containers
+    local pod_annotations=("${pod_annotations[@]}")
     security_context="$(default_security_context)"
-    while getopts 'A:w:S:pc:d:e:C:a:' opt "$@" ; do
+    while getopts 'A:w:S:pc:d:e:C:a:N:' opt "$@" ; do
 	case "$opt" in
 	    A) affinity_yaml="$OPTARG"		   ;;
 	    a) arglist_function="$OPTARG"	   ;;
 	    C) create_container_function="$OPTARG" ;;
 	    c) node_class="$OPTARG"		   ;;
 	    d) deployment_type="$OPTARG"	   ;;
+	    N) pod_annotations+=("$OPTARG")	   ;;
 	    p) allow_replica_controller=0	   ;;
 	    S) security_context="$OPTARG"	   ;;
 	    w) workload="$OPTARG"	  	   ;;
@@ -2545,14 +2568,7 @@ $(indent 2 standard_labels_yaml 'sync' "$namespace")
     matchLabels:
       app: ${namespace}
 $(create_container_function=create_container_sync create_spec -P -c sync -r '' "$namespace" 0 0 "$@")
-  securityContext:
-    allowPrivilegeEscalation: False
-    capabilities:
-      drop:
-      - ALL
-    runAsNonRoot: True
-    seccompProfile:
-      type: RuntimeDefault
+$(indent 2 default_security_context)
   restartPolicy: Never
 EOF
 }
@@ -2613,9 +2629,7 @@ $(indent 2 standard_labels_yaml -s dc "$workload" "$namespace" "$instance" "$rep
     matchLabels:
       replica: ${namespace}-${workload}-${instance}-${replica}
   securityContext:
-    seccompProfile: RuntimeDefault
     privileged: True
-    allowPrivilegeEscalation: False
 $(create_container_function=create_container_drop_cache create_spec -P -c drop-cache -r '' "$namespace" "$instance" 0)
   - name: "proc-sys-vm"
     hostPath:
@@ -2843,6 +2857,7 @@ function do_cleanup() {
 	sleep "${injected_errors[cleanup]:-}"
 	killthemall "Cleanup timed out!"
     fi
+    # shellcheck disable=SC2086
     _do_cleanup $force $objects_to_clean || killthemall "Cleanup timed out!"
 }
 
@@ -2898,9 +2913,16 @@ function do_logging() {
     local namespace
     local pod
     local ignore
+    local namespace_retrieved=
     while read -r namespace pod ignore ; do
 	if [[ -n "$namespace" && -n "$pod" ]] ; then
-	    sync_pods+=("-n $namespace $pod")
+	    if [[ -z "$namespace_retrieved" ]] ; then
+		namespace_retrieved=$namespace
+		sync_pods+=("-n" "$namespace")
+	    elif [[ "$namespace" != "$namespace_retrieved" ]] ; then
+		killthemall "Namespace mismatch: $namespace vs $namespace_retrieved"
+	    fi
+	    sync_pods+=("$pod")
 	fi
     done <<< "$(____OC get pod -A --no-headers -l "${basename}-sync=${uuid}")"
     get_logs "${sync_pods[@]}" &
@@ -2993,9 +3015,9 @@ function run_clusterbuster_2() {
 	do_cleanup -p 1>&2 || return 1
     fi
     if ((cleanup_always)) ; then
-	trap 'killthemall "Cleaning up"; wait; remove_tmpdir; doit=1; do_cleanup -f; exit 1' TERM INT HUP
+	trap 'echo "Cleaning up" 1>&2; remove_tmpdir; doit=1; do_cleanup -f; killthemall ''; wait; remove_tmpdir; doit=1; do_cleanup -f; exit 1' TERM INT HUP
     else
-	trap 'killthemall "Not cleaning up"; wait; remove_tmpdir; exit 1' TERM HUP INT
+	trap 'remove_tmpdir; killthemall "Not cleaning up"; wait; exit 1' TERM HUP INT
     fi
     if [[ $doit -gt 0 ]] ; then
 	if [[ -n "${artifactdir:-}" && $take_prometheus_snapshot -gt 0 ]] ; then
@@ -3150,14 +3172,6 @@ esac
 
 if [[ -z $OC && $doit -gt 0 ]] ; then
     fatal "Cannot find oc or kubectl command, exiting!"
-fi
-
-if [[ -z "$pbench_controller_address" && $pbench_controller_port -ne 0 ]] ; then
-    fatal "Both pbench_controller_address and pbench_controller_port must be specified"
-fi
-
-if [[ -n "$pbench_controller_address" && $pbench_controller_port -eq 0 ]] ; then
-    fatal "Both pbench_controller_address and pbench_controller_port must be specified"
 fi
 
 resource_validation_failed=0

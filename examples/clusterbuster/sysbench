@@ -1,9 +1,0 @@
-# Run as
-# clusterbuster -f sysbench
-
-workload=sysbench
-precleanup
-cleanup
-workloadruntime=30
-exit_at_end
-no-report-object-creation
