@@ -107,6 +107,19 @@ function parse_size() {
     done
 }
 
+function parse_optvalues() {
+    echoarg=
+    if [[ $1 = '-n' ]] ; then
+	echoarg=-n
+	shift
+    fi
+    local args=$*
+    args=${args//,/ }
+    for arg in $args ; do
+	echo $echoarg "$arg"
+    done
+}
+
 function parse_option() {
     local option=$1
     option=${option## }

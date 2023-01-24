@@ -49,7 +49,8 @@ function cpusoaker_test() {
 		job_name="$replicas"
 		if run_clusterbuster_1 -r "$xruntime" -y  -j "$job_name" -w cpusoaker \
 				       -t "$___cpusoaker_job_timeout" -R "$___cpusoaker_job_runtime" -- \
-				       --replicas="$replicas" --cleanup-always=1 ; then
+				       --replicas="$replicas" --failure-status='No Result' \
+				       --cleanup-always=1 ; then
 		    :
 		else
 		    unset runtimes_to_test[$runtime]

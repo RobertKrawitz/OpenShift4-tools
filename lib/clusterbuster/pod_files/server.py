@@ -61,7 +61,7 @@ class server_client(clusterbuster_pod_client):
             self._timestamp(f"waited for {pid} => {status}")
             if status != 0:
                 status = int((status / 256)) | (status & 255)
-                return(1)
+                return 1
             pid_count = pid_count - 1
 
 

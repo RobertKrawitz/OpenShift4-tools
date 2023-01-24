@@ -570,7 +570,7 @@ while getopts 'hn-:B:' opt ; do
     case "$opt" in
 	-) process_option "$OPTARG"	;;
 	h) help				;;
-	n) dontdoit=-n			;;
+	n) debugonly=1; dontdoit=-n	;;
 	*)				;;
     esac
 done
