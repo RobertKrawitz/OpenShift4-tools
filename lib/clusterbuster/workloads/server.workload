@@ -190,7 +190,7 @@ function server_supports_reporting() {
 function server_report_options() {
     cat <<EOF
 "msg_size": $___msg_size,
-"interface": "${___server_interface}"
+"interface": "${___server_interface}",
 "server_interface": "${___server_interface_server}",
 "client_interface": "${___server_interface_client}"
 EOF

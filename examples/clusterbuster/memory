@@ -9,4 +9,4 @@ no-report-object-creation
 replicas=8
 processes=3
 namespaces=1
-memorysize=1Gi
+memorysize=512Mi
