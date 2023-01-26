@@ -313,18 +313,18 @@ function get_available_nodes() {
     for role in 'node-role.kubernetes.io/clusterbuster=' 'node-role.kubernetes.io/worker=,node-role.kubernetes.io/master!=' 'node-role.kubernetes.io/worker=' ; do
 	readarray -d ' ' -t nodes < <("${OC}" get node -l "$role" -o jsonpath='{.items[*].metadata.name}')
 	if ((${#nodes[@]} >= 2)) ; then
-	    echo "${nodes[*]}"
+	    (IFS=$'\n'; echo "${nodes[*]}")
 	    return
 	fi
     done
-    echo "${nodes[*]}"
+    (IFS=$'\n'; echo "${nodes[*]}")
 }
 
 function set_pin_nodes() {
     if ((! pin_jobs)) ; then return; fi
     if [[ -z "$client_pin_node" || -z "$server_pin_node" || -z "$sync_pin_node" ]] ; then
 	local -a nodes
-	readarray -d ' ' -t nodes < <(get_available_nodes)
+	readarray -t nodes < <(get_available_nodes)
 	local -i node_count=${#nodes[@]}
 	if ((node_count < 1)) ; then
 	    finis "No nodes found!"
@@ -746,7 +746,9 @@ function run_clusterbuster_1() {
 
 function run_clusterbuster() {
     for runtimeclass in "${runtimeclasses[@]}" ; do
-	run_clusterbuster_1 -r "$runtimeclass" "$@"
+	if [[ -z "$runtimeclass" ]] || oc get runtimeclass "$runtimeclass" >/dev/null 2>&1 ; then
+	    run_clusterbuster_1 -r "$runtimeclass" "$@"
+	fi
     done
     counter=$((counter+1))
 }
