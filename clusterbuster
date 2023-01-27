@@ -402,8 +402,8 @@ $(print_workloads_supporting_reporting '                        - ')
        --container_image=<image>
                         Image to use (default $container_image).
                         Does not apply to "classic" or "pause" workloads.
-       --deployment_type=<pod,deployment>
-                        Deploy via individual pods or deployments (default $deployment_type)
+       --deployment_type=<pod,deployment,vm>
+                        Deploy via individual pods, deployments or vm (default $deployment_type)
        --external_sync=host:port
                         Sync to external host rather than internally
        --request=<resource=value>
@@ -443,6 +443,19 @@ $(print_workloads_supporting_reporting '                        - ')
                         Allow use of direct I/O for virtiofsd (default $virtiofsd_direct).
        --virtiofsd-threadpoolsize=n
                         Use the specified thread pool size for virtiofsd (default 1).
+       --vmthreads=<value>
+                        Specify the number of threads on each core (default $vm_threads).
+       --vmcores=<value>
+                        Specify the number of cores on each socket (default $vm_cores).
+       --vmsockets=<value>
+                        Specify the number of sockets (default $vm_sockets).
+       --vmgraceperiod=<value>
+                        Specify the period between when a vm is signaled to
+                        shutdown and the point when KubeVirt will force off
+                        the vm (default $vm_grace_period).
+       --vmimage=<image_url>
+                        Container vm disk image to use.
+                        Default $vm_image
 
     Tuning object creation (short equivalents):
        --scale-ns=[0,1] Scale up the number of namespaces vs.
