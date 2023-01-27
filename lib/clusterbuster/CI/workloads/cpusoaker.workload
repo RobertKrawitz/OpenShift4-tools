@@ -37,9 +37,11 @@ function cpusoaker_test() {
     local -A runtimes_to_test=()
     local runtime
     for runtime in "${runtimeclasses[@]}" ; do
-	runtime=${runtime:-runc}
-	runtimes+=("$runtime")
-	runtimes_to_test[$runtime]=1
+	if [[ -z "$runtime" ]] || oc get runtimeclass "$runtime" >/dev/null 2>&1 ; then
+	    runtime=${runtime:-runc}
+	    runtimes+=("$runtime")
+	    runtimes_to_test[$runtime]=1
+	fi
     done
     while ((___cpusoaker_max_replicas == -1 || replicas <= ___cpusoaker_max_replicas)); do
 	for runtime in "${runtimes[@]}" ; do
