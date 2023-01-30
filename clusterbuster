@@ -153,7 +153,7 @@ declare -i liveness_probe_frequency=0
 declare -i liveness_probe_sleep_time=0
 declare -i metrics_support=-1
 declare pod_prefix=
-declare -r arch=$(uname -m)
+declare arch=
 declare failure_status=Fail
 
 declare -r sync_flag_file="/tmp/syncfile";
@@ -165,7 +165,7 @@ declare xuuid=$uuid
 
 declare kata_runtime_class=kata
 declare image_pull_policy=
-declare container_image=quay.io/rkrawitz/clusterbuster:${arch}-latest
+declare container_image=
 
 declare accumulateddata=
 declare -a plurals=('s' '')
@@ -289,6 +289,11 @@ EOF
                         generate a random-based UUID.
        --exit_at_end    Exit upon completion of workload (-e/-E)
        --verbose        Print verbose log messages (-v)
+       --arch=<architecture>
+                        Use the specified architecture.  Default the
+                        architecture of this platform.
+       --containerimage=<image>
+                        Use the specified container image.
 
     Reporting Options:
        --report=<format>
@@ -659,6 +664,7 @@ function process_option() {
 	jobname)		    job_name=$optvalue				;;
 	workload)		    requested_workload=$optvalue		;;
 	basename)		    basename=$optvalue				;;
+	arch)			    arch=$optvalue				;;
 	# Object definition
 	workdir)		    common_workdir=$optvalue			;;
 	configmapfile)		    configmap_files+=("$optvalue")		;;
@@ -1408,7 +1414,7 @@ function _report_runtime_classes() {
 function _extract_metrics() {
     if supports_metrics && [[ -r "$metrics_file" ]] ; then
 	cat <<EOF
-"metrics": $("${__topdir__}/prom-extract" --define "namespace_re=${basename}-.*" -m "$metrics_file" --metrics-only --start_time="$prometheus_starting_timestamp" --epoch="$metrics_epoch" --post-settling-time=0)
+"metrics": $("${__topdir__}/prom-extract" --define "namespace_re=${basename}-.*" -m "$metrics_file" --metrics-only --start_time="$prometheus_starting_timestamp" --epoch="$metrics_epoch" --post-settling-time=0),
 EOF
     fi
 }
@@ -1518,7 +1524,7 @@ $(indent 8 call_api -w "$requested_workload" "report_options")
     }
   }
 },
-$(indent 2 _extract_metrics),
+$(indent 2 _extract_metrics)
 "nodes": $(__OC get nodes -ojson),
 "api_objects": $(__OC get all -A -l "${basename}-id=$uuid" -ojson |jq -r .items?),
 "csvs": $(__OC get csv -A -ojson | jq -r '[foreach .items[]? as $item ([[],[]];0; {name: $item.metadata.name, namespace: $item.metadata.namespace, version: $item.spec.version})]')
@@ -2557,6 +2563,7 @@ EOF
 
 function create_sync_deployment() {
     local namespace=$1; shift
+    local -a tolerations=('node-role.kubernetes.io/infra:Equal:NoSchedule' "${tolerations[@]}")
     create_object -t Pod -n "$namespace" "${namespace}-sync" <<EOF
 apiVersion: v1
 kind: Pod
@@ -3130,6 +3137,8 @@ fi
 
 iworkload=$requested_workload
 requested_workload=$(get_workload "$requested_workload") || help_extended "(Unknown workload '$iworkload')"
+arch=${arch:-$(uname -m)}
+container_image=${container_image:-quay.io/rkrawitz/clusterbuster:${arch}-latest}
 
 call_api -w "$requested_workload" -s "process_options" "${unknown_opts[@]}" || help "${unknown_opt_names[@]}"
 
