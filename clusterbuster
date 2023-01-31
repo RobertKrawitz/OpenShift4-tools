@@ -1172,7 +1172,7 @@ function _monitor_pods() {
 	    if [[ -n "${starting_pods[*]}" ]] ; then
 		pods_now_pending=$(IFS=$'\n'; echo "${!starting_pods[*]}" | sort)
 		if [[ "$pods_now_pending" != "$pods_pending" ]] ; then
-		    pod_progress_timeout=$((timestamp+10))
+		    pod_progress_timeout=$((timestamp+60))
 		    pods_pending="$pods_now_pending"
 		else
 		    if ((timestamp > pod_progress_timeout)) ; then
