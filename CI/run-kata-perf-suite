@@ -317,7 +317,7 @@ function get_available_nodes() {
 	    return
 	fi
     done
-    echo "${nodes[*]}"
+    (IFS=$'\n'; echo "${nodes[*]}")
 }
 
 function set_pin_nodes() {
@@ -747,7 +747,9 @@ function run_clusterbuster_1() {
 
 function run_clusterbuster() {
     for runtimeclass in "${runtimeclasses[@]}" ; do
-	run_clusterbuster_1 -r "$runtimeclass" "$@"
+	if [[ -z "$runtimeclass" ]] || oc get runtimeclass "$runtimeclass" >/dev/null 2>&1 ; then
+	    run_clusterbuster_1 -r "$runtimeclass" "$@"
+	fi
     done
     counter=$((counter+1))
 }
