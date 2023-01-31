@@ -27,6 +27,7 @@ fio-memsize=4096
 uperf-timeout=300
 
 cpusoaker-timeout=600
+cpusoaker-initial-replicas=1,2,3,4
 
 job_runtime=60
 artifactdir=
