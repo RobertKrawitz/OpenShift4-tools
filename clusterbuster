@@ -1172,7 +1172,7 @@ function _monitor_pods() {
 	    if [[ -n "${starting_pods[*]}" ]] ; then
 		pods_now_pending=$(IFS=$'\n'; echo "${!starting_pods[*]}" | sort)
 		if [[ "$pods_now_pending" != "$pods_pending" ]] ; then
-		    pod_progress_timeout=$((timestamp+60))
+		    pod_progress_timeout=$((timestamp+10))
 		    pods_pending="$pods_now_pending"
 		else
 		    if ((timestamp > pod_progress_timeout)) ; then
@@ -1558,7 +1558,6 @@ function _get_logs() {
     tfile1=$(mktemp ${cb_tempdir:+-p "$cb_tempdir"} -t '_clusterbusterlogs1.XXXXXXXXXX') || fatal "Cannot create temporary file"
     tfile2=$(mktemp ${cb_tempdir:+-p "$cb_tempdir"} -t '_clusterbusterlogs2.XXXXXXXXXX') || fatal "Cannot create temporary file"
     "$@" > "$tfile1" && status=Success
-    set -x
     cat > "$tfile2" <<EOF
 {
 $(indent 2 < "$tfile1"),
@@ -2706,18 +2705,22 @@ function find_first_deployment() {
 
 function create_all_namespaces() {
     local i
+    local -a pids=()
     for i in $(seq 0 "$((parallel_namespaces - 1))") ; do
 	create_objects_n namespace "$parallel_namespaces" "$objs_per_call_namespaces" "$i" "$sleep_between_namespaces" &
+	pids+=("$!")
     done
-    wait || killthemall "Unable to create namespaces"
+    wait "${pids[@]}" || killthemall "Unable to create namespaces"
 }
 
 function create_all_secrets() {
     local i
+    local -a pids=()
     for i in $(seq 0 "$((parallel_secrets - 1))") ; do
 	create_objects_n secrets "$parallel_secrets" "$objs_per_call_secrets" "$i" "$sleep_between_secrets" "$deps_per_namespace" "$secrets" &
+	pids+=("$!")
     done
-    wait || killthemall "Unable to create secrets"
+    wait "${pids[@]}" || killthemall "Unable to create secrets"
 }
 
 function create_system_configmap() {
@@ -2729,8 +2732,9 @@ function create_system_configmap() {
 	fi
 	for i in $(seq 0 "$((parallel_configmaps - 1))") ; do
 	    create_objects_n configmaps "$parallel_configmaps" "$objs_per_call_configmaps" "$i" "$sleep_between_configmaps" "systemconfigmap" "${systemfiles[@]}"&
+	    pids+=("$!")
 	done
-	wait || killthemall "Unable to create system configmap"
+	wait "${pids[@]}" || killthemall "Unable to create system configmap"
     fi
 }
 
@@ -2738,10 +2742,12 @@ function create_all_configmaps() {
     create_system_configmap
     (( ${#configmap_files[@]} )) || return;
     local i
+    local -a pids=()
     for i in $(seq 0 "$((parallel_configmaps - 1))") ; do
 	create_objects_n configmaps "$parallel_configmaps" "$objs_per_call_configmaps" "$i" "$sleep_between_configmaps" "configmap" "${configmap_files[@]}"&
+	pids+=("$!")
     done
-    wait || killthemall "Unable to create configmaps"
+    wait "${pids[@]}" || killthemall "Unable to create configmaps"
 }
 
 function drop_host_caches() {
@@ -2757,19 +2763,23 @@ function drop_host_caches() {
     else
 	readarray -t nodes_to_drop <<< "$(____OC get -l node-role.kubernetes.io/worker node -ojsonpath="{range .items[*]}{.metadata.name}{'\n'}{end}")"
     fi
+    local -a pids=()
     for n in "${nodes_to_drop[@]}" ; do
 	((report_object_creation)) && echo "Dropping buffer cache: $n"
 	_OC debug --no-tty=true "node/$n" -- chroot /host sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches' 2>/dev/null &
+	pids+=("$!")
     done
-    wait
+    wait "${pids[@]}"
 }
 
 function create_all_deployments() {
     local i
+    local -a pids=()
     for i in $(seq 0 "$((parallel_deployments - 1))") ; do
 	create_objects_n deployment "$parallel_deployments" "$objs_per_call_deployments" "$i" "$sleep_between_deployments" "$deps_per_namespace" "$secrets" "$replicas" "$containers_per_pod" &
+	pids+=("$!")
     done
-    wait || killthemall "Unable to create deployments"
+    wait "${pids[@]}" || killthemall "Unable to create deployments"
 }
 
 function create_all_objects() {
@@ -2915,7 +2925,8 @@ function do_logging() {
     local -i logs_expected=0
     logs_expected="$(calculate_logs_required "$namespaces" "$deps_per_namespace" "$replicas" "$containers_per_pod")"
     ((logs_expected > 0)) || return 0
-    trap 'wait; return 1' TERM
+    local -i get_logs_pid=0
+    trap 'if ((get_logs_pid > 1)) ; then kill -TERM "$get_logs_pid"; wait "$get_logs_pid" 2>/dev/null; fi; return 1' TERM
 
     local -a sync_pods=()
     local namespace
@@ -2934,7 +2945,7 @@ function do_logging() {
 	fi
     done <<< "$(____OC get pod -A --no-headers -l "${basename}-sync=${uuid}")"
     get_logs "${sync_pods[@]}" &
-    local -i get_logs_pid=$!
+    get_logs_pid=$!
     if ((timeout > 0)) ; then
 	local -i itimeout=$timeout
 	local -i finis=0
@@ -3023,7 +3034,7 @@ function run_clusterbuster_2() {
 	do_cleanup -p 1>&2 || return 1
     fi
     if ((cleanup_always)) ; then
-	trap 'echo "Cleaning up" 1>&2; remove_tmpdir; doit=1; do_cleanup -f; killthemall ''; wait; remove_tmpdir; doit=1; do_cleanup -f; exit 1' TERM INT HUP
+	trap 'echo "Cleaning up" 1>&2; remove_tmpdir; doit=1; do_cleanup -f; killthemall ""; wait; remove_tmpdir; doit=1; do_cleanup -f; exit 1' TERM INT HUP
     else
 	trap 'remove_tmpdir; killthemall "Not cleaning up"; wait; exit 1' TERM HUP INT
     fi
