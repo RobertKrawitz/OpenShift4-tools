@@ -1558,6 +1558,7 @@ function _get_logs() {
     tfile1=$(mktemp ${cb_tempdir:+-p "$cb_tempdir"} -t '_clusterbusterlogs1.XXXXXXXXXX') || fatal "Cannot create temporary file"
     tfile2=$(mktemp ${cb_tempdir:+-p "$cb_tempdir"} -t '_clusterbusterlogs2.XXXXXXXXXX') || fatal "Cannot create temporary file"
     "$@" > "$tfile1" && status=Success
+    set -x
     cat > "$tfile2" <<EOF
 {
 $(indent 2 < "$tfile1"),
@@ -1590,7 +1591,7 @@ function _retrieve_artifacts() {
 }
 
 function print_report() {
-    if [[ $report_format == raw ]] ; then
+    if [[ $report_format = raw ]] ; then
 	cat
     else
 	"${pathdir:-.}/clusterbuster-report" ${report_format:+-o "$report_format"}
