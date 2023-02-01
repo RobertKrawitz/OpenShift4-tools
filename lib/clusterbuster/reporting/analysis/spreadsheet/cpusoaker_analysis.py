@@ -48,7 +48,7 @@ class cpusoaker_analysis(ClusterBusterAnalyzeOne):
         answer += self._analyze_variables(self._data, 'first_pod_start', 'First pod start (sec)',
                                           integer=False, difference=True)
         answer += self._analyze_variables(self._data, 'last_pod_start', 'Last pod start (sec)',
-                                          integer=False, difference=True)
+                                          integer=False, difference=True, rate_per_second=True)
         answer += self._analyze_variables(self._data, 'memory_per_pod', 'Memory/pod (MiB)',
                                           multiplier=1/1048576, integer=False, ratio=False, difference=True)
         answer += self._analyze_variables(self._data, None, 'Last N-1 Pod Start Interval',
@@ -56,7 +56,8 @@ class cpusoaker_analysis(ClusterBusterAnalyzeOne):
         return answer
 
     def _analyze_variables(self, data: dict, column, header: str, multiplier=1.0, valfunc=None,
-                           integer: bool = True, ratio: bool = True, difference: bool = False):
+                           integer: bool = True, ratio: bool = True, difference: bool = False,
+                           rate_per_second: bool = False):
 
         def isnumber(x):
             return isinstance(x, (int, float))
@@ -75,9 +76,8 @@ class cpusoaker_analysis(ClusterBusterAnalyzeOne):
 """
         rows = []
         for pods, data1 in sorted(list(data.items())):
-            baseline_value = self.get_value(data1, runs[0], column, valfunc)
-            row = [str(pods), prettyprint(baseline_value, base=0, integer=integer, precision=3, multiplier=multiplier)]
-            for run in runs[1:]:
+            row = [str(pods)]
+            for run in runs:
                 run_value = self.get_value(data1, run, column, valfunc)
                 row.append(prettyprint(run_value,  base=0, integer=integer, precision=3, multiplier=multiplier))
             rows.append('\t'.join(row))
@@ -94,7 +94,7 @@ class cpusoaker_analysis(ClusterBusterAnalyzeOne):
                 row = [str(pods), '']
                 for run in runs[1:]:
                     run_value = self.get_value(data1, run, column, valfunc)
-                    run_ratio = run_value / baseline_value if isnumber(baseline_value) and isnumber(run_value) else ''
+                    run_ratio = run_value / baseline_value if isnumber(baseline_value) and baseline_value > 0 and isnumber(run_value) else ''
                     row.append(prettyprint(run_ratio, base=0, precision=3))
                 rows.append('\t'.join(row))
             answer += '\n'.join(rows) + '\n'
@@ -110,8 +110,23 @@ class cpusoaker_analysis(ClusterBusterAnalyzeOne):
                 row = [str(pods), '']
                 for run in runs[1:]:
                     run_value = self.get_value(data1, run, column, valfunc)
-                    run_delta = run_value - baseline_value if isnumber(baseline_value) and isnumber(run_value) else ''
+                    run_delta = run_value - baseline_value if isnumber(baseline_value) and baseline_value > 0 and isnumber(run_value) else ''
                     row.append(prettyprint(run_delta, base=0, integer=integer, precision=3, multiplier=multiplier))
+                rows.append('\t'.join(row))
+            answer += '\n'.join(rows) + '\n'
+
+        if rate_per_second:
+            answer += f"""
+{header}, N pods (starts per second)
+{columns_txt}
+"""
+            rows = []
+            for pods, data1 in sorted(list(data.items())):
+                row = [str(pods)]
+                for run in runs:
+                    run_value = self.get_value(data1, run, column, valfunc)
+                    per_second = int(pods) / run_value if isnumber(run_value) and run_value > 0 else ''
+                    row.append(prettyprint(per_second, base=0, integer=integer, precision=3, multiplier=multiplier))
                 rows.append('\t'.join(row))
             answer += '\n'.join(rows) + '\n'
 
