@@ -22,7 +22,6 @@ declare -gi ___cpusoaker_job_timeout=0
 declare -ga ___cpusoaker_initial_replicas=()
 
 function cpusoaker_next_replica_count() {
-    echo "+${____cpusoaker_current_replica_index}" 1>&2
     if ((____cpusoaker_current_replica_index < ${#___cpusoaker_initial_replicas[@]})) ; then
 
 	replicas="${___cpusoaker_initial_replicas[$____cpusoaker_current_replica_index]}"
@@ -98,7 +97,7 @@ function cpusoaker_process_option() {
 	cpusoaker*runtime)  ___cpusoaker_job_runtime=$optvalue		;;
 	cpusoaker*timeout)  ___cpusoaker_job_timeout=$optvalue		;;
 	cpusoakermax*)      ___cpusoaker_max_replicas=$optvalue		;;
-	cpusoakerinit*)	    ___cpusoaker_initial_replicas+=($(parse_optvalues "$optvalue")) ;;
+	cpusoakerinit*)	    ___cpusoaker_initial_replicas=($(parse_optvalues "$optvalue")) ;;
 	*) 		    return 1					;;
     esac
     return 0
