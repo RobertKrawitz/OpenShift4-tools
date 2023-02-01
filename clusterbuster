@@ -1008,27 +1008,6 @@ function set_start_timestamps() {
 }
 
 function get_pod_and_local_timestamps() {
-    local status
-    local -i retrycount=24
-    # Try for up to 2 minutes to get the sync pod.  If a pod is not running,
-    # attempting to oc exec into it can lock up.  Hopefully if it's running_pods
-    # it will stay OK.
-    while ((retrycount-- > 0)) ; do
-	status=$(__OC get pod "$@" -o jsonpath="{.status.phase}" 2>/dev/null)
-	case "${status,,}" in
-	    running)
-		break
-		;;
-	    error|failed)
-		echo "Sync pod failed to start:" 1>&2
-		__OC logs "$@" | tail -10 1>&2
-		killthemall "Sync pod failed"
-		;;
-	    *)
-		sleep 5
-		;;
-	esac
-    done
     until __OC exec "$@" -- /bin/sh -c "date +%s.%N" </dev/null >/dev/null 2>/dev/null ; do
 	local status
 	status=$(__OC get pod "$@" -o jsonpath="{.status.phase}" 2>/dev/null)
