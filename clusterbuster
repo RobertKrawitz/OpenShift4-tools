@@ -153,7 +153,7 @@ declare -i liveness_probe_frequency=0
 declare -i liveness_probe_sleep_time=0
 declare -i metrics_support=-1
 declare pod_prefix=
-declare -r arch=$(uname -m)
+declare arch=
 declare failure_status=Fail
 
 declare -r sync_flag_file="/tmp/syncfile";
@@ -165,7 +165,7 @@ declare xuuid=$uuid
 
 declare kata_runtime_class=kata
 declare image_pull_policy=
-declare container_image=quay.io/rkrawitz/clusterbuster:${arch}-latest
+declare container_image=
 
 declare accumulateddata=
 declare -a plurals=('s' '')
@@ -289,6 +289,11 @@ EOF
                         generate a random-based UUID.
        --exit_at_end    Exit upon completion of workload (-e/-E)
        --verbose        Print verbose log messages (-v)
+       --arch=<architecture>
+                        Use the specified architecture.  Default the
+                        architecture of this platform.
+       --containerimage=<image>
+                        Use the specified container image.
 
     Reporting Options:
        --report=<format>
@@ -659,6 +664,7 @@ function process_option() {
 	jobname)		    job_name=$optvalue				;;
 	workload)		    requested_workload=$optvalue		;;
 	basename)		    basename=$optvalue				;;
+	arch)			    arch=$optvalue				;;
 	# Object definition
 	workdir)		    common_workdir=$optvalue			;;
 	configmapfile)		    configmap_files+=("$optvalue")		;;
@@ -1108,6 +1114,7 @@ function _monitor_pods() {
 	warn "*** Injecting pending error"
 	starting_pods["TEST/TEST"]=1
     fi
+    local -i message_printed=0
     while read -r namespace name status ; do
 	if [[ -n "${cb_tempdir:-}" && -f "$cb_tempdir/___run_complete" ]] ; then
 	    if [[ -z "${injected_errors[timeout]:-}" ]] ; then
@@ -1168,6 +1175,18 @@ function _monitor_pods() {
 		if [[ "$pods_now_pending" != "$pods_pending" ]] ; then
 		    pod_progress_timeout=$((timestamp+60))
 		    pods_pending="$pods_now_pending"
+		    if [[ -z "$pods_pending" ]] ; then
+			echo "All pods are running                                 " | echo_if_desired 1>&2
+		    else
+			# If we've reported pods pending, and then more pods are running,
+			# we want to overprint the old message so it doesn't look like things
+			# are stuck.  However, to avoid log clutter, we don't do this unless
+			# a pending message was previously printed.
+			if ((message_printed)) ; then
+			    echo -ne "                                                  \r" | echo_if_desired 1>&2
+			    message_printed=1
+			fi
+		    fi
 		else
 		    if ((timestamp > pod_progress_timeout)) ; then
 			killthemall "No progress with pods after 1 minute, ${#starting_pods[@]} pods still pending."
@@ -1178,6 +1197,7 @@ function _monitor_pods() {
 			if ((pod_progress_timeout-timestamp == 1)) ; then p_seconds=second; fi
 			if ((${#starting_pods[@]} == 1)) ; then p_pods=pod; fi
 			echo -ne "${#starting_pods[@]} $p_pods pending (will retry $((pod_progress_timeout-timestamp)) $p_seconds)\r" | echo_if_desired 1>&2
+			message_printed=1
 		    fi
 		fi
 	    fi
@@ -1262,7 +1282,7 @@ function _log_helper() {
     fi
     until [[ $(____OC get pod -ojsonpath='{.status.phase}' "$@" 2>/dev/null) != 'Running' ]] ; do
 	# Need to produce periodic output to stderr to prevent oc exec connection from prematurely terminating
-	____OC exec --stdin=false "$@" -- sh -c "while [[ ! -f '$sync_flag_file' ]] ; do sleep 5; echo KEEPALIVE 1>&2; done; cat '$sync_flag_file'" 2>/dev/null && break
+	____OC exec --stdin=false "$@" -- sh -c "while [[ ! -f '$sync_flag_file' ]] ; do sleep 5; echo KEEPALIVE 1>&2; done; cat '$sync_flag_file'; sleep 5; echo DONE 1>&2" 2>/dev/null && break
 	sleep 5
     done
     # Tell the pod monitor to stop.
@@ -1408,7 +1428,7 @@ function _report_runtime_classes() {
 function _extract_metrics() {
     if supports_metrics && [[ -r "$metrics_file" ]] ; then
 	cat <<EOF
-"metrics": $("${__topdir__}/prom-extract" --define "namespace_re=${basename}-.*" -m "$metrics_file" --metrics-only --start_time="$prometheus_starting_timestamp" --epoch="$metrics_epoch" --post-settling-time=0)
+"metrics": $("${__topdir__}/prom-extract" --define "namespace_re=${basename}-.*" -m "$metrics_file" --metrics-only --start_time="$prometheus_starting_timestamp" --epoch="$metrics_epoch" --post-settling-time=0),
 EOF
     fi
 }
@@ -1518,7 +1538,7 @@ $(indent 8 call_api -w "$requested_workload" "report_options")
     }
   }
 },
-$(indent 2 _extract_metrics),
+$(indent 2 _extract_metrics)
 "nodes": $(__OC get nodes -ojson),
 "api_objects": $(__OC get all -A -l "${basename}-id=$uuid" -ojson |jq -r .items?),
 "csvs": $(__OC get csv -A -ojson | jq -r '[foreach .items[]? as $item ([[],[]];0; {name: $item.metadata.name, namespace: $item.metadata.namespace, version: $item.spec.version})]')
@@ -1584,7 +1604,7 @@ function _retrieve_artifacts() {
 }
 
 function print_report() {
-    if [[ $report_format == raw ]] ; then
+    if [[ $report_format = raw ]] ; then
 	cat
     else
 	"${pathdir:-.}/clusterbuster-report" ${report_format:+-o "$report_format"}
@@ -2557,6 +2577,7 @@ EOF
 
 function create_sync_deployment() {
     local namespace=$1; shift
+    local -a tolerations=('node-role.kubernetes.io/infra:Equal:NoSchedule' "${tolerations[@]}")
     create_object -t Pod -n "$namespace" "${namespace}-sync" <<EOF
 apiVersion: v1
 kind: Pod
@@ -2698,18 +2719,22 @@ function find_first_deployment() {
 
 function create_all_namespaces() {
     local i
+    local -a pids=()
     for i in $(seq 0 "$((parallel_namespaces - 1))") ; do
 	create_objects_n namespace "$parallel_namespaces" "$objs_per_call_namespaces" "$i" "$sleep_between_namespaces" &
+	pids+=("$!")
     done
-    wait || killthemall "Unable to create namespaces"
+    wait "${pids[@]}" || killthemall "Unable to create namespaces"
 }
 
 function create_all_secrets() {
     local i
+    local -a pids=()
     for i in $(seq 0 "$((parallel_secrets - 1))") ; do
 	create_objects_n secrets "$parallel_secrets" "$objs_per_call_secrets" "$i" "$sleep_between_secrets" "$deps_per_namespace" "$secrets" &
+	pids+=("$!")
     done
-    wait || killthemall "Unable to create secrets"
+    wait "${pids[@]}" || killthemall "Unable to create secrets"
 }
 
 function create_system_configmap() {
@@ -2721,8 +2746,9 @@ function create_system_configmap() {
 	fi
 	for i in $(seq 0 "$((parallel_configmaps - 1))") ; do
 	    create_objects_n configmaps "$parallel_configmaps" "$objs_per_call_configmaps" "$i" "$sleep_between_configmaps" "systemconfigmap" "${systemfiles[@]}"&
+	    pids+=("$!")
 	done
-	wait || killthemall "Unable to create system configmap"
+	wait "${pids[@]}" || killthemall "Unable to create system configmap"
     fi
 }
 
@@ -2730,10 +2756,12 @@ function create_all_configmaps() {
     create_system_configmap
     (( ${#configmap_files[@]} )) || return;
     local i
+    local -a pids=()
     for i in $(seq 0 "$((parallel_configmaps - 1))") ; do
 	create_objects_n configmaps "$parallel_configmaps" "$objs_per_call_configmaps" "$i" "$sleep_between_configmaps" "configmap" "${configmap_files[@]}"&
+	pids+=("$!")
     done
-    wait || killthemall "Unable to create configmaps"
+    wait "${pids[@]}" || killthemall "Unable to create configmaps"
 }
 
 function drop_host_caches() {
@@ -2749,19 +2777,23 @@ function drop_host_caches() {
     else
 	readarray -t nodes_to_drop <<< "$(____OC get -l node-role.kubernetes.io/worker node -ojsonpath="{range .items[*]}{.metadata.name}{'\n'}{end}")"
     fi
+    local -a pids=()
     for n in "${nodes_to_drop[@]}" ; do
 	((report_object_creation)) && echo "Dropping buffer cache: $n"
 	_OC debug --no-tty=true "node/$n" -- chroot /host sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches' 2>/dev/null &
+	pids+=("$!")
     done
-    wait
+    wait "${pids[@]}"
 }
 
 function create_all_deployments() {
     local i
+    local -a pids=()
     for i in $(seq 0 "$((parallel_deployments - 1))") ; do
 	create_objects_n deployment "$parallel_deployments" "$objs_per_call_deployments" "$i" "$sleep_between_deployments" "$deps_per_namespace" "$secrets" "$replicas" "$containers_per_pod" &
+	pids+=("$!")
     done
-    wait || killthemall "Unable to create deployments"
+    wait "${pids[@]}" || killthemall "Unable to create deployments"
 }
 
 function create_all_objects() {
@@ -2907,7 +2939,8 @@ function do_logging() {
     local -i logs_expected=0
     logs_expected="$(calculate_logs_required "$namespaces" "$deps_per_namespace" "$replicas" "$containers_per_pod")"
     ((logs_expected > 0)) || return 0
-    trap 'wait; return 1' TERM
+    local -i get_logs_pid=0
+    trap 'if ((get_logs_pid > 1)) ; then kill -TERM "$get_logs_pid"; wait "$get_logs_pid" 2>/dev/null; fi; return 1' TERM
 
     local -a sync_pods=()
     local namespace
@@ -2926,7 +2959,7 @@ function do_logging() {
 	fi
     done <<< "$(____OC get pod -A --no-headers -l "${basename}-sync=${uuid}")"
     get_logs "${sync_pods[@]}" &
-    local -i get_logs_pid=$!
+    get_logs_pid=$!
     if ((timeout > 0)) ; then
 	local -i itimeout=$timeout
 	local -i finis=0
@@ -3015,7 +3048,7 @@ function run_clusterbuster_2() {
 	do_cleanup -p 1>&2 || return 1
     fi
     if ((cleanup_always)) ; then
-	trap 'echo "Cleaning up" 1>&2; remove_tmpdir; doit=1; do_cleanup -f; killthemall ''; wait; remove_tmpdir; doit=1; do_cleanup -f; exit 1' TERM INT HUP
+	trap 'echo "Cleaning up" 1>&2; remove_tmpdir; doit=1; do_cleanup -f; killthemall ""; wait; remove_tmpdir; doit=1; do_cleanup -f; exit 1' TERM INT HUP
     else
 	trap 'remove_tmpdir; killthemall "Not cleaning up"; wait; exit 1' TERM HUP INT
     fi
@@ -3130,6 +3163,8 @@ fi
 
 iworkload=$requested_workload
 requested_workload=$(get_workload "$requested_workload") || help_extended "(Unknown workload '$iworkload')"
+arch=${arch:-$(uname -m)}
+container_image=${container_image:-quay.io/rkrawitz/clusterbuster:${arch}-latest}
 
 call_api -w "$requested_workload" -s "process_options" "${unknown_opts[@]}" || help "${unknown_opt_names[@]}"
 

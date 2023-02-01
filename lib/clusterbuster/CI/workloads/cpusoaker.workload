@@ -19,8 +19,25 @@ declare -gi ___cpusoaker_replica_increment=5
 declare -gi ___cpusoaker_max_replicas=-1
 declare -gi ___cpusoaker_job_runtime=0
 declare -gi ___cpusoaker_job_timeout=0
+declare -ga ___cpusoaker_initial_replicas=()
+
+function cpusoaker_next_replica_count() {
+    if ((____cpusoaker_current_replica_index < ${#___cpusoaker_initial_replicas[@]})) ; then
+
+	replicas="${___cpusoaker_initial_replicas[$____cpusoaker_current_replica_index]}"
+	____cpusoaker_current_replica_index=$((____cpusoaker_current_replica_index + 1))
+    elif ((___cpusoaker_max_replicas == -1 || ____cpusoaker_current_replicas <= ___cpusoaker_max_replicas)) ; then
+	replicas="$____cpusoaker_current_replicas"
+	____cpusoaker_current_replicas=$((____cpusoaker_current_replicas + ___cpusoaker_replica_increment))
+    else
+	return 1
+    fi
+}
 
 function cpusoaker_test() {
+    local -i ____cpusoaker_current_replica_index=0
+    local -i ____cpusoaker_current_replicas=0
+    local -i replicas=0
     local default_job_runtime=$1
     if ((___cpusoaker_replica_increment < 1)) ; then
 	echo "Replica increment must be at least 1" 1>&2
@@ -30,10 +47,11 @@ function cpusoaker_test() {
 	___cpusoaker_job_runtime=$default_job_runtime
     fi
     ___cpusoaker_job_timeout=$(compute_timeout "$___cpusoaker_job_timeout")
-    if ((___cpusoaker_starting_replicas <= 0)) ; then
-	___cpusoaker_starting_replicas=$___cpusoaker_replica_increment
+    if ((___cpusoaker_starting_replicas > 0)) ; then
+	____cpusoaker_current_replicas=$___cpusoaker_starting_replicas
+    else
+	____cpusoaker_current_replicas=$___cpusoaker_replica_increment
     fi
-    replicas=$___cpusoaker_starting_replicas
     local -A runtimes_to_test=()
     local runtime
     for runtime in "${runtimeclasses[@]}" ; do
@@ -43,7 +61,7 @@ function cpusoaker_test() {
 	    runtimes_to_test[$runtime]=1
 	fi
     done
-    while ((___cpusoaker_max_replicas == -1 || replicas <= ___cpusoaker_max_replicas)); do
+    while cpusoaker_next_replica_count ; do
 	for runtime in "${runtimes[@]}" ; do
 	    if [[ -n "${runtimes_to_test[$runtime]:-}" ]] ; then
 		local xruntime=$runtime
@@ -61,11 +79,10 @@ function cpusoaker_test() {
 	done
 	if [[ -n "${runtimes_to_test[*]}" ]] ; then
 	    counter=$((counter+1))
-	    replicas=$((replicas+___cpusoaker_replica_increment))
 	else
 	    break
 	fi
-	if ((debugonly)) ; then
+	if ((debugonly && counter > 10)) ; then
 	    break
 	fi
     done
@@ -80,6 +97,7 @@ function cpusoaker_process_option() {
 	cpusoaker*runtime)  ___cpusoaker_job_runtime=$optvalue		;;
 	cpusoaker*timeout)  ___cpusoaker_job_timeout=$optvalue		;;
 	cpusoakermax*)      ___cpusoaker_max_replicas=$optvalue		;;
+	cpusoakerinit*)	    ___cpusoaker_initial_replicas=($(parse_optvalues "$optvalue")) ;;
 	*) 		    return 1					;;
     esac
     return 0
@@ -108,6 +126,9 @@ function cpusoaker_help_options() {
         --cpusoaker-max-replicas=n
                                 Maximum number of replicas to scale to.
                                 Default is -1, equivalent to no upper limit.
+        --cpusoaker_initial_replicas=n[,n...]
+                                Run the specified number of replicas before starting
+                                the increment loop
 EOF
 }
 

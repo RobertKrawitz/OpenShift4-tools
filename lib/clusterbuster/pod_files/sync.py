@@ -433,7 +433,7 @@ result['worker_results'] = data
 
 try:
     with open(tmp_sync_file_base, 'w') as tmp:
-        tmp.write(json.dumps(timebase._clean_numbers(result), sort_keys=True))
+        tmp.write(json.dumps(timebase._clean_numbers(result), sort_keys=True, indent=1))
 except Exception as exc:
     fatal(f"Can't write to sync file {tmp_sync_file_base}: {exc}")
 try:

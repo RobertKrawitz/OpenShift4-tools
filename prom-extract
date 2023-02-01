@@ -15,20 +15,24 @@
 # limitations under the License.
 
 from __future__ import print_function
-from prometheus_api_client import PrometheusConnect
-import argparse
-from datetime import datetime, timezone, timedelta
-from jinja2 import Template
-import json
-import openshift
-import selectors
-import subprocess
 import sys
 import time
+import os
+from datetime import datetime, timezone, timedelta
+import json
+import subprocess
 import urllib3
 import uuid
 import yaml
-import os
+try:
+    from prometheus_api_client import PrometheusConnect
+    import argparse
+    from jinja2 import Template
+    import openshift
+    import selectors
+except Exception:
+    print("{}")
+    sys.exit(1)
 
 
 def eprint(*args, **kwargs):
@@ -111,7 +115,7 @@ def get_prometheus_timestamp():
             with openshift.project('openshift-monitoring'):
                 result = openshift.selector('pod/prometheus-k8s-0').object().execute(['date', '+%s.%N'],
                                                                                      container_name='prometheus')
-                return(datetime.utcfromtimestamp(float(result.out())))
+                return datetime.utcfromtimestamp(float(result.out()))
         except Exception as err:
             if retries <= 0:
                 efail("Unable to retrieve date: %s" % err)
