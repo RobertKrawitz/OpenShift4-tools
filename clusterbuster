@@ -1008,6 +1008,27 @@ function set_start_timestamps() {
 }
 
 function get_pod_and_local_timestamps() {
+    local status
+    local -i retrycount=24
+    # Try for up to 2 minutes to get the sync pod.  If a pod is not running,
+    # attempting to oc exec into it can lock up.  Hopefully if it's running_pods
+    # it will stay OK.
+    while ((retrycount-- > 0)) ; do
+	status=$(__OC get pod "$@" -o jsonpath="{.status.phase}" 2>/dev/null)
+	case "${status,,}" in
+	    running)
+		break
+		;;
+	    error|failed)
+		echo "Sync pod failed to start:" 1>&2
+		__OC logs "$@" | tail -10 1>&2
+		killthemall "Sync pod failed"
+		;;
+	    *)
+		sleep 5
+		;;
+	esac
+    done
     until __OC exec "$@" -- /bin/sh -c "date +%s.%N" </dev/null >/dev/null 2>/dev/null ; do
 	local status
 	status=$(__OC get pod "$@" -o jsonpath="{.status.phase}" 2>/dev/null)
@@ -1114,6 +1135,7 @@ function _monitor_pods() {
 	warn "*** Injecting pending error"
 	starting_pods["TEST/TEST"]=1
     fi
+    local -i message_printed=0
     while read -r namespace name status ; do
 	if [[ -n "${cb_tempdir:-}" && -f "$cb_tempdir/___run_complete" ]] ; then
 	    if [[ -z "${injected_errors[timeout]:-}" ]] ; then
@@ -1174,6 +1196,18 @@ function _monitor_pods() {
 		if [[ "$pods_now_pending" != "$pods_pending" ]] ; then
 		    pod_progress_timeout=$((timestamp+60))
 		    pods_pending="$pods_now_pending"
+		    if [[ -z "$pods_pending" ]] ; then
+			echo "All pods are running                                 " | echo_if_desired 1>&2
+		    else
+			# If we've reported pods pending, and then more pods are running,
+			# we want to overprint the old message so it doesn't look like things
+			# are stuck.  However, to avoid log clutter, we don't do this unless
+			# a pending message was previously printed.
+			if ((message_printed)) ; then
+			    echo -ne "                                                  \r" | echo_if_desired 1>&2
+			    message_printed=1
+			fi
+		    fi
 		else
 		    if ((timestamp > pod_progress_timeout)) ; then
 			killthemall "No progress with pods after 1 minute, ${#starting_pods[@]} pods still pending."
@@ -1184,6 +1218,7 @@ function _monitor_pods() {
 			if ((pod_progress_timeout-timestamp == 1)) ; then p_seconds=second; fi
 			if ((${#starting_pods[@]} == 1)) ; then p_pods=pod; fi
 			echo -ne "${#starting_pods[@]} $p_pods pending (will retry $((pod_progress_timeout-timestamp)) $p_seconds)\r" | echo_if_desired 1>&2
+			message_printed=1
 		    fi
 		fi
 	    fi
@@ -1268,7 +1303,7 @@ function _log_helper() {
     fi
     until [[ $(____OC get pod -ojsonpath='{.status.phase}' "$@" 2>/dev/null) != 'Running' ]] ; do
 	# Need to produce periodic output to stderr to prevent oc exec connection from prematurely terminating
-	____OC exec --stdin=false "$@" -- sh -c "while [[ ! -f '$sync_flag_file' ]] ; do sleep 5; echo KEEPALIVE 1>&2; done; cat '$sync_flag_file'" 2>/dev/null && break
+	____OC exec --stdin=false "$@" -- sh -c "while [[ ! -f '$sync_flag_file' ]] ; do sleep 5; echo KEEPALIVE 1>&2; done; cat '$sync_flag_file'; sleep 5; echo DONE 1>&2" 2>/dev/null && break
 	sleep 5
     done
     # Tell the pod monitor to stop.
