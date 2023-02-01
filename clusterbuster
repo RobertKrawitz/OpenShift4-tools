@@ -436,13 +436,15 @@ $(print_workloads_supporting_reporting '                        - ')
                         Arrange for the liveness probe to sleep for specified
                         time.
 
-    Virtualization Options:
+    Kata Virtualization Tuning:
        --virtiofsd-writeback=[0,1]
                         Use writeback caching for virtiofsd (default $virtiofsd_writeback).
        --virtiofsd-direct=[0,1]
                         Allow use of direct I/O for virtiofsd (default $virtiofsd_direct).
        --virtiofsd-threadpoolsize=n
                         Use the specified thread pool size for virtiofsd (default 1).
+
+   OpenShift Virtualiation Options:
        --vmthreads=<value>
                         Specify the number of threads on each core (default $vm_threads).
        --vmcores=<value>
