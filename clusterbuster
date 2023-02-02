@@ -178,6 +178,13 @@ declare cb_tempdir=
 declare force_cleanup_timeout=
 declare default_namespace_policy=restricted
 
+# vm related variables
+declare -i vm_cores=1
+declare -i vm_threads=1
+declare -i vm_sockets=1
+declare vm_grace_period=30
+declare vm_image='quay.io/kubevirt/fedora-container-disk-images:35'
+
 declare OC=${OC:-${KUBECTL:-}}
 OC=${OC:-$(type -p oc)}
 OC=${OC:-$(type -p kubectl)}	# kubectl might not work, though...
@@ -400,8 +407,8 @@ $(print_workloads_supporting_reporting '                        - ')
        --container_image=<image>
                         Image to use (default $container_image).
                         Does not apply to "classic" or "pause" workloads.
-       --deployment_type=<pod,deployment>
-                        Deploy via individual pods or deployments (default $deployment_type)
+       --deployment_type=<pod,deployment,vm>
+                        Deploy via individual pods, deployments or vm (default $deployment_type)
        --external_sync=host:port
                         Sync to external host rather than internally
        --request=<resource=value>
@@ -434,13 +441,28 @@ $(print_workloads_supporting_reporting '                        - ')
                         Arrange for the liveness probe to sleep for specified
                         time.
 
-    Virtualization Options:
+    Kata Virtualization Tuning:
        --virtiofsd-writeback=[0,1]
                         Use writeback caching for virtiofsd (default $virtiofsd_writeback).
        --virtiofsd-direct=[0,1]
                         Allow use of direct I/O for virtiofsd (default $virtiofsd_direct).
        --virtiofsd-threadpoolsize=n
                         Use the specified thread pool size for virtiofsd (default 1).
+
+   OpenShift Virtualiation Options:
+       --vmthreads=<value>
+                        Specify the number of threads on each core (default $vm_threads).
+       --vmcores=<value>
+                        Specify the number of cores on each socket (default $vm_cores).
+       --vmsockets=<value>
+                        Specify the number of sockets (default $vm_sockets).
+       --vmgraceperiod=<value>
+                        Specify the period between when a vm is signaled to
+                        shutdown and the point when KubeVirt will force off
+                        the vm (default $vm_grace_period).
+       --vmimage=<image_url>
+                        Container vm disk image to use.
+                        Default $vm_image
 
     Tuning object creation (short equivalents):
        --scale-ns=[0,1] Scale up the number of namespaces vs.
@@ -716,6 +738,12 @@ function process_option() {
 		*) affinity=0         ;;
 	    esac
 	    ;;
+        # vm specs
+        vmcores)                    vm_cores=$optvalue                          ;;
+        vmsockets)                  vm_sockets=$optvalue                        ;;
+        vmthreads)                  vm_threads=$optvalue                        ;;
+        vmgraceperiod)              vm_grace_period=$optvalue                   ;;
+        vmimage)                    vm_image=$optvalue                          ;;
 	# Object creation
 	obj*spercall)		    objs_per_call=$optvalue			;;
 	parallel)		    parallel=$optvalue				;;
@@ -861,10 +889,17 @@ function generate_environment() {
 
 function namespace_policy() {
     local policy
-    policy=$(call_api -w "$requested_workload" -s namespace_policy)
+    if [[ $(type -t "deployment_type_${deployment_type,,}_policy") = function ]] ; then
+        policy=$("deployment_type_${deployment_type,,}_policy")
+    else
+        policy=$(call_api -w "$requested_workload" -s namespace_policy)
+    fi
     echo "${policy:-${default_namespace_policy}}"
 }
 
+function deployment_type_vm_policy() {
+    echo privileged
+}
 ################################################################
 # Helpers
 ################################################################
@@ -2467,6 +2502,63 @@ EOF
     done
 }
 
+function create_vm_deployment() {
+    local namespace=$1
+    local instance=$2
+    local -i replicas=$4
+    local -i replica=0
+    local depname="${namespace}-${workload}-${instance}"
+    while (( replica++ < replicas )) ; do
+        local name="${depname}-${replica}"
+        local vmname=$(mkpodname "$name")
+        create_object -n "$namespace" "$name" <<EOF
+apiVersion: kubevirt.io/v1alpha3
+kind: VirtualMachine
+metadata:
+$(indent 2 standard_labels_yaml)
+  name: "$vmname"
+$(indent 2 standard_deployment_metadata_yaml "$namespace" client)
+$(indent 2 standard_pod_metadata_yaml "$namespace" client)
+$(create_vm_spec -n "$vmname")
+EOF
+    done
+}
+
+function create_vm_spec() {
+    local vmname="$basename"
+    while getopts 'n:' opt; do
+        case "$opt" in
+            n) vmname=$OPTARG ;;
+        esac
+    done
+    [[ -n "$vmname" ]] || fatal "vmname is required"
+    cat <<EOF
+spec:
+  running: true
+  template:
+    metadata:
+      labels:
+        kubevirt-vm: "$vmname"
+    spec:
+      domain:
+        cpu:
+          cores: $vm_cores
+          sockets: $vm_sockets
+          threads: $vm_threads
+        devices:
+          disks:
+            - name: containerdisk
+              disk:
+                bus: virtio
+$(indent 8 container_resources_yaml)
+      terminationGracePeriodSeconds: $vm_grace_period
+      volumes:
+        - name: containerdisk
+          containerDisk:
+            image: $vm_image
+EOF
+}
+
 function create_replication_deployment() {
     local namespace=$1
     local instance=$2
@@ -2542,6 +2634,9 @@ function create_standard_deployment() {
 		create_pod_deployment "$@"
 	    fi
 	    ;;
+        vm)
+            create_vm_deployment "$@"
+            ;;
 	*)
 	    fatal "Unknown deployment type $deployment_type"
 	    ;;
@@ -2849,7 +2944,7 @@ function _do_cleanup() {
     if ! _do_cleanup_1 "$@" ; then
 	if [[ -n "$force_cleanup_timeout" ]] ; then
 	    warn "*** Cleanup failed, doing a force delete!"
-	    __OC delete deployment,replicaset,pod,configmap,secret,service -A  -l "$basename" --force --grace-period=0 1>&2
+	    __OC delete deployment,replicaset,pod,vm,configmap,secret,service -A  -l "$basename" --force --grace-period=0 1>&2
 	    if ((use_namespaces && remove_namespaces)) ; then
 		__OC delete namespace -l "$basename" --force --grace-period=0 1>&2
 	    fi
@@ -2877,7 +2972,7 @@ function do_cleanup() {
     if ((use_namespaces && remove_namespaces)) ; then
 	objects_to_clean=namespace
     else
-	objects_to_clean="-A deployment,replicaset,configmap,secret,service,pod"
+	objects_to_clean="-A deployment,replicaset,configmap,secret,service,pod,vm"
     fi
     if [[ -n "${injected_errors[precleanup]:-}" && $precleanup -gt 0 ]] ; then
 	warn "*** Injecting precleanup error ${inject_errors[precleanup]:-}"
@@ -3199,9 +3294,10 @@ case "${deployment_type,,}" in
     # immediately try to re-create them.
     replicaset|rs)         deployment_type=ReplicaSet; exit_at_end=0 ;;
     deployment|dep|deploy) deployment_type=Deployment; exit_at_end=0 ;;
-    pod) deployment_type=pod		   		  ;;
+    pod) deployment_type=pod                                         ;;
+    vm) deployment_type=vm                                           ;;
     *)
-	echo "--deployment_type must be pod, deployment, or replicaset"
+	echo "--deployment_type must be pod, vm, deployment, or replicaset"
 	help
 esac
 
