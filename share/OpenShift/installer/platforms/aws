@@ -25,9 +25,11 @@ declare -rga _____aws_default_regions=(us-{east,west}-{1,2})
 add_platform _____aws_dispatch
 
 declare -arg _____aws_known_instance_types=(" X.General Purpose"
-					    # ARM instances aren't useful
+					    # ARM instances aren't useful...but soon enough will be
 					    # a1.{medium,{,{,2,4}x}large}
 					    # m6g.{medium,{,{,2,4,8,16,32,48,64}x}large}
+					    m6i{,d}{,n}.{,{,2,4,8,12,16,24,32}x}large
+					    m6a.{{,{,2,4,8,12,16,24,32,48xs}x}large,metal}
 					    m5{,d}.{{,{,2,4,8,12,16,24}x}large,metal}
 					    m5{a,n,dn}.{,{,2,4,8,12,16,24}x}large
 					    m5ad.{,{,2,4,12,24}x}large
@@ -41,13 +43,20 @@ declare -arg _____aws_known_instance_types=(" X.General Purpose"
 					    c5a{,d}.{,{,2,4,8,12,16,24}x}large
 					    c5d.{,{,2,4,9,18}x}large
 					    c5n.{{,{,2,4,9,18}x}large,metal}
+					    c6i{,n,d}.{{,{,2,4,8,12,16,24,32}x}large,metal}
+					    c6a.{{,{,2,4,8,12,16,24,32,48}x}large,metal}
 					    " X.Memory Optimized"
 					    r4.{,{,2,4,8,16}x}large
 					    r5{,d,b}.{{,{,2,4,8,12,16,24}x}large,metal}
 					    r5{a,n,dn}.{,{,2,4,8,12,16,24}x}large
 					    r5ad.{,{,2,4,12,24}x}large
+					    r6i{,d}{,n}.{{,{,2,4,8,12,16,24,32}x}large,metal}
+					    r6a.{,{,2,4,8,12,16,24,32,48}x}large
 					    x1e.{,2,4,8,16,32}xlarge
 					    x1.{16,32}xlarge
+					    x2idn.{{16,32,32}xlarge,metal}
+					    x2iedn.{{,2,4,8,16,32,32}xlarge,metal}
+					    x2iezn.{{2,4,6,8,12}xlarge,metal}
 					    " X.Single Thread Optimized"
 					    z1d.{{,{,2,3,6,12}x}large,metal}
 					    # High Memory are special dedicated-only hosts
@@ -56,6 +65,7 @@ declare -arg _____aws_known_instance_types=(" X.General Purpose"
 					    u-{9,12}tb1.{112xlarge,metal}
 					    u-{18,24}tb1.metal
 					    " X.Storage Optimized"
+					    i4i.{{,{,2,4,8,16,32}x}large,metal}
 					    i3.{{,{,2,4,8,16}x}large,metal}
 					    i3en.{{,{,2,3,6,12,24}x}large,metal}
 					    d{2,3}.{,2,4,8}xlarge
@@ -67,10 +77,16 @@ declare -arg _____aws_known_instance_types=(" X.General Purpose"
 					    p3dn.24xlarge
 					    p2.{,8,16}xlarge
 					    inf1.{,2,6,24}xlarge
+					    inf2.{,2,8,24,48}xlarge
 					    g4ad.{4,8,12}xlarge
 					    g4dn.{{,2,4,8,12,16}xlarge,metal}
 					    g3s.xlarge
 					    g3.{4,8,16}xlarge
+					    dl1.24xlarge
+					    tm1.{2,32}xl
+					    vb1.{3,6,24}xlarge
+					    " X.HPC"
+					    hpc6id.32xlarge
 					    # FPGA instances are of no use for
 					    # running OpenShift
 					    # f1.{2,4,16}xlarge
