@@ -226,7 +226,7 @@ function _help_extended() {
     print_help
     cat <<EOF
 
-    Other options with no short command line option (with -X):
+    Other options with no short command line option:
       Generic cluster configuration:
         host_prefix_bits    Use the specified host prefix size (default $host_prefix_bits,
                             must be between 8 and 24)
@@ -439,7 +439,7 @@ function _list_instance_types() {
     if [[ $cmd = list_all ]] ; then
 	list_all=1
     else
-	echo "Use '$___topsc -X $list_option_name=list-all' to list all instance types."
+	echo "Use '$___topsc --$list_option_name=list-all' to list all instance types."
     fi
     echo
     local last_class=
