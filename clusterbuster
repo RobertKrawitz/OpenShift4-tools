@@ -57,6 +57,8 @@ declare -i parallel_secrets=0
 declare -i parallel_configmaps=0
 declare -i parallel_namespaces=0
 declare -i parallel_deployments=0
+declare -i parallel_log_retrieval=50
+declare -i retrieve_successful_logs=0
 declare -i objs_per_call=1
 declare -i objs_per_call_secrets=0
 declare -i objs_per_call_configmaps=0
@@ -337,6 +339,11 @@ $(print_workloads_supporting_reporting '                        - ')
        --failure-status=<status>
                         Failures should be reported as specified rather 
                         than "Fail"
+       --retrieve-successful-logs=<0|1>
+			If retrieving artifacts, retrieve logs for all
+			pods, not just failing pods.  Default $retrieve_successful_logs.
+       --parallel-logs=n
+			If retrieving artifacts, parallelize log retrieval.
 
     Workload sizing options:
        --containers_per_pod=N
@@ -682,6 +689,9 @@ function process_option() {
 	postdelay)		    postdelay=$optvalue				;;
 	timeout)		    timeout=$optvalue				;;
 	failurestatus)		    failure_status=$optvalue			;;
+	parallellog*)		    parallel_log_retrieval=$optvalue		;;
+	retrievesuc*)		    retrieve_successful_logs=$(bool "$optvalue");;
+	logsuc*)		    retrieve_successful_logs=$(bool "$optvalue");;
 	# Basic options
 	jobname)		    job_name=$optvalue				;;
 	workload)		    requested_workload=$optvalue		;;
@@ -1594,6 +1604,7 @@ function _get_logs() {
     local remote_ts
     local second_local_ts
     local status=$failure_status
+    local do_retrieve_artifacts=1
     read -r first_local_ts remote_ts second_local_ts <<< "$(get_pod_and_local_timestamps "${@:2}")"
     if [[ -z "$remote_ts" ]] ; then
 	killthemall "Unable to retrieve sync timestamp"
@@ -1606,7 +1617,10 @@ function _get_logs() {
     trap 'if [[ -n "$tfile2" && -f "$tfile2" ]] ; then rm -f "$tfile1" "$tfile2" ; fi; if ((! reported)) ; _report_failure; reported=1; fi; _retrieve_artifacts; return 1' TERM
     tfile1=$(mktemp ${cb_tempdir:+-p "$cb_tempdir"} -t '_clusterbusterlogs1.XXXXXXXXXX') || fatal "Cannot create temporary file"
     tfile2=$(mktemp ${cb_tempdir:+-p "$cb_tempdir"} -t '_clusterbusterlogs2.XXXXXXXXXX') || fatal "Cannot create temporary file"
-    "$@" > "$tfile1" && status=Success
+    "$@" > "$tfile1" && {
+	status=Success
+	do_retrieve_artifacts=
+    }
     cat > "$tfile2" <<EOF
 {
 $(indent 2 < "$tfile1"),
@@ -1616,22 +1630,47 @@ EOF
     ((reported)) || cat "$tfile2"
     reported=1
     rm -f "$tfile1" "$tfile2"
-    _retrieve_artifacts
+    _retrieve_artifacts $do_retrieve_artifacts
 }
 
 function _retrieve_artifacts() {
+    local always_retrieve_artifacts=${1:-}
     if [[ -n "$artifactdir" ]] ; then
 	mkdir -p "$artifactdir/Logs"
 	local -i failcount=0
-	while read -r namespace pod container ; do
-	    if ! __OC logs -n "$namespace" -c "$container" "$pod" 2>/dev/null > "$artifactdir/Logs/${namespace}:${pod}:${container}" ; then
-		rm -f "$artifactdir/Logs/${namespace}:${pod}:${container}"
+	local -A jobs_pending
+	local job
+	while read -r namespace pod container status; do
+	    if [[ $namespace != "$sync_namespace" && -z $always_retrieve_artifacts &&
+		      $retrieve_successful_logs -eq 0 && ($status = Running || $status = Completed) ]] ; then
+		continue
+	    fi
+	    local name="${namespace}:${pod}:${container}"
+	    __OC logs -n "$namespace" -c "$container" "$pod" 2>/dev/null > "$artifactdir/Logs/$name" &
+	    jobs_pending[$!]=$name
+	    if (( ${#jobs_pending[@]} > parallel_log_retrieval )) ; then
+		for job in "${!jobs_pending[@]}" ; do
+		    wait "$job" || {
+			rm -f "$artifactdir/Logs/$name"
+			failcount=$((failcount+1))
+			if ((failcount <= 5)) ; then
+			    echo "Unable to retrieve logs for pod $name" 1>&2
+			fi
+		    }
+		    unset jobs_pending[$job]
+		done
+	    fi
+	done <<< "$(__OC get pod -A -l "${basename}-id=$uuid" -ojson | jq -r '[foreach .items[]? as $item ([[],[]];0; (if ($item.kind == "Pod") then ([foreach $item.spec.containers[]? as $container ([[],[]];0; $item.metadata.namespace + " " + $item.metadata.name + " " + $container.name + " " + $item.status.phase)]) else null end))] | flatten | map (select (. != null))[]')"
+	for job in "${!jobs_pending[@]}" ; do
+	    wait "$job" || {
+		rm -f "$artifactdir/Logs/$name"
 		failcount=$((failcount+1))
 		if ((failcount <= 5)) ; then
-		    echo "Unable to retrieve logs for pod $namespace/$pod:$container" 1>&2
+		    echo "Unable to retrieve logs for pod $name" 1>&2
 		fi
-	    fi
-	done <<< "$(__OC get pod -A -l "${basename}-id=$uuid" -ojson | jq -r '[foreach .items[]? as $item ([[],[]];0; (if ($item.kind == "Pod") then ([foreach $item.spec.containers[]? as $container ([[],[]];0; $item.metadata.namespace + " " + $item.metadata.name + " " + $container.name)]) else null end))] | flatten | map (select (. != null))[]')"
+	    }
+	    unset jobs_pending[$job]
+	done
 	if ((failcount > 5)) ; then
 	    echo "+ $((failcount - 5)) more" 1>&2
 	fi

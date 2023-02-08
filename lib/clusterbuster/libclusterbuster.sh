@@ -76,7 +76,7 @@ function bool() {
 
 function parse_size() {
     local size
-    echoarg=
+    local echoarg=
     if [[ $1 = '-n' ]] ; then
 	echoarg=-n
 	shift
@@ -85,7 +85,7 @@ function parse_size() {
     sizes=${sizes//,/ }
     for size in $sizes ; do
 	if [[ $size =~ (-?[[:digit:]]+)([[:alpha:]]*) ]] ; then
-	    local size=${BASH_REMATCH[1]}
+	    local sizen=${BASH_REMATCH[1]}
 	    local size_modifier=${BASH_REMATCH[2],,}
 	    local -i size_multiplier=1
 	    case "$size_modifier" in
@@ -98,11 +98,11 @@ function parse_size() {
 		gi|gib|gibibytes) size_multiplier=1073741824     ;;
 		t|tb|terabytes)   size_multiplier=1000000000000  ;;
 		ti|tib|tebibytes) size_multiplier=1099511627776  ;;
-		*) fatal "Cannot parse size $optvalue"           ;;
+		*) fatal "Cannot parse size $size"		 ;;
 	    esac
-	    echo $echoarg "$((size*size_multiplier)) "
+	    echo $echoarg "$((sizen*size_multiplier)) "
 	else
-	    fatal "Cannot parse size $optvalue"
+	    fatal "Cannot parse size $size"
 	fi
     done
 }
