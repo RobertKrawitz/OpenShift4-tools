@@ -339,7 +339,7 @@ $(print_workloads_supporting_reporting '                        - ')
        --failure-status=<status>
                         Failures should be reported as specified rather 
                         than "Fail"
-       --log-successful-pods=<0|1>
+       --retrieve-successful-logs=<0|1>
 			If retrieving artifacts, retrieve logs for all
 			pods, not just failing pods.  Default $retrieve_successful_logs.
        --parallel-logs=n
@@ -691,6 +691,7 @@ function process_option() {
 	failurestatus)		    failure_status=$optvalue			;;
 	parallellog*)		    parallel_log_retrieval=$optvalue		;;
 	retrievesuc*)		    retrieve_successful_logs=$(bool "$optvalue");;
+	logsuc*)		    retrieve_successful_logs=$(bool "$optvalue");;
 	# Basic options
 	jobname)		    job_name=$optvalue				;;
 	workload)		    requested_workload=$optvalue		;;
@@ -1641,10 +1642,9 @@ function _retrieve_artifacts() {
 	local job
 	while read -r namespace pod container status; do
 	    if [[ $namespace != "$sync_namespace" && -z $always_retrieve_artifacts &&
-		      ($retrieve_successful_logs -eq 0 && ($status = Running || $status = Completed) ) ]] ; then
+		      $retrieve_successful_logs -eq 0 && ($status = Running || $status = Completed) ]] ; then
 		continue
 	    fi
-	    echo "$namespace $pod $container $status" 1>&2
 	    local name="${namespace}:${pod}:${container}"
 	    __OC logs -n "$namespace" -c "$container" "$pod" 2>/dev/null > "$artifactdir/Logs/$name" &
 	    jobs_pending[$!]=$name
