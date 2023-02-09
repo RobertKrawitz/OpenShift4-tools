@@ -28,9 +28,19 @@ try:
     from prometheus_api_client import PrometheusConnect
     import argparse
     from jinja2 import Template
-    import openshift
     import selectors
-except Exception:
+except ModuleNotFoundError as exc:
+    print(f"prom-extract failed: {exc}", file=sys.stderr)
+    print("{}")
+    sys.exit(1)
+
+# Both openshift and openshift_client provide packages named openshift.
+# Make sure that we have the correct one.
+try:
+    import openshift
+    _ = openshift.project
+except (ModuleNotFoundError, AttributeError) as exc:
+    print(f"prom-extract failed: {exc} (need to install 'openshift_client', not 'openshift')", file=sys.stderr)
     print("{}")
     sys.exit(1)
 
@@ -332,7 +342,5 @@ try:
                 results['rundata']['stdout'] = stdout_data
 
     print(json.dumps(results, indent=4))
-except KeyboardInterrupt:
-    sys.exit(1)
-except BrokenPipeError:
+except (KeyboardInterrupt, BrokenPipeError):
     sys.exit(1)
