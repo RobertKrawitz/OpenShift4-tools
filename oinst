@@ -65,6 +65,7 @@ if [[ $# = 0 || $1 != "---DoIt=$0" ]] ; then
 else
     ___realsc=${1#---DoIt=}
     ___clean_startup
+    export -n ___topsc ___topdir
     shift
 fi
 
@@ -961,6 +962,7 @@ Configuration:
 $OPENSHIFT_INSTALL_CONFIG
 EOF
     (( noconfirm )) && return 0
+    [[ -t 0 ]] || return 0
     local proceed
     echo
     while : ; do

@@ -14,6 +14,54 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Find our helpers
+function finddir() {
+    local path_to_file
+    path_to_file=$(readlink -f "$0")
+    if [[ -z $path_to_file ]] ; then
+	return 1
+    elif [[ -d $path_to_file ]] ; then
+	echo "$path_to_file/"
+    elif [[ -e $path_to_file ]] ; then
+	echo "${path_to_file%/*}/"
+    else
+	return 1
+    fi
+    return 0
+}
+
+declare __realsc__=
+declare __topsc__
+if [[ -z ${__topsc__:-} ]] ; then
+    export __topsc__="${0##*/}"
+    # shellcheck disable=SC2155
+    export __topdir__="$(finddir "$0")"
+    [[ -z $__topdir__ ]] && fatal "Can't find directory for $0"
+fi
+
+function clean_startup() {
+    [[ -f $__realsc__ ]] && rm -f "$__realsc__"
+}
+
+# This allows us to edit the script while another instance is running
+# since this script sticks around until the user exits the spawned shell.
+# It's fine for the running script to be removed, since the shell still
+# has its open file descriptor.
+if [[ $# = 0 || $1 != "--DoIt=$0" ]] ; then
+    tmpsc=$(mktemp -t "${__topsc__}".XXXXXXXXXX)
+    [[ -z $tmpsc || ! -f $tmpsc || -L $tmpsc ]] && fatal "Can't create temporary script file"
+    trap clean_startup EXIT SIGHUP SIGINT SIGQUIT SIGTERM
+    PATH+=${PATH:+:}$__topdir__
+    cat "$0" > "$tmpsc"
+    chmod +x "$tmpsc"
+    exec "$tmpsc" "--DoIt=$tmpsc" "$@"
+else
+    __realsc__=${1#--DoIt=}
+    clean_startup
+    export -n __topsc__ __topdir__
+    shift
+fi
+
 # Unfortunate that there's no way to tell shellcheck to always source
 # specific files.
 # shellcheck disable=SC2034
@@ -25,7 +73,7 @@ if (( BASH_VERSINFO[0] >= 5 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] >= 4) 
     set -u
 else
     cat 1>&2 <<EOF
-Warning: bash version at least 4.4 is recommended for using ${0##*/}.
+Warning: bash version at least 4.4 is recommended for using ${__topsc__##*/}.
 Actual version is ${BASH_VERSION}
 EOF
 fi
@@ -116,7 +164,7 @@ declare -i precleanup=1
 declare -i cleanup=0
 declare -i cleanup_always=0
 declare -i timeout=0
-declare pathdir=${0%/*}
+declare pathdir=${__topdir__%/*}
 declare -a unknown_opts=()
 declare -a unknown_opt_names=()
 declare -i total_objects_created=0
@@ -172,8 +220,8 @@ declare container_image=
 declare accumulateddata=
 declare -a plurals=('s' '')
 declare artifactdir=
-declare -a saved_argv=("$0" "$@")
-declare -a processed_options=("$0")
+declare -a saved_argv=("${__topsc__:-0}" "$@")
+declare -a processed_options=("${__topsc__:-0}")
 declare -a pod_annotations=()
 declare -A injected_errors=()
 declare cb_tempdir=
@@ -204,15 +252,6 @@ if [[ -z "$OC" ]] ; then
     fatal "Can't find kubectl or oc"
 fi
 
-declare __me__
-__me__=$(realpath -e "$0")
-
-if [[ -z "$__me__" ]] ; then
-    echo "Can't find my path!" 1>&2
-    exit 1
-fi
-
-declare __topdir__=${__me__%/*}
 declare __libdir__=${__topdir__}/lib/clusterbuster
 declare __podfile_dir__=${__libdir__}/pod_files
 declare __workloaddir__=${__libdir__}/workloads
@@ -232,7 +271,7 @@ Clusterbuster is a tool to permit you to load a configurable workload
 onto an OpenShift cluster.  ClusterBuster focuses primarily on workload
 scalability, including synchronization of multi-instance workloads.
 
-Usage: $0 [options] [name]
+Usage: ${__topsc__:-0} [options] [name]
 
     Help:
        -h              Print basic help information.
@@ -257,7 +296,7 @@ $(print_workloads '                       - ')
                        report them)
        -v              Print verbose log messages.
        --opt[=val]     Set the specified option.
-                       Use ${0##*/} -H to list the available options.
+                       Use ${__topsc__##*/} -H to list the available options.
 EOF
 }
 
