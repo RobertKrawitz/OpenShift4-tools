@@ -569,6 +569,9 @@ Advanced options (generally not required):
                         For testing purposes, inject the specified error
                         condition (documented only in code).
        --force-abort    Abort the run on any error.
+       --force-no-metrics
+                        Do not attempt anything that would use metrics
+                        or the prometheus pod.
 
 Here is a brief description of all available workloads:
 $(_document_workloads)
@@ -821,6 +824,7 @@ function process_option() {
 	baseoffset)		    baseoffset=$optvalue			;;
 	# Synchronization
 	sync|syncstart)		    sync_start=$((1-sync_start))		;;
+	forcenometrics)		    metrics_support=$(($(bool "$optvalue")-1))  ;;
 	externalsync)
 	    if [[ $optvalue =~ ^(-|([[:alnum:]][-_[:alnum:]]*[[:alnum:]]\.)*([[:alnum:]][-_[:alnum:]]*[[:alnum:]])):([1-9][[:digit:]]{0,4})$ ]] ; then
 		sync_host=${BASH_REMATCH[1]}
@@ -1686,9 +1690,9 @@ function _retrieve_artifacts() {
 		      $retrieve_successful_logs -eq 0 && ($status = Running || $status = Completed) ]] ; then
 		continue
 	    fi
-	    local podname="${namespace}:${pod}:${container}"
+	    local podname="${namespace}:${pod}"
 	    local name="${podname}:${container}"
-	    if [[ -n "${pods_described[$podname]}" ]] ; then
+	    if [[ -n "${pods_described[$podname]:-}" ]] ; then
 		__OC logs -n "$namespace" -c "$container" "$pod" 2>/dev/null > "$artifactdir/Logs/$name" &
 	    else
 		(__OC logs -n "$namespace" -c "$container" "$pod" 2>/dev/null > "$artifactdir/Logs/$name"; __OC describe pod -n "$namespace" "$pod" 2>/dev/null > "$artifactdir/Describe/$podname") &
