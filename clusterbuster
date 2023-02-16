@@ -1676,16 +1676,24 @@ function _retrieve_artifacts() {
     local always_retrieve_artifacts=${1:-}
     if [[ -n "$artifactdir" ]] ; then
 	mkdir -p "$artifactdir/Logs"
+	mkdir -p "$artifactdir/Describe"
 	local -i failcount=0
 	local -A jobs_pending
 	local job
+	local -A pods_described=()
 	while read -r namespace pod container status; do
 	    if [[ $namespace != "$sync_namespace" && -z $always_retrieve_artifacts &&
 		      $retrieve_successful_logs -eq 0 && ($status = Running || $status = Completed) ]] ; then
 		continue
 	    fi
-	    local name="${namespace}:${pod}:${container}"
-	    __OC logs -n "$namespace" -c "$container" "$pod" 2>/dev/null > "$artifactdir/Logs/$name" &
+	    local podname="${namespace}:${pod}:${container}"
+	    local name="${podname}:${container}"
+	    if [[ -n "${pods_described[$podname]}" ]] ; then
+		__OC logs -n "$namespace" -c "$container" "$pod" 2>/dev/null > "$artifactdir/Logs/$name" &
+	    else
+		(__OC logs -n "$namespace" -c "$container" "$pod" 2>/dev/null > "$artifactdir/Logs/$name"; __OC describe pod -n "$namespace" "$pod" 2>/dev/null > "$artifactdir/Describe/$podname") &
+		pods_described[$podname]=1
+	    fi
 	    jobs_pending[$!]=$name
 	    if (( ${#jobs_pending[@]} > parallel_log_retrieval )) ; then
 		for job in "${!jobs_pending[@]}" ; do
