@@ -202,6 +202,7 @@ declare -a virtiofsd_args=()
 declare -i liveness_probe_frequency=0
 declare -i liveness_probe_sleep_time=0
 declare -i metrics_support=-1
+declare -i pod_start_timeout=60
 declare pod_prefix=
 declare arch=
 declare failure_status=Fail
@@ -375,9 +376,15 @@ $(print_workloads_supporting_reporting '                        - ')
        --metrics-epoch=<seconds>
                         Number of seconds to look back for metrics prior
                         to start of run (default $metrics_epoch)
+       --force-no-metrics
+                        Do not attempt anything that would use metrics
+                        or the prometheus pod.
        --failure-status=<status>
                         Failures should be reported as specified rather 
                         than "Fail"
+       --pod-start-timeout=<seconds>
+                        Wait specified time for pods to come on line.
+                        Default $pod_start_timeout
        --retrieve-successful-logs=<0|1>
 			If retrieving artifacts, retrieve logs for all
 			pods, not just failing pods.  Default $retrieve_successful_logs.
@@ -821,6 +828,8 @@ function process_option() {
 	baseoffset)		    baseoffset=$optvalue			;;
 	# Synchronization
 	sync|syncstart)		    sync_start=$((1-sync_start))		;;
+	forcenometrics)		    metrics_support=$(($(bool "$optvalue")-1))  ;;
+	podstart[ti]*)		    pod_start_timeout=$optvalue			;;
 	externalsync)
 	    if [[ $optvalue =~ ^(-|([[:alnum:]][-_[:alnum:]]*[[:alnum:]]\.)*([[:alnum:]][-_[:alnum:]]*[[:alnum:]])):([1-9][[:digit:]]{0,4})$ ]] ; then
 		sync_host=${BASH_REMATCH[1]}
@@ -1246,7 +1255,6 @@ function _monitor_pods() {
 	else
 	    # Timestamp
 	    local timestamp=$status
-	    # If
 	    if [[ -z "${injected_errors[timeout]:-}" ]] && ! supports_api -w "$requested_workload" supports_reporting ; then
 		if (( ${#running_pods[@]} + finished_pod_count > 0 && other_pod_count == 0 )) ; then
 		    sleep "$workload_run_time"
@@ -1257,7 +1265,7 @@ function _monitor_pods() {
 	    if [[ -n "${starting_pods[*]}" ]] ; then
 		pods_now_pending=$(IFS=$'\n'; echo "${!starting_pods[*]}" | sort)
 		if [[ "$pods_now_pending" != "$pods_pending" ]] ; then
-		    pod_progress_timeout=$((timestamp+60))
+		    pod_progress_timeout=$((timestamp+$pod_start_timeout))
 		    pods_pending="$pods_now_pending"
 		    if [[ -z "$pods_pending" ]] ; then
 			echo "All pods are running                                 " | echo_if_desired 1>&2
@@ -1268,12 +1276,12 @@ function _monitor_pods() {
 			# a pending message was previously printed.
 			if ((message_printed)) ; then
 			    echo -ne "                                                  \r" | echo_if_desired 1>&2
-			    message_printed=1
+			    message_printed=0
 			fi
 		    fi
 		else
 		    if ((timestamp > pod_progress_timeout)) ; then
-			killthemall "No progress with pods after 1 minute, ${#starting_pods[@]} pods still pending."
+			killthemall "No progress with pods after $pod_start_timeout seconds, ${#starting_pods[@]} pods still pending."
 		    fi
 		    if ((pod_progress_timeout-timestamp <= 30)) ; then
 			local p_seconds=seconds
@@ -1284,6 +1292,9 @@ function _monitor_pods() {
 			message_printed=1
 		    fi
 		fi
+	    elif ((message_printed)) ; then
+		echo -ne "                                                  \r" | echo_if_desired 1>&2
+		message_printed=0
 	    fi
 	    if ((timeout > 0 && timestamp > timeout)) ; then
 		killthemall "Monitor pods timeout!"
@@ -1551,7 +1562,7 @@ function _get_csv_version() {
     namespace=${namespace:-openshift-${product}}
     if namespace_exists "$namespace" ; then
 	local version
-	version=$(____OC get csv -n "$namespace" -o jsonpath="{.items[0]${field}}")
+	version=$(____OC get csv -n "$namespace" -o jsonpath="{.items[0]${field}}" 2>/dev/null)
 	if [[ -n "$version" ]] ; then
 	    cat <<EOF
 "${product}_version": "${version:-}",
@@ -1676,16 +1687,24 @@ function _retrieve_artifacts() {
     local always_retrieve_artifacts=${1:-}
     if [[ -n "$artifactdir" ]] ; then
 	mkdir -p "$artifactdir/Logs"
+	mkdir -p "$artifactdir/Describe"
 	local -i failcount=0
 	local -A jobs_pending
 	local job
+	local -A pods_described=()
 	while read -r namespace pod container status; do
 	    if [[ $namespace != "$sync_namespace" && -z $always_retrieve_artifacts &&
 		      $retrieve_successful_logs -eq 0 && ($status = Running || $status = Completed) ]] ; then
 		continue
 	    fi
-	    local name="${namespace}:${pod}:${container}"
-	    __OC logs -n "$namespace" -c "$container" "$pod" 2>/dev/null > "$artifactdir/Logs/$name" &
+	    local podname="${namespace}:${pod}"
+	    local name="${podname}:${container}"
+	    if [[ -n "${pods_described[$podname]:-}" ]] ; then
+		__OC logs -n "$namespace" -c "$container" "$pod" 2>/dev/null > "$artifactdir/Logs/$name" &
+	    else
+		(__OC logs -n "$namespace" -c "$container" "$pod" 2>/dev/null > "$artifactdir/Logs/$name"; __OC describe pod -n "$namespace" "$pod" 2>/dev/null > "$artifactdir/Describe/$podname") &
+		pods_described[$podname]=1
+	    fi
 	    jobs_pending[$!]=$name
 	    if (( ${#jobs_pending[@]} > parallel_log_retrieval )) ; then
 		for job in "${!jobs_pending[@]}" ; do
@@ -3238,7 +3257,7 @@ function run_clusterbuster_2() {
 	    artifactdir="$(expand_string "$artifactdir")"
 	    mkdir -p "$artifactdir" || fatal "Can't create log directory $artifactdir"
 	    echo "${saved_argv[@]@Q}" > "$artifactdir/commandline"
-	    exec 2> >(tee "$artifactdir/stderr.log" >&2)
+	    exec 2> >(tee >(tr "\r" "\n" > "$artifactdir/stderr.log") >&2)
 	fi
     fi
     allocate_namespaces || return 1
