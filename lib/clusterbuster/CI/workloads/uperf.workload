@@ -23,6 +23,7 @@ declare -gi ___uperf_job_timeout=0
 declare -g ___uperf_interface=
 declare -g ___uperf_interface_server=
 declare -g ___uperf_interface_client=
+declare -g ___uperf_use_annotation=yes
 
 function uperf_test() {
     local default_job_runtime=$1
@@ -50,7 +51,7 @@ function uperf_test() {
 				      ${uperf_interface_server:+--uperf_interface_server=$___uperf_interface_server:} \
 				      ${uperf_interface_client:+--uperf_interface_client=$___uperf_interface_client:} \
 				      --uperf_interface="$___uperf_interface" \
-				      --pod-annotation="io.katacontainers.config.hypervisor.default_vcpus: \"$nthr\""
+				      ${___uperf_use_annotation:+--pod-annotation="io.katacontainers.config.hypervisor.default_vcpus: \"$nthr\""}
 		done
 	    done
 	done
@@ -68,10 +69,10 @@ function uperf_process_option() {
 	uperf*runtime) ___uperf_job_runtime=$optvalue						;;
 	uperf*timeout) ___uperf_job_timeout=$optvalue						;;
 	uperfint*)     ___uperf_interface=$optvalue						;;
+	uperfann*)     ___uperf_use_annotation=$(bool -Y '' "$optvalue")			;;
 	*)	       return 1									;;
     esac
 }
-
 
 function uperf_help_options() {
     cat <<'EOF'
@@ -100,6 +101,8 @@ function uperf_help_options() {
         --uperf-interface-client=<interface[=pod_interface]>
                                 Specify the interfaces for client and server
                                 separately.
+        --uperf-annotate_vcpus  Provide a pod annotation for the number of
+                                vCPUs to use (default $___uperf_use_annotation)
 EOF
 }
 
