@@ -2561,6 +2561,10 @@ function create_spec() {
     local namespace=$1
     local instance=$2
     local secret_count=$3
+    local runtime_class=$runtime_class
+    if [[ $runtime_class = runc ]] ; then
+	runtime_class=
+    fi
     cat <<EOF
 spec:
   terminationGracePeriodSeconds: 1

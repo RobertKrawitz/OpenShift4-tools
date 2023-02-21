@@ -82,6 +82,7 @@ declare uuid=$(uuidgen -r)
 declare -a failures=()
 declare -a jobs=()
 declare -A job_runtimes=()
+declare -A runtimeclass_ok=()
 
 declare starting_timestamp=
 declare job_datestamp
@@ -539,7 +540,7 @@ function process_option() {
 	analyze*) analyze_results="$optvalue"						;;
 	reportformat*) report_format=$optvalue						;;
 	analysisformat*) analysis_format=$optvalue					;;
-	runtimeclass*) readarray -t runtimeclasses <<< "$optvalue"			;;
+	runtimeclass*) readarray -t runtimeclasses <<< "$(parse_optvalues "$optvalue")"	;;
 	restart) restart=$(bool "$optvalue")						;;
 	runtimeout) run_timeout=$(parse_time "$optvalue")				;;
 	profile|runtype) process_profile "$optvalue"					;;
@@ -630,15 +631,6 @@ function to_hms() {
     fi
 }
 
-function xruntimeclass() {
-    local runtimeclass=$1
-    if [[ $runtimeclass == kata ]] ; then
-	echo kata
-    else
-	echo runc
-    fi
-}
-
 function doit() {
     echo "${@@Q}"
     if ((! debugonly)) ; then
@@ -649,6 +641,18 @@ function doit() {
 	job_pid=
 	return $status
     fi
+}
+
+function check_runtimeclass() {
+    local runtimeclass=${1:-runc}
+    if [[ -z "${runtimeclass_ok[$runtimeclass]:-}" ]] ; then
+	if [[ -z "$runtimeclass" || $runtimeclass = runc ]] || oc get runtimeclass "$runtimeclass" >/dev/null 2>&1 ; then
+	    runtimeclass_ok[$runtimeclass]=0
+	else
+	    runtimeclass_ok[$runtimeclass]=1
+	fi
+    fi
+    return ${runtimeclass_ok[$runtimeclass]}
 }
 
 function run_clusterbuster_1() {
@@ -678,8 +682,8 @@ function run_clusterbuster_1() {
     done
     [[ -z "$jobname" ]] && fatal "Job name must be specified"
     [[ -z "$workload" ]] && fatal "Workload must be specified"
-    job_prefix=$(printf '%s-%s-%04d' "$workload" "$(xruntimeclass "$runtimeclass")" "$counter")
-    jobname=$(printf '%s-%s-%04d-%s' "$workload" "$(xruntimeclass "$runtimeclass")" "$counter" "$jobname")
+    job_prefix=$(printf '%s-%s-%04d' "$workload" "${runtimeclass:-runc}" "$counter")
+    jobname=$(printf '%s-%s-%04d-%s' "$workload" "${runtimeclass:-runc}" "$counter" "$jobname")
     jobdir=${artifactdir:+$artifactdir/$jobname}
     if [[ $debugonly -eq 0 && -n "$jobdir" && -d "$jobdir" && -f "$jobdir/clusterbuster-report.json" ]] ; then
 	if ((restart)) ; then
@@ -747,7 +751,7 @@ function run_clusterbuster_1() {
 
 function run_clusterbuster() {
     for runtimeclass in "${runtimeclasses[@]}" ; do
-	if [[ -z "$runtimeclass" ]] || oc get runtimeclass "$runtimeclass" >/dev/null 2>&1 ; then
+	if check_runtimeclass "$runtimeclass" ; then
 	    run_clusterbuster_1 -r "$runtimeclass" "$@"
 	fi
     done

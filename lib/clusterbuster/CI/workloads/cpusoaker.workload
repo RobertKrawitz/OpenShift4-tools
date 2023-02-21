@@ -55,7 +55,7 @@ function cpusoaker_test() {
     local -A runtimes_to_test=()
     local runtime
     for runtime in "${runtimeclasses[@]}" ; do
-	if [[ -z "$runtime" ]] || oc get runtimeclass "$runtime" >/dev/null 2>&1 ; then
+	if [[ -z "$runtime" || $runtime = runc ]] || oc get runtimeclass "$runtime" >/dev/null 2>&1 ; then
 	    runtime=${runtime:-runc}
 	    runtimes+=("$runtime")
 	    runtimes_to_test[$runtime]=1
