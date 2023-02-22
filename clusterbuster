@@ -206,6 +206,7 @@ declare -i pod_start_timeout=60
 declare pod_prefix=
 declare arch=
 declare failure_status=Fail
+declare -i create_pods_privileged=0
 
 declare -r sync_flag_file="/tmp/syncfile";
 declare -r sync_error_file="/tmp/syncerror";
@@ -493,6 +494,8 @@ $(print_workloads_supporting_reporting '                        - ')
        --liveness-probe-sleep=<seconds>
                         Arrange for the liveness probe to sleep for specified
                         time.
+       --privileged-pods=[0,1]
+			Create pods as privileged (default $create_pods_privileged)
 
     Kata Virtualization Tuning:
        --virtiofsd-writeback=[0,1]
@@ -781,6 +784,7 @@ function process_option() {
 	virtiofsdthread*)	    virtiofsd_threadpoolsize=$optvalue		;;
 	livenessprobeint*)	    liveness_probe_frequency=$optvalue		;;
 	livenessprobesleep*)	    liveness_probe_sleep_time=$optvalue		;;
+	privilege*)		    create_pods_privileged=$(bool "$optvalue")	;;
 	affinity)
 	    case "$optvalue" in
 		1|'') affinity=1      ;;
@@ -945,10 +949,16 @@ function generate_environment() {
     call_api -w "$requested_workload" -s generate_environment
 }
 
+function requires_drop_cache() {
+    call_api -w "$requested_workload" requires_drop_cache
+}
+
 function namespace_policy() {
     local policy
     if [[ $(type -t "deployment_type_${deployment_type,,}_policy") = function ]] ; then
         policy=$("deployment_type_${deployment_type,,}_policy")
+    elif ((create_pods_privileged)) || requires_drop_cache ; then
+	policy=privileged
     else
         policy=$(call_api -w "$requested_workload" -s namespace_policy)
     fi
@@ -1185,7 +1195,16 @@ function ts() {
 }
 
 function run_status_monitor() {
-    (while : ; do sleep 1; printf '++Mark++ ++Mark+ %(%s)T%s' -1 $'\n'; done &); ____OC get pod "$@" -w -o jsonpath='{.metadata.namespace} {.metadata.name} {.status.phase}{"\n"}'
+    function run_status_monitor_1() {
+	____OC get pod "$@" -w -o jsonpath='{.metadata.namespace} {.metadata.name} {.status.phase}{"\n"}'
+    }
+    (while : ; do sleep 1; printf '++Mark++ ++Mark+ %(%s)T%s' -1 $'\n'; done &)
+    if [[ -n "$artifactdir" ]] ; then
+	mkdir -p "$artifactdir"
+	run_status_monitor_1 "$@" | tee >(grep -v '\+\+Mark\+\+' | timestamp > "${artifactdir}/monitor.log")
+    else
+	run_status_monitor_1 "$@"
+    fi
 }
 
 function _monitor_pods() {
@@ -1780,7 +1799,14 @@ function get_logs() {
 # YAML fragment generation
 ################################################################
 
-function default_security_context_content() {
+function privileged_security_context_content() {
+    cat <<'EOF'
+privileged: true
+runAsUser: 0
+EOF
+}
+
+function restricted_security_context_content() {
     cat <<'EOF'
 allowPrivilegeEscalation: False
 capabilities:
@@ -1792,10 +1818,32 @@ seccompProfile:
 EOF
 }
 
+function default_security_context_content() {
+    if ((create_pods_privileged)) ; then
+	privileged_security_context_content
+    else
+	restricted_security_context_content
+    fi
+}
+
 function default_security_context() {
     cat <<EOF
 securityContext:
 $(indent 2 default_security_context_content)
+EOF
+}
+
+function privileged_security_context() {
+    cat <<EOF
+securityContext:
+$(indent 2 privileged_security_context_content)
+EOF
+}
+
+function restricted_security_context() {
+    cat <<EOF
+securityContext:
+$(indent 2 restricted_security_context_content)
 EOF
 }
 
@@ -1952,6 +2000,7 @@ $(if [[ -n "${arglist_function}" ]] ; then
      "${arglist_function}" "${system_configmap_mount_dir}/" "$@" "$container" -- "$namespace" "c$container" \
      "$basetime" "$baseoffset" "$(ts)" "$exit_at_end" "$sync_service" "$sync_port_num" "$sync_ns_port_num" | indent 2 ; fi)
 $(indent 2 volume_mounts_yaml "$namespace" "${instance}" "$secret_count")
+$(indent 2 <<< "${security_context:-}")
 EOF
     done
 }
@@ -2398,6 +2447,11 @@ $(indent 2 standard_labels_yaml -t namespace)
     pod-security.kubernetes.io/audit: $policy
     pod-security.kubernetes.io/warn: $policy
 EOF
+	if [[ $policy = privileged ]] ; then
+	    _OC create serviceaccount -n "$namespace" "$namespace"
+	    _OC label serviceaccount -n "$namespace" "$namespace" "${basename}=true"
+	    _OC adm policy add-scc-to-user -n "$namespace" privileged -z "$namespace"
+	fi
     fi
 }
 
@@ -2567,7 +2621,7 @@ function create_spec() {
     local namespace=$1
     local instance=$2
     local secret_count=$3
-    local runtime_class=$runtime_class
+    local runtime_class=${runtime_class:-}
     if [[ $runtime_class = runc ]] ; then
 	runtime_class=
     fi
@@ -2603,7 +2657,6 @@ $(indent 2 standard_pod_metadata_yaml "$namespace" client)
       app: $name
 $(indent 2 standard_labels_yaml -l "$workload" "$namespace" "${instance}" "${replica}")
 $(create_spec -A "$affinity_yaml" -c "$node_class" "$@" "$replica")
-${security_context:+$(indent 2 <<< "$security_context")}
   restartPolicy: Never
 EOF
     done
@@ -2680,7 +2733,6 @@ $(indent 2 standard_deployment_metadata_yaml "$namespace" client)
 $(indent 2 standard_labels_yaml -l "$workload" "$namespace" "$instance")
 spec:
   replicas: $replicas
-$(indent 2 <<< "${security_context:-}")
   selector:
     matchLabels:
       instance: ${namespace}-${workload}-${instance}
@@ -2691,7 +2743,6 @@ $(indent 2 <<< "${security_context:-}")
 $(indent 6 standard_labels_yaml -l "$workload" "$namespace" "$instance")
 $(indent 6 standard_pod_metadata_yaml "$namespace" client)
 $(indent 4 create_spec -A "$affinity_yaml" -c "$node_class" "$@")
-$(indent 6 <<< "${security_context:-}")
 EOF
 }
 
@@ -2729,6 +2780,7 @@ function create_standard_deployment() {
     if (($# != 5)) ; then
 	fatal "Usage: create_standard_deployment <args> namespace instance secret_count replicas containers"
     fi
+    requires_drop_cache && create_drop_cache_deployment "$1" "$requested_workload" "$2" "$4"
 
     case "${deployment_type,,}" in
 	pod)
@@ -2774,6 +2826,7 @@ $(indent 2 standard_environment)
   - "$expected_clients"
   - "$initial_expected_clients"
 $(indent 2 volume_mounts_yaml "$namespace" 0 0)
+$(indent 2 restricted_security_context)
 EOF
 }
 
@@ -2791,7 +2844,6 @@ $(indent 2 standard_labels_yaml 'sync' "$namespace")
     matchLabels:
       app: ${namespace}
 $(create_container_function=create_container_sync create_spec -P -c sync -r '' "$namespace" 0 0 "$@")
-$(indent 2 default_security_context)
   restartPolicy: Never
 EOF
 }
@@ -2808,6 +2860,7 @@ function create_container_drop_cache() {
   image: "$container_image"
   securityContext:
     privileged: true
+    runAsUser: 0
   ports:
   - containerPort: $drop_cache_port
 $(indent 2 standard_environment)
@@ -3051,7 +3104,7 @@ function _do_cleanup() {
     if ! _do_cleanup_1 "$@" ; then
 	if [[ -n "$force_cleanup_timeout" ]] ; then
 	    warn "*** Cleanup failed, doing a force delete!"
-	    __OC delete deployment,replicaset,pod,vm,configmap,secret,service -A  -l "$basename" --force --grace-period=0 1>&2
+	    __OC delete deployment,replicaset,pod,vm,configmap,secret,service,serviceaccount -A  -l "$basename" --force --grace-period=0 1>&2
 	    if ((use_namespaces && remove_namespaces)) ; then
 		__OC delete namespace -l "$basename" --force --grace-period=0 1>&2
 	    fi
@@ -3273,7 +3326,7 @@ function run_clusterbuster_2() {
     allocate_namespaces || return 1
     find_first_deployment || return 1
     if [[ -n "$sync_namespace" ]] ; then
-	create_namespace -f -p restricted "$sync_namespace" || return 1
+	create_namespace -f "$sync_namespace" || return 1
     fi
     create_all_objects namespaces || return 1
     if get_sync -q ; then

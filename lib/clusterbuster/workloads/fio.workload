@@ -58,7 +58,6 @@ function fio_create_deployment() {
     create_sync_service "$namespace" "$((containers_per_pod * processes_per_pod * replicas * count))" \
 				  "$((containers_per_pod * replicas * count))"
     for instance in $(seq "$first_deployment" $((count + first_deployment - 1))) ; do
-	create_drop_cache_deployment "$namespace" "$workload" "$instance" "$replicas"
 	create_standard_deployment  -a fio_arglist -p \
 				    "$namespace" "$instance" "$secret_count" "$replicas" "$containers_per_pod"
     done
@@ -265,8 +264,8 @@ function fio_report_options() {
 EOF
 }
 
-function fio_namespace_policy() {
-    echo privileged
+function fio_requires_drop_cache() {
+    :
 }
 
 register_workload fio
