@@ -66,7 +66,8 @@ class SpreadsheetAnalysis(ClusterBusterAnalyzeSummaryGeneric):
                 if metric == 'value':
                     runs = self._runs
                 else:
-                    runs = list(self._runs)[1:]
+                    runs = ['']
+                    runs.extend(list(self._runs)[1:])
                 answer += f"""
 {self._op_map[metric]}{tab}{tab.join(runs)}
 """
@@ -89,12 +90,12 @@ class SpreadsheetAnalysis(ClusterBusterAnalyzeSummaryGeneric):
                         multiplier = v.get('multiplier', 1)
                         base = v.get('base', None)
                         answer += f'{name}{unit}{tab}'
-                        answer += tab.join([prettyprint(datum, multiplier=multiplier, base=base)
+                        answer += tab.join([prettyprint(datum, multiplier=multiplier, base=0)
                                             for datum in self._get_run_data(v_data, 'Total', metric)])
                     else:
                         answer += f'{name}'
-                        answer += tab.join([prettyprint(datum, precision=3, base=0)
-                                            for datum in self._get_run_data(v_data, 'Total', metric)])
+                        answer += '\t' + tab.join([prettyprint(datum, precision=3, base=0)
+                                                   for datum in self._get_run_data(v_data, 'Total', metric)])
                     answer += "\n"
                 answer += "\n"
             if has_data_metric:
@@ -120,7 +121,7 @@ Operation: {name}{unit}
 """
                 for key in self._get_all_keys(var):
                     report_answer += f'{key}{tab}'
-                    report_answer += tab.join([prettyprint(datum, multiplier=multiplier, base=base)
+                    report_answer += tab.join([prettyprint(datum, multiplier=multiplier, base=0)
                                                for datum in self._get_run_data(var, key, "value")]) + '\n'
                 answers.append(report_answer)
                 for op in 'ratio', 'min_ratio', 'max_ratio':
