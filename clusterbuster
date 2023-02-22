@@ -1101,18 +1101,24 @@ function set_start_timestamps() {
 }
 
 function get_pod_and_local_timestamps() {
+    local -i sync_prestart
+    sync_prestart=$(date +%s)
     until __OC exec "$@" -- /bin/sh -c "date +%s.%N" </dev/null >/dev/null 2>/dev/null ; do
 	local status
 	status=$(__OC get pod "$@" -o jsonpath="{.status.phase}" 2>/dev/null)
 	case "$status" in
 	    Error|Failed)
-		echo "Sync pod failed to start:" 1>&2
+		echo "Sync pod failed:" 1>&2
 		__OC logs "$@" | tail -10 1>&2
 		killthemall "Sync pod failed"
 		;;
 	    *)  ;;
 	esac
 	sleep 2
+	if (($(date +%s) - sync_prestart > pod_start_timeout)) ; then
+	    echo "Sync pod did not start!"
+	    killthemall "Sync pod did not start in $pod_start_timeout seconds"
+	fi
     done
     local first_local_ts
     local remote_ts
