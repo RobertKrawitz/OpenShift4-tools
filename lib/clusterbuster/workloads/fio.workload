@@ -30,6 +30,7 @@ declare -gi ___fio_ramp_time=5
 declare -gi ___fio_filesize=; ___fio_filesize=$(parse_size "4Gi")
 declare -g  ___fio_workdir="/tmp"
 declare -g  ___fio_processed_job_file
+declare -i  ___fio_drop_cache=1
 
 function fio_arglist() {
     local mountdir=$1; shift
@@ -38,10 +39,16 @@ function fio_arglist() {
     local secret_count=$3
     local replicas=$4
     local containers_per_pod=$5
+    local dc_service=
+    local dc_port=0
+    if ((___fio_drop_cache)) ; then
+	dc_service="svc-${namespace}-fio-${instance}-${replica}-dc"
+	dc_port="$drop_cache_port"
+    fi
     while [[ "$1" != '--' ]] ; do shift; done; shift
     mk_yaml_args "python3" "${mountdir}fio.py" "$@" \
 		 "$processes_per_pod" "$___fio_workdir" "$workload_run_time" "$configmap_mount_dir" \
-		 "svc-${namespace}-fio-${instance}-${replica}-dc" "$drop_cache_port" \
+		 "$dc_service" "$dc_port" \
 		 "${___fio_blocksizes[*]:-}" "${___fio_patterns[*]:-}" "${___fio_iodepths[*]:-}" \
 		 "${___fio_fdatasyncs[*]:-}" "${___fio_directs[*]:-}" "${___fio_ioengines[*]:-}" \
 		 "$___fio_ramp_time" "${___fio_generic_options[*]:-}"
@@ -120,6 +127,8 @@ function fio_help_options() {
                         File size (default $___fio_filesize)
        --fio-workdir=<dir>
                         Work directory (default $___fio_workdir)
+       --fio-drop-cache=[0,1]
+                        Drop cache, don't merely sync (default $___fio_drop_cache)
 EOF
 }
 
@@ -154,6 +163,7 @@ function fio_process_options() {
 	    fiofdatasync*)	fiofdatasync=$optvalue			 ;;
 	    fiofilesize)	___fio_filesize=$(parse_size "$optvalue");;
 	    fioworkdir)         ___fio_workdir=$optvalue		 ;;
+	    fiodrop*)		___fio_drop_cache=$(bool "$optvalue")	 ;;
 	    *) 			unknown_opts+=("$noptname ($noptname1)") ;;
 	esac
     done
@@ -260,12 +270,13 @@ function fio_report_options() {
 "fio_ioengines": $(mk_str_list "${___fio_ioengines[@]}"),
 "fio_ramp_time": $___fio_ramp_time,
 "fio_filesize": $___fio_filesize,
-"fio_workdir": "$___fio_workdir"
+"fio_workdir": "$___fio_workdir",
+"fio_drop_cache": $___fio_drop_cache
 EOF
 }
 
 function fio_requires_drop_cache() {
-    :
+    ((___fio_drop_cache))
 }
 
 register_workload fio
