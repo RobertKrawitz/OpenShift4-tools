@@ -29,6 +29,7 @@ declare -g  ___fio_relative_filesize=2
 declare -g  ___fio_max_relative_filesize=$___fio_relative_filesize
 declare -gi ___fio_ramptime=5
 declare -gi ___fio_job_timeout=9000
+declare -gi ___fio_drop_cache=1
 declare -gi ___fio_pod_memsize=
 
 function fio_test() {
@@ -72,6 +73,7 @@ function fio_test() {
 			  --fio_filesize="$filesize" \
 			  --fio_ramp_time="$___fio_ramptime" \
 			  --fio_workdir="$___fio_workdir" \
+			  --fio-drop-cache="$___fio_drop_cache" \
 			  ${memory_annotation:+"$memory_annotation"}
     done
 }
@@ -95,6 +97,7 @@ function fio_process_option() {
 	fiorel*file*)    ___fio_relative_filesize="$optvalue"				;;
 	fiomaxrel*file*) ___fio_max_relative_filesize="$optvalue"			;;
 	fio*timeout)     ___fio_job_timeout=$optvalue					;;
+	fiodrop*)	 ___fio_drop_cache=$(bool "$optvalue")				;;
 	fio*memsize)     ___fio_pod_memsize=$(parse_size "$optvalue")			;;
 	*) 		 return 1							;;
     esac
@@ -149,6 +152,8 @@ function fio_help_options() {
                                 is the global timeout default.
         --fio-pod-memsize=size  Memory size to allocate to sandboxed pods.
                                 Default is the system default (normally 2GiB).
+        --fio-drop-cache=[0,1]
+                                Drop cache, don't merely sync (default $___fio_drop_cache)
 EOF
 }
 

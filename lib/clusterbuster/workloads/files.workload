@@ -23,6 +23,7 @@ declare -ig ___file_block_size=0
 declare -ig ___file_dirs_per_volume=1
 declare -ig ___files_per_dir=1
 declare -ig ___files_direct=0
+declare -i  ___files_drop_cache=1
 
 function files_arglist() {
     local mountdir=$1; shift
@@ -31,6 +32,12 @@ function files_arglist() {
     local secret_count=$3
     local replicas=$4
     local containers_per_pod=$5
+    local dc_service=
+    local dc_port=0
+    if ((___files_drop_cache)) ; then
+	dc_service="svc-${namespace}-files-${instance}-${replica}-dc"
+	dc_port="$drop_cache_port"
+    fi
     while [[ "$1" != '--' ]] ; do shift; done; shift
     local -i file_blocks=$((___file_size/___file_block_size))
     local mounts=("${volume_mount_paths[@]}" "${emptydirs[@]}")
@@ -86,6 +93,8 @@ function files_help_options() {
                         This should be a divisor of the file size; if not,
                         the results are unspecified.
        --files-direct   Use direct I/O (default no)
+       --files-drop-cache=[0,1]
+                        Drop cache, don't merely sync (default $___files_drop_cache)
 EOF
 }
 
@@ -107,6 +116,7 @@ function files_process_options() {
 	    fileblocksize)	___file_block_size=$(parse_size "$optvalue")	;;
 	    filesize)		___file_size=$(parse_size "$optvalue")		;;
 	    filesdirect)	___files_direct=$(bool "$optvalue")		;;
+	    filesdrop*)		___files_drop_cache=$(bool "$optvalue")	 	;;
 	    *) 			unknown_opts+=("$noptname ($noptname1)") 	;;
 	esac
     done
@@ -119,7 +129,7 @@ function files_process_options() {
 }
 
 function files_requires_drop_cache() {
-    :
+    ((___files_drop_cache))
 }
 
 function files_supports_reporting() {
@@ -136,7 +146,8 @@ function files_report_options() {
 "files_per_dir": $___files_per_dir,
 "file_block_size": $___file_block_size,
 "file_size": $___file_size,
-"files_direct": $___files_direct
+"files_direct": $___files_direct,
+"files_drop_cache": $___files_drop_cache
 EOF
 }
 

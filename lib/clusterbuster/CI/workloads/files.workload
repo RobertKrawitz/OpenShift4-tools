@@ -23,6 +23,7 @@ declare -ga ___files_directs=(0 1)
 declare -gi ___files_job_timeout=9000
 declare -ga ___files_params=()
 declare -gi ___files_min_direct=1024
+declare -gi ___files_drop_cache=1
 
 function files_test() {
     ___files_job_timeout=$(compute_timeout "$___files_job_timeout")
@@ -84,6 +85,7 @@ function files_process_option() {
 	files*timeout)   ___files_job_timeout=$optvalue						;;
 	files*params)    ___files_params+=(${optvalue//,/ })					;;
 	filesmindir*)    ___files_min_direct=$(parse_size "$optvalue")				;;
+	filesdrop*)	 ___files_drop_cache=$(bool "$optvalue")				;;
 	*) 		 return 1								;;
     esac
 }
@@ -122,6 +124,8 @@ function files_help_options() {
         --files-direct=bool[,bool]
                                 Space or comma separated list of whether to use
                                 direct I/O.  Default is $(IFS=,; echo "${___files_directs[*]}").
+        --files-drop-cache=[0,1]
+                                Drop cache, don't merely sync (default $___files_drop_cache)
 EOF
 }
 
