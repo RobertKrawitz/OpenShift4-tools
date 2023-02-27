@@ -381,16 +381,16 @@ $(print_workloads_supporting_reporting '                        - ')
                         Do not attempt anything that would use metrics
                         or the prometheus pod.
        --failure-status=<status>
-                        Failures should be reported as specified rather 
+                        Failures should be reported as specified rather
                         than "Fail"
        --pod-start-timeout=<seconds>
                         Wait specified time for pods to come on line.
                         Default $pod_start_timeout
        --retrieve-successful-logs=<0|1>
-			If retrieving artifacts, retrieve logs for all
-			pods, not just failing pods.  Default $retrieve_successful_logs.
+                        If retrieving artifacts, retrieve logs for all
+                        pods, not just failing pods.  Default $retrieve_successful_logs.
        --parallel-logs=n
-			If retrieving artifacts, parallelize log retrieval.
+                        If retrieving artifacts, parallelize log retrieval.
 
     Workload sizing options:
        --containers_per_pod=N
@@ -495,7 +495,7 @@ $(print_workloads_supporting_reporting '                        - ')
                         Arrange for the liveness probe to sleep for specified
                         time.
        --privileged-pods=[0,1]
-			Create pods as privileged (default $create_pods_privileged)
+                        Create pods as privileged (default $create_pods_privileged)
 
     Kata Virtualization Tuning:
        --virtiofsd-writeback=[0,1]
