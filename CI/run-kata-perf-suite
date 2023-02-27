@@ -58,6 +58,7 @@ declare -i use_python_venv=1
 declare python_venv=
 declare analyze_results=
 declare -i debugonly=0
+declare force_cleanup_timeout=
 declare -i take_prometheus_snapshot=0
 declare unique_job_prefix=
 declare snapshot_date_format='%Y_%m_%dT%H_%M_%S%z'
@@ -100,7 +101,7 @@ function report_results() {
 function retrieve_prometheus_timestamp() {
     "${OC}" exec -n openshift-monitoring prometheus-k8s-0 -- /bin/sh -c "date -u '+$snapshot_date_format'"
 }
-    
+
 function start_prometheus_snapshot() {
     echo "Starting Prometheus snapshot" 1>&2
     "${OC}" delete pod -n openshift-monitoring prometheus-k8s-0
@@ -418,7 +419,7 @@ function monitor() {
 function help() {
     ${PAGER:-less} <<EOF
 Usage: $0 [options | clusterbuster_options] [workloads]
-    Here is a brief description of all available workloads.  If not provided, 
+    Here is a brief description of all available workloads.  If not provided,
         all workloads are run:
 $(_document_workloads)
 
@@ -439,7 +440,7 @@ $(_document_workloads)
         --sync-pin-node=node    Pin the sync pod to the specified node.
                                 By default, the third worker node is used.
         --pin-node[=class]=node
-                                Pin pods of the specified class to the 
+                                Pin pods of the specified class to the
                                 specified node.  Class is optional; if
                                 specified, it should be either client,
                                 server, or pin.
@@ -547,6 +548,7 @@ function process_option() {
 	forcepull*) force_pull_image="$(bool "$optvalue")"				;;
 	usepythonvenv*) use_python_venv="$(bool "$optvalue")"				;;
 	uuid) uuid=$optvalue								;;
+	forcecleanupiknowthisisdangerous) force_cleanup_timeout=$optvalue               ;;
 	prometheussnapshot) take_prometheus_snapshot=$(bool "$optvalue")		;;
 	uniqueprefix) unique_job_prefix=$(bool -Y "$optvalue")				;;
 	jobdelay) job_delay=$optvalue							;;
@@ -715,6 +717,7 @@ function run_clusterbuster_1() {
 	 ${jobname:+"--jobname=$jobname"} \
 	 ${tmp_jobdir:+"--artifactdir=$tmp_jobdir"} \
 	 ${runtimeclass:+"--runtimeclass=$runtimeclass"} \
+         ${force_cleanup_timeout:+"--force-cleanup-i-know-this-is-dangerous=$force_cleanup_timeout"} \
 	 ${unique_job_prefix:+"--pod-prefix=$job_prefix"} \
 	 "${extra_clusterbuster_args[@]}" \
 	 "$@" 2>&1 || status=$?
