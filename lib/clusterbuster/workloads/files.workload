@@ -23,7 +23,7 @@ declare -ig ___file_block_size=0
 declare -ig ___file_dirs_per_volume=1
 declare -ig ___files_per_dir=1
 declare -ig ___files_direct=0
-declare -i  ___files_drop_cache=1
+declare -ig  ___files_drop_cache=1
 
 function files_arglist() {
     local mountdir=$1; shift
