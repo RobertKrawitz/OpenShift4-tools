@@ -1124,11 +1124,14 @@ function get_pod_and_local_timestamps() {
 		;;
 	    *)  ;;
 	esac
-	sleep 2
 	if (($(date +%s) - sync_prestart > pod_start_timeout)) ; then
-	    echo "Sync pod did not start!"
+	    echo "Sync pod did not start!" 1>&2
+	    if [[ -n "$artifactdir" ]] ; then
+		__OC describe pod "$@" > "${artifactdir}/sync.desc"
+	    fi
 	    killthemall "Sync pod did not start in $pod_start_timeout seconds"
 	fi
+	sleep 2
     done
     local first_local_ts
     local remote_ts
@@ -2904,8 +2907,6 @@ $(indent 2 standard_labels_yaml -s dc "$workload" "$namespace" "$instance" "$rep
   selector:
     matchLabels:
       replica: ${namespace}-${workload}-${instance}-${replica}
-  securityContext:
-    privileged: True
 $(create_container_function=create_container_drop_cache create_spec -P -c drop-cache -r '' "$namespace" "$instance" 0)
   - name: "proc-sys-vm"
     hostPath:
