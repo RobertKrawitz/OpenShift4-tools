@@ -30,7 +30,7 @@ declare -gi ___fio_ramp_time=5
 declare -gi ___fio_filesize=; ___fio_filesize=$(parse_size "4Gi")
 declare -g  ___fio_workdir="/tmp"
 declare -g  ___fio_processed_job_file
-declare -i  ___fio_drop_cache=1
+declare -ig  ___fio_drop_cache=1
 
 function fio_arglist() {
     local mountdir=$1; shift
