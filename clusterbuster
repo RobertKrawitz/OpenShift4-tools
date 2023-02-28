@@ -3419,7 +3419,7 @@ fi
 iworkload=$requested_workload
 requested_workload=$(get_workload "$requested_workload") || help_extended "(Unknown workload '$iworkload')"
 arch=${arch:-$(uname -m)}
-container_image=${container_image:-quay.io/rkrawitz/clusterbuster:${arch}-perf-ci-v.1.2}
+container_image=${container_image:-quay.io/rkrawitz/clusterbuster:${arch}-perf-ci-v1.2}
 
 call_api -w "$requested_workload" -s "process_options" "${unknown_opts[@]}" || help "${unknown_opt_names[@]}"
 
