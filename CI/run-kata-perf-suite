@@ -246,7 +246,7 @@ function finis() {
 	report_ci_results -s "$status" -t "$saved_starting_timestamp" -e "$ending_timestamp"
 	if [[ -n "$analyze_results" ]] ; then
 	    # shellcheck disable=SC2086
-	    "$__analyze__" ${analysis_format:-r "$analysis_format"} -o "$analyze_results" "$artifactdir"
+	    "$__analyze__" ${analysis_format:+-r "$analysis_format"} -o "$analyze_results" "$artifactdir"
 	fi
 	if [[ -n "$python_venv" && -d "$python_venv" ]] ; then
 	    if type -t deactivate >/dev/null ; then
