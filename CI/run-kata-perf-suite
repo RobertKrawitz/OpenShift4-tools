@@ -65,6 +65,7 @@ declare snapshot_date_format='%Y_%m_%dT%H_%M_%S%z'
 declare prometheus_snapshot_start_ts=
 declare job_delay=0
 declare -i pin_jobs=1
+declare -a workloads=()
 
 declare -a runtimeclasses=('' 'kata')
 declare -a extra_clusterbuster_args=()
@@ -246,7 +247,14 @@ function finis() {
 	report_ci_results -s "$status" -t "$saved_starting_timestamp" -e "$ending_timestamp"
 	if [[ -n "$analyze_results" ]] ; then
 	    # shellcheck disable=SC2086
-	    "$__analyze__" ${analysis_format:+-r "$analysis_format"} -o "$analyze_results" "$artifactdir"
+	    local workload_pattern
+	    workload_pattern="($(IFS='|'; echo "${workloads[*]}"))"
+	    local -a analysis_classes=()
+	    local runtimeclass
+	    for runtimeclass in "${runtimeclasses[@]}" ; do
+		analysis_classes+=("$artifactdir:name=${runtimeclass:-runc}:job_pattern=^$workload_pattern-${runtimeclass:-runc}-[0-9]{4,}")
+	    done
+	    "$__analyze__" ${analysis_format:+-r "$analysis_format"} -o "$analyze_results" "${analysis_classes[@]}"
 	fi
 	if [[ -n "$python_venv" && -d "$python_venv" ]] ; then
 	    if type -t deactivate >/dev/null ; then
@@ -754,9 +762,7 @@ function run_clusterbuster_1() {
 
 function run_clusterbuster() {
     for runtimeclass in "${runtimeclasses[@]}" ; do
-	if check_runtimeclass "$runtimeclass" ; then
-	    run_clusterbuster_1 -r "$runtimeclass" "$@"
-	fi
+	run_clusterbuster_1 -r "$runtimeclass" "$@"
     done
     counter=$((counter+1))
 }
@@ -781,6 +787,11 @@ if ((! debugonly)) ; then
     if ((take_prometheus_snapshot)) ; then
 	start_prometheus_snapshot
     fi
+    all_runtimeclasses=("${runtimeclasses[@]}")
+    runtimeclasses=()
+    for runtimeclass in "${all_runtimeclasses[@]}" ; do
+	check_runtimeclass "$runtimeclass" && runtimeclasses+=("$runtimeclass")
+    done
     starting_timestamp=$(date +%s)
     job_datestamp=$(date -u '+%Y_%m_%dT%H_%M_%S%z' --date=@"$starting_timestamp")
     artifactdir=${artifactdir//%s/$job_datestamp}
