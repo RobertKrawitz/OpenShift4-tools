@@ -27,8 +27,8 @@ class uperf_analysis(SpreadsheetAnalysis):
             {
              'var': 'rate',
              'name': 'Rate',
-             'unit': ' (MB/sec)',
-             'multiplier': .000001
+             'unit': ' (MBit/sec)',
+             'multiplier': .000008
              },
             {
              'var': 'avg_time_op',
