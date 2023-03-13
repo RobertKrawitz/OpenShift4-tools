@@ -34,10 +34,33 @@ function cpusoaker_next_replica_count() {
     fi
 }
 
-function cpusoaker_test() {
+function cpusoaker_test_1() {
+    local runtime=${1:-}
+    counter=0
     local -i ____cpusoaker_current_replica_index=0
     local -i ____cpusoaker_current_replicas=0
     local -i replicas=0
+    if ((___cpusoaker_starting_replicas > 0)) ; then
+	____cpusoaker_current_replicas=$___cpusoaker_starting_replicas
+    else
+	____cpusoaker_current_replicas=$___cpusoaker_replica_increment
+    fi
+    while cpusoaker_next_replica_count ; do
+	local xruntime=$runtime
+	if [[ $xruntime = runc ]] ; then xruntime=''; fi
+	job_name="$replicas"
+	run_clusterbuster_1 -r "$xruntime" -y  -j "$job_name" -w cpusoaker \
+			    -t "$___cpusoaker_job_timeout" -R "$___cpusoaker_job_runtime" -- \
+			    --replicas="$replicas" --failure-status='No Result' \
+			    --cleanup-always=1 || return
+	counter=$((counter+1))
+	if ((debugonly && counter > 10)) ; then
+	    break
+	fi
+    done
+}
+
+function cpusoaker_test() {
     local default_job_runtime=$1
     if ((___cpusoaker_replica_increment < 1)) ; then
 	echo "Replica increment must be at least 1" 1>&2
@@ -47,46 +70,19 @@ function cpusoaker_test() {
 	___cpusoaker_job_runtime=$default_job_runtime
     fi
     ___cpusoaker_job_timeout=$(compute_timeout "$___cpusoaker_job_timeout")
-    if ((___cpusoaker_starting_replicas > 0)) ; then
-	____cpusoaker_current_replicas=$___cpusoaker_starting_replicas
-    else
-	____cpusoaker_current_replicas=$___cpusoaker_replica_increment
-    fi
-    local -A runtimes_to_test=()
+    local -A runtimes_tested=()
     local runtime
     for runtime in "${runtimeclasses[@]}" ; do
-	if [[ -z "$runtime" || $runtime = runc ]] || oc get runtimeclass "$runtime" >/dev/null 2>&1 ; then
-	    runtime=${runtime:-runc}
-	    runtimes+=("$runtime")
-	    runtimes_to_test[$runtime]=1
-	fi
-    done
-    while cpusoaker_next_replica_count ; do
-	for runtime in "${runtimes[@]}" ; do
-	    if [[ -n "${runtimes_to_test[$runtime]:-}" ]] ; then
-		local xruntime=$runtime
-		if [[ $xruntime = runc ]] ; then xruntime=''; fi
-		job_name="$replicas"
-		if run_clusterbuster_1 -r "$xruntime" -y  -j "$job_name" -w cpusoaker \
-				       -t "$___cpusoaker_job_timeout" -R "$___cpusoaker_job_runtime" -- \
-				       --replicas="$replicas" --failure-status='No Result' \
-				       --cleanup-always=1 ; then
-		    :
-		else
-		    unset runtimes_to_test[$runtime]
-		fi
+	runtime=${runtime:-runc}
+	if [[ -z "${runtimes_tested[${runtime}]:-}" ]] ; then
+	    if [[ $runtime = runc ]] || oc get runtimeclass "$runtime" >/dev/null 2>&1 ; then
+		runtimes_tested[$runtime]=1
+		cpusoaker_test_1 "$runtime"
 	    fi
-	done
-	if [[ -n "${runtimes_to_test[*]}" ]] ; then
-	    counter=$((counter+1))
-	else
-	    break
-	fi
-	if ((debugonly && counter > 10)) ; then
-	    break
 	fi
     done
 }
+
 
 function cpusoaker_process_option() {
     local opt=$1
