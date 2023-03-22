@@ -62,7 +62,7 @@ declare local_toolsdir=
 declare install_device=sda
 declare -a fixed_infra_nodes=()
 declare -i install_retries=2	# Many bare metal nodes take a long time to POST
-declare -ra commands_not_requiring_config_file=(install_cnv install_kata)
+declare -ra commands_not_requiring_config_file=(install_cnv install_kata migrate_infra install_operator)
 declare -i require_config_file=1
 declare kata_install_label=
 declare kata_config_name=example-kataconfig
@@ -77,6 +77,8 @@ declare -r command_help=$(cat <<'EOF'
         bootstrap_destroy        Destroy any (virtual) bootstrap node
         setup_dnsmasq            Set up dnsmasq/haproxy configuration
         setup_infra              Set up an infra node
+        migrate_infra            Migrate infra components to set up infra node
+        install_operator <op>    Install the specified operator
      The following commands all use IPMI:
         reset_all                Reset all nodes
         reset_masters            Reset all master nodes
@@ -1083,15 +1085,23 @@ $(make_infra_config alertmanagerMain prometheusK8s prometheusOperator grafana k8
 EOF
 }
 
-function setup_infra() {
-    (( infra_count <= 0 && master_as_infra < 0 )) && return
-    echo "*** Labeling infra nodes"
-    local node
-    while read -r node ; do
-	oc label "$node" node-role.kubernetes.io/infra= node-role.kubernetes.io/worker- |grep -v 'label .* not found'
-    done <<< "$(get_infra_nodes)"
+function migrate_infra() {
+    if [[ -n "$*" ]] ; then
+	echo "*** Labeling infra nodes"
+	local node
+	for node in "$@" ; do
+	    oc label node "$node" node-role.kubernetes.io/infra= node-role.kubernetes.io/worker- |grep -v 'label .* not found'
+	done
+    fi
     echo "*** Moving monitoring to infra nodes"
     generate_infra | oc apply -f -
+}
+
+function setup_infra() {
+    (( infra_count <= 0 && master_as_infra < 0 )) && return
+    local -a infra_nodes
+    readarray -t infra_nodes <<< "$(get_infra_nodes)"
+    migrate_infra "${infra_nodes[@]}"
 }
 
 function _get_ns_csv_name() {
@@ -1130,15 +1140,28 @@ function _get_operator_namespace() {
 }
 
 function generate_operator_yaml() {
+    local OPTIND=0
+    local opt
+    local namespace=
+    local channel=
+    local csv=
+    local catalog_source=
+    while getopts 'c:C:s:n:' opt "$@" ; do
+	case "$opt" in
+	    c) channel="$OPTARG" ;;
+	    C) csv="$OPTARG" ;;
+	    s) catalog_cource="$OPTARG" ;;
+	    n) namespace="$OPTARG" ;;
+	esac
+    done
+    shift "$((OPTIND-1))"
     local operator=$1
-    local channel
-    channel=$(_get_operator_channel "$operator")
-    local csv
-    csv=$(_get_operator_csv "$operator" "$channel")
-    local catalog_source
-    catalog_source=$(_get_operator_catalog_source "$operator")
-    local namespace
-    namespace=$(_get_operator_namespace "$operator" "$channel")
+    local sourcetype=${2:-}
+    local image=${3:-}
+    channel=${channel:-$(_get_operator_channel "$operator")}
+    csv=${csv:-$(_get_operator_csv "$operator" "$channel")}
+    catalog_source=${catalog_source:-$(_get_operator_catalog_source "$operator")}
+    namespace=${namespace:-$(_get_operator_namespace "$operator" "$channel")}
     cat <<EOF
 apiVersion: v1
 kind: Namespace
@@ -1159,6 +1182,15 @@ kind: Subscription
 metadata:
   name: $operator
   namespace: $namespace
+EOF
+    if [[ -n "$image" ]] ; then
+	cat <<EOF
+spec:
+  sourceType: "${sourcetype:-grpc}"
+  image: "$image"
+EOF
+    else
+	cat <<EOF
 spec:
   channel: "$channel"
   installPlanApproval: Automatic
@@ -1167,10 +1199,11 @@ spec:
   sourceNamespace: openshift-marketplace
   startingCSV: $csv
 EOF
+    fi
 }
 
-function generate_kata_operator_yaml() {
-    generate_operator_yaml "sandboxed-containers-operator"
+function install_operator() {
+    oc apply -f <(generate_operator_yaml "$@")
 }
 
 function generate_kata_yaml() {
@@ -1206,7 +1239,7 @@ function install_kata_internal() {
 	echo '*** Kata already installed'
     fi
     echo '*** Installing Kata'
-    oc apply -f - < <(generate_kata_operator_yaml)
+    install_operator sandboxed-containers-operator
     # Wait for kataconfig to exist as a CRD.
     # Probably should have a timeout here.
     until oc get kataconfig -A >/dev/null 2>&1 ; do sleep 1; done
@@ -1285,17 +1318,13 @@ function install_kata() {
     do_install_kata=1 install_kata_internal
 }
 
-function generate_cnv_operator_yaml() {
-    generate_operator_yaml "kubevirt-hyperconverged"
-}
-
 function install_cnv_internal() {
     (( do_install_cnv <= 0 )) && return
     if oc get hyperconverged kubevirt-hyperconverged >/dev/null 2>&1 ; then
 	echo '*** CNV already installed'
     fi
     echo '*** Installing CNV'
-    oc apply -f - <<< "$(generate_cnv_operator_yaml)"
+    install_operator kubevirt-hyperconverged
     # Wait for kataconfig to exist as a CRD.
     # Probably should have a timeout here.
     until oc get hyperconverged -A >/dev/null 2>&1 ; do sleep 1; done
