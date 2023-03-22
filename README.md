@@ -69,6 +69,9 @@ etc. OpenShift 4 clusters.
 
 ## Data reporting utilities
 
+- **monitor-cluster-resources** -- monitor CPU, memory, and pod
+  utilization per-node in real time.
+
 - **prom-extract**: Capture selected Prometheus data for the duration
   of a run; report the results along with metadata and workload output
   JSON-formatted.
