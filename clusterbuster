@@ -129,6 +129,7 @@ declare -i verbose=0
 declare -i wait_for_secrets=1
 declare -i bytes_transfer=0
 declare -i bytes_transfer_max=0
+# shellcheck disable=SC2034
 declare -i default_bytes_transfer=1000000000
 declare -i workload_run_time=0
 declare -i workload_run_time_max=0
@@ -207,6 +208,7 @@ declare pod_prefix=
 declare arch=
 declare failure_status=Fail
 declare -i create_pods_privileged=0
+declare -i wait_forever=0
 
 declare -r sync_flag_file="/tmp/syncfile";
 declare -r sync_error_file="/tmp/syncerror";
@@ -236,6 +238,7 @@ declare -i vm_threads=1
 declare -i vm_sockets=1
 declare vm_grace_period=30
 declare vm_image='quay.io/kubevirt/fedora-container-disk-images:35'
+declare vm_evict_migrate=1
 
 declare OC=${OC:-${KUBECTL:-}}
 OC=${OC:-$(type -p oc)}
@@ -324,6 +327,7 @@ EOF
        --precleanup     Clean up any prior objects
        --cleanup        Clean up generated objects unless there's a failure
        --cleanup-always Clean up generated objects even if there is a failure
+       --wait-forever   Don't exit if sync pod dies
        --remove-namespaces=<1,0>
                         Remove namespaces when cleaning up objects.  Only
                         applies when using clusterbuster-created namespaces.
@@ -519,6 +523,9 @@ $(print_workloads_supporting_reporting '                        - ')
        --vmimage=<image_url>
                         Container vm disk image to use.
                         Default $vm_image
+       --vm-migrate=[0,1]
+                        Allow VMs to migrate when evicted rather than be deleted.
+                        Default $vm_evict_migrate.
 
     Tuning object creation (short equivalents):
        --scale-ns=[0,1] Scale up the number of namespaces vs.
@@ -714,6 +721,7 @@ function process_option() {
     # shellcheck disable=SC2206
     # shellcheck disable=SC2119
     processed_options+=("--$1")
+    # shellcheck disable=SC2034
     case "$noptname1" in
 	# Help, verbosity
 	helpall*)		    help_extended				;;
@@ -832,6 +840,7 @@ function process_option() {
 	baseoffset)		    baseoffset=$optvalue			;;
 	# Synchronization
 	sync|syncstart)		    sync_start=$((1-sync_start))		;;
+	waitforever)                wait_forever=$(bool "$optvalue")		;;
 	forcenometrics)		    metrics_support=$(($(bool "$optvalue")-1))  ;;
 	podstart[ti]*)		    pod_start_timeout=$optvalue			;;
 	externalsync)
@@ -1253,8 +1262,8 @@ function _monitor_pods() {
 	    if [[ $lstatus = "${pod_status[$name]:-}" ]] ; then continue; fi
 	    debug monitor "$pod" "${pod_status[$pod]:-}" '=>' "$lstatus"
 	    pod_status["$pod"]=$lstatus
-	    unset starting_pods["$pod"]
-	    unset running_pods["$pod"]
+	    unset "starting_pods[$pod]"
+	    unset "running_pods[$pod]"
 	    case "$lstatus" in
 		error|failed)
 		    echo "Pod -n $namespace $name $status!" 1>&2
@@ -1272,7 +1281,7 @@ function _monitor_pods() {
 		    running_pods["$namespace/$name"]=1
 		    ;;
 		completed|terminat*|succeeded)
-		    unset pod_status["$pod"]
+		    unset "pod_status[$pod]"
 		    other_pod_count=$((other_pod_count-1))
 		    finished_pod_count=$((finished_pod_count+1))
 		    ;;
@@ -1293,7 +1302,7 @@ function _monitor_pods() {
 	    if [[ -n "${starting_pods[*]}" ]] ; then
 		pods_now_pending=$(IFS=$'\n'; echo "${!starting_pods[*]}" | sort)
 		if [[ "$pods_now_pending" != "$pods_pending" ]] ; then
-		    pod_progress_timeout=$((timestamp+$pod_start_timeout))
+		    pod_progress_timeout=$((timestamp+pod_start_timeout))
 		    pods_pending="$pods_now_pending"
 		    if [[ -z "$pods_pending" ]] ; then
 			echo "All pods are running                                 " | echo_if_desired 1>&2
@@ -1708,6 +1717,7 @@ EOF
     ((reported)) || cat "$tfile2"
     reported=1
     rm -f "$tfile1" "$tfile2"
+    # shellcheck disable=SC2086
     _retrieve_artifacts $do_retrieve_artifacts
 }
 
@@ -1743,7 +1753,7 @@ function _retrieve_artifacts() {
 			    echo "Unable to retrieve logs for pod $name" 1>&2
 			fi
 		    }
-		    unset jobs_pending[$job]
+		    unset "jobs_pending[$job]"
 		done
 	    fi
 	done <<< "$(__OC get pod -A -l "${basename}-id=$uuid" -ojson | jq -r '[foreach .items[]? as $item ([[],[]];0; (if ($item.kind == "Pod") then ([foreach $item.spec.containers[]? as $container ([[],[]];0; $item.metadata.namespace + " " + $item.metadata.name + " " + $container.name + " " + $item.status.phase)]) else null end))] | flatten | map (select (. != null))[]')"
@@ -1755,7 +1765,7 @@ function _retrieve_artifacts() {
 		    echo "Unable to retrieve logs for pod $name" 1>&2
 		fi
 	    }
-	    unset jobs_pending[$job]
+	    unset "jobs_pending[$job]"
 	done
 	if ((failcount > 5)) ; then
 	    echo "+ $((failcount - 5)) more" 1>&2
@@ -2446,12 +2456,14 @@ kind: Namespace
 metadata:
   name: "${namespace}"
 $(indent 2 standard_labels_yaml -t namespace)
-    pod-security.kubernetes.io/enforce: $policy
-    pod-security.kubernetes.io/audit: $policy
-    pod-security.kubernetes.io/warn: $policy
 EOF
+	_OC label namespace --overwrite "$namespace" "pod-security.kubernetes.io/enforce=$policy"
+	_OC label namespace --overwrite "$namespace" "pod-security.kubernetes.io/audit=$policy"
+	_OC label namespace --overwrite "$namespace" "pod-security.kubernetes.io/warn=$policy"
 	if [[ $policy = privileged ]] ; then
-	    _OC create serviceaccount -n "$namespace" "$namespace"
+	    if ! __OC get serviceaccount -n "$namespace" "$namespace" >/dev/null 2>&1 ; then
+		_OC create serviceaccount -n "$namespace" "$namespace"
+	    fi
 	    _OC label serviceaccount -n "$namespace" "$namespace" "${basename}=true"
 	    _OC adm policy add-scc-to-user -n "$namespace" privileged -z "$namespace"
 	fi
@@ -2673,7 +2685,8 @@ function create_vm_deployment() {
     local depname="${namespace}-${workload}-${instance}"
     while (( replica++ < replicas )) ; do
         local name="${depname}-${replica}"
-        local vmname=$(mkpodname "$name")
+        local vmname
+	vmname=$(mkpodname "$name")
         create_object -n "$namespace" "$name" <<EOF
 apiVersion: kubevirt.io/v1alpha3
 kind: VirtualMachine
@@ -2681,28 +2694,41 @@ metadata:
 $(indent 2 standard_labels_yaml)
   name: "$vmname"
 $(indent 2 standard_deployment_metadata_yaml "$namespace" client)
-$(indent 2 standard_pod_metadata_yaml "$namespace" client)
-$(create_vm_spec -n "$vmname")
+$(create_vm_spec -A "$affinity_yaml" -n "$vmname")
 EOF
     done
 }
 
 function create_vm_spec() {
+    function vm_evict_strategy() {
+	if ((vm_evict_migrate)) ; then
+	    echo "evictionStrategy: LiveMigrate"
+	fi
+    }
     local vmname="$basename"
-    while getopts 'n:' opt; do
+    while getopts 'A:n:' opt; do
         case "$opt" in
+	    A) affinity_yaml=$OPTARG ;;
             n) vmname=$OPTARG ;;
+	    *)		      ;;
         esac
     done
     [[ -n "$vmname" ]] || fatal "vmname is required"
+    pin_node=$(get_pin_node "$node_class")
+    if [[ -n "${pin_node:-}" ]] ; then
+	affinity_yaml="nodeSelector:${nl}  kubernetes.io/hostname: \"$pin_node\""
+    fi
     cat <<EOF
 spec:
   running: true
   template:
     metadata:
-      labels:
+$(indent 6 standard_labels_yaml)
         kubevirt-vm: "$vmname"
+$(indent 6 standard_deployment_metadata_yaml "$namespace" client)
+$(indent 6 standard_pod_metadata_yaml "$namespace" client)
     spec:
+$(indent 6 vm_evict_strategy)
       domain:
         cpu:
           cores: $vm_cores
@@ -2715,6 +2741,7 @@ spec:
                 bus: virtio
 $(indent 8 container_resources_yaml)
       terminationGracePeriodSeconds: $vm_grace_period
+$(indent 6 <<< "$affinity_yaml")
       volumes:
         - name: containerdisk
           containerDisk:
@@ -2843,6 +2870,7 @@ metadata:
   name: $(mkpodname "${namespace}")
 $(indent 2 standard_deployment_metadata_yaml "$namespace" sync)
 $(indent 2 standard_labels_yaml 'sync' "$namespace")
+    ${basename}-sync: "true"
   selector:
     matchLabels:
       app: ${namespace}
@@ -2951,7 +2979,9 @@ function allocate_namespaces() {
         done
         namespaces_to_create+=("${basename}-$((ns_idx++))")
     done
-    sync_namespace="${basename}-sync"
+    if ((sync_start)) ; then
+	sync_namespace="${basename}-sync"
+    fi
 }
 
 function find_first_deployment() {
@@ -2962,7 +2992,7 @@ function find_first_deployment() {
 	# shellcheck disable=SC2034
         while read -r ns deployment stuff ; do
 	    if [[ -n "$deployment" ]] ; then
-		deployment=${deployment#${ns}-}
+		deployment=${deployment#"${ns}"-}
 		deployment=${deployment%-*}
 		echo __OC get deployments -l "$basename" -A --no-headers 1>&2
 		if (( deployment + 1 > first_deployment )) ; then
@@ -3083,7 +3113,29 @@ function create_all_objects() {
 
 function _do_cleanup_1() {
     local ltimeout="${force_cleanup_timeout:+--timeout=${timeout}s}"
-    if [[ ${1:-} = '-f' ]] ; then
+    local force=0
+    local OPTIND=0
+    local opt
+    while getopts 'f' opt "$@" ; do
+	case "$opt" in
+	    f) force=1 ;;
+	    *)         ;;
+	esac
+    done
+    shift $((OPTIND-1))
+    local objects_to_clean=${1:-}
+    local objects_to_clean_sync=${2:-$objects_to_clean}
+    if [[ -n "$objects_to_clean" ]] ; then
+	objects_to_clean="-A $objects_to_clean"
+    else
+	objects_to_clean=ns
+    fi
+    if [[ -n "$objects_to_clean_sync" ]] ; then
+	objects_to_clean_sync="-A $objects_to_clean_sync"
+    else
+	objects_to_clean_sync=ns
+    fi
+    if ((force)) ; then
 	shift
 	# It appears that allowing processes to write to stderr inside
 	# a trap results in the subprocess not doing everything
@@ -3091,13 +3143,19 @@ function _do_cleanup_1() {
 	exec >/dev/null
 	exec 2>/dev/null
 	# shellcheck disable=SC2086
-	____OC delete "${@:-ns}" -l "$basename" $ltimeout
+	____OC delete $objects_to_clean_sync -l "${basename}-sync" $ltimeout
+	# shellcheck disable=SC2086
+	____OC delete $objects_to_clean -l "$basename" $ltimeout
     elif ((report_object_creation)) ; then
 	# shellcheck disable=SC2086
-	__OC delete "${@:-ns}" -l "$basename" $ltimeout 1>&2
+	__OC delete $objects_to_clean_sync -l "${basename}-sync" $ltimeout 1>&2
+	# shellcheck disable=SC2086
+	__OC delete $objects_to_clean -l "${basename}-sync" $ltimeout 1>&2
     else
 	# shellcheck disable=SC2086
-	__OC delete "${@:-ns}" -l "$basename" $ltimeout 2>&1 |grep 'DEBUG kubectl:' 1>&2
+	__OC delete $objects_to_clean_sync -l "$basename" $ltimeout 2>&1 |grep 'DEBUG kubectl:' 1>&2
+	# shellcheck disable=SC2086
+	__OC delete $objects_to_clean -l "$basename" $ltimeout 2>&1 |grep 'DEBUG kubectl:' 1>&2
     fi
 }
 
@@ -3105,7 +3163,12 @@ function _do_cleanup() {
     if ! _do_cleanup_1 "$@" ; then
 	if [[ -n "$force_cleanup_timeout" ]] ; then
 	    warn "*** Cleanup failed, doing a force delete!"
-	    __OC delete deployment,replicaset,pod,vm,configmap,secret,service,serviceaccount -A  -l "$basename" --force --grace-period=0 1>&2
+	    if [[ $deployment_type = vm ]] ; then
+		__OC delete pod,configmap,secret,service,serviceaccout -A -l "${basename}-sync" --force --grace-period=0 1>&2
+		__OC delete vm,configmap,secret,service,serviceaccount -A  -l "$basename" --force --grace-period=0 1>&2
+	    else
+		__OC delete deployment,replicaset,pod,configmap,secret,service,serviceaccount -A  -l "$basename" --force --grace-period=0 1>&2
+	    fi
 	    if ((use_namespaces && remove_namespaces)) ; then
 		__OC delete namespace -l "$basename" --force --grace-period=0 1>&2
 	    fi
@@ -3127,13 +3190,17 @@ function do_cleanup() {
 	esac
     done
     shift "$OPTIND"
-    local objects_to_clean
+    local objects_to_clean=
+    local objects_to_clean_sync=
     local objtype
     (( doit )) || return 0
     if ((use_namespaces && remove_namespaces)) ; then
 	objects_to_clean=namespace
+    elif [[ $deployment_type = vm ]] ; then
+	objects_to_clean_sync="configmap,secret,service,pod"
+	objects_to_clean="configmap,secret,service,vm"
     else
-	objects_to_clean="-A deployment,replicaset,configmap,secret,service,pod,vm"
+	objects_to_clean="deployment,replicaset,configmap,secret,service,pod"
     fi
     if [[ -n "${injected_errors[precleanup]:-}" && $precleanup -gt 0 ]] ; then
 	warn "*** Injecting precleanup error ${inject_errors[precleanup]:-}"
@@ -3146,7 +3213,7 @@ function do_cleanup() {
 	killthemall "Cleanup timed out!"
     fi
     # shellcheck disable=SC2086
-    _do_cleanup $force $objects_to_clean || killthemall "Cleanup timed out!"
+    _do_cleanup $force "$objects_to_clean" "$objects_to_clean_sync" || killthemall "Cleanup timed out!"
 }
 
 ################################################################
@@ -3191,6 +3258,7 @@ function create_secrets_top_level() {
 }
 
 function do_logging() {
+    ((wait_forever)) && sleep infinity
     ((report)) || return 0
     local -i logs_expected=0
     logs_expected="$(calculate_logs_required "$namespaces" "$deps_per_namespace" "$replicas" "$containers_per_pod")"
@@ -3203,6 +3271,7 @@ function do_logging() {
     local pod
     local ignore
     local namespace_retrieved=
+    # shellcheck disable=SC2034
     while read -r namespace pod ignore ; do
 	if [[ -n "$namespace" && -n "$pod" ]] ; then
 	    if [[ -z "$namespace_retrieved" ]] ; then
@@ -3304,9 +3373,9 @@ function run_clusterbuster_2() {
 	do_cleanup -p 1>&2 || return 1
     fi
     if ((cleanup_always)) ; then
-	trap 'echo "Cleaning up" 1>&2; remove_tmpdir; doit=1; do_cleanup -f; killthemall ""; wait; remove_tmpdir; doit=1; do_cleanup -f; exit 1' TERM INT HUP
+	trap 'echo "Cleaning up" 1>&2; doit=1; do_cleanup -f; killthemall ""; wait; remove_tmpdir; doit=1; do_cleanup -f; exit 1' TERM INT HUP
     else
-	trap 'remove_tmpdir; killthemall "Not cleaning up"; wait; exit 1' TERM HUP INT
+	trap 'killthemall "Not cleaning up"; wait; remove_tmpdir; exit 1' TERM HUP INT
     fi
     if [[ $doit -gt 0 ]] ; then
 	if [[ -n "${artifactdir:-}" && $take_prometheus_snapshot -gt 0 ]] ; then
@@ -3326,7 +3395,7 @@ function run_clusterbuster_2() {
     fi
     allocate_namespaces || return 1
     find_first_deployment || return 1
-    if [[ -n "$sync_namespace" ]] ; then
+    if [[ $sync_start -ne 0 && -n "$sync_namespace" ]] ; then
 	create_namespace -f "$sync_namespace" || return 1
     fi
     create_all_objects namespaces || return 1
