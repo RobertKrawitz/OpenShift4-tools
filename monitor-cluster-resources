@@ -20,6 +20,8 @@ import time
 import sys
 import subprocess
 import selectors
+import argparse
+import fnmatch
 
 
 def _ts():
@@ -55,42 +57,64 @@ pod_memory = {}
 pod_cpu = {}
 node_pods = {}
 pod_nodes = {}
+all_nodes = []
+
+
+parser = argparse.ArgumentParser(description='Monitor cluster resources')
+parser.add_argument('-N', '--node-pattern', help='Pattern(s) of nodes to list',
+                    metavar='pattern', action='append')
+parser.add_argument('-q', '--quiet', help='Do not print rows for individual pods',
+                    action='store_true')
+parser.add_argument('-Q', '--veryquiet', help='Do not print individual pods that have changed',
+                    action='store_true')
+args = parser.parse_args()
 
 
 def process_memory(token):
     if not token or token == '':
         return 0
-    m = re.match(r'([0-9]+)(Ki|Mi|Gi)?', token)
-    if m:
-        mem = int(m.group(1))
-        if m.group(2) == 'Ki':
-            return mem * 1024
-        elif m.group(2) == 'Mi':
-            return mem * 1024 * 1024
-        elif m.group(2) == 'Gi':
-            return mem * 1024 * 1024 * 1024
-        else:
-            return mem
+    tokens = token.split()
+    quantity = 0
+    for token in tokens:
+        m = re.match(r'([0-9]+)(Ki|Mi|Gi)?', token)
+        if m:
+            mem = int(m.group(1))
+            if m.group(2) == 'Ki':
+                quantity += mem * 1024
+            elif m.group(2) == 'Mi':
+                quantity += mem * 1024 * 1024
+            elif m.group(2) == 'Gi':
+                quantity += mem * 1024 * 1024 * 1024
+            else:
+                quantity += mem
+    return quantity
 
 
 def process_cpu(token):
     if not token or token == '':
         return 0
-    m = re.match(r'([0-9]+)(m)?', token)
-    if m.group(2) == 'm':
-        return int(m.group(1)) * .001
-    else:
-        return int(m.group(1))
+    tokens = token.split()
+    quantity = 0
+    for token in tokens:
+        m = re.match(r'([0-9]+)(m)?', token)
+        cpu = int(m.group(1))
+        if m.group(2) == 'm':
+            quantity += cpu * .001
+        else:
+            quantity += cpu
+    return quantity
 
 
-def fformat(num: float, precision: int = 3):
+def pformat(num: float, precision: int = 3):
     """
     Return a rounded representation of a number.
     :param num:
     :param precision:
     """
+    num = num * 100
+    precision = precision - 2
     try:
-        if precision > 1:
+        if precision >= 1:
             return f'{num:.{precision}f}'
         else:
             return str(round(num))
@@ -98,31 +122,91 @@ def fformat(num: float, precision: int = 3):
         return str(num)
 
 
-def process_stdout(line):
-    ns, pod, status, node, start, cpu, memory = line.split('|')
-    podname = f'{pod}.{ns}'
-    if podname in pod_status and pod_status[podname] == status:
-        return
-    memory = process_memory(memory)
-    cpu = process_cpu(cpu)
-    changed = False
-    if status == 'Running':
-        pod_memory[podname] = memory
-        pod_cpu[podname] = cpu
+def is_matching_node(node: str):
+    if args.node_pattern:
+        for arg in args.node_pattern:
+            if fnmatch.fnmatch(node, arg):
+                return True
+        return False
+    else:
+        return True
+
+
+def define_node(line: str):
+    node, cpu, memory, pods = line.split('|')
+    global all_nodes
+    if node not in node_cpu_capacity:
+        node_cpu_capacity[node] = process_cpu(cpu)
+        node_memory_capacity[node] = process_memory(memory)
+        node_pod_capacity[node] = int(pods)
+        node_cpu[node] = 0
+        node_memory[node] = 0
+        node_pods[node] = 0
+        all_nodes = sorted([node for node in list(node_cpu_capacity.keys()) if is_matching_node(node)])
+
+
+def fetch_node(node: str):
+    run_command(['sh', '-c', f'''
+kubectl get node {node} -ojson | jq -r '.metadata.name + "|" + .status.allocatable.cpu + "|" + .status.allocatable.memory + "|" + .status.allocatable.pods'
+'''], define_node)
+
+
+def get_node_data():
+    return '\t'.join([f'{node}\t{pformat(node_cpu[node] / node_cpu_capacity[node])}\t{pformat(node_memory[node] / node_memory_capacity[node])}\t{pformat(node_pods[node] / node_pod_capacity[node])}' for node in all_nodes])
+
+
+def process_lines(lines: list):
+    new_pod_cpu = {}
+    new_pod_memory = {}
+    new_pod_nodes = {}
+    pods_changed = []
+    for line in lines:
+        pod, status, node, cpu, memory = line.split('|')
+        if status != 'Running':
+            continue
+        new_pod_cpu[pod] = process_cpu(cpu)
+        new_pod_memory[pod] = process_memory(memory)
+        new_pod_nodes[pod] = node
+    for pod in [spod for spod in pod_nodes if spod not in {pod: None for pod in new_pod_nodes}]:
+        node = pod_nodes[pod]
+        node_memory[node] -= pod_memory[pod]
+        del pod_memory[pod]
+        node_cpu[node] -= pod_cpu[pod]
+        del pod_cpu[pod]
+        node_pods[node] -= 1
+        del pod_nodes[pod]
+        pods_changed.append(f'-{pod}')
+        if not args.quiet and not args.veryquiet:
+            timestamp(f'{get_node_data()}\t-{pod}')
+
+    for pod, node in new_pod_nodes.items():
+        cpu = new_pod_cpu[pod]
+        memory = new_pod_memory[pod]
+        prefix = '+'
+        pod_node = None
+        if pod in pod_nodes:
+            if node == pod_nodes[pod] and cpu == pod_cpu[pod] and memory == pod_memory[pod]:
+                continue
+            else:
+                pod_node = pod_nodes[pod]
+                node_memory[pod_node] -= pod_memory[pod]
+                node_cpu[pod_node] -= pod_cpu[pod]
+                node_pods[pod_node] -= 1
+                prefix = '!'
+        pod_memory[pod] = memory
+        pod_cpu[pod] = cpu
+        pod_nodes[pod] = node
         node_memory[node] += memory
         node_cpu[node] += cpu
         node_pods[node] += 1
-        changed = True
-    elif podname in pod_cpu:
-        node_memory[node] -= pod_memory[podname]
-        node_cpu[node] -= pod_cpu[podname]
-        node_pods[node] -= 1
-        del pod_cpu[podname]
-        del pod_memory[podname]
-        changed = True
-    pod_status[podname] = status
-    if changed:
-        timestamp(f'{ns} {pod} {status} {node} {start} {cpu} {memory} {node_memory[node]} {fformat(node_cpu[node])} {node_pods[node]} {fformat(node_memory[node] / node_memory_capacity[node])} {fformat(node_cpu[node] / node_cpu_capacity[node])} {fformat(node_pods[node] / node_pod_capacity[node])}')
+        pods_changed.append(f'{prefix}{pod}')
+        if not args.quiet and not args.veryquiet and (not pod_node or pod_node in all_nodes) and node in all_nodes:
+            timestamp(f'{get_node_data()}\t{prefix}{pod}')
+    if pods_changed:
+        if args.veryquiet:
+            timestamp(get_node_data())
+        elif args.quiet:
+            timestamp(f'{get_node_data()}\t{" ".join(sorted(pods_changed))}')
 
 
 def run_command(cmd, process_stdout=None, process_stderr=None):
@@ -135,6 +219,7 @@ def run_command(cmd, process_stdout=None, process_stderr=None):
         sel.register(command.stdout, selectors.EVENT_READ)
         sel.register(command.stderr, selectors.EVENT_READ)
         foundSomething = True
+        stdout_lines = []
         while foundSomething:
             # Keep reading until we reach EOF on both channels.
             # command.poll() is not a good criterion because the process
@@ -146,35 +231,33 @@ def run_command(cmd, process_stdout=None, process_stderr=None):
                     foundSomething = True
                     data = data.decode().rstrip()
                     if key.fileobj is command.stdout:
-                        if process_stdout:
+                        if process_stdout is True:
+                            stdout_lines.append(data)
+                        elif process_stdout:
                             process_stdout(data)
                         else:
                             timestamp(data)
                     elif key.fileobj is command.stderr:
-                        if process_stdout:
+                        if process_stderr:
                             process_stderr(data)
                         else:
                             timestamp(data)
-
-
-def process_node(line):
-    node, cpu, memory, pods = line.split('|')
-    node_cpu_capacity[node] = process_cpu(cpu)
-    node_memory_capacity[node] = process_memory(memory)
-    node_pod_capacity[node] = int(pods)
-    node_cpu[node] = 0
-    node_memory[node] = 0
-    node_pods[node] = 0
+        if process_stdout is True:
+            return stdout_lines
 
 
 try:
     run_command(['sh', '-c', '''
     kubectl get node -ojson | jq -r 'foreach .items[]? as $item ([[],[]];0; ($item.metadata.name + "|" + $item.status.allocatable.cpu + "|" + $item.status.allocatable.memory + "|" + $item.status.allocatable.pods))'
     '''],
-                process_node)
+                define_node)
 
-    run_command(['kubectl', 'get', 'pod', '--watch', '-A', '-o',
-                 'jsonpath={.metadata.namespace}|{.metadata.name}|{.status.phase}|{.spec.nodeName}|{.status.startTime}|{.spec.containers[].resources.requests.cpu}|{.spec.containers[].resources.requests.memory}{"\\n"}'],
-                process_stdout)
+    while True:
+        # Unfortunately, watching doesn't work here because we don't normally
+        # receive any notification that the pod has gone away.
+        process_lines(run_command(['kubectl', 'get', 'pod', '-A', '-o',
+                                   'jsonpath={range .items[*]}{.metadata.name}.{.metadata.namespace}|{.status.phase}|{.spec.nodeName}|{.spec.containers[*].resources.requests.cpu}|{.spec.containers[*].resources.requests.memory}{"\\n"}{end}'],
+                                  process_stdout=True))
+        time.sleep(5)
 except KeyboardInterrupt:
     sys.exit()
