@@ -76,14 +76,14 @@ def process_memory(token):
     tokens = token.split()
     quantity = 0
     for token in tokens:
-        m = re.match(r'([0-9]+)(Ki|Mi|Gi)?', token)
+        m = re.match(r'([0-9]+)([kmg])?', token.lower())
         if m:
             mem = int(m.group(1))
-            if m.group(2) == 'Ki':
+            if m.group(2) == 'k':
                 quantity += mem * 1024
-            elif m.group(2) == 'Mi':
+            elif m.group(2) == 'm':
                 quantity += mem * 1024 * 1024
-            elif m.group(2) == 'Gi':
+            elif m.group(2) == 'g':
                 quantity += mem * 1024 * 1024 * 1024
             else:
                 quantity += mem
