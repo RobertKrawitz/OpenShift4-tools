@@ -9,3 +9,4 @@ uperf-test-type=stream
 uperf-proto=tcp
 replicas=4
 precleanup
+antiaffinity
