@@ -50,7 +50,7 @@ function uperf_test() {
 				      ${uperf_interface:+--uperf_interface=$___uperf_interface:} \
 				      ${uperf_interface_server:+--uperf_interface_server=$___uperf_interface_server:} \
 				      ${uperf_interface_client:+--uperf_interface_client=$___uperf_interface_client:} \
-				      --uperf_interface="$___uperf_interface" \
+				      --uperf_interface="$___uperf_interface" --anti-affinity \
 				      ${___uperf_use_annotation:+--pod-annotation="io.katacontainers.config.hypervisor.default_vcpus: \"$nthr\""}
 		done
 	    done

@@ -120,8 +120,10 @@ declare -i port=7777
 declare -i sync_port=7778
 declare -i drop_cache_port=7779
 declare -i sync_ns_port=7753
+declare -i sync_in_first_namespace=0
 declare sync_host=
 declare -i affinity=0
+declare -i sync_affinity=2
 declare -A pin_nodes=()
 declare -A runtime_classes=()
 declare runtime_class
@@ -428,6 +430,9 @@ $(print_workloads_supporting_reporting '                        - ')
                         Workloads may define other classes.
                         If no class is specified, pin node applies to all
                         pods.
+       --sync-in-first-namespace=<0|1>
+                        Place the sync pod in the first worker namespace.
+                        Default ${sync_in_first_namespace}.
        --affinity       Force affinity between client and server pods
                         in a client-server workload.  Default is neither
                         affinity nor anti-affinity.  Use of a pin node
@@ -436,6 +441,13 @@ $(print_workloads_supporting_reporting '                        - ')
                         in a client-server workload.  Default is neither
                         affinity nor anti-affinity.  Use of a pin node
                         overrides anti-affinity.
+       --anti-affinity  Force anti-affinity between client and server pods
+                        in a client-server workload.  Default is neither
+                        affinity nor anti-affinity.  Use of a pin node
+                        overrides anti-affinity.
+       --sync-affinity  Force affinity between sync and all worker pods.
+       --sync-anti-affinity
+                        Force anti-affinity between sync and all worker pods.
        --drop_cache     Drop the buffer cache in all pin nodes; if no
                         pin nodes are defined, drop all workers' caches.
        --drop_all_cache Drop the buffer cache on all workers.
@@ -793,6 +805,7 @@ function process_option() {
 	livenessprobeint*)	    liveness_probe_frequency=$optvalue		;;
 	livenessprobesleep*)	    liveness_probe_sleep_time=$optvalue		;;
 	privilege*)		    create_pods_privileged=$(bool "$optvalue")	;;
+	syncinfirst*)		    sync_in_first_namespace=$(bool "$optvalue") ;;
 	affinity)
 	    case "$optvalue" in
 		1|'') affinity=1      ;;
@@ -804,6 +817,19 @@ function process_option() {
 	    case "$optvalue" in
 		1|'') affinity=2      ;;
 		*) affinity=0         ;;
+	    esac
+	    ;;
+	syncaffinity)
+	    case "$optvalue" in
+		1|'') syncaffinity=1  ;;
+		2|anti) syncaffinity=2;;
+		*) syncaffinity=0     ;;
+	    esac
+	    ;;
+	syncantiaffinity)
+	    case "$optvalue" in
+		1|'') syncaffinity=2  ;;
+		*) syncaffinity=0     ;;
 	    esac
 	    ;;
         # vm specs
@@ -1731,7 +1757,7 @@ function _retrieve_artifacts() {
 	local job
 	local -A pods_described=()
 	while read -r namespace pod container status; do
-	    if [[ $namespace != "$sync_namespace" && -z $always_retrieve_artifacts &&
+	    if [[ ($namespace != "$sync_namespace" || $sync_in_first_namespace) && -z $always_retrieve_artifacts &&
 		      $retrieve_successful_logs -eq 0 && ($status = Running || $status = Completed) ]] ; then
 		continue
 	    fi
@@ -2068,8 +2094,10 @@ function standard_labels_yaml() {
     local OPTIND=0
     local logger=
     local suffix=
-    while getopts 't:ls:' opt "$@" ; do
+    local -i worker_label=1
+    while getopts 'St:ls:' opt "$@" ; do
 	case "$opt" in
+	    S) worker_label=0	 ;;
 	    t) objtype="$OPTARG" ;;
 	    l) logger=true	 ;;
 	    s) suffix="$OPTARG"  ;;
@@ -2096,6 +2124,12 @@ ${objtype:+  ${basename}-${objtype}: "$uuid"}
 ${objtype:+  ${basename}-x-${objtype}: "$xuuid"}
 ${logger:+  ${basename}-logger: $true}
 EOF
+    if ((worker_label)) ; then
+	cat <<EOF
+  ${basename}-worker: "true"
+  clusterbuster-worker: "true"
+EOF
+    fi
     if [[ -n "$workload" ]] ; then
 	cat <<EOF
   ${basename}-${workload}: "$uuid"
@@ -2298,6 +2332,7 @@ function create_affinity_yaml() {
 	esac
     done
     case "${_affinity,,}" in
+	0)	     return		    ;;
 	1|af*|podaf) _affinity=Affinity	    ;;
 	*)	     _affinity=AntiAffinity ;;
     esac
@@ -2439,9 +2474,11 @@ function create_namespace() {
     local force=
     local opt=
     local policy
+    local worker_label=
     policy=$(namespace_policy)
-    while getopts 'fp:' opt "$@" ; do
+    while getopts 'Sfp:' opt "$@" ; do
 	case "$opt" in
+	    S) worker_label=-S	;;
 	    f) force=-f		;;
 	    p) policy="$OPTARG" ;;
 	    *)			;;
@@ -2455,7 +2492,7 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: "${namespace}"
-$(indent 2 standard_labels_yaml -t namespace)
+$(indent 2 standard_labels_yaml $worker_label -t namespace)
 EOF
 	_OC label namespace --overwrite "$namespace" "pod-security.kubernetes.io/enforce=$policy"
 	_OC label namespace --overwrite "$namespace" "pod-security.kubernetes.io/audit=$policy"
@@ -2863,18 +2900,20 @@ EOF
 function create_sync_deployment() {
     local namespace=$1; shift
     local -a tolerations=('node-role.kubernetes.io/infra:Equal:NoSchedule' "${tolerations[@]}")
+    local affinity_yaml="$(affinity=$sync_affinity create_affinity_yaml -k ${basename}-worker "true")"
     create_object -t Pod -n "$namespace" "${namespace}-sync" <<EOF
 apiVersion: v1
 kind: Pod
 metadata:
-  name: $(mkpodname "${namespace}")
+  name: $(mkpodname "${basename}-sync")
 $(indent 2 standard_deployment_metadata_yaml "$namespace" sync)
-$(indent 2 standard_labels_yaml 'sync' "$namespace")
+$(indent 2 standard_labels_yaml -S 'sync' "$basename")
     ${basename}-sync: "true"
   selector:
     matchLabels:
       app: ${namespace}
 $(create_container_function=create_container_sync create_spec -P -c sync -r '' "$namespace" 0 0 "$@")
+$(indent 2 <<< "$affinity_yaml")
   restartPolicy: Never
 EOF
 }
@@ -2980,7 +3019,11 @@ function allocate_namespaces() {
         namespaces_to_create+=("${basename}-$((ns_idx++))")
     done
     if ((sync_start)) ; then
-	sync_namespace="${basename}-sync"
+	if ((sync_in_first_namespace)) ; then
+	    sync_namespace=${namespaces_to_create[0]}
+	else
+	    sync_namespace="${basename}-sync"
+	fi
     fi
 }
 
@@ -3027,7 +3070,7 @@ function create_system_configmap() {
     if supports_api -w "$requested_workload" list_configmaps ; then
 	local -a systemfiles
 	readarray -t systemfiles < <(list_configmaps)
-	if [[ -n "$sync_namespace" ]] ; then
+	if [[ $sync_start -ne 0 && -n "$sync_namespace" && $sync_in_first_namespace -ne 0 ]] ; then
 	    create_configmaps "$sync_namespace" "systemconfigmap" "${systemfiles[@]}"
 	fi
 	for i in $(seq 0 "$((parallel_configmaps - 1))") ; do
@@ -3395,8 +3438,8 @@ function run_clusterbuster_2() {
     fi
     allocate_namespaces || return 1
     find_first_deployment || return 1
-    if [[ $sync_start -ne 0 && -n "$sync_namespace" ]] ; then
-	create_namespace -f "$sync_namespace" || return 1
+    if [[ $sync_start -ne 0 && -n "$sync_namespace" && $sync_in_first_namespace -eq 0 ]] ; then
+	create_namespace -S -f "$sync_namespace" || return 1
     fi
     create_all_objects namespaces || return 1
     if get_sync -q ; then
