@@ -24,29 +24,6 @@ import argparse
 import fnmatch
 
 
-def _ts():
-    return datetime.utcfromtimestamp(time.time()).strftime('%Y-%m-%dT%T.%f')
-
-
-def _get_timestamp(string):
-    """
-    Return a string with a timestamp prepended to the first line
-    and any other lines indented
-    :param string: String to be timestamped
-    :return: Timestamped string
-    """
-    string = re.sub(r'\n(.*\S.*)', r'\n            \1', string)
-    return '%s %s' % (_ts(), string)
-
-
-def timestamp(string):
-    """
-    Timestamp a string and print it to stderr
-    :param string: String to be printed to stderr with timestamp attached
-    """
-    print(_get_timestamp(str(string)))
-
-
 node_cpu = {}
 node_memory = {}
 node_cpu_capacity = {}
@@ -58,16 +35,76 @@ pod_cpu = {}
 node_pods = {}
 pod_nodes = {}
 all_nodes = []
+starting_time = None
+resources_to_list = ['cpu', 'memory', 'pods']
+interval = 5
+first_time = True
+last_row = None
+tab = '\t'
+n_timestamps = 0
 
 
 parser = argparse.ArgumentParser(description='Monitor cluster resources')
 parser.add_argument('-N', '--node-pattern', help='Pattern(s) of nodes to list',
                     metavar='pattern', action='append')
+parser.add_argument('-P', '--pod-pattern', help='Pattern(s) of pods to list',
+                    metavar='pattern', action='append')
+parser.add_argument('-R', '--resource',
+                    help='Resource(s) to list (memory, cpu, pods).  Repeat for multiple.',
+                    metavar='resource', action='append')
+parser.add_argument('-i', '--interval', help=f'Interval between scans (default {interval})',
+                    metavar='time interval', type=float)
 parser.add_argument('-q', '--quiet', help='Do not print rows for individual pods',
                     action='store_true')
 parser.add_argument('-Q', '--veryquiet', help='Do not print individual pods that have changed',
                     action='store_true')
+parser.add_argument('-c', '--changed-rows-only', help='Only print changed rows', action='store_true')
+parser.add_argument('-t', '--relative-timestamps', help='Print relative timestamps', action='store_true')
+parser.add_argument('-T', '--absolute-timestamps', help='Print absolute timestamps', action='store_true')
 args = parser.parse_args()
+
+if args.relative_timestamps:
+    n_timestamps += 1
+if args.absolute_timestamps is None or args.absolute_timestamps is True:
+    n_timestamps += 1
+
+if args.resource:
+    resources_to_list = [resource for resource in resources_to_list if resource in args.resource]
+if args.interval:
+    interval = args.interval
+
+
+def _ts(delimiter: str = ' '):
+    global starting_time
+    answers = []
+    now_time = time.time()
+    if args.absolute_timestamps is None or args.absolute_timestamps is True:
+        answers.append(datetime.utcfromtimestamp(now_time).strftime('%Y-%m-%dT%T.%f'))
+    if args.relative_timestamps:
+        if starting_time is None:
+            starting_time = now_time
+        delta = now_time - starting_time
+        answers.append(f'{delta:.3f}')
+    return delimiter.join(answers)
+
+
+def get_timestamp(string, delimiter: str = ' '):
+    """
+    Return a string with a timestamp prepended to the first line
+    and any other lines indented
+    :param string: String to be timestamped
+    :return: Timestamped string
+    """
+    string = re.sub(r'\n(.*\S.*)', r'\n            \1', string)
+    return delimiter.join([_ts(delimiter), string])
+
+
+def timestamp(string, delimiter: str = ' '):
+    """
+    Timestamp a string and print it to stderr
+    :param string: String to be printed to stderr with timestamp attached
+    """
+    print(get_timestamp(str(string), delimiter=delimiter))
 
 
 def process_memory(token):
@@ -122,10 +159,10 @@ def pformat(num: float, precision: int = 3):
         return str(num)
 
 
-def is_matching_node(node: str):
-    if args.node_pattern:
-        for arg in args.node_pattern:
-            if fnmatch.fnmatch(node, arg):
+def is_match(elt: str, patterns=None):
+    if patterns:
+        for pattern in patterns:
+            if fnmatch.fnmatch(elt, pattern):
                 return True
         return False
     else:
@@ -142,24 +179,45 @@ def define_node(line: str):
         node_cpu[node] = 0
         node_memory[node] = 0
         node_pods[node] = 0
-        all_nodes = sorted([node for node in list(node_cpu_capacity.keys()) if is_matching_node(node)])
+        all_nodes = sorted([node for node in list(node_cpu_capacity.keys()) if is_match(node, args.node_pattern)])
 
 
 def fetch_node(node: str):
     run_command(['sh', '-c', f'''
-kubectl get node {node} -ojson | jq -r '.metadata.name + "|" + .status.allocatable.cpu + "|" + .status.allocatable.memory + "|" + .status.allocatable.pods'
-'''], define_node)
+kubectl get node {node} -ojson | jq -r '.metadata.name + "|" + .status.allocatable.cpu + "|" + .status.allocatable.memory + "|" + .status.allocatable.pods'''], define_node)
+
+
+def mk_header():
+    if args.veryquiet:
+        return f'''Node{tab * n_timestamps}{(tab * len(resources_to_list)).join(all_nodes)}{tab}Pods changed
+Timestamp{((tab * n_timestamps) + (tab.join(resources_to_list))) * len(all_nodes)}{tab}add{tab}remove{tab}change{tab}total'''
+    else:
+        return f'''Node{tab * n_timestamps}{(tab * len(resources_to_list)).join(all_nodes)}
+Timestamp{((tab * n_timestamps) + (tab.join(resources_to_list))) * len(all_nodes)}'''
 
 
 def get_node_data():
-    return '\t'.join([f'{node}\t{pformat(node_cpu[node] / node_cpu_capacity[node])}\t{pformat(node_memory[node] / node_memory_capacity[node])}\t{pformat(node_pods[node] / node_pod_capacity[node])}' for node in all_nodes])
+    answer = []
+    for node in all_nodes:
+        if 'cpu' in resources_to_list:
+            answer.append(str(pformat(node_cpu[node] / node_cpu_capacity[node])))
+        if 'memory' in resources_to_list:
+            answer.append(str(pformat(node_memory[node] / node_memory_capacity[node])))
+        if 'pods' in resources_to_list:
+            answer.append(str(pformat(node_pods[node] / node_pod_capacity[node])))
+    return tab.join(answer)
 
 
 def process_lines(lines: list):
+    global first_time, last_row
     new_pod_cpu = {}
     new_pod_memory = {}
     new_pod_nodes = {}
     pods_changed = []
+    npods_added = 0
+    npods_removed = 0
+    npods_changed = 0
+    npods_total = 0
     for line in lines:
         pod, status, node, cpu, memory = line.split('|')
         if status != 'Running':
@@ -175,15 +233,19 @@ def process_lines(lines: list):
         del pod_cpu[pod]
         node_pods[node] -= 1
         del pod_nodes[pod]
-        pods_changed.append(f'-{pod}')
-        if not args.quiet and not args.veryquiet:
-            timestamp(f'{get_node_data()}\t-{pod}')
+        if is_match(pod, args.pod_pattern):
+            pods_changed.append(f'-{node}.{pod}')
+            npods_removed += 1
+            if not args.quiet and not args.veryquiet:
+                timestamp(f'{get_node_data()}{tab}-{node}.{pod}')
 
     for pod, node in new_pod_nodes.items():
         cpu = new_pod_cpu[pod]
         memory = new_pod_memory[pod]
         prefix = '+'
         pod_node = None
+        if is_match(pod, args.pod_pattern):
+            npods_total += 1
         if pod in pod_nodes:
             if node == pod_nodes[pod] and cpu == pod_cpu[pod] and memory == pod_memory[pod]:
                 continue
@@ -199,14 +261,27 @@ def process_lines(lines: list):
         node_memory[node] += memory
         node_cpu[node] += cpu
         node_pods[node] += 1
-        pods_changed.append(f'{prefix}{pod}')
-        if not args.quiet and not args.veryquiet and (not pod_node or pod_node in all_nodes) and node in all_nodes:
-            timestamp(f'{get_node_data()}\t{prefix}{pod}')
-    if pods_changed:
+        if is_match(pod, args.pod_pattern):
+            if prefix == '+':
+                npods_added += 1
+            else:
+                npods_changed += 1
+            pods_changed.append(f'{prefix}{node}.{pod}')
+            if not args.quiet and not args.veryquiet and (not pod_node or pod_node in all_nodes) and node in all_nodes:
+                timestamp(f'{get_node_data()}{tab}{prefix}{node}.{pod}')
+    if args.quiet or args.veryquiet:
         if args.veryquiet:
-            timestamp(get_node_data())
+            row = get_timestamp(f'{get_node_data()}{tab}{npods_added}{tab}{npods_removed}{tab}{npods_changed}{tab}{npods_total}', delimiter='\t')
         elif args.quiet:
-            timestamp(f'{get_node_data()}\t{" ".join(sorted(pods_changed))}')
+            row = get_timestamp(f'{get_node_data()}\t{" ".join(sorted(pods_changed))}', delimiter='\t')
+        if first_time or npods_changed + npods_added + npods_removed > 0 or not args.changed_rows_only:
+            if last_row:
+                print(last_row)
+                last_row = None
+            print(row)
+            first_time = False
+        else:
+            last_row = row
 
 
 def run_command(cmd, process_stdout=None, process_stderr=None):
@@ -252,12 +327,22 @@ try:
     '''],
                 define_node)
 
+    print(mk_header())
     while True:
         # Unfortunately, watching doesn't work here because we don't normally
         # receive any notification that the pod has gone away.
+        curtime = time.time()
         process_lines(run_command(['kubectl', 'get', 'pod', '-A', '-o',
-                                   'jsonpath={range .items[*]}{.metadata.name}.{.metadata.namespace}|{.status.phase}|{.spec.nodeName}|{.spec.containers[*].resources.requests.cpu}|{.spec.containers[*].resources.requests.memory}{"\\n"}{end}'],
+                                   ('jsonpath='
+                                    '{range .items[*]}'
+                                    '{.metadata.name}.{.metadata.namespace}|'
+                                    '{.status.phase}|'
+                                    '{.spec.nodeName}|'
+                                    '{.spec.containers[*].resources.requests.cpu}|'
+                                    '{.spec.containers[*].resources.requests.memory}{"\\n"}{end}')],
                                   process_stdout=True))
-        time.sleep(5)
+        now = time.time()
+        if now - curtime < interval:
+            time.sleep(interval - (now - curtime))
 except KeyboardInterrupt:
     sys.exit()
