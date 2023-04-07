@@ -183,7 +183,6 @@ function server_process_options() {
 }
 
 function server_supports_reporting() {
-    echo "server_supports_reporting" 1>&2
     :
 }
 
