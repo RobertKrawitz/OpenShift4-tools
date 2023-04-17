@@ -40,8 +40,11 @@ resources_to_list = ['cpu', 'memory', 'pods']
 interval = 5
 first_time = True
 last_row = None
+last_row_base = None
+last_changed = 0
 tab = '\t'
 n_timestamps = 0
+nodes_schedulable = {}
 
 
 parser = argparse.ArgumentParser(description='Monitor cluster resources')
@@ -188,28 +191,51 @@ kubectl get node {node} -ojson | jq -r '.metadata.name + "|" + .status.allocatab
 
 
 def mk_header():
+    line1_base = f'Node{tab * n_timestamps}{(tab * len(resources_to_list)).join(all_nodes)}{tab}%Capacity'
+    line2_base = f'Timestamp{(tab * (n_timestamps - 1)) + ((tab + tab.join(resources_to_list)) * (len(all_nodes) + 1))}'
     if args.veryquiet:
-        return f'''Node{tab * n_timestamps}{(tab * len(resources_to_list)).join(all_nodes)}{tab}Pods changed
-Timestamp{((tab * n_timestamps) + (tab.join(resources_to_list))) * len(all_nodes)}{tab}add{tab}remove{tab}change{tab}total'''
+        return f'''{line1_base}{(tab * len(resources_to_list))}Pods changed
+{line2_base}{tab}add{tab}remove{tab}change{tab}total'''
     else:
-        return f'''Node{tab * n_timestamps}{(tab * len(resources_to_list)).join(all_nodes)}
-Timestamp{((tab * n_timestamps) + (tab.join(resources_to_list))) * len(all_nodes)}'''
+        return f'''{line1_base}{(tab * len(resources_to_list))}Pods changed
+{line2_base}{tab}add{tab}remove{tab}change{tab}total'''
 
 
 def get_node_data():
     answer = []
+    totals = {'cpu': 0, 'memory': 0, 'pods': 0}
     for node in all_nodes:
         if 'cpu' in resources_to_list:
-            answer.append(str(pformat(node_cpu[node] / node_cpu_capacity[node])))
+            fraction = node_cpu[node] / node_cpu_capacity[node]
+            answer.append(str(pformat(fraction)))
+            if node in nodes_schedulable:
+                totals['cpu'] += fraction
         if 'memory' in resources_to_list:
+            fraction = node_memory[node] / node_memory_capacity[node]
             answer.append(str(pformat(node_memory[node] / node_memory_capacity[node])))
+            if node in nodes_schedulable:
+                totals['memory'] += fraction
         if 'pods' in resources_to_list:
+            fraction = node_pods[node] / node_pod_capacity[node]
             answer.append(str(pformat(node_pods[node] / node_pod_capacity[node])))
+            if node in nodes_schedulable:
+                totals['memory'] += fraction
+    for resource in ['cpu', 'memory', 'pods']:
+        if resource in resources_to_list:
+            answer.append(str(pformat(totals[resource] / len(nodes_schedulable) if len(nodes_schedulable) > 0 else 0)))
     return tab.join(answer)
 
 
 def process_lines(lines: list):
-    global first_time, last_row
+    def node_status(lines: list):
+        global nodes_schedulable
+        nodes_schedulable = {}
+        for line in lines:
+            node, unschedulable = line.split('|')
+            if node in all_nodes and not unschedulable.lower().endswith('true'):
+                nodes_schedulable[node] = True
+
+    global first_time, last_row, last_row_base
     new_pod_cpu = {}
     new_pod_memory = {}
     new_pod_nodes = {}
@@ -218,6 +244,7 @@ def process_lines(lines: list):
     npods_removed = 0
     npods_changed = 0
     npods_total = 0
+    node_status(run_command(['kubectl', 'get', 'node', '-ojsonpath={range .items[*]}{.metadata.name}|u={.spec.unschedulable}{"\\n"}{end}'], process_stdout=True))
     for line in lines:
         pod, status, node, cpu, memory = line.split('|')
         if status != 'Running':
@@ -271,10 +298,11 @@ def process_lines(lines: list):
                 timestamp(f'{get_node_data()}{tab}{prefix}{node}.{pod}')
     if args.quiet or args.veryquiet:
         if args.veryquiet:
-            row = get_timestamp(f'{get_node_data()}{tab}{npods_added}{tab}{npods_removed}{tab}{npods_changed}{tab}{npods_total}', delimiter='\t')
+            row_base = f'{get_node_data()}{tab}{npods_added}{tab}{npods_removed}{tab}{npods_changed}{tab}{npods_total}'
         elif args.quiet:
-            row = get_timestamp(f'{get_node_data()}\t{" ".join(sorted(pods_changed))}', delimiter='\t')
-        if first_time or npods_changed + npods_added + npods_removed > 0 or not args.changed_rows_only:
+            row_base = f'{get_node_data()}{tab}{npods_added}{tab}{npods_removed}{tab}{npods_changed}{tab}{npods_total}{tab}{" ".join(sorted(pods_changed))}'
+        row = get_timestamp(row_base, delimiter=tab)
+        if first_time or row_base != last_row_base or not args.changed_rows_only:
             if last_row:
                 print(last_row)
                 last_row = None
@@ -282,6 +310,7 @@ def process_lines(lines: list):
             first_time = False
         else:
             last_row = row
+        last_row_base = row_base
 
 
 def run_command(cmd, process_stdout=None, process_stderr=None):
@@ -328,6 +357,7 @@ try:
                 define_node)
 
     print(mk_header())
+    exit_next = False
     while True:
         # Unfortunately, watching doesn't work here because we don't normally
         # receive any notification that the pod has gone away.
@@ -341,8 +371,15 @@ try:
                                     '{.spec.containers[*].resources.requests.cpu}|'
                                     '{.spec.containers[*].resources.requests.memory}{"\\n"}{end}')],
                                   process_stdout=True))
-        now = time.time()
-        if now - curtime < interval:
-            time.sleep(interval - (now - curtime))
+        if exit_next:
+            sys.exit()
+        try:
+            now = time.time()
+            if now - curtime < interval:
+                time.sleep(interval - (now - curtime))
+        except KeyboardInterrupt:
+            first_time = True
+            last_row = None
+            exit_next = True
 except KeyboardInterrupt:
     sys.exit()
