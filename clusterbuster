@@ -209,6 +209,7 @@ declare arch=
 declare failure_status=Fail
 declare -i create_pods_privileged=0
 declare -i wait_forever=0
+declare -a pod_labels=()
 
 declare -r sync_flag_file="/tmp/syncfile";
 declare -r sync_error_file="/tmp/syncerror";
@@ -510,6 +511,11 @@ $(print_workloads_supporting_reporting '                        - ')
                         time.
        --privileged-pods=[0,1]
                         Create pods as privileged (default $create_pods_privileged)
+       --label=[:class:]label=value
+                        Apply the specified label to all pods of the
+                        optionally specified class (same meaning as for
+                        --pin_node as above).  This may be specified
+                        multiple times.
 
     Kata Virtualization Tuning:
        --virtiofsd-writeback=[0,1]
@@ -787,6 +793,7 @@ function process_option() {
 	request|requests)	    resource_requests+=("$optvalue")		;;
 	kata)			    process_runtimeclass "kata"			;;
 	podannotation)		    pod_annotations+=("$optvalue")		;;
+	label|labels)		    pod_labels+=("$optvalue")			;;
 	runtimeclass)		    process_runtimeclass "$optvalue"		;;
 	uuid)			    uuid=$optvalue				;;
 	secrets)		    secrets=$optvalue				;;
@@ -804,6 +811,7 @@ function process_option() {
 	livenessprobesleep*)	    liveness_probe_sleep_time=$optvalue		;;
 	privilege*)		    create_pods_privileged=$(bool "$optvalue")	;;
 	syncinfirst*)		    sync_in_first_namespace=$(bool "$optvalue") ;;
+	vmmigrate*)		    vm_evict_migrate=$(bool "$optvalue")	;;
 	affinity)
 	    case "$optvalue" in
 		1|'') affinity=1      ;;
@@ -2107,19 +2115,22 @@ function container_resources_json() {
 
 function standard_labels_yaml() {
     local objtype=worker
+    local objclass=
     local OPTIND=0
     local logger=
     local suffix=
     local -i worker_label=1
-    while getopts 'St:ls:' opt "$@" ; do
+    while getopts 'St:ls:c:' opt "$@" ; do
 	case "$opt" in
 	    S) worker_label=0	 ;;
 	    t) objtype="$OPTARG" ;;
 	    l) logger=true	 ;;
 	    s) suffix="$OPTARG"  ;;
+	    c) objclass="$OPTARG";;
 	    *)			 ;;
 	esac
     done
+    objclass=${objclass:-$objtype}
     shift $((OPTIND-1))
     local workload=${1:-}
     local namespace=${2:-}
@@ -2134,17 +2145,27 @@ labels:
   ${basename}-uuid: "$uuid"
   ${basename}-id: "$uuid"
   ${basename}: "true"
-  clusterbusterbase: "true"
   ${basename}base: "true"
 ${objtype:+  ${basename}-${objtype}: "$uuid"}
 ${objtype:+  ${basename}-x-${objtype}: "$xuuid"}
 ${logger:+  ${basename}-logger: $true}
+  ${basename}-objtype: "$objtype"
 EOF
+    if [[ $basename != clusterbuster ]] ; then
+	cat <<EOF
+  clusterbusterbase: "true"
+  clusterbuster-objtype: "$objtype"
+EOF
+    fi
     if ((worker_label)) ; then
 	cat <<EOF
-  ${basename}-worker: "true"
-  clusterbuster-worker: "true"
+  ${basename}-workload: "true"
 EOF
+	if [[ $basename != clusterbuster ]] ; then
+	cat <<EOF
+  clusterbuster-workload: "true"
+EOF
+	fi
     fi
     if [[ -n "$workload" ]] ; then
 	cat <<EOF
@@ -2157,6 +2178,29 @@ EOF
   ${workload}: "true"
 EOF
     fi
+    for label in "${pod_labels[@]}" ; do
+	if [[ $label =~ ^:([^:]*):(.*)$ ]] ; then
+	    # shellcheck disable=SC2206
+	    local -a classes=(${BASH_REMATCH[1]//,/ })
+	    label=${BASH_REMATCH[2]:-}
+	    local class
+	    local -i class_found=0
+	    for class in "${classes[@]}" ; do
+		if [[ $objclass = "$class" ]] ; then
+		    class_found=1
+		    break
+		fi
+	    done
+	    if (( ! class_found )) ; then
+		continue
+	    fi
+	fi
+	if [[ $label = *'='* ]] ; then
+	    echo "  ${label%=*}: \"${label##*=}\""
+	else
+	    echo "  ${label}: \"true\""
+	fi
+    done
 }
 
 function standard_environment() {
@@ -2226,7 +2270,7 @@ function namespace_yaml() {
 }
 
 function annotations_yaml() {
-    local desired_class=${2:-client}
+    local desired_class=${1:-client}
     local annotation
     echo "annotations:"
     for annotation in "${pod_annotations[@]}" ; do
@@ -2745,7 +2789,7 @@ $(indent 2 standard_pod_metadata_yaml "$namespace" client)
   selector:
     matchLabels:
       app: $name
-$(indent 2 standard_labels_yaml -l "$workload" "$namespace" "${instance}" "${replica}")
+$(indent 2 standard_labels_yaml -c "$node_class" -l "$workload" "$namespace" "${instance}" "${replica}")
 $(create_spec -A "$affinity_yaml" -c "$node_class" "$@" "$replica")
   restartPolicy: Never
 EOF
@@ -2766,7 +2810,7 @@ function create_vm_deployment() {
 apiVersion: kubevirt.io/v1alpha3
 kind: VirtualMachine
 metadata:
-$(indent 2 standard_labels_yaml)
+$(indent 2 standard_labels_yaml -c "$node_class" -l "$workload" "$namespace" "$instance")
   name: "$vmname"
 $(indent 2 standard_deployment_metadata_yaml "$namespace" client)
 $(create_vm_spec -A "$affinity_yaml" -n "$vmname")
@@ -2807,7 +2851,7 @@ spec:
   running: true
   template:
     metadata:
-$(indent 6 standard_labels_yaml)
+$(indent 6 standard_labels_yaml -c "$node_class" -l "$workload" "$namespace" "$instance")
         kubevirt-vm: "$vmname"
 $(indent 6 standard_deployment_metadata_yaml "$namespace" client)
 $(indent 6 standard_pod_metadata_yaml "$namespace" client)
@@ -2844,7 +2888,7 @@ kind: $deployment_type
 metadata:
   name: $(mkpodname "$name")
 $(indent 2 standard_deployment_metadata_yaml "$namespace" client)
-$(indent 2 standard_labels_yaml -l "$workload" "$namespace" "$instance")
+$(indent 2 standard_labels_yaml -c "$node_class" -l "$workload" "$namespace" "$instance")
 spec:
   replicas: $replicas
   selector:
@@ -2854,7 +2898,7 @@ spec:
     type: RollingUpdate
   template:
     metadata:
-$(indent 6 standard_labels_yaml -l "$workload" "$namespace" "$instance")
+$(indent 6 standard_labels_yaml -c "$node_class" -l "$workload" "$namespace" "$instance")
 $(indent 6 standard_pod_metadata_yaml "$namespace" client)
 $(indent 4 create_spec -A "$affinity_yaml" -c "$node_class" "$@")
 EOF
@@ -2955,7 +2999,7 @@ kind: Pod
 metadata:
   name: $(mkpodname "${basename}-sync")
 $(indent 2 standard_deployment_metadata_yaml "$namespace" sync)
-$(indent 2 standard_labels_yaml -S 'sync' "${basename}-sync")
+$(indent 2 standard_labels_yaml -c sync -S -t 'sync' 'sync' "${basename}-sync")
     ${basename}-sync-dep: "true"
   selector:
     matchLabels:
@@ -3018,7 +3062,7 @@ metadata:
   name: $(mkpodname "$dcname")
 $(indent 2 standard_pod_metadata_yaml "$namespace" drop_cache)
 $(indent 2 standard_deployment_metadata_yaml "$namespace" drop_cache)
-$(indent 2 standard_labels_yaml -s dc "$workload" "$namespace" "$instance" "$replica")
+$(indent 2 standard_labels_yaml -c dc -s dc -S -t drop-cache "$workload" "$namespace" "$instance" "$replica")
   selector:
     matchLabels:
       replica: ${namespace}-${workload}-${instance}-${replica}
