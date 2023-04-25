@@ -62,14 +62,14 @@ declare local_toolsdir=
 declare install_device=sda
 declare -a fixed_infra_nodes=()
 declare -i install_retries=2	# Many bare metal nodes take a long time to POST
-declare -ra commands_not_requiring_config_file=(install_cnv install_kata migrate_infra install_operator)
+declare -ra commands_not_requiring_config_file=(install_cnv install_kata migrate_infra install_operator list_operators describe_operator)
 declare -i require_config_file=1
 declare kata_install_label=
 declare kata_config_name=example-kataconfig
 platform=$(uname -i)
 
 # shellcheck disable=SC2155
-declare -r command_help=$(cat <<'EOF'
+declare -r command_help=$(expand <<'EOF'
     Commands:
         do_install <version>     Install a baremetal cluster using UPI
         install_cnv              Install sandboxed containers into cluster
@@ -78,6 +78,8 @@ declare -r command_help=$(cat <<'EOF'
         setup_dnsmasq            Set up dnsmasq/haproxy configuration
         setup_infra              Set up an infra node
         migrate_infra            Migrate infra components to set up infra node
+        describe_operator <op>   Describe the specified operator
+        list_operators           List available operators
         install_operator <op>    Install the specified operator
      The following commands all use IPMI:
         reset_all                Reset all nodes
@@ -1121,13 +1123,14 @@ function _get_operator_channel() {
 
 function _get_operator_field() {
     local operator=$1
-    local channel=$2
-    local field=$3
+    local field=$2
+    local channel
+    channel="${3:-$(_get_operator_channel "$operator")}"
     oc get packagemanifest -n openshift-marketplace "$operator" -ojson | jq -r '[foreach .status.channels[] as $channel ([[],[]];0; (if ($channel.name == "'"$channel"'") then $channel.'"$field"' else null end))] | flatten | map (select (. != null))[]'
 }
 
 function _get_operator_csv() {
-    _get_operator_field "$@" "currentCSV"
+    _get_operator_field "$1" "currentCSV" "$2"
 }
 
 function _get_operator_catalog_source() {
@@ -1136,7 +1139,13 @@ function _get_operator_catalog_source() {
 }
 
 function _get_operator_namespace() {
-    _get_operator_field "$@" 'currentCSVDesc.annotations."operatorframework.io/suggested-namespace"'
+    local operator=$1
+    local namespace
+    namespace="$(_get_operator_field "$operator" 'currentCSVDesc.annotations."operatorframework.io/suggested-namespace"')"
+    if [[ -z "$namespace" ]] ; then
+	namespace="$(jq -r '.[0].metadata.namespace' <<< "$(_get_operator_field "$operator" 'currentCSVDesc.annotations."alm-examples"')" 2>/dev/null)"
+    fi
+    echo "${namespace:-$operator}"
 }
 
 function generate_operator_yaml() {
@@ -1150,8 +1159,9 @@ function generate_operator_yaml() {
 	case "$opt" in
 	    c) channel="$OPTARG" ;;
 	    C) csv="$OPTARG" ;;
-	    s) catalog_cource="$OPTARG" ;;
+	    s) catalog_source="$OPTARG" ;;
 	    n) namespace="$OPTARG" ;;
+	    *) ;;
 	esac
     done
     shift "$((OPTIND-1))"
@@ -1163,6 +1173,7 @@ function generate_operator_yaml() {
     catalog_source=${catalog_source:-$(_get_operator_catalog_source "$operator")}
     namespace=${namespace:-$(_get_operator_namespace "$operator" "$channel")}
     cat <<EOF
+---
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -1203,7 +1214,31 @@ EOF
 }
 
 function install_operator() {
-    oc apply -f <(generate_operator_yaml "$@")
+    local -i doit=1
+    local OPTIND=0
+    while getopts "n" opt "$@" ; do
+	case "$opt" in
+	    n) doit=0 ;;
+	    *) ;;
+	esac
+    done
+    shift "$((OPTIND-1))"
+    local operator
+    for operator in "$@" ; do
+	if ((doit)) ; then
+	    oc apply -f <(generate_operator_yaml "$operator")
+	else
+	    generate_operator_yaml "$operator"
+	fi
+    done
+}
+
+function list_operators() {
+    oc get packagemanifests -n openshift-marketplace -no-headers | awk '{print $1}' | sort
+}
+
+function describe_operator() {
+    _get_operator_field "$1" 'currentCSVDesc.description'
 }
 
 function generate_kata_yaml() {
@@ -1581,9 +1616,10 @@ if ((require_config_file)) ; then
     [[ -r "$ocp4_public_key" ]] || fatal "No public key!"
 fi
 
+declare lcommand=${command//-/_}
 for cmd in "${simple_commands[@]}" ; do
-    if [[ $command = "$cmd" ]] ; then
-	"$command" "$@"
+    if [[ $lcommand = "$cmd" ]] ; then
+	"$lcommand" "$@"
 	exit $?
     fi
 done
