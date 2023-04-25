@@ -866,8 +866,14 @@ function process_option() {
 	scalens)	   	    scale_ns=$(bool "$optvalue")		;;
 	scaledeployments)   	    scale_deployments=$(bool "$optvalue")	;;
 	precleanup)		    precleanup=$(bool "$optvalue")		;;
-	cleanup)		    cleanup=$(bool "$optvalue")			;;
-	cleanupalways)		    cleanup_always=$(bool "$optvalue")		;;
+	cleanup)
+	    cleanup=$(bool "$optvalue")
+	    if ((! cleanup)) ; then cleanup_always=0; fi
+	    ;;
+	cleanupalways)	    	    
+	    cleanup_always=$(bool "$optvalue")
+	    if ((cleanup_always)) ; then cleanup=1; fi
+	    ;;
 	removenamespace*)	    remove_namespaces=$(bool "$optvalue")	;;
 	baseoffset)		    baseoffset=$optvalue			;;
 	# Synchronization
