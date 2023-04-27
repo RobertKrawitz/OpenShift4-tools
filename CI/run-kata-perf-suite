@@ -66,6 +66,7 @@ declare prometheus_snapshot_start_ts=
 declare job_delay=0
 declare -i pin_jobs=1
 declare -a workloads=()
+declare -a debugargs=()
 
 declare -a runtimeclasses=('' 'kata')
 declare -a extra_clusterbuster_args=()
@@ -535,8 +536,8 @@ function process_option() {
     optvalue=$(splitarg "$optvalue")
     case "$noptname1" in
 	help*) help									;;
-	debug*) debugonly="$(bool "$optvalue")"						;;
-
+	debugonly*) debugonly="$(bool "$optvalue")"					;;
+	debug) debugargs+=("--debug=$optvalue")						;;
 	clientpin*) client_pin_node=$optvalue						;;
 	serverpin*) server_pin_node=$optvalue						;;
 	syncpin*) sync_pin_node=$optvalue						;;
@@ -717,6 +718,7 @@ function run_clusterbuster_1() {
     doit "$__clusterbuster__" ${dontdoit:+"$dontdoit"} --uuid="$uuid" \
 	 --precleanup --image-pull-policy=IfNotPresent \
 	 --metrics --report="$report_format" --workload="$workload" \
+	 "${debugargs[@]}" \
 	 ${job_runtime:+"--workload_runtime=$job_runtime"} \
 	 ${client_pin_node:+"--pin-node=client=$client_pin_node"} \
 	 ${server_pin_node:+"--pin-node=server=$server_pin_node"} \

@@ -48,7 +48,7 @@ function debug() {
     local condition=${1:-}
     shift
     if test_debug "$condition" ; then
-	echo "*** DEBUG $condition:" "${@@Q}" |timestamp 1>&4
+	echo "*** DEBUG $condition:" "${@@Q}" |timestamp 1>&2
     fi
     return 0
 }

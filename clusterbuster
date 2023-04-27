@@ -123,7 +123,7 @@ declare -i sync_ns_port=7753
 declare -i sync_in_first_namespace=0
 declare sync_host=
 declare -i affinity=0
-declare -i sync_affinity=2
+declare -i sync_affinity=0
 declare -A pin_nodes=()
 declare -A runtime_classes=()
 declare runtime_class
@@ -188,8 +188,6 @@ declare second_start_timestamp=
 declare prometheus_ending_timestamp=
 declare -i target_data_rate=0
 declare job_name=
-# shellcheck disable=2155
-declare -i job_start_time=$(date +%s)
 declare global_sync_service=
 declare -i predelay=0
 declare -i postdelay=0
@@ -211,6 +209,7 @@ declare arch=
 declare failure_status=Fail
 declare -i create_pods_privileged=0
 declare -i wait_forever=0
+declare -a pod_labels=()
 
 declare -r sync_flag_file="/tmp/syncfile";
 declare -r sync_error_file="/tmp/syncerror";
@@ -512,6 +511,11 @@ $(print_workloads_supporting_reporting '                        - ')
                         time.
        --privileged-pods=[0,1]
                         Create pods as privileged (default $create_pods_privileged)
+       --label=[:class:]label=value
+                        Apply the specified label to all pods of the
+                        optionally specified class (same meaning as for
+                        --pin_node as above).  This may be specified
+                        multiple times.
 
     Kata Virtualization Tuning:
        --virtiofsd-writeback=[0,1]
@@ -789,6 +793,7 @@ function process_option() {
 	request|requests)	    resource_requests+=("$optvalue")		;;
 	kata)			    process_runtimeclass "kata"			;;
 	podannotation)		    pod_annotations+=("$optvalue")		;;
+	label|labels)		    pod_labels+=("$optvalue")			;;
 	runtimeclass)		    process_runtimeclass "$optvalue"		;;
 	uuid)			    uuid=$optvalue				;;
 	secrets)		    secrets=$optvalue				;;
@@ -806,6 +811,7 @@ function process_option() {
 	livenessprobesleep*)	    liveness_probe_sleep_time=$optvalue		;;
 	privilege*)		    create_pods_privileged=$(bool "$optvalue")	;;
 	syncinfirst*)		    sync_in_first_namespace=$(bool "$optvalue") ;;
+	vmmigrate*)		    vm_evict_migrate=$(bool "$optvalue")	;;
 	affinity)
 	    case "$optvalue" in
 		1|'') affinity=1      ;;
@@ -821,15 +827,15 @@ function process_option() {
 	    ;;
 	syncaffinity)
 	    case "$optvalue" in
-		1|'') syncaffinity=1  ;;
-		2|anti) syncaffinity=2;;
-		*) syncaffinity=0     ;;
+		1|'') sync_affinity=1  ;;
+		2|anti) sync_affinity=2;;
+		*) sync_affinity=0     ;;
 	    esac
 	    ;;
 	syncantiaffinity)
 	    case "$optvalue" in
-		1|'') syncaffinity=2  ;;
-		*) syncaffinity=0     ;;
+		1|'') sync_affinity=2  ;;
+		*) sync_affinity=0     ;;
 	    esac
 	    ;;
         # vm specs
@@ -860,8 +866,14 @@ function process_option() {
 	scalens)	   	    scale_ns=$(bool "$optvalue")		;;
 	scaledeployments)   	    scale_deployments=$(bool "$optvalue")	;;
 	precleanup)		    precleanup=$(bool "$optvalue")		;;
-	cleanup)		    cleanup=$(bool "$optvalue")			;;
-	cleanupalways)		    cleanup_always=$(bool "$optvalue")		;;
+	cleanup)
+	    cleanup=$(bool "$optvalue")
+	    if ((! cleanup)) ; then cleanup_always=0; fi
+	    ;;
+	cleanupalways)	    	    
+	    cleanup_always=$(bool "$optvalue")
+	    if ((cleanup_always)) ; then cleanup=1; fi
+	    ;;
 	removenamespace*)	    remove_namespaces=$(bool "$optvalue")	;;
 	baseoffset)		    baseoffset=$optvalue			;;
 	# Synchronization
@@ -933,7 +945,7 @@ function validate_resource() {
 
 function print_workloads_supporting_reporting() {
     local prefix="${1:-}"
-    local workloads
+    local workload
     while read -r workload ; do
 	echo "$prefix$workload"
     done <<< "$(workloads_supporting_api supports_reporting)"
@@ -1012,7 +1024,7 @@ function __OC() {
 	debug kubectl "$OC" "$@"
     fi
     if ((! doit)) ; then
-	echo "$OC" "${@@Q}" 1>&2
+	echo '(skipped)' "$OC" "${@@Q}" 1>&2
     elif [[ $1 = exec || $1 = rsh ]] ; then
 	# Capture error output
 	(set -o pipefail; "$OC" "$@" 2>&1 1>&3 |sed -e "s/^/${*//\//\\/}: /" |timestamp 1>&2) 3>&1
@@ -1028,16 +1040,12 @@ function __OC() {
 
 function _OC() {
     debug kubectl "$OC" "$@"
-    if ! __OC "$@" ; then
-	fatal "__KUBEFAIL__ $OC $* failed!"
-    fi
+    __OC "$@" || fatal "__KUBEFAIL__ $OC $* failed!"
 }
 
 function ___OC() {
     debug kubectl "$OC" "$@"
-    if ! __OC "$@" ; then
-	fatal "$OC $* failed!"
-    fi
+    __OC "$@" || fatal "$OC $* failed!"
 }
 
 function ____OC() {
@@ -1079,10 +1087,10 @@ function create_sync_service() {
     local initial_sync_clients=${3:-$sync_clients}
     if get_sync -q ; then
 	if [[ $namespace = "${namespaces_to_create[0]:-}" ]] ; then
-	    create_service -h "$sync_namespace" "${sync_namespace}-sync" "$sync_port" "$sync_ns_port"
+	    create_service -h -v "${basename}-sync-sync" "$sync_namespace" "${sync_namespace}-sync" "$sync_port" "$sync_ns_port"
 	    create_sync_deployment "$sync_namespace" "$((sync_clients * ${#namespaces_to_create[@]}))" "$((initial_sync_clients * ${#namespaces_to_create[@]}))"
 	fi
-	create_external_service "$namespace" "${namespace}-sync" "$global_sync_service" "$sync_port" "$sync_ns_port"
+	create_external_service "$namespace" "${basename}-sync-sync" "${global_sync_service}" "$sync_port" "$sync_ns_port"
     fi
 }
 
@@ -1139,7 +1147,7 @@ function set_start_timestamps() {
 	return 1
     else
 	first_start_timestamp=$(date +%s.%N)
-	prometheus_start_timestamp=$first_start_timestamp
+	prometheus_starting_timestamp=$first_start_timestamp
 	prometheus_exact_starting_timestamp=$first_start_timestamp
 	second_start_timestamp=$first_start_timestamp
     fi
@@ -1647,7 +1655,7 @@ function _report_metadata_and_objects() {
 "metadata": {
   "kind": "clusterbusterResults",
   "controller_first_start_timestamp": $first_start_timestamp,
-  "prometheus_start_timestamp": $prometheus_exact_starting_timestamp,
+  "prometheus_starting_timestamp": $prometheus_exact_starting_timestamp,
   "controller_second_start_timestamp": $second_start_timestamp,
   "controller_end_timestamp": $enddate,
   "controller_elapsed_time": $(bc <<< "$enddate - ${second_start_timestamp:-0}"),
@@ -1722,8 +1730,6 @@ function _get_logs() {
     if [[ -z "$remote_ts" ]] ; then
 	killthemall "Unable to retrieve sync timestamp"
     fi
-    sync_ts_error_interval=$(bc <<< "$second_local_ts - $first_local_ts")
-    sync_ts_delta=$(bc <<< "$second_local_ts - $first_local_ts")
     local -i reported=0
     local tfile1=
     local tfile2=
@@ -1757,7 +1763,7 @@ function _retrieve_artifacts() {
 	local job
 	local -A pods_described=()
 	while read -r namespace pod container status; do
-	    if [[ ($namespace != "$sync_namespace" || $sync_in_first_namespace) && -z $always_retrieve_artifacts &&
+	    if [[ ($namespace != "$sync_namespace" || $sync_in_first_namespace != 0) && -z $always_retrieve_artifacts &&
 		      $retrieve_successful_logs -eq 0 && ($status = Running || $status = Completed) ]] ; then
 		continue
 	    fi
@@ -1809,14 +1815,12 @@ function print_report() {
 
 function get_logs() {
     trap - TERM
-    local extra_arg=
     local log_cmd
     if supports_api -w "$requested_workload" supports_reporting ; then
 	log_cmd=get_logs_poll
     else
 	log_cmd=true
     fi
-    local report_cmd=cat
     if supports_api -w "$requested_workload" supports_reporting && [[ -n "$*" ]]; then
 	if [[ -n "$artifactdir" ]] ; then
 	    # Even if reporting fails, make sure we capture the JSON
@@ -1943,10 +1947,17 @@ EOF
 function container_resources_yaml() {
     function resources() {
 	local token
+	local -A resource_map=()
+	local resource
+	local value
+	# Remove duplicate resources
 	for token in "$@" ; do
-	    local resource=${token%%=*}
-	    local value=${token#*=}
-	    echo "$resource: $value"
+	    resource=${token%%=*}
+	    value=${token#*=}
+	    resource_map[$resource]=$value
+	done
+	for resource in "${!resource_map[@]}" ; do
+	    echo "$resource: ${resource_map[$resource]}"
 	done
     }
     if (( ${#resource_limits[@]} + ${#resource_requests[@]} )) ; then
@@ -1973,6 +1984,17 @@ livenessProbe:
   periodSeconds: $liveness_probe_frequency
 EOF
     fi
+}
+
+function mk_selector() {
+    local selector=$1
+    local key=$selector
+    local value=''
+    if [[ $selector = *'='* ]] ; then
+	key=${selector%%=*}
+	value=${selector#*=}
+    fi
+    echo "nodeSelector:${nl}  $key: \"$value\""
 }
 
 function mk_yaml_args() {
@@ -2030,7 +2052,7 @@ function create_standard_containers() {
 	cat <<EOF
 - name: "c${container}"
   imagePullPolicy: $image_pull_policy
-  image: "$container_image"
+  image: "$image"
 $(indent 2 container_standard_auxiliary_yaml)
 $(indent 2 standard_environment)
 $(indent 2 generate_environment)
@@ -2065,9 +2087,17 @@ function resource_json() {
     local request_type=$1
     shift
     echo "    \"$request_type\": {"
-    local -a resources=()
+    local -A resource_map=()
+    local token
     local resource
-    for resource in "$@" ; do
+    local value
+    # Remove duplicate resources
+    for token in "$@" ; do
+	resource=${token%%=*}
+	resource_map[$resource]=$token
+    done
+    local -a resources=()
+    for resource in "${resource_map[@]}" ; do
 	resources+=("$(resources "$resource")")
     done
     (IFS=$',\n        '; echo "${resources[*]}")
@@ -2091,19 +2121,22 @@ function container_resources_json() {
 
 function standard_labels_yaml() {
     local objtype=worker
+    local objclass=
     local OPTIND=0
     local logger=
     local suffix=
     local -i worker_label=1
-    while getopts 'St:ls:' opt "$@" ; do
+    while getopts 'St:ls:c:' opt "$@" ; do
 	case "$opt" in
 	    S) worker_label=0	 ;;
 	    t) objtype="$OPTARG" ;;
 	    l) logger=true	 ;;
 	    s) suffix="$OPTARG"  ;;
+	    c) objclass="$OPTARG";;
 	    *)			 ;;
 	esac
     done
+    objclass=${objclass:-$objtype}
     shift $((OPTIND-1))
     local workload=${1:-}
     local namespace=${2:-}
@@ -2118,17 +2151,27 @@ labels:
   ${basename}-uuid: "$uuid"
   ${basename}-id: "$uuid"
   ${basename}: "true"
-  clusterbusterbase: "true"
   ${basename}base: "true"
 ${objtype:+  ${basename}-${objtype}: "$uuid"}
 ${objtype:+  ${basename}-x-${objtype}: "$xuuid"}
 ${logger:+  ${basename}-logger: $true}
+  ${basename}-objtype: "$objtype"
 EOF
+    if [[ $basename != clusterbuster ]] ; then
+	cat <<EOF
+  clusterbusterbase: "true"
+  clusterbuster-objtype: "$objtype"
+EOF
+    fi
     if ((worker_label)) ; then
 	cat <<EOF
-  ${basename}-worker: "true"
-  clusterbuster-worker: "true"
+  ${basename}-workload: "true"
 EOF
+	if [[ $basename != clusterbuster ]] ; then
+	cat <<EOF
+  clusterbuster-workload: "true"
+EOF
+	fi
     fi
     if [[ -n "$workload" ]] ; then
 	cat <<EOF
@@ -2141,6 +2184,29 @@ EOF
   ${workload}: "true"
 EOF
     fi
+    for label in "${pod_labels[@]}" ; do
+	if [[ $label =~ ^:([^:]*):(.*)$ ]] ; then
+	    # shellcheck disable=SC2206
+	    local -a classes=(${BASH_REMATCH[1]//,/ })
+	    label=${BASH_REMATCH[2]:-}
+	    local class
+	    local -i class_found=0
+	    for class in "${classes[@]}" ; do
+		if [[ $objclass = "$class" ]] ; then
+		    class_found=1
+		    break
+		fi
+	    done
+	    if (( ! class_found )) ; then
+		continue
+	    fi
+	fi
+	if [[ $label = *'='* ]] ; then
+	    echo "  ${label%=*}: \"${label##*=}\""
+	else
+	    echo "  ${label}: \"true\""
+	fi
+    done
 }
 
 function standard_environment() {
@@ -2210,7 +2276,7 @@ function namespace_yaml() {
 }
 
 function annotations_yaml() {
-    local desired_class=${2:-client}
+    local desired_class=${1:-client}
     local annotation
     echo "annotations:"
     for annotation in "${pod_annotations[@]}" ; do
@@ -2430,6 +2496,10 @@ function _create_object_from_file() {
     function _ns() {
 	((use_namespaces)) && echo -n "-n $namespace"
     }
+    if (($# < 3)) ; then
+	warn "_create_object_from_file: type, namespace, and name must be specified"
+	return 1
+    fi
     local objtype=$1; shift
     local namespace=$1; shift
     local objname=$1; shift
@@ -2485,7 +2555,11 @@ function create_namespace() {
 	esac
     done
     shift $((OPTIND-1))
-    local namespace=$1
+    local namespace=${1:-}
+    if [[ -z "$namespace" ]] ; then
+	warn "create_namespace: namespace must be specified"
+	return 1
+    fi
     if ((use_namespaces)) ; then
 	namespace_exists "$namespace" || create_object $force -t namespace "$namespace" <<EOF
 apiVersion: v1
@@ -2508,7 +2582,11 @@ EOF
 }
 
 function create_secrets() {
-    local namespace=$1
+    local namespace=${1:-}
+    if [[ -z "$namespace" ]] ; then
+	warn "create_secrets: namespace must be specified"
+	return 1
+    fi
     local deps_per_namespace=${2:-1}
     local secrets=${3:-1}
     local -i i
@@ -2577,13 +2655,15 @@ function create_service() {
     local headless=
     local key=name
     local prefix='svc-'
-    while getopts 'eEhHk:' opt ; do
+    local selector_value=
+    while getopts 'eEhHk:v:' opt ; do
 	case "$opt" in
 	    e) prefix=			 ;;
 	    E) prefix='svc-'		 ;;
 	    h) force_headless_services=1 ;;
 	    H) force_headless_services=0 ;;
 	    k) key="$OPTARG"		 ;;
+	    v) selector_value="$OPTARG"	 ;;
 	    *) ;;
 	esac
     done
@@ -2592,6 +2672,7 @@ function create_service() {
     ((force_headless_services)) && headless='clusterIP: "None"'
     local namespace=$1
     local deployment=$2
+    selector_value=${selector_value:-$deployment}
     shift 2
     create_object -t Service -n "$namespace" "svc-${deployment}" <<EOF
 apiVersion: v1
@@ -2605,7 +2686,7 @@ $(indent 2 <<< "$headless")
   ports:
 $(indent 4 _create_service_ports "svc-${deployment}" "$@")
   selector:
-    ${key}: "${deployment}"
+    ${key}: "${selector_value}"
 EOF
 }
 
@@ -2643,15 +2724,18 @@ function create_spec() {
     local node_class=client
     local OPTIND=0
     local OPTARG
-    local ns_yaml=${node_selector:+"nodeSelector:${nl}  $node_selector: \"\""}
     local runtime_class
     local opt
     local pin_node
-    while getopts "A:c:r:Pp" opt "$@" ; do
+    local node_selector=$node_selector
+    while getopts "A:c:r:s:Pp" opt "$@" ; do
 	case "$opt" in
 	    A) affinity_yaml=$OPTARG ;;
 	    c) node_class=$OPTARG    ;;
 	    r) runtime_class=$OPTARG ;;
+	    s) node_selector=$OPTARG ;;
+	    P)			     ;;
+	    p)			     ;;
 	    *)                       ;;
 	esac
     done
@@ -2659,8 +2743,12 @@ function create_spec() {
     (( $# >= 3 )) || fatal "Usage: create_spec namespace instance secret_count args..."
     # Node specifiers override affinity
     pin_node=$(get_pin_node "$node_class")
-    if [[ -n "${pin_node:-}" ]] ; then
-	affinity_yaml="nodeSelector:${nl}  kubernetes.io/hostname: \"$pin_node\""
+    if [[ -z "$affinity_yaml" ]] ; then
+	if [[ -n "${pin_node:-}" ]] ; then
+	    affinity_yaml="nodeSelector:${nl}  kubernetes.io/hostname: \"$pin_node\""
+	elif [[ -n "$node_selector" ]] ; then
+	    affinity_yaml="$(mk_selector "$node_selector")"
+	fi
     fi
     if [[ -z "${runtime_class+x}" ]] ; then
 	if [[ -n "$node_class" && -n "${runtime_classes[$node_class]:-}" ]] ; then
@@ -2707,7 +2795,7 @@ $(indent 2 standard_pod_metadata_yaml "$namespace" client)
   selector:
     matchLabels:
       app: $name
-$(indent 2 standard_labels_yaml -l "$workload" "$namespace" "${instance}" "${replica}")
+$(indent 2 standard_labels_yaml -c "$node_class" -l "$workload" "$namespace" "${instance}" "${replica}")
 $(create_spec -A "$affinity_yaml" -c "$node_class" "$@" "$replica")
   restartPolicy: Never
 EOF
@@ -2728,7 +2816,7 @@ function create_vm_deployment() {
 apiVersion: kubevirt.io/v1alpha3
 kind: VirtualMachine
 metadata:
-$(indent 2 standard_labels_yaml)
+$(indent 2 standard_labels_yaml -c "$node_class" -l "$workload" "$namespace" "$instance")
   name: "$vmname"
 $(indent 2 standard_deployment_metadata_yaml "$namespace" client)
 $(create_vm_spec -A "$affinity_yaml" -n "$vmname")
@@ -2742,25 +2830,34 @@ function create_vm_spec() {
 	    echo "evictionStrategy: LiveMigrate"
 	fi
     }
+    local node_class=client
     local vmname="$basename"
-    while getopts 'A:n:' opt; do
+    local node_selector=$node_selector
+    while getopts 'A:n:c:r:s:' opt; do
         case "$opt" in
 	    A) affinity_yaml=$OPTARG ;;
-            n) vmname=$OPTARG ;;
-	    *)		      ;;
+	    c) node_class=$OPTARG    ;;
+            n) vmname=$OPTARG	     ;;
+	    r) runtime_class=$OPTARG ;;
+	    s) node_selector=$OPTARG ;;
+	    *)			     ;;
         esac
     done
     [[ -n "$vmname" ]] || fatal "vmname is required"
     pin_node=$(get_pin_node "$node_class")
-    if [[ -n "${pin_node:-}" ]] ; then
-	affinity_yaml="nodeSelector:${nl}  kubernetes.io/hostname: \"$pin_node\""
+    if [[ -z "$affinity_yaml" ]] ; then
+	if [[ -n "${pin_node:-}" ]] ; then
+	    affinity_yaml="nodeSelector:${nl}  kubernetes.io/hostname: \"$pin_node\""
+	elif [[ -n "$node_selector" ]] ; then
+	    affinity_yaml="$(mk_selector "$node_selector")"
+	fi
     fi
     cat <<EOF
 spec:
   running: true
   template:
     metadata:
-$(indent 6 standard_labels_yaml)
+$(indent 6 standard_labels_yaml -c "$node_class" -l "$workload" "$namespace" "$instance")
         kubevirt-vm: "$vmname"
 $(indent 6 standard_deployment_metadata_yaml "$namespace" client)
 $(indent 6 standard_pod_metadata_yaml "$namespace" client)
@@ -2797,7 +2894,7 @@ kind: $deployment_type
 metadata:
   name: $(mkpodname "$name")
 $(indent 2 standard_deployment_metadata_yaml "$namespace" client)
-$(indent 2 standard_labels_yaml -l "$workload" "$namespace" "$instance")
+$(indent 2 standard_labels_yaml -c "$node_class" -l "$workload" "$namespace" "$instance")
 spec:
   replicas: $replicas
   selector:
@@ -2807,7 +2904,7 @@ spec:
     type: RollingUpdate
   template:
     metadata:
-$(indent 6 standard_labels_yaml -l "$workload" "$namespace" "$instance")
+$(indent 6 standard_labels_yaml -c "$node_class" -l "$workload" "$namespace" "$instance")
 $(indent 6 standard_pod_metadata_yaml "$namespace" client)
 $(indent 4 create_spec -A "$affinity_yaml" -c "$node_class" "$@")
 EOF
@@ -2900,19 +2997,20 @@ EOF
 function create_sync_deployment() {
     local namespace=$1; shift
     local -a tolerations=('node-role.kubernetes.io/infra:Equal:NoSchedule' "${tolerations[@]}")
-    local affinity_yaml="$(affinity=$sync_affinity create_affinity_yaml -k ${basename}-worker "true")"
+    local affinity_yaml
+    affinity_yaml="$(affinity=$sync_affinity create_affinity_yaml -k "${basename}-worker" "true")"
     create_object -t Pod -n "$namespace" "${namespace}-sync" <<EOF
 apiVersion: v1
 kind: Pod
 metadata:
   name: $(mkpodname "${basename}-sync")
 $(indent 2 standard_deployment_metadata_yaml "$namespace" sync)
-$(indent 2 standard_labels_yaml -S 'sync' "$basename")
-    ${basename}-sync: "true"
+$(indent 2 standard_labels_yaml -c sync -S -t 'sync' 'sync' "${basename}-sync")
+    ${basename}-sync-dep: "true"
   selector:
     matchLabels:
       app: ${namespace}
-$(create_container_function=create_container_sync create_spec -P -c sync -r '' "$namespace" 0 0 "$@")
+$(create_container_function=create_container_sync create_spec -P -s '' -c sync -r '' "$namespace" 0 0 "$@")
 $(indent 2 <<< "$affinity_yaml")
   restartPolicy: Never
 EOF
@@ -2970,11 +3068,11 @@ metadata:
   name: $(mkpodname "$dcname")
 $(indent 2 standard_pod_metadata_yaml "$namespace" drop_cache)
 $(indent 2 standard_deployment_metadata_yaml "$namespace" drop_cache)
-$(indent 2 standard_labels_yaml -s dc "$workload" "$namespace" "$instance" "$replica")
+$(indent 2 standard_labels_yaml -c dc -s dc -S -t drop-cache "$workload" "$namespace" "$instance" "$replica")
   selector:
     matchLabels:
       replica: ${namespace}-${workload}-${instance}-${replica}
-$(create_container_function=create_container_drop_cache create_spec -P -c drop-cache -r '' "$namespace" "$instance" 0)
+$(create_container_function=create_container_drop_cache create_spec -P -s '' -c drop-cache -r '' "$namespace" "$instance" 0)
   - name: "proc-sys-vm"
     hostPath:
       path: "/proc/sys/vm"
@@ -3070,7 +3168,7 @@ function create_system_configmap() {
     if supports_api -w "$requested_workload" list_configmaps ; then
 	local -a systemfiles
 	readarray -t systemfiles < <(list_configmaps)
-	if [[ $sync_start -ne 0 && -n "$sync_namespace" && $sync_in_first_namespace -ne 0 ]] ; then
+	if [[ $sync_start -ne 0 && -n "$sync_namespace" && $sync_in_first_namespace -eq 0 ]] ; then
 	    create_configmaps "$sync_namespace" "systemconfigmap" "${systemfiles[@]}"
 	fi
 	for i in $(seq 0 "$((parallel_configmaps - 1))") ; do
@@ -3193,10 +3291,10 @@ function _do_cleanup_1() {
 	# shellcheck disable=SC2086
 	__OC delete $objects_to_clean_sync -l "${basename}-sync" $ltimeout 1>&2
 	# shellcheck disable=SC2086
-	__OC delete $objects_to_clean -l "${basename}-sync" $ltimeout 1>&2
+	__OC delete $objects_to_clean -l "${basename}" $ltimeout 1>&2
     else
 	# shellcheck disable=SC2086
-	__OC delete $objects_to_clean_sync -l "$basename" $ltimeout 2>&1 |grep 'DEBUG kubectl:' 1>&2
+	__OC delete $objects_to_clean_sync -l "$basename-sync" $ltimeout 2>&1 |grep 'DEBUG kubectl:' 1>&2
 	# shellcheck disable=SC2086
 	__OC delete $objects_to_clean -l "$basename" $ltimeout 2>&1 |grep 'DEBUG kubectl:' 1>&2
     fi
