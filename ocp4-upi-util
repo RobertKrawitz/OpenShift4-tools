@@ -66,6 +66,7 @@ declare -ra commands_not_requiring_config_file=(install_cnv install_kata migrate
 declare -i require_config_file=1
 declare kata_install_label=
 declare kata_config_name=example-kataconfig
+declare -i update_packages=1
 platform=$(uname -i)
 
 # shellcheck disable=SC2155
@@ -192,6 +193,7 @@ Usage: $command -c <configfile> [options]$cmdmsg args...
         installer_image       Path to local installer image .tgz
         loal_toolsdir         Location of client_image and installer_image.
                               Must match the version to be installed.
+        update_packages       Update local packages (default 1)
 
 $command_help
 EOF
@@ -649,20 +651,23 @@ EOF
 }
 
 function check_packages() {
-    dnf -y groupinstall 'Virtualization Host' || yum module install virt
-    local -a required_rpms=()
-    local rpm
-    if [[ $platform = aarch64 ]] ; then
-	platform_packages=(shim-aa64 grub2-efi-aa64)
-    else
-	platform_packages=()
-    fi
-    for rpm in wget virt-install jq podman git python3-pyyaml qemu-kvm virt-manager virt-viewer xorg-x11-xauth xinetd syslinux-tftpboot haproxy httpd perl perl-JSON ipmitool python3-magic "${platform_packages[@]}" ; do
-	rpm --quiet -q "$rpm" || required_rpms+=("$rpm")
-    done
-    if [[ -n "${!required_rpms[*]}" ]] ; then
-	echo "Installing ${required_rpms[*]}"
-	dnf -y install "${required_rpms[@]}"
+    if (( update_packages )) ; then
+	echo '*** Configuring dnsmasq'
+	dnf -y groupinstall 'Virtualization Host' || yum module install virt
+	local -a required_rpms=()
+	local rpm
+	if [[ $platform = aarch64 ]] ; then
+	    platform_packages=(shim-aa64 grub2-efi-aa64)
+	else
+	    platform_packages=()
+	fi
+	for rpm in wget virt-install jq podman git python3-pyyaml qemu-kvm virt-manager virt-viewer xorg-x11-xauth xinetd syslinux-tftpboot haproxy httpd perl perl-JSON ipmitool python3-magic "${platform_packages[@]}" ; do
+	    rpm --quiet -q "$rpm" || required_rpms+=("$rpm")
+	done
+	if [[ -n "${!required_rpms[*]}" ]] ; then
+	    echo "Installing ${required_rpms[*]}"
+	    dnf -y install "${required_rpms[@]}"
+	fi
     fi
     systemctl enable libvirtd
     systemctl start libvirtd
@@ -708,8 +713,8 @@ function try_to_download() {
 }
 
 function fetch_tools_if_needed() {
-    local client_filename=openshift-client-linux-${VERSION}.tar.gz
-    local installer_filename=openshift-install-linux-${VERSION}.tar.gz
+    local client_filename=openshift-client-linux${arch_infix}-${VERSION}.tar.gz
+    local installer_filename=openshift-install-linux${arch_infix}-${VERSION}.tar.gz
     if [[ -d "$local_toolsdir" ]] ; then
 	if [[ -z "$installer_image" ]] ; then
 	    installer_image="${local_toolsdir}/$installer_filename"
@@ -760,15 +765,18 @@ function setup_install_1() {
     mkdir "$cluster_install_dir"
     setup_dnsmasq
     setup_virt_net
+    local arch_infix=
+    if [[ $platform = aarch64 ]] ; then
+	arch_infix=-arm64
+    fi
     fetch_tools_if_needed || return 1
     cd "$cluster_install_dir"
     if [[ ! -f "$cluster_install_dir/filetranspile" ]] ; then
 	wget -q -P "$cluster_install_dir" https://raw.githubusercontent.com/ashcrow/filetranspiler/1.1.3/filetranspile
 	chmod +x "$cluster_install_dir/filetranspile"
     fi
-    set +x
-    tar -C "$cluster_install_dir" -xzf "$cachedir/openshift-client-linux-${VERSION}.tar.gz"
-    tar -C "$cluster_install_dir" -xzf "$cachedir/openshift-install-linux-${VERSION}.tar.gz"
+    tar -C "$cluster_install_dir" -xzf "$cachedir/openshift-client-linux${arch_infix}-${VERSION}.tar.gz"
+    tar -C "$cluster_install_dir" -xzf "$cachedir/openshift-install-linux${arch_infix}-${VERSION}.tar.gz"
     PATH="${cluster_install_dir}:$PATH"
     local -A paths
     local -A fn
