@@ -795,7 +795,11 @@ function setup_install_1() {
 	paths[rootfs]=$(get_key "$installer_data" '.images."live-rootfs".path')
     else
 	baseURI=https://mirror.openshift.com/pub/openshift-v4/${platform}/dependencies/rhcos/$RELEASE/latest
-	echo "Using fallback $baseURI"
+	echo "Trying fallback $baseURI"
+	if ! curl -f -s "$baseURI" ; then
+	    baseURI=https://mirror.openshift.com/pub/openshift-v4/${platform}/dependencies/rhcos/pre-release/latest-$RELEASE
+	    echo "Trying fallback $baseURI"
+	fi
 	paths[bios]=rhcos-metal."${platform}".raw.gz
 	paths[kernel]=rhcos-live-kernel-"${platform}"
 	paths[initramfs]=rhcos-live-initramfs."${platform}".img
@@ -816,7 +820,11 @@ function setup_install_1() {
     fi
 
     for f in "${!fn[@]}" ; do
-	rm -f "/var/www/html/ocp4-upi/${fn[$f]}" "/var/lib/tftpboot/${fn[$f]}"
+	echo "Looking for $f (${fn[$f]}) (${paths[$f]:-})" 1>&2
+	if [[ -L "/var/www/html/ocp4-upi/${fn[$f]}" ]] ; then
+	    doit rm -f "$(readlink "/var/www/html/ocp4-upi/${fn[$f]}")"
+	fi
+	doit rm -f "/var/www/html/ocp4-upi/${fn[$f]}" "/var/lib/tftpboot/${fn[$f]}"
 	if [[ -n "${paths[$f]:-}" ]] ; then
 	    dest="/var/www/html/ocp4-upi/${paths[$f]}"
 	    if [[ ! -f "/var/www/html/ocp4-upi/${paths[$f]}" ]] ; then
