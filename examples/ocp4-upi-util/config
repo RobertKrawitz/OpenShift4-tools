@@ -1,13 +1,52 @@
 #!/bin/bash
 
-mgmt_masters=(system-1-mgmt.example.com)
-mgmt_workers=(system-2-mgmt.example.com system-3-mgmt.example.com system-4-mgmt.example.com system-5-mgmt.example.com system-6-mgmt.example.com system-7-mgmt.example.com)
-
+bootstrap_mac=52:54:00:f9:8e:41
 public_interface=enp2s0f0
 bare_metal_interface=enp1s0f1
-master_macs=(00:00:00:00:00:00)
-worker_macs=(00:00:00:00:00:01 00:00:00:00:00:02 00:00:00:00:00:03 00:00:00:00:00:04 00:00:00:00:00:05 00:00:00:00:00:06)
-exclude_ifs=(enp1s0f1 enp2s0f1 enp3s0f0 enp3s0f1)
+
+# Other hardware interfaces that may exist that must be disabled.
+exclude_ifs=(enp2s0f1 enp3s0f1)
+
+declare -a disks=()
+# Don't rely on /dev/sdX names being stable; when
+# disks are probed asynchronously, their order can
+# change.  Instead, rely on the wwn, which is is
+# burned into the disk.
+disks[0]=/dev/disk/by-id/wwn-0x5555555555555550
+disks[1]=/dev/disk/by-id/wwn-0x5555555555555551
+disks[2]=/dev/disk/by-id/wwn-0x5555555555555552
+disks[3]=/dev/disk/by-id/wwn-0x5555555555555553
+disks[4]=/dev/disk/by-id/wwn-0x5555555555555554
+disks[5]=/dev/disk/by-id/wwn-0x5555555555555555
+
+declare -a macaddrs=()
+macaddrs[0]=00:00:00:00:00:00
+macaddrs[1]=00:00:00:00:00:01
+macaddrs[2]=00:00:00:00:00:02
+macaddrs[3]=00:00:00:00:00:03
+macaddrs[4]=00:00:00:00:00:04
+macaddrs[5]=00:00:00:00:00:05
+
+n_masters=3
+
+masters=()
+mgmt_masters=()
+master_macs=()
+mgmt_workers=()
+worker_macs=()
+for m in $(seq 0 $((n_masters - 1))) ; do
+    masters+=("node-${m}.example.com")
+    mgmt_masters+=("node-${m}-mm.example.com")
+    mac=${emacaddrs[$m]}
+    master_macs+=("$mac")
+    install_disks[$mac]=${disks[$m]}
+done
+for m in $(seq $n_masters $((${#disks[@]} - 1))) ; do
+    mgmt_workers+=("node-${m}-mm.example.com")
+    mac=${macaddrs[$m]}
+    worker_macs+=("$mac")
+    install_disks[$mac]=${disks[$m]}
+done
 
 cluster_domain=example.myocp4.com
 do_install_cnv=0
