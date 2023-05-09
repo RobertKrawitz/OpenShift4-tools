@@ -67,6 +67,7 @@ declare -i require_config_file=1
 declare kata_install_label=
 declare kata_config_name=example-kataconfig
 declare -i update_packages=1
+declare -A install_disks=()
 platform=$(uname -i)
 
 # shellcheck disable=SC2155
@@ -508,40 +509,44 @@ EOF
 
 function generate_pxelinux_cfg() {
     local node_type=${1:-master}
-    local installdev
-    if [[ $node_type = bootstrap ]] ; then
-	installdev=sda
-    else
-	installdev=$install_device
-    fi
-    shift
+    local installdev=${2:-$install_device}
+    shift 2
     cat <<EOF
 DEFAULT pxeboot
 TIMEOUT 20
 PROMPT 0
 LABEL pxeboot
     KERNEL http://${bootstrap_ipaddr}:${pxe_port}/ocp4-upi/rhcos-installer-kernel
-    APPEND rdblacklist=megaraid_sas ip=dhcp rd.neednet=1 initrd=http://${bootstrap_ipaddr}:${pxe_port}/ocp4-upi/rhcos-installer-initramfs.img console=tty0 console=ttyS0 coreos.inst=yes coreos.inst.install_dev=/dev/${installdev} coreos.inst.image_url=http://${bootstrap_ipaddr}:${pxe_port}/ocp4-upi/rhcos-metal-bios.raw.gz coreos.inst.ignition_url=http://${bootstrap_ipaddr}:${pxe_port}/ocp4-upi/${node_type}.ign $*
+    APPEND rdblacklist=megaraid_sas ip=dhcp rd.neednet=1 initrd=http://${bootstrap_ipaddr}:${pxe_port}/ocp4-upi/rhcos-installer-initramfs.img console=tty0 console=ttyS0 coreos.inst=yes coreos.inst.install_dev=${installdev} coreos.inst.image_url=http://${bootstrap_ipaddr}:${pxe_port}/ocp4-upi/rhcos-metal-bios.raw.gz coreos.inst.ignition_url=http://${bootstrap_ipaddr}:${pxe_port}/ocp4-upi/${node_type}.ign $*
     SYSAPPEND 2
 EOF
 }
 
 function generate_grub_cfg() {
     local node_type=${1:-master}
-    local installdev
-    if [[ $node_type = bootstrap ]] ; then
-	installdev=sda
-    else
-	installdev=$install_device
-    fi
-    shift
+    local installdev=${2:-$install_device}
+    shift 2
     cat <<EOF
 set timeout=10
 menuentry 'Install CoreOS' {
-  linux rhcos-installer-kernel rdblacklist=megaraid_sas ip=dhcp coreos.inst.install_dev=/dev/${installdev} nomodeset rd.neednet=1 coreos.inst=yes coreos.inst.image_url=http://${bootstrap_ipaddr}:${pxe_port}/ocp4-upi/rhcos-metal-bios.raw.gz coreos.inst.ignition_url=http://${bootstrap_ipaddr}:${pxe_port}/ocp4-upi/${node_type}.ign $*
+  linux rhcos-installer-kernel rdblacklist=megaraid_sas ip=dhcp coreos.inst.install_dev=${installdev} nomodeset rd.neednet=1 coreos.inst=yes coreos.inst.image_url=http://${bootstrap_ipaddr}:${pxe_port}/ocp4-upi/rhcos-metal-bios.raw.gz coreos.inst.ignition_url=http://${bootstrap_ipaddr}:${pxe_port}/ocp4-upi/${node_type}.ign $*
   initrd rhcos-installer-initramfs.img
 }
 EOF
+}
+
+function get_installdev() {
+    local node_type=${1:-master}
+    local mac=${2:-}
+    if [[ $node_type = bootstrap ]] ; then
+	installdev=sda
+    else
+	installdev=${install_disks[${mac,,}]:-$install_device}
+    fi
+    if [[ ${installdev:0:1} != '/' ]] ; then
+	installdev="/dev/$installdev"
+    fi
+    echo "$installdev"
 }
 
 function setup_tftpboot() {
@@ -555,11 +560,13 @@ function setup_tftpboot() {
 	macs+=("$arg")
     done
     local m
+    local installdev
     if [[ $platform = aarch64 ]] ; then
 	for m in "${macs[@]}" ; do
 	    local file="/var/lib/tftpboot/grub.cfg-01-${m//:/-}"
 	    echo "Configuring $m as $ntype: $file"
-	    generate_grub_cfg "$ntype" "$@" > "$file"
+	    installdev=$(get_installdev "$ntype" "$m")
+	    generate_grub_cfg "$ntype" "$installdev" "$@" > "$file"
 	done
 	cp /boot/efi/EFI/BOOT/BOOTAA64.EFI /var/lib/tftpboot
 	cp /boot/efi/EFI/redhat/grubaa64.efi /var/lib/tftpboot
@@ -569,7 +576,8 @@ function setup_tftpboot() {
 	for m in "${macs[@]}" ; do
 	    local file="/var/lib/tftpboot/pxelinux.cfg/01-${m//:/-}"
 	    echo "Configuring $m as $ntype: $file"
-	    generate_pxelinux_cfg "$ntype" "$@" > "$file"
+	    installdev=$(get_installdev "$ntype" "$m")
+	    generate_pxelinux_cfg "$ntype" "$installdev" "$@" > "$file"
 	done
 	cp -p /tftpboot/lpxelinux.0 /var/lib/tftpboot
 	cp -p /tftpboot/ldlinux.c32 /var/lib/tftpboot
@@ -795,7 +803,11 @@ function setup_install_1() {
 	paths[rootfs]=$(get_key "$installer_data" '.images."live-rootfs".path')
     else
 	baseURI=https://mirror.openshift.com/pub/openshift-v4/${platform}/dependencies/rhcos/$RELEASE/latest
-	echo "Using fallback $baseURI"
+	echo "Trying fallback $baseURI"
+	if ! curl -f -s "$baseURI" ; then
+	    baseURI=https://mirror.openshift.com/pub/openshift-v4/${platform}/dependencies/rhcos/pre-release/latest-$RELEASE
+	    echo "Trying fallback $baseURI"
+	fi
 	paths[bios]=rhcos-metal."${platform}".raw.gz
 	paths[kernel]=rhcos-live-kernel-"${platform}"
 	paths[initramfs]=rhcos-live-initramfs."${platform}".img
@@ -816,7 +828,11 @@ function setup_install_1() {
     fi
 
     for f in "${!fn[@]}" ; do
-	rm -f "/var/www/html/ocp4-upi/${fn[$f]}" "/var/lib/tftpboot/${fn[$f]}"
+	echo "Looking for $f (${fn[$f]}) (${paths[$f]:-})" 1>&2
+	if [[ -L "/var/www/html/ocp4-upi/${fn[$f]}" ]] ; then
+	    doit rm -f "$(readlink "/var/www/html/ocp4-upi/${fn[$f]}")"
+	fi
+	doit rm -f "/var/www/html/ocp4-upi/${fn[$f]}" "/var/lib/tftpboot/${fn[$f]}"
 	if [[ -n "${paths[$f]:-}" ]] ; then
 	    dest="/var/www/html/ocp4-upi/${paths[$f]}"
 	    if [[ ! -f "/var/www/html/ocp4-upi/${paths[$f]}" ]] ; then
@@ -886,7 +902,7 @@ EOF
     setup_tftpboot bootstrap "$bootstrap_mac" -- "$rootfs_arg"
     # Clear out old known_hosts entries so ssh doesn't choke on host
     # identification changing.
-    sed -i -E -e '/^((master-|worker|infra-)[[:digit:]]+|bootstrap)[, ]/d' ~/.ssh/known_hosts
+    sed -i -E -e '/^((master|worker|infra)-[[:digit:]]+|bootstrap)[, ]/d' ~/.ssh/known_hosts
 }
 
 function ipmi_cmd() {
