@@ -102,7 +102,7 @@ class ClusterBusterAnalysis:
             return self.__postprocess('\n\n'.join([str(v) for v in report.values()]), status, metadata)
         elif report_type == dict or report_type == list:
             report['metadata'] = metadata
-            for v in ['uuid', 'run_host', 'openshift_version', 'kata_version', 'cnv_version']:
+            for v in ['uuid', 'run_host', 'openshift_version', 'kata_version', 'kata_containers_version', 'cnv_version']:
                 if v in metadata:
                     report['metadata'][v] = metadata[v]
             for v in ['result', 'job_start', 'job_end', 'job_runtime']:

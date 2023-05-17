@@ -59,6 +59,7 @@ class LoadOneReport:
             data['metadata']['jobs'][name]['server_version'] = self._metadata['kubernetes_version']['serverVersion']
             data['metadata']['jobs'][name]['openshift_version'] = self._metadata['kubernetes_version'].get('openshiftVersion', 'Unknown')
             data['metadata']['jobs'][name]['run_host'] = self._metadata['runHost']
+            data['metadata']['jobs'][name]['kata_containers_version'] = self._metadata.get('kata_containers_version', None)
             data['metadata']['jobs'][name]['kata_version'] = self._metadata.get('kata_version', None)
             data['metadata']['jobs'][name]['cnv_version'] = self._metadata.get('cnv_version', None)
         else:
@@ -74,6 +75,8 @@ class LoadOneReport:
                     raise Exception(f"Mismatched server_version: {self._metadata['kubernetes_version']['serverVersion']}, {data['metadata']['jobs'][name]['server_version']}")
                 if self._metadata.get('kata_version') != data['metadata']['jobs'][name]['kata_version']:
                     raise Exception(f"Mismatched kata_version: {self._metadata.get('kata_version')}, {data['metadata']['jobs'][name]['kata_version']}")
+                if self._metadata.get('kata_containers_version') != data['metadata']['jobs'][name]['kata_containers_version']:
+                    raise Exception(f"Mismatched kata_containers_version: {self._metadata.get('kata_containers_version')}, {data['metadata']['jobs'][name]['kata_containers_version']}")
         if self._metadata['kind'] != 'clusterbusterResults':
             raise Exception("Invalid results file")
         if 'runtime_class' in self._metadata:

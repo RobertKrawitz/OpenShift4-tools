@@ -1642,6 +1642,22 @@ EOF
     fi
 }
 
+function _get_kata_version() {
+    if [[ -n "$(____OC get kataconfig --no-headers 2>/dev/null)" ]] ; then
+	local node
+	while read -r node ; do
+	    local answer
+	    answer=$(____OC debug "$node" -- chroot /host sh -c "rpm -q --queryformat='%{NAME}-%{VERSION}-%{RELEASE}.%{ARCH}'$'\n' kata-containers" 2>/dev/null | head -1 |grep -v 'is not installed')
+	    if [[ -n "$answer" ]] ; then
+		cat <<EOF
+"kata_containers_version": "$answer",
+EOF
+		return
+	    fi
+	done <<< "$(____OC get node -oname --no-headers)"
+    fi
+}
+
 function _report_metadata_and_objects() {
     function readable_timestamp_report() {
 	local rawtime=${1:-}
@@ -1674,6 +1690,7 @@ function _report_metadata_and_objects() {
   "controller_postsync_timestamp": $second_local_ts,
   "artifact_directory": "$artifactdir",
 $(indent 2 _get_csv_version -n openshift-sandboxed-containers-operator kata)
+$(indent 2 _get_kata_version)
 $(indent 2 _get_csv_version cnv)
 $(indent 2 _get_csv_version -f .spec.labels.full_version -n openshift-storage odf)
   "options": {
@@ -2157,6 +2174,11 @@ ${objtype:+  ${basename}-x-${objtype}: "$xuuid"}
 ${logger:+  ${basename}-logger: $true}
   ${basename}-objtype: "$objtype"
 EOF
+    if [[ $objtype = worker || $objtype = sync ]] ; then
+	cat <<EOF
+  ${basename}-monitor: "$xuuid"
+EOF
+    fi
     if [[ $basename != clusterbuster ]] ; then
 	cat <<EOF
   clusterbusterbase: "true"
