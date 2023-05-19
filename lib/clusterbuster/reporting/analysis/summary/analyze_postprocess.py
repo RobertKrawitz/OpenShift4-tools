@@ -35,7 +35,7 @@ class AnalyzePostprocess:
         for job, job_metadata in self._metadata['jobs'].items():
             if job not in metadata:
                 metadata[job] = {}
-            for var in ['uuid', 'run_host', 'openshift_version', 'kata_version']:
+            for var in ['uuid', 'run_host', 'openshift_version', 'kata_containers_version', 'kata_version']:
                 if var in job_metadata:
                     metadata[job][var] = job_metadata[var]
         self._report['metadata'] = metadata

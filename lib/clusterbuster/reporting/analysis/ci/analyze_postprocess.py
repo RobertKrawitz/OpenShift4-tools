@@ -29,6 +29,7 @@ class AnalyzePostprocess:
             'uuid': None,
             'run_host': None,
             'openshift_version': None,
+            'kata_containers_version': None,
             'kata_version': None,
             'result': None,
             'job_start': None,
@@ -42,7 +43,7 @@ class AnalyzePostprocess:
                 elif job_status.get(var, None) is not None and job_status[var] != self._report['metadata'][var]:
                     raise Exception(f'Mismatched {var} in status ({job_status[var]} vs {self._report["metadata"][var]}!')
         for job, job_metadata in self._metadata['jobs'].items():
-            for var in ['uuid', 'run_host', 'openshift_version', 'kata_version']:
+            for var in ['uuid', 'run_host', 'openshift_version', 'kata_containers_version', 'kata_version']:
                 if self._report['metadata'][var] is None:
                     self._report['metadata'][var] = job_metadata.get(var, None)
                 elif job_metadata.get(var, None) is not None and job_metadata[var] != self._report['metadata'][var]:
