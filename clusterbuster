@@ -210,6 +210,7 @@ declare failure_status=Fail
 declare -i create_pods_privileged=0
 declare -i wait_forever=0
 declare -a pod_labels=()
+declare -i get_logs_pid=0
 
 declare -r sync_flag_file="/tmp/syncfile";
 declare -r sync_error_file="/tmp/syncerror";
@@ -2494,7 +2495,7 @@ function create_object() {
     if (( doit )) ; then
 	if [[ -n "$artifactdir" ]] ; then
 	    mkdir -p "$artifactdir/$objtype"
-	    echo "$data" > "$artifactdir/${objtype}/${namespace}:$objname"
+	    echo "$data" > "$artifactdir/${objtype}/${namespace:+${namespace}:}$objname"
 	fi
 	accumulateddata+="$data"
 	if (( force || (++objs_item_count >= objs_per_call) )) ; then
@@ -3426,8 +3427,7 @@ function do_logging() {
     local -i logs_expected=0
     logs_expected="$(calculate_logs_required "$namespaces" "$deps_per_namespace" "$replicas" "$containers_per_pod")"
     ((logs_expected > 0)) || return 0
-    local -i get_logs_pid=0
-    trap 'if ((get_logs_pid > 1)) ; then kill -TERM "$get_logs_pid"; wait "$get_logs_pid" 2>/dev/null; fi; return 1' TERM
+    trap 'if ((get_logs_pid > 1)) ; then kill -TERM "$get_logs_pid"; wait "$get_logs_pid" 2>/dev/null; get_logs_pid=0; fi; return 1' TERM
 
     local -a sync_pods=()
     local namespace
@@ -3493,6 +3493,7 @@ function do_logging() {
     fi
     if (( get_logs_pid > 1 )) ; then
 	wait "$get_logs_pid" 2>/dev/null
+	get_logs_pid=0
     fi
 }
 
@@ -3536,9 +3537,9 @@ function run_clusterbuster_2() {
 	do_cleanup -p 1>&2 || return 1
     fi
     if ((cleanup_always)) ; then
-	trap 'echo "Cleaning up" 1>&2; doit=1; do_cleanup -f; killthemall ""; wait; remove_tmpdir; doit=1; do_cleanup -f; exit 1' TERM INT HUP
+	trap 'echo "Cleaning up" 1>&2; doit=1; do_cleanup -f; if ((get_logs_pid > 0)) ; then wait "$get_logs_pid"; get_logs_pid=0; fi; killthemall ""; wait; remove_tmpdir; doit=1; do_cleanup -f; exit 1' TERM INT HUP
     else
-	trap 'killthemall "Not cleaning up"; wait; remove_tmpdir; exit 1' TERM HUP INT
+	trap 'echo "Not cleaning up" 1>&2; if ((get_logs_pid > 0)) ; then wait "$get_logs_pid"; get_logs_pid=0; fi; killthemall ""; wait; remove_tmpdir; exit 1' TERM HUP INT
     fi
     if [[ $doit -gt 0 ]] ; then
 	if [[ -n "${artifactdir:-}" && $take_prometheus_snapshot -gt 0 ]] ; then
