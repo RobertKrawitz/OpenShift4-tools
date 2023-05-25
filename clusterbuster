@@ -1497,7 +1497,7 @@ function _get_logs_poll() {
 	done
 	# shellcheck disable=SC2086
 	local mypid=$BASHPID
-	monitor_pods -A -l "${basename}-x-worker=$xuuid" &
+	monitor_pods -A -l "${basename}-monitor=$xuuid" &
 	# shellcheck disable=SC2086
 	if supports_api -w "$requested_workload" supports_reporting ; then
 	    # Ensure that if there's a lot of output that we don't remove the sync file before it has all been flushed out
