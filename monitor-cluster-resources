@@ -43,8 +43,43 @@ last_row = None
 last_row_base = None
 last_changed = 0
 tab = '\t'
+nl = '\n'
 n_timestamps = 0
 nodes_schedulable = {}
+
+
+def format_pods(num: float):
+    if args.absolute:
+        return str(int(num))
+    else:
+        return pformat(num)
+
+
+def format_cpu(num: float):
+    return pformat(num)
+
+
+def format_memory(num: float):
+    if args.absolute:
+        if num < 1024:
+            return str(num)
+        elif num < 1024 * 1024:
+            return f'{pformat(num / 1024)}Ki'
+        elif num < 1024 * 1024 * 1024:
+            return f'{pformat(num / (1024 * 1024))}Mi'
+        elif num < 1024 * 1024 * 1024 * 1024:
+            return f'{pformat(num / (1024 * 1024 * 1024))}Gi'
+        else:
+            return f'{pformat(num / (1024 * 1024 * 1024 * 1024))}Ti'
+    else:
+        return pformat(num)
+
+
+print_funcs = {
+    'cpu': format_cpu,
+    'memory': format_memory,
+    'pods': format_pods
+    }
 
 
 parser = argparse.ArgumentParser(description='Monitor cluster resources')
@@ -64,12 +99,18 @@ parser.add_argument('-Q', '--veryquiet', help='Do not print individual pods that
 parser.add_argument('-c', '--changed-rows-only', help='Only print changed rows', action='store_true')
 parser.add_argument('-t', '--relative-timestamps', help='Print relative timestamps', action='store_true')
 parser.add_argument('-T', '--absolute-timestamps', help='Print absolute timestamps', action='store_true')
+parser.add_argument('-O', '--once', help="Run only once", action='store_true')
+parser.add_argument('-A', '--absolute', help="Report absolute units", action='store_true')
+parser.add_argument('--only-matches', help="Count only matching pods", action='store_true')
+parser.add_argument('--no-summary', help="Don't print summary", action='store_true')
+parser.add_argument('--no-headers', help="Don't print headers", action='store_true')
 args = parser.parse_args()
 
-if args.relative_timestamps:
-    n_timestamps += 1
-if args.absolute_timestamps is None or args.absolute_timestamps is True:
-    n_timestamps += 1
+if not args.once:
+    if args.relative_timestamps:
+        n_timestamps += 1
+    if args.absolute_timestamps is None or args.absolute_timestamps is True:
+        n_timestamps += 1
 
 if args.resource:
     resources_to_list = [resource for resource in resources_to_list if resource in args.resource]
@@ -81,6 +122,8 @@ def _ts(delimiter: str = ' '):
     global starting_time
     answers = []
     now_time = time.time()
+    if args.once:
+        return ''
     if args.absolute_timestamps is None or args.absolute_timestamps is True:
         answers.append(datetime.utcfromtimestamp(now_time).strftime('%Y-%m-%dT%T.%f'))
     if args.relative_timestamps:
@@ -91,7 +134,7 @@ def _ts(delimiter: str = ' '):
     return delimiter.join(answers)
 
 
-def get_timestamp(string, delimiter: str = ' '):
+def get_timestamp(string, delimiter: str = tab):
     """
     Return a string with a timestamp prepended to the first line
     and any other lines indented
@@ -99,7 +142,10 @@ def get_timestamp(string, delimiter: str = ' '):
     :return: Timestamped string
     """
     string = re.sub(r'\n(.*\S.*)', r'\n            \1', string)
-    return delimiter.join([_ts(delimiter), string])
+    if n_timestamps > 0:
+        return delimiter.join([_ts(delimiter), string])
+    else:
+        return string
 
 
 def timestamp(string, delimiter: str = ' '):
@@ -151,7 +197,8 @@ def pformat(num: float, precision: int = 3):
     :param num:
     :param precision:
     """
-    num = num * 100
+    if not args.absolute:
+        num = num * 100
     precision = precision - 2
     try:
         if precision >= 1:
@@ -191,14 +238,33 @@ kubectl get node {node} -ojson | jq -r '.metadata.name + "|" + .status.allocatab
 
 
 def mk_header():
-    line1_base = f'Node{tab * n_timestamps}{(tab * len(resources_to_list)).join(all_nodes)}{tab}%Capacity'
-    line2_base = f'Timestamp{(tab * (n_timestamps - 1)) + ((tab + tab.join(resources_to_list)) * (len(all_nodes) + 1))}'
-    if args.veryquiet:
-        return f'''{line1_base}{(tab * len(resources_to_list))}Pods changed
-{line2_base}{tab}add{tab}remove{tab}change{tab}total'''
+    line1_base = ''
+    line2_base = ''
+    line3_base = ''
+    if n_timestamps > 0:
+        line1_base = ''
+        line2_base = f'Node{tab * n_timestamps}{(tab * len(resources_to_list)).join(all_nodes)}'
+        if not args.no_summary:
+            line2_base += f'{tab}{"%Capacity" if not args.absolute else "Total"}{(tab * len(resources_to_list))}Pods changed'
+        line3_base = f'{"Timestamp"}{(tab * (n_timestamps - 1)) + ((tab + tab.join(resources_to_list)) * (len(all_nodes) + 1))}'
     else:
-        return f'''{line1_base}{(tab * len(resources_to_list))}Pods changed
-{line2_base}{tab}add{tab}remove{tab}change{tab}total'''
+        line1a_base = ''
+        if not args.no_summary:
+            line1a_base = (tab * (len(resources_to_list) * len(all_nodes))) + "Summary"
+        line1_base = f'Node{line1a_base}{nl}'
+        line2_base = f'{(tab * len(resources_to_list)).join(all_nodes)}'
+        if not args.no_summary:
+            line2_base += f'{(tab * len(resources_to_list))}{"%Capacity" if not args.absolute else "Total"}{(tab * len(resources_to_list))}Pods changed'
+        line3_base = f'{((tab.join(resources_to_list) + tab) * (len(all_nodes) + (0 if args.no_summary else 1)))}'
+    summary_base = ''
+    if not args.no_summary:
+        summary_base = f'{tab}add{tab}remove{tab}change{tab}total'
+    if args.veryquiet:
+        return f'''{line1_base}{line2_base}
+{line3_base}{summary_base}'''
+    else:
+        return f'''{line1_base}{line2_base}
+{line3_base}{summary_base}'''
 
 
 def get_node_data():
@@ -206,23 +272,24 @@ def get_node_data():
     totals = {'cpu': 0, 'memory': 0, 'pods': 0}
     for node in all_nodes:
         if 'cpu' in resources_to_list:
-            fraction = node_cpu[node] / node_cpu_capacity[node]
-            answer.append(str(pformat(fraction)))
+            num = node_cpu[node] / (node_cpu_capacity[node] if not args.absolute else 1)
+            answer.append(format_cpu(num))
             if node in nodes_schedulable:
-                totals['cpu'] += fraction
+                totals['cpu'] += num
         if 'memory' in resources_to_list:
-            fraction = node_memory[node] / node_memory_capacity[node]
-            answer.append(str(pformat(node_memory[node] / node_memory_capacity[node])))
+            num = node_memory[node] / (node_memory_capacity[node] if not args.absolute else 1)
+            answer.append(format_memory(num))
             if node in nodes_schedulable:
-                totals['memory'] += fraction
+                totals['memory'] += num
         if 'pods' in resources_to_list:
-            fraction = node_pods[node] / node_pod_capacity[node]
-            answer.append(str(pformat(node_pods[node] / node_pod_capacity[node])))
+            num = node_pods[node] / (node_pods_capacity[node] if not args.absolute else 1)
+            answer.append(format_pods(num))
             if node in nodes_schedulable:
-                totals['memory'] += fraction
-    for resource in ['cpu', 'memory', 'pods']:
-        if resource in resources_to_list:
-            answer.append(str(pformat(totals[resource] / len(nodes_schedulable) if len(nodes_schedulable) > 0 else 0)))
+                totals['pods'] += num
+    if not args.no_summary:
+        for resource in ['cpu', 'memory', 'pods']:
+            if resource in resources_to_list:
+                answer.append(str(print_funcs[resource](totals[resource] / (len(nodes_schedulable) if not args.absolute else 1) if len(nodes_schedulable) > 0 else 0)))
     return tab.join(answer)
 
 
@@ -273,6 +340,8 @@ def process_lines(lines: list):
         pod_node = None
         if is_match(pod, args.pod_pattern):
             npods_total += 1
+        elif args.only_matches:
+            continue
         if pod in pod_nodes:
             if node == pod_nodes[pod] and cpu == pod_cpu[pod] and memory == pod_memory[pod]:
                 continue
@@ -297,11 +366,14 @@ def process_lines(lines: list):
             if not args.quiet and not args.veryquiet and (not pod_node or pod_node in all_nodes) and node in all_nodes:
                 timestamp(f'{get_node_data()}{tab}{prefix}{node}.{pod}')
     if args.quiet or args.veryquiet:
+        row_base = get_node_data()
+        if not args.no_summary:
+            row_base += f'{get_node_data()}{tab}{npods_added}{tab}{npods_removed}{tab}{npods_changed}{tab}{npods_total}'
         if args.veryquiet:
-            row_base = f'{get_node_data()}{tab}{npods_added}{tab}{npods_removed}{tab}{npods_changed}{tab}{npods_total}'
+            pass
         elif args.quiet:
-            row_base = f'{get_node_data()}{tab}{npods_added}{tab}{npods_removed}{tab}{npods_changed}{tab}{npods_total}{tab}{" ".join(sorted(pods_changed))}'
-        row = get_timestamp(row_base, delimiter=tab)
+            row_base += f'{tab}{" ".join(sorted(pods_changed))}'
+        row = get_timestamp(row_base)
         if first_time or row_base != last_row_base or not args.changed_rows_only:
             if last_row:
                 print(last_row)
@@ -356,7 +428,8 @@ try:
     '''],
                 define_node)
 
-    print(mk_header())
+    if not args.no_headers:
+        print(mk_header())
     exit_next = False
     while True:
         # Unfortunately, watching doesn't work here because we don't normally
@@ -371,7 +444,7 @@ try:
                                     '{.spec.containers[*].resources.requests.cpu}|'
                                     '{.spec.containers[*].resources.requests.memory}{"\\n"}{end}')],
                                   process_stdout=True))
-        if exit_next:
+        if exit_next or args.once:
             sys.exit()
         try:
             now = time.time()
