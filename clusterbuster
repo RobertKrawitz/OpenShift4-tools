@@ -127,6 +127,7 @@ declare -i sync_affinity=0
 declare -A pin_nodes=()
 declare -A runtime_classes=()
 declare runtime_class
+declare scheduler=
 declare -i verbose=0
 declare -i wait_for_secrets=1
 declare -i bytes_transfer=0
@@ -517,6 +518,8 @@ $(print_workloads_supporting_reporting '                        - ')
                         optionally specified class (same meaning as for
                         --pin_node as above).  This may be specified
                         multiple times.
+       --scheduler=<scheduler>
+                        Use the specified scheduler to schedule pods.
 
     Kata Virtualization Tuning:
        --virtiofsd-writeback=[0,1]
@@ -813,6 +816,7 @@ function process_option() {
 	privilege*)		    create_pods_privileged=$(bool "$optvalue")	;;
 	syncinfirst*)		    sync_in_first_namespace=$(bool "$optvalue") ;;
 	vmmigrate*)		    vm_evict_migrate=$(bool "$optvalue")	;;
+	scheduler)		    scheduler=$optvalue				;;
 	affinity)
 	    case "$optvalue" in
 		1|'') affinity=1      ;;
@@ -2753,13 +2757,15 @@ function create_spec() {
     local runtime_class
     local opt
     local pin_node
+    local scheduler_name
     local node_selector=$node_selector
-    while getopts "A:c:r:s:Pp" opt "$@" ; do
+    while getopts "A:c:r:s:E:Pp" opt "$@" ; do
 	case "$opt" in
 	    A) affinity_yaml=$OPTARG ;;
 	    c) node_class=$OPTARG    ;;
 	    r) runtime_class=$OPTARG ;;
 	    s) node_selector=$OPTARG ;;
+	    E) scheduler_name=$OPTARG;;
 	    P)			     ;;
 	    p)			     ;;
 	    *)                       ;;
@@ -2794,7 +2800,7 @@ function create_spec() {
     cat <<EOF
 spec:
   terminationGracePeriodSeconds: 1
-$(indent 2 <<< "$affinity_yaml")
+${scheduler_name:+$(indent 2 <<< "schedulerName: $scheduler_name")}
 $(indent 2 tolerations_yaml ${tolerations+"${tolerations[@]}"})
 ${runtime_class:+$(indent 2 <<< "runtimeClassName: \"$runtime_class\"")}
   containers:
@@ -2822,7 +2828,7 @@ $(indent 2 standard_pod_metadata_yaml "$namespace" client)
     matchLabels:
       app: $name
 $(indent 2 standard_labels_yaml -c "$node_class" -l "$workload" "$namespace" "${instance}" "${replica}")
-$(create_spec -A "$affinity_yaml" -c "$node_class" "$@" "$replica")
+$(create_spec -A "$affinity_yaml" -c "$node_class" ${scheduler:+-E "$scheduler"} "$@" "$replica")
   restartPolicy: Never
 EOF
     done
@@ -2845,7 +2851,7 @@ metadata:
 $(indent 2 standard_labels_yaml -c "$node_class" -l "$workload" "$namespace" "$instance")
   name: "$vmname"
 $(indent 2 standard_deployment_metadata_yaml "$namespace" client)
-$(create_vm_spec -A "$affinity_yaml" -n "$vmname")
+$(create_vm_spec -A "$affinity_yaml" ${scheduler:+-E "$scheduler"} -n "$vmname")
 EOF
     done
 }
@@ -2859,13 +2865,15 @@ function create_vm_spec() {
     local node_class=client
     local vmname="$basename"
     local node_selector=$node_selector
-    while getopts 'A:n:c:r:s:' opt; do
+    local scheduler_name=
+    while getopts 'A:n:c:r:s:E:' opt; do
         case "$opt" in
 	    A) affinity_yaml=$OPTARG ;;
 	    c) node_class=$OPTARG    ;;
             n) vmname=$OPTARG	     ;;
 	    r) runtime_class=$OPTARG ;;
 	    s) node_selector=$OPTARG ;;
+	    E) scheduler_name=$OPTARG;;
 	    *)			     ;;
         esac
     done
@@ -2888,6 +2896,7 @@ $(indent 6 standard_labels_yaml -c "$node_class" -l "$workload" "$namespace" "$i
 $(indent 6 standard_deployment_metadata_yaml "$namespace" client)
 $(indent 6 standard_pod_metadata_yaml "$namespace" client)
     spec:
+${scheduler_name:+$(indent 6 <<< "schedulerName: $scheduler_name")}
 $(indent 6 vm_evict_strategy)
       domain:
         cpu:
@@ -2932,7 +2941,7 @@ spec:
     metadata:
 $(indent 6 standard_labels_yaml -c "$node_class" -l "$workload" "$namespace" "$instance")
 $(indent 6 standard_pod_metadata_yaml "$namespace" client)
-$(indent 4 create_spec -A "$affinity_yaml" -c "$node_class" "$@")
+$(indent 4 create_spec -A "$affinity_yaml" -c "$node_class" ${scheduler:+-E "$scheduler"} "$@")
 EOF
 }
 
