@@ -2803,6 +2803,7 @@ spec:
 ${scheduler_name:+$(indent 2 <<< "schedulerName: $scheduler_name")}
 $(indent 2 tolerations_yaml ${tolerations+"${tolerations[@]}"})
 ${runtime_class:+$(indent 2 <<< "runtimeClassName: \"$runtime_class\"")}
+${affinity_yaml:+$(indent 2 <<< "$affinity_yaml")}
   containers:
 $(indent 2 "$create_container_function" "$@")
 $(indent 2 volumes_yaml "$namespace" "$instance" "$secret_count")
