@@ -18,12 +18,10 @@
 # CPU soaker workload
 ################################################################
 
-declare -g ___cpusoaker_workload=python3
-
 function cpusoaker_arglist() {
     local mountdir=$1; shift
     while [[ "$1" != '--' ]] ; do shift; done; shift
-    mk_yaml_args "$___cpusoaker_workload" "${mountdir}cpusoaker.py" "$@" \
+    mk_yaml_args "python3" "${mountdir}cpusoaker.py" "$@" \
 		 "$processes_per_pod" "$workload_run_time"
 }
 
