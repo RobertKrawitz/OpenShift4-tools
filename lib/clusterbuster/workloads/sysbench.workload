@@ -58,7 +58,7 @@ function sysbench_create_deployment() {
 
 function sysbench_list_configmaps() {
     cat <<EOF
-${__podfile_dir__}/sysbench.py
+$(find_on_path pod_files "sysbench.py")
 EOF
 }
 

@@ -45,7 +45,7 @@ function memory_create_deployment() {
 
 function memory_list_configmaps() {
     cat <<EOF
-${__podfile_dir__}/memory.py
+$(find_on_path pod_files "memory.py")
 EOF
 }
 

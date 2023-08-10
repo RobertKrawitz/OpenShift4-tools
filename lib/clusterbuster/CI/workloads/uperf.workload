@@ -75,7 +75,7 @@ function uperf_process_option() {
 }
 
 function uperf_help_options() {
-    cat <<'EOF'
+    cat <<EOF
     Uperf test options:
         --uperf-msg-sizes=n[,n...]
                                 Space or comma separate list of message sizes

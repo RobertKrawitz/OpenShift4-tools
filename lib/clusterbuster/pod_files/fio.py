@@ -21,20 +21,18 @@ class fio_client(clusterbuster_pod_client):
             self.rundir = self._args[1]
             self.runtime = int(self._args[2])
             self.jobfilesdir = self._args[3]
-            self.drop_cache_service = self._args[4]
-            self.drop_cache_port = int(self._args[5])
-            self.fio_blocksizes = self._toSizes(self._args[6])
-            self.fio_patterns = re.split(r'\s+', self._args[7])
-            self.fio_iodepths = self._toSizes(self._args[8])
-            self.fio_fdatasyncs = self._toBools(self._args[9])
-            self.fio_directs = self._toBools(self._args[10])
-            if self._args[11]:
-                self.fio_ioengines = re.split(r'\s+', self._args[11])
+            self.fio_blocksizes = self._toSizes(self._args[4])
+            self.fio_patterns = re.split(r'\s+', self._args[5])
+            self.fio_iodepths = self._toSizes(self._args[6])
+            self.fio_fdatasyncs = self._toBools(self._args[7])
+            self.fio_directs = self._toBools(self._args[8])
+            if self._args[9]:
+                self.fio_ioengines = re.split(r'\s+', self._args[9])
             else:
                 self.fio_ioengines = []
-            self.fio_ramptime = self._toSizes(self._args[12])
-            if self._args[13]:
-                self.fio_generic_args = re.split(r'\s+', self._args[13])
+            self.fio_ramptime = self._toSizes(self._args[10])
+            if self._args[11]:
+                self.fio_generic_args = re.split(r'\s+', self._args[11])
             else:
                 self.fio_generic_args = []
         except Exception as err:
@@ -89,7 +87,7 @@ I/O engines: {self._args[11]}""")
                         for direct in self.fio_directs:
                             for ioengine in self.fio_ioengines:
                                 jobname = '%04d-%s-%d-%d-%d-%d-%s' % (jobidx, pattern, size, iodepth, fdatasync, direct, ioengine)
-                                self._drop_cache(self.drop_cache_service, self.drop_cache_port)
+                                self._drop_cache()
                                 self._sync_to_controller(jobname)
                                 if jobidx == 1:
                                     self._timestamp("Running...")

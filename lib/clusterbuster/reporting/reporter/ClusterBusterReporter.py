@@ -24,6 +24,7 @@ import os
 import base64
 import importlib
 import inspect
+import traceback
 from .metrics.PrometheusMetrics import PrometheusMetrics
 from ..prettyprint import fformat, prettyprint
 
@@ -101,8 +102,8 @@ class ClusterBusterReporter:
             with open(item) as f:
                 try:
                     answers.append(ClusterBusterReporter.report_one(os.path.dirname(item), json.load(f), format, **kwargs))
-                except Exception as err:
-                    print(f'Warning (continuing): unable to load {item}: {err}', file=sys.stderr)
+                except Exception:
+                    print(f'Warning (continuing): unable to load {item}: {traceback.format_exc()}', file=sys.stderr)
         for item in items:
             jdata = dict()
             if isinstance(item, str):
@@ -110,13 +111,13 @@ class ClusterBusterReporter:
             if isinstance(item, io.TextIOBase):
                 try:
                     jdata = json.load(item)
-                except Exception as err:
-                    print(f'Warning (continuing): unable to load {item}: {err}', file=sys.stderr)
+                except Exception:
+                    print(f'Warning (continuing): unable to load {item}: {traceback.format_exc()}', file=sys.stderr)
             elif item is None:
                 try:
                     jdata = json.load(sys.stdin)
-                except Exception as err:
-                    print(f'Warning (continuing): unable to load <stdin>: {err}', file=sys.stderr)
+                except Exception:
+                    print(f'Warning (continuing): unable to load <stdin>: {traceback.format_exc()}', file=sys.stderr)
             elif isinstance(item, dict):
                 jdata = item
             else:
@@ -480,7 +481,8 @@ class ClusterBusterReporter:
             return num
         if base is None:
             base = 1024
-        return prettyprint(num, precision=precision, integer=integer, base=base, suffix=suffix, parseable='parseable' in self._format)
+        return prettyprint(num, precision=precision, integer=integer, base=base, suffix=suffix,
+                           parseable='parseable' in self._format)
 
     def _safe_div(self, num: float, denom: float, precision: int = None, as_string: bool = False,
                   number_only: bool = False):
@@ -566,8 +568,8 @@ class ClusterBusterReporter:
                     except Exception:
                         pass
                     args[name] = value
-                except Exception as exc:
-                    raise Exception(f"Cannot parse option {option}: {exc}")
+                except Exception:
+                    raise Exception(f"Cannot parse option {option}: {traceback.format_exc()}")
             val = self._prettyprint(val, **args)
         if rvar in dest and val != dest[rvar]:
             if orig_var is None:

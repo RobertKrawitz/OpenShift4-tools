@@ -48,7 +48,7 @@ function synctest_create_deployment() {
 
 function synctest_list_configmaps() {
     cat <<EOF
-${__podfile_dir__}/synctest.py
+$(find_on_path pod_files "synctest.py")
 EOF
 }
 

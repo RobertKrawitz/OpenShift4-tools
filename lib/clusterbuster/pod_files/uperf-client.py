@@ -20,7 +20,7 @@ class uperf_client(clusterbuster_pod_client):
             self.srvhost = self._resolve_host(self._args[2])
             self.connect_port = int(self._args[3])
             self.tests = self._args[4:]
-            self.podfile_dir = os.environ.get('PODFILE_DIR', '.')
+            self.podfile_dir = os.environ.get('SYSTEM_PODFILE_DIR', '.')
             self.process_file(os.path.join(self.podfile_dir, "uperf-mini.xml"),
                               "/tmp/uperf-test.xml", {'srvhost': self.srvhost, 'runtime': 1})
             self._timestamp(f"Waiting for uperf server {self.srvhost}:{self.connect_port} to come online...")

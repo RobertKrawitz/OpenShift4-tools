@@ -121,11 +121,11 @@ function uperf_create_deployment() {
 
 function uperf_list_configmaps() {
     cat <<EOF
-${__podfile_dir__}/uperf-client.py
-${__podfile_dir__}/uperf-server.py
-${__podfile_dir__}/uperf-mini.xml
-${__podfile_dir__}/uperf-rr.xml
-${__podfile_dir__}/uperf-stream.xml
+$(find_on_path pod_files "uperf-client.py")
+$(find_on_path pod_files "uperf-server.py")
+$(find_on_path pod_files "uperf-mini.xml")
+$(find_on_path pod_files "uperf-rr.xml")
+$(find_on_path pod_files "uperf-stream.xml")
 EOF
 }
 

@@ -91,7 +91,7 @@ function files_process_option() {
 }
 
 function files_help_options() {
-    cat <<'EOF'
+    cat <<EOF
     Files test options:
         --files-timeout=seconds
                                 Time the job out after specified time.  Default

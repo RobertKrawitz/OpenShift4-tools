@@ -39,7 +39,7 @@ declare __workloaddir__="${__libdir__}/CI/workloads"
 [[ -d "$__libdir__" ]] || fatal "Can't find my library dir!"
 
 . "${__libdir__}"/libclusterbuster.sh
-load_workloads "$__workloaddir__"
+load_workloads "$__libdir__" CI
 
 declare client_pin_node=
 declare server_pin_node=
@@ -491,7 +491,7 @@ $(list_profiles '                                - ')
 $(_help_options_workloads)
 
   Clusterbuster options:
-$("$__clusterbuster__" --help-options 2>&1)
+$("$__clusterbuster__" --help-options)
 
 EOF
     exit
