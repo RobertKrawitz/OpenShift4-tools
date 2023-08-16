@@ -55,7 +55,7 @@ function logger_workload_reporting_class() {
 
 function logger_list_configmaps() {
     cat <<EOF
-${__podfile_dir__}/logger.py
+$(find_on_path pod_files "logger.py")
 EOF
 }
 

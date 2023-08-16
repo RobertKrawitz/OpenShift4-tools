@@ -171,29 +171,59 @@ function _document_workloads() {
     done <<< "$(workloads_supporting_api document)"
 }
 
-function __split_path() {
-    local workload_path=
-    workload_path="$(IFS=:; echo "$*")"
-    local IFS=:
-    set -f
-    # shellcheck disable=SC2206
-    local -a dirlist=($workload_path)
+function load_workloads() {
+    local -a path=$1
+    local -a subdir=${2:-}
+    local -a workloads
+    readarray -t workloads <<< "$(find_files_on_path "${subdir}/workloads" "*.workload" "$path")"
     local dir
-    for dir in "${dirlist[@]}" ; do
-	echo "${dir:-.}"
+    local workload
+    for workload in "${workloads[@]}" ; do
+	. "$workload" || fatal "Can't load workload $workload"
     done
 }
 
-function load_workloads() {
-    local -a workload_path
-    readarray -t workload_path <<< "$(__split_path "$@")"
-    local dir
-    local workload
-    for dir in "${workload_path[@]}" ; do
-	for workload in "$dir"/*.workload ; do
-	    . "$workload" || fatal "Can't load workload $workload"
+function find_on_path() {
+    local ftype=$1
+    local fn=$2
+    if [[ $fn = '/'* ]] ; then
+	echo "$fn"
+	return 0
+    fi
+    local path=${3:-$CB_LIBPATH}
+    local -a xpath
+    readarray -d : -t xpath <<< "$path"
+    xpath=("${xpath[@]%$'\n'}")
+    local d
+    for d in "${xpath[@]}" ; do
+	d=${d:-.}
+	local l="${d}/${ftype}/${fn}"
+	l=${l//\/\///}
+	if [[ -f "$l" ]] ; then
+	    echo "$l"
+	    return 0
+	fi
+    done
+    return 1
+}
+
+function find_files_on_path() {
+    local ftype=${1:-}
+    local pattern=${2:-*}
+    local path=${3:-$CB_LIBPATH}
+    local -a xpath
+    readarray -d : -t xpath <<< "$path"
+    xpath=("${xpath[@]%$'\n'}")
+    local d
+    for d in "${xpath[@]}" ; do
+	d=${d:-.}
+	local l="${d}/${ftype}"
+	local f
+	for f in "$l"/$pattern ; do
+	    echo "${f//\/\///}"
 	done
     done
+    return 0
 }
 
 function dispatch_generic() {

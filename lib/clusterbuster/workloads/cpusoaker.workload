@@ -42,7 +42,7 @@ function cpusoaker_create_deployment() {
 
 function cpusoaker_list_configmaps() {
     cat <<EOF
-${__podfile_dir__}/cpusoaker.py
+$(find_on_path pod_files "cpusoaker.py")
 EOF
 }
 

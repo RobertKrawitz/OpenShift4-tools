@@ -175,9 +175,10 @@ declare -i total_objects_created=0
 # <name, filename with contents>
 declare -a configmap_files=()
 declare -a tolerations=()
-declare configmap_mount_dir=/etc/clusterbuster
+declare user_configmap_mount_dir=/etc/clusterbuster
 declare system_configmap_mount_dir=/var/lib/clusterbuster
-declare -i has_system_configmap=0
+declare -i has_system_configmap=1
+declare -i has_user_configmap=1
 declare node_selector='node-role.kubernetes.io/worker'
 declare -i processes_per_pod=1
 declare -i emptydir_volumes=0
@@ -212,6 +213,7 @@ declare -i create_pods_privileged=0
 declare -i wait_forever=0
 declare -a pod_labels=()
 declare -i get_logs_pid=0
+declare -a extra_args=()
 
 declare -r sync_flag_file="/tmp/syncfile";
 declare -r sync_error_file="/tmp/syncerror";
@@ -261,11 +263,9 @@ if [[ -z "$OC" ]] ; then
 fi
 
 declare __libdir__=${__topdir__}/lib/clusterbuster
-declare __podfile_dir__=${__libdir__}/pod_files
-declare __workloaddir__=${__libdir__}/workloads
+export CB_LIBPATH=${CB_LIBPATH:-$__libdir__}
 
 [[ -d "$__libdir__" ]] || fatal "Can't find my library dir!"
-[[ -d "$__workloaddir__" ]] || fatal "Can't find my workload directory $__workloaddir__!"
 
 . "${__libdir__}"/libclusterbuster.sh
 
@@ -279,7 +279,7 @@ Clusterbuster is a tool to permit you to load a configurable workload
 onto an OpenShift cluster.  ClusterBuster focuses primarily on workload
 scalability, including synchronization of multi-instance workloads.
 
-Usage: ${__topsc__:-0} [options] [name]
+Usage: ${__topsc__:-0} [options] [extra args]
 
     Help:
        -h              Print basic help information.
@@ -529,7 +529,7 @@ $(print_workloads_supporting_reporting '                        - ')
        --virtiofsd-threadpoolsize=n
                         Use the specified thread pool size for virtiofsd (default 1).
 
-   OpenShift Virtualiation Options:
+    OpenShift Virtualization Options:
        --vmthreads=<value>
                         Specify the number of threads on each core (default $vm_threads).
        --vmcores=<value>
@@ -614,12 +614,12 @@ EOF
 }
 
 function help() {
-    _help_extended "$@" | "${PAGER:-more}" 1>&2
+    _help_extended "$@" | "${PAGER:-more}"
     exit 1
 }
 
 function help_extended() {
-    _help_extended "$@" | "${PAGER:-more}" 1>&2
+    _help_extended "$@" | "${PAGER:-more}"
     exit 1
 }
 
@@ -963,10 +963,6 @@ function list_report_formats() {
     done <<< "$("${pathdir:-.}/clusterbuster-report" --list_formats)"
 }
 
-function json_encode_settings() {
-    call_api -w "$requested_workload" json_encode_settings
-}
-
 function create_deployment() {
     call_api -w "$requested_workload" create_deployment "$@"
 }
@@ -981,16 +977,18 @@ function calculate_logs_required() {
 
 function list_configmaps() {
     cat <<EOF
-${__podfile_dir__}/cb_util.py
-${__podfile_dir__}/clusterbuster_pod_client.py
-${__podfile_dir__}/sync.py
-${__podfile_dir__}/drop_cache.py
+$(find_on_path pod_files "cb_util.py")
+$(find_on_path pod_files "clusterbuster_pod_client.py")
+$(find_on_path pod_files "sync.py")
+$(find_on_path pod_files "drop_cache.py")
+$(find_on_path pod_files "do-sync")
+$(find_on_path pod_files "drop-cache")
 EOF
-    call_api -w "$requested_workload" -s list_configmaps
+    call_api -w "$requested_workload" -s list_configmaps |grep .
 }
 
 function list_user_configmaps() {
-    call_api -w "$requested_workload" -s list_user_configmaps
+    call_api -w "$requested_workload" -s list_user_configmaps | grep .
 }
 
 function generate_workload_metadata() {
@@ -1097,6 +1095,13 @@ function create_sync_service() {
 	fi
 	create_external_service "$namespace" "${basename}-sync-sync" "${global_sync_service}" "$sync_port" "$sync_ns_port"
     fi
+}
+
+function get_drop_cache() {
+    local namespace=$1
+    local instance=$2
+    local replica=$3
+    requires_drop_cache && echo "svc-${namespace}-${workload}-${instance}-${replica}-dc:$drop_cache_port"
 }
 
 ################################################################
@@ -1459,7 +1464,7 @@ function _log_helper() {
 	sleep 5
     done
     # Tell the pod monitor to stop.
-    if [[ -n "${cb_tempdir:-}" ]] ; then
+    if [[ -n "${cb_tempdir:-}" && -d "$cb_tempdir" ]] ; then
 	touch "$cb_tempdir/___run_complete"
     fi
     ____OC exec --stdin=false "$@" -- sh -c "rm -f '$sync_flag_file'" || killthemall "Can't terminate sync"
@@ -1787,6 +1792,10 @@ function _retrieve_artifacts() {
 	local -A jobs_pending
 	local job
 	local -A pods_described=()
+	local namespace
+	local pod
+	local container
+	local status
 	while read -r namespace pod container status; do
 	    if [[ ($namespace != "$sync_namespace" || $sync_in_first_namespace != 0) && -z $always_retrieve_artifacts &&
 		      $retrieve_successful_logs -eq 0 && ($status = Running || $status = Completed) ]] ; then
@@ -2056,9 +2065,11 @@ function create_standard_containers() {
     local OPTIND=0
     local opt
     local image="$container_image"
-    while getopts 'i:' opt "$@" ; do
+    local replica=0
+    while getopts 'i:R:' opt "$@" ; do
 	case "$opt" in
 	    i) image="$OPTARG"  ;;
+	    R) replica="$OPTARG";;
 	    *)		        ;;
 	esac
     done
@@ -2072,7 +2083,10 @@ function create_standard_containers() {
     local sync_service=
     local sync_port_num=
     local sync_ns_port_num=
+    local drop_cache_service=
+    local drop_cache_port_num=
     IFS=: read -r sync_service sync_port_num sync_ns_port_num <<< "$(get_sync)"
+    IFS=: read -r drop_cache_service drop_cache_port_num <<< "$(get_drop_cache "$namespace" "$instance" "$replica")"
     for container in $(seq 0 $((containers - 1))) ; do
 	cat <<EOF
 - name: "c${container}"
@@ -2084,7 +2098,8 @@ $(indent 2 generate_environment)
   command:
 $(if [[ -n "${arglist_function}" ]] ; then
      "${arglist_function}" "${system_configmap_mount_dir}/" "$@" "$container" -- "$namespace" "c$container" \
-     "$basetime" "$baseoffset" "$(ts)" "$exit_at_end" "$sync_service" "$sync_port_num" "$sync_ns_port_num" | indent 2 ; fi)
+     "$basetime" "$baseoffset" "$(ts)" "$exit_at_end" "$sync_service" "$sync_port_num" "$sync_ns_port_num" \
+     "$drop_cache_service" "$drop_cache_port_num" | indent 2 ; fi)
 $(indent 2 volume_mounts_yaml "$namespace" "${instance}" "$secret_count")
 $(indent 2 <<< "${security_context:-}")
 EOF
@@ -2244,8 +2259,10 @@ function standard_environment() {
 env:
 - name: VERBOSE
   value: "$verbose"
-- name: PODFILE_DIR
+- name: SYSTEM_PODFILE_DIR
   value: "$system_configmap_mount_dir"
+- name: USER_PODFILE_DIR
+  value: "$user_configmap_mount_dir"
 - name: PYTHONPATH
   value: "$system_configmap_mount_dir"
 EOF
@@ -2255,7 +2272,7 @@ function volume_mounts_yaml() {
     local namespace=$1
     local deployment=${2:-1}
     local secrets=${3:-1}
-    (( secrets + ${#emptydirs[@]} + ${#configmap_files[@]} + ${#volumes[@]} + has_system_configmap )) || return;
+    (( secrets + ${#emptydirs[@]} + ${#configmap_files[@]} + ${#volumes[@]} + has_system_configmap + has_user_configmap )) || return;
     local -i i
     echo volumeMounts:
     for i in $(seq 0 $((secrets - 1))) ; do
@@ -2275,10 +2292,10 @@ EOF
 EOF
 	done
     fi
-    if [[ $namespace != "$sync_namespace" && -n "${configmap_files[*]:-}" ]] ; then
+    if [[ ($namespace != "$sync_namespace" || $sync_in_first_namespace -ne 0) && $has_user_configmap -ne 0 ]] ; then
 	cat <<EOF
-- name: "configmap-${namespace}"
-  mountPath: "${configmap_mount_dir}"
+- name: "userconfigmap-${namespace}"
+  mountPath: "${user_configmap_mount_dir}"
   readOnly: true
 EOF
     fi
@@ -2355,7 +2372,7 @@ function volumes_yaml() {
     local namespace=$1
     local instance=${2:-1}
     local secrets=${3:-1}
-    (( secrets + ${#emptydirs[@]} + ${#configmap_files[@]} + ${#volumes[@]} + has_system_configmap )) || return;
+    (( secrets + ${#emptydirs[@]} + ${#configmap_files[@]} + ${#volumes[@]} + has_system_configmap + has_user_configmap )) || return;
     local -i i
     echo "volumes:"
     for i in $(seq 0 $((secrets - 1))) ; do
@@ -2376,11 +2393,11 @@ EOF
 EOF
 	done
     fi
-    if [[ $namespace != "$sync_namespace" && -n "${configmap_files[*]:-}" ]] ; then
+    if [[ ($namespace != "$sync_namespace" || $sync_in_first_namespace -ne 0) && $has_user_configmap -ne 0 ]] ; then
 	cat <<EOF
-- name: "configmap-${namespace}"
+- name: "userconfigmap-${namespace}"
   configMap:
-    name: "configmap-${namespace}"
+    name: "userconfigmap-${namespace}"
 EOF
     fi
     if [[ -n "${volumes[*]:-}" ]] ; then
@@ -2407,6 +2424,7 @@ EOF
   configMap:
     name: "systemconfigmap-${namespace}"
 EOF
+
     fi
 }
 
@@ -2657,7 +2675,6 @@ function check_configmaps() {
 function create_configmaps() {
     local namespace=$1; shift
     local mapname=$1; shift
-    (( $# )) || return;
     create_object_from_file configmap "$namespace" "${mapname}-${namespace}" "$@"
 }
 
@@ -2759,13 +2776,15 @@ function create_spec() {
     local pin_node
     local scheduler_name
     local node_selector=$node_selector
-    while getopts "A:c:r:s:E:Pp" opt "$@" ; do
+    local replica=0
+    while getopts "A:c:r:s:E:PpR:" opt "$@" ; do
 	case "$opt" in
 	    A) affinity_yaml=$OPTARG ;;
 	    c) node_class=$OPTARG    ;;
 	    r) runtime_class=$OPTARG ;;
 	    s) node_selector=$OPTARG ;;
 	    E) scheduler_name=$OPTARG;;
+	    R) replica=$OPTARG	     ;;
 	    P)			     ;;
 	    p)			     ;;
 	    *)                       ;;
@@ -2805,7 +2824,7 @@ $(indent 2 tolerations_yaml ${tolerations+"${tolerations[@]}"})
 ${runtime_class:+$(indent 2 <<< "runtimeClassName: \"$runtime_class\"")}
 ${affinity_yaml:+$(indent 2 <<< "$affinity_yaml")}
   containers:
-$(indent 2 "$create_container_function" "$@")
+$(indent 2 "$create_container_function" -R "$replica" "$@")
 $(indent 2 volumes_yaml "$namespace" "$instance" "$secret_count")
 EOF
 }
@@ -2829,7 +2848,7 @@ $(indent 2 standard_pod_metadata_yaml "$namespace" client)
     matchLabels:
       app: $name
 $(indent 2 standard_labels_yaml -c "$node_class" -l "$workload" "$namespace" "${instance}" "${replica}")
-$(create_spec -A "$affinity_yaml" -c "$node_class" ${scheduler:+-E "$scheduler"} "$@" "$replica")
+$(create_spec -A "$affinity_yaml" -c "$node_class" ${scheduler:+-E "$scheduler"} -R "$replica" "$@")
   restartPolicy: Never
 EOF
     done
@@ -3003,6 +3022,15 @@ function create_standard_deployment() {
 }
 
 function create_container_sync() {
+    local OPTARG
+    local OPTIND=0
+    local opt
+    while getopts 'i:R:' opt "$@" ; do
+	case "$opt" in
+	    *)		        ;;
+	esac
+    done
+    shift $((OPTIND-1))
     local namespace=$1
     local expected_clients=$4
     local initial_expected_clients=$5
@@ -3053,6 +3081,15 @@ EOF
 }
 
 function create_container_drop_cache() {
+    local OPTARG
+    local OPTIND=0
+    local opt
+    while getopts 'i:R:' opt "$@" ; do
+	case "$opt" in
+	    *)		        ;;
+	esac
+    done
+    shift $((OPTIND-1))
     local namespace=$1
     local sync_service=
     local sync_port_num=
@@ -3080,6 +3117,7 @@ $(indent 2 standard_environment)
   - "$sync_service"
   - "$sync_port_num"
   - "$sync_ns_port"
+  - "none"
   - "$drop_cache_port"
 $(indent 2 volume_mounts_yaml "$namespace" 0 0)
   - mountPath: "/proc-sys-vm"
@@ -3201,18 +3239,20 @@ function create_all_secrets() {
 }
 
 function create_system_configmap() {
-    if supports_api -w "$requested_workload" list_configmaps ; then
-	local -a systemfiles
-	readarray -t systemfiles < <(list_configmaps)
-	if [[ $sync_start -ne 0 && -n "$sync_namespace" && $sync_in_first_namespace -eq 0 ]] ; then
-	    create_configmaps "$sync_namespace" "systemconfigmap" "${systemfiles[@]}"
-	fi
-	for i in $(seq 0 "$((parallel_configmaps - 1))") ; do
-	    create_objects_n configmaps "$parallel_configmaps" "$objs_per_call_configmaps" "$i" "$sleep_between_configmaps" "systemconfigmap" "${systemfiles[@]}"&
-	    pids+=("$!")
-	done
-	wait "${pids[@]}" || killthemall "Unable to create system configmap"
+    local -a systemfiles
+    readarray -t systemfiles < <(list_configmaps | grep .)
+    if [[ ${#systemfiles[@]} > 0 && $sync_start -ne 0 && -n "$sync_namespace" && $sync_in_first_namespace -eq 0 ]] ; then
+	create_configmaps "$sync_namespace" "systemconfigmap" "${systemfiles[@]}"
     fi
+    local -a userfiles
+    readarray -t userfiles < <(list_user_configmaps | grep .)
+    for i in $(seq 0 "$((parallel_configmaps - 1))") ; do
+	create_objects_n configmaps "$parallel_configmaps" "$objs_per_call_configmaps" "$i" "$sleep_between_configmaps" "systemconfigmap" "${systemfiles[@]}"&
+	pids+=("$!")
+	create_objects_n configmaps "$parallel_configmaps" "$objs_per_call_configmaps" "$i" "$sleep_between_configmaps" "userconfigmap" "${userfiles[@]}"&
+	pids+=("$!")
+    done
+    wait "${pids[@]}" || killthemall "Unable to create system configmap"
 }
 
 function create_all_configmaps() {
@@ -3574,7 +3614,7 @@ function run_clusterbuster_2() {
     allocate_namespaces || return 1
     find_first_deployment || return 1
     if [[ $sync_start -ne 0 && -n "$sync_namespace" && $sync_in_first_namespace -eq 0 ]] ; then
-	create_namespace -S -f "$sync_namespace" || return 1
+	create_namespace -S -f "$sync_namespace" 1>&2 || return 1
     fi
     create_all_objects namespaces || return 1
     if get_sync -q ; then
@@ -3637,7 +3677,8 @@ trap "remove_tmpdir; exit" EXIT
 trap "remove_tmpdir; exit 1" TERM INT HUP
 cb_tempdir=$(umask 77; mktemp -d -p /tmp -t cbtmp_XXXXXXXX) || fatal "Can't create temporary directory"
 
-load_workloads "$__workloaddir__"
+declare -a __workloads__
+load_workloads "$CB_LIBPATH"
 
 set_metrics_file default
 
@@ -3659,6 +3700,11 @@ while getopts ":B:Eef:Hhno:P:Qqv-:" opt ; do
 	*) help "$OPTARG"			 ;;
     esac
 done
+
+shift $((OPTIND - 1))
+
+# shellcheck disable=SC2034
+extra_args=("$@")
 
 if [[ -z "$requested_workload" ]] ; then
     help "Workload must be specified with -P"
@@ -3732,13 +3778,5 @@ job_name=${job_name:-${requested_workload:-}}
 if [[ -n "${virtiofsd_args[*]:-}" ]] ; then
     pod_annotations+=("io.katacontainers.config.hypervisor.virtio_fs_extra_args: '[$(IFS=,; echo "${virtiofsd_args[*]}")]'")
 fi
-
-shift $((OPTIND - 1))
-if [[ -n ${1:-} ]] ; then
-    basename="$1"
-    shift
-fi
-
-[[ -z "$*" ]] || warn "Warning: extraneous arguments $* after basename will be ignored!"
 
 (run_clusterbuster_1) 4>&2

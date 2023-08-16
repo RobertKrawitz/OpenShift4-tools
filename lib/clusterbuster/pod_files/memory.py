@@ -2,7 +2,6 @@
 
 import time
 import signal
-import string
 import random
 
 from clusterbuster_pod_client import clusterbuster_pod_client

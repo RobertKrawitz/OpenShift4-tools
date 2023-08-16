@@ -104,7 +104,7 @@ function fio_process_option() {
 }
 
 function fio_help_options() {
-    cat <<'EOF'
+    cat <<EOF
    Fio test options:
         --fio-block-sizes=n[,n...]
                                 Space or comma separated list of block

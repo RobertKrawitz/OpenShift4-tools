@@ -39,16 +39,9 @@ function fio_arglist() {
     local secret_count=$3
     local replicas=$4
     local containers_per_pod=$5
-    local dc_service=
-    local dc_port=0
-    if ((___fio_drop_cache)) ; then
-	dc_service="svc-${namespace}-fio-${instance}-${replica}-dc"
-	dc_port="$drop_cache_port"
-    fi
     while [[ "$1" != '--' ]] ; do shift; done; shift
     mk_yaml_args "python3" "${mountdir}fio.py" "$@" \
-		 "$processes_per_pod" "$___fio_workdir" "$workload_run_time" "$configmap_mount_dir" \
-		 "$dc_service" "$dc_port" \
+		 "$processes_per_pod" "$___fio_workdir" "$workload_run_time" "$user_configmap_mount_dir" \
 		 "${___fio_blocksizes[*]:-}" "${___fio_patterns[*]:-}" "${___fio_iodepths[*]:-}" \
 		 "${___fio_fdatasyncs[*]:-}" "${___fio_directs[*]:-}" "${___fio_ioengines[*]:-}" \
 		 "$___fio_ramp_time" "${___fio_generic_options[*]:-}"
@@ -80,7 +73,7 @@ function fio_calculate_logs_required() {
 
 function fio_list_configmaps() {
     cat <<EOF
-${__podfile_dir__}/fio.py
+$(find_on_path pod_files "fio.py")
 EOF
 }
 

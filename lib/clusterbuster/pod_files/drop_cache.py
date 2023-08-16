@@ -11,7 +11,7 @@ class drop_cache_client(clusterbuster_pod_client):
     def __init__(self):
         try:
             super().__init__(initialize_timing_if_needed=False)
-            self.listen_port = int(self._args[0])
+            self.listen_port = self._get_drop_cache_port()
         except Exception as err:
             self._abort(f"Init failed! {err} {' '.join(self._args)}")
 

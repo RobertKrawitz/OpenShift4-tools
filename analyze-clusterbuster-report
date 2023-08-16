@@ -16,11 +16,12 @@
 import sys
 import argparse
 import json
-import re
 import os
 from lib.clusterbuster.reporting.analysis.ClusterBusterAnalysis import ClusterBusterAnalysis
 from lib.clusterbuster.reporting.loader.ClusterBusterLoader import ClusterBusterLoader
 
+if 'CB_LIBPATH' in os.environ:
+    sys.path = [element for element in os.environ['CB_LIBPATH'].split(':')] + sys.path
 parser = argparse.ArgumentParser(description='Analyze ClusterBuster report')
 analysis_formats = ClusterBusterAnalysis.list_analysis_formats()
 
@@ -49,7 +50,6 @@ def analyze_clusterbuster_1(f, data):
 
 
 def analyze_clusterbuster(f):
-    reports = {}
     dir_args = []
     if args.kata:
         for arg in args.files:

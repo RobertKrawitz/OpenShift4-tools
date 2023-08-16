@@ -122,8 +122,8 @@ function server_create_deployment() {
 
 function server_list_configmaps() {
     cat <<EOF
-${__podfile_dir__}/client.py
-${__podfile_dir__}/server.py
+$(find_on_path pod_files "client.py")
+$(find_on_path pod_files "server.py")
 EOF
 }
 

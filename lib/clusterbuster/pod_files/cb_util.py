@@ -33,8 +33,9 @@ class cb_util:
     Miscellaneous utilities for ClusterBuster shared (at least in principle)
     between the controller and clients
     """
-    def __init__(self, offset: float = 0):
+    def __init__(self, offset: float = 0, no_timestamp: bool = False):
         self.__offset = offset
+        self.__no_timestamp = no_timestamp
 
     def _set_offset(self, offset: float = 0):
         old_offset = self.__offset
@@ -51,8 +52,11 @@ class cb_util:
         :param string: String to be timestamped
         :return: Timestamped string
         """
-        string = re.sub(r'\n(.*\S.*)', r'\n            \1', string)
-        return '%7d %s %s\n' % (os.getpid(), self._ts(), string)
+        if self.__no_timestamp:
+            return f'{string}\n'
+        else:
+            string = re.sub(r'\n(.*\S.*)', r'\n            \1', string)
+            return '%7d %s %s\n' % (os.getpid(), self._ts(), string)
 
     def _timestamp(self, string):
         """

@@ -31,64 +31,89 @@ class clusterbuster_pod_client(cb_util):
     Python interface to the ClusterBuster pod API
     """
 
-    def __init__(self, initialize_timing_if_needed: bool = True, argv: list = sys.argv):
-        super().__init__()
-        print(f'Args: {" ".join(argv)}', file=sys.stderr)
-        # No use in catching errors here, since we may not be sufficiently initialized
-        # to signal them back.
-        if len(argv) < 9:
-            print("clusterbuster_pod_client: incomplete argument list", file=sys.stderr)
-            os._exit(1)
-        print(f"clusterbuster_pod_client {argv}", file=sys.stderr)
-        self.__namespace = argv[1]
-        self.__container = argv[2]
-        self.__basetime = float(argv[3])
-        self.__baseoffset = float(argv[4])
-        self.__crtime = float(argv[5])
-        self.__exit_at_end = self._toBool(argv[6])
-        self.__synchost = argv[7]
-        self.__syncport = int(argv[8])
-        self.__sync_ns_port = int(argv[9])
-        self.__is_worker = False
-        self.__start_time = float(time.time())
-        self.__enable_sync = True
-        self.__host_table = {}
-        self.__reported_results = False
-        try:
-            child = os.fork()
-        except Exception as err:
-            print(f"Fork failed: {err}", file=sys.stderr)
-            if self.__exit_at_end:
-                os._exit(1)
-            else:
-                while True:
-                    signal.pause()
-        if child == 0:
-            self.__pod = socket.gethostname()
-            self._args = argv[10:]
-            self.__timing_parameters = {}
-            self.__timing_initialized = False
-            if initialize_timing_if_needed:
-                self.__initialize_timing()
-            self._set_offset(self.__timing_parameters.get('local_offset_from_sync', 0))
-            self.__child_idx = None
-            self.__processes = 1
-            self.__requested_ip_addresses = [f'{self.__pod}.{self.__namespace}']
-        else:
+    def __init__(self, initialize_timing_if_needed: bool = True, argv: list = sys.argv, external_sync_only: bool = False):
+        super().__init__(no_timestamp=external_sync_only)
+        if external_sync_only:
+            self.__synchost = os.environ.get('__CB_SYNCHOST')
+            self.__syncport = int(os.environ.get('__CB_SYNCPORT'))
+            self.__drop_cache_host = os.environ.get('__CB_DROP_CACHE_HOST', None)
             try:
-                pid, status = os.wait()
-                status = int((status / 256)) | (status & 255)
-                if status:
-                    print(f"Child process {pid} failed: {status}")
-                else:
-                    print("Child process {pid} succeeded")
+                self.__drop_cache_port = int(os.environ.get('__CB_DROP_CACHE_PORT'))
+            except Exception:
+                self.__drop_cache_port = None
+            self.__external_sync_only = True
+            self.__enable_sync = True
+            self.__pod = socket.gethostname()
+        else:
+            self.__external_sync_only = False
+            print(f'Args: {" ".join(argv)}', file=sys.stderr)
+            # No use in catching errors here, since we may not be sufficiently initialized
+            # to signal them back.
+            if len(argv) < 9:
+                print("clusterbuster_pod_client: incomplete argument list", file=sys.stderr)
+                os._exit(1)
+            print(f"clusterbuster_pod_client {argv}", file=sys.stderr)
+            self.__namespace = argv[1]
+            self.__container = argv[2]
+            self.__basetime = float(argv[3])
+            self.__baseoffset = float(argv[4])
+            self.__crtime = float(argv[5])
+            self.__exit_at_end = self._toBool(argv[6])
+            self.__synchost = argv[7]
+            self.__syncport = int(argv[8])
+            self.__sync_ns_port = int(argv[9])
+            self.__drop_cache_host = argv[10]
+            try:
+                self.__drop_cache_port = int(argv[11])
+            except Exception:
+                self.__drop_cache_port = None
+            self.__is_worker = False
+            self.__start_time = float(time.time())
+            self.__enable_sync = True
+            self.__host_table = {}
+            self.__reported_results = False
+            os.environ['__CB_SYNCHOST'] = self.__synchost
+            os.environ['__CB_SYNCPORT'] = str(self.__syncport)
+            os.environ['__CB_DROP_CACHE_HOST'] = self.__drop_cache_host
+            if self.__drop_cache_port:
+                os.environ['__CB_DROP_CACHE_PORT'] = str(self.__drop_cache_port)
+            else:
+                os.environ['__CB_DROP_CACHE_PORT'] = ''
+            try:
+                child = os.fork()
+            except Exception as err:
+                print(f"Fork failed: {err}", file=sys.stderr)
                 if self.__exit_at_end:
-                    os._exit(status)
+                    os._exit(1)
                 else:
                     while True:
                         signal.pause()
-            except Exception as err:
-                self._abort(f"Wait failed: {err}")
+            if child == 0:
+                self.__pod = socket.gethostname()
+                self._args = argv[12:]
+                self.__timing_parameters = {}
+                self.__timing_initialized = False
+                if initialize_timing_if_needed:
+                    self.__initialize_timing()
+                self._set_offset(self.__timing_parameters.get('local_offset_from_sync', 0))
+                self._child_idx = None
+                self.__processes = 1
+                self.__requested_ip_addresses = [f'{self.__pod}.{self.__namespace}']
+            else:
+                try:
+                    pid, status = os.wait()
+                    status = int((status / 256)) | (status & 255)
+                    if status:
+                        print(f"Child process {pid} failed: {status}")
+                    else:
+                        print("Child process {pid} succeeded")
+                    if self.__exit_at_end:
+                        os._exit(status)
+                    else:
+                        while True:
+                            signal.pause()
+                except Exception as err:
+                    self._abort(f"Wait failed: {err}")
 
     def run_workload(self):
         """
@@ -108,7 +133,7 @@ class clusterbuster_pod_client(cb_util):
                     os._exit(1)
                 if child == 0:  # Child
                     self.__is_worker = True
-                    self.__child_idx = i
+                    self._child_idx = i
                     self._timestamp(f"About to run subprocess {i}")
                     try:
                         start_time = self._adjusted_time()
@@ -184,7 +209,7 @@ class clusterbuster_pod_client(cb_util):
         else:
             return time.time() - otime
 
-    def _drop_cache(self, service: str = None, port: int = None):
+    def _drop_cache(self):
         """
         Attempt to drop buffer cache locally and on remote (typically hypervisor)
         :param service: Service for requesting drop cache
@@ -193,9 +218,9 @@ class clusterbuster_pod_client(cb_util):
         self._timestamp("Dropping local cache")
         subprocess.run('sync')
         self._timestamp("Dropping host cache")
-        if service and port:
-            with self._connect_to(service, port) as sock:
-                self._timestamp(f"    Connected to {service}:{port}")
+        if self.__drop_cache_host and self.__drop_cache_port:
+            with self._connect_to(self.__drop_cache_host, self.__drop_cache_port) as sock:
+                self._timestamp(f"    Connected to {self.__drop_cache_host}:{self.__drop_cache_port}")
                 sock.recv(1)
                 self._timestamp("    Confirmed")
 
@@ -297,6 +322,9 @@ class clusterbuster_pod_client(cb_util):
         except Exception:
             message = f"Process {os.getpid()} aborting: {msg} (no traceback)"
         self.__finish(False, message=message)
+
+    def _get_drop_cache_port(self):
+        return self.__drop_cache_port
 
     def __wait_forever(self):
         self._timestamp('Waiting forever')

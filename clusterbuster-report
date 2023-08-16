@@ -18,7 +18,11 @@ import sys
 import argparse
 from lib.clusterbuster.reporting.reporter.ClusterBusterReporter import ClusterBusterReporter
 import traceback
+import os
 
+
+if 'CB_LIBPATH' in os.environ:
+    sys.path = [element for element in os.environ['CB_LIBPATH'].split(':')] + sys.path
 parser = argparse.ArgumentParser(description='Generate ClusterBuster report')
 report_formats = ClusterBusterReporter.list_report_formats()
 

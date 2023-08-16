@@ -41,7 +41,7 @@ function classic_create_deployment() {
 
 function classic_list_configmaps() {
     cat <<EOF
-${__podfile_dir__}/classic.py
+$(find_on_path pod_files "classic.py")
 EOF
 }
 

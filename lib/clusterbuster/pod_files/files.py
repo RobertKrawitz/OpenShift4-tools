@@ -17,8 +17,8 @@ class files_client(clusterbuster_pod_client):
     def __init__(self):
         try:
             super().__init__()
-            if len(self._args) > 8:
-                self.dir_list = self._args[8:]
+            if len(self._args) > 6:
+                self.dir_list = self._args[6:]
             else:
                 self.dir_list = ['/tmp']
             self.dirs = self._toSize(self._args[0])
@@ -27,8 +27,6 @@ class files_client(clusterbuster_pod_client):
             self.block_count = self._toSize(self._args[3])
             self._set_processes(int(self._args[4]))
             self.o_direct = self._toBool(self._args[5])
-            self.drop_cache_service = self._args[6]
-            self.drop_cache_port = int(self._args[7])
             self.flags = 0
             if self.o_direct:
                 self.flags = os.O_DIRECT
@@ -129,12 +127,12 @@ class files_client(clusterbuster_pod_client):
 
     def run_one_operation(self, op_name0: str, op_name1: str, op_name2: str, op_func, pid: int, data_start_time: float):
         self._sync_to_controller(self._idname([pid, f"start {op_name2}"]))
-        self._drop_cache(self.drop_cache_service, self.drop_cache_port)
+        self._drop_cache()
         ucpu, scpu = self._cputimes()
         op_start_time = self._adjusted_time() - data_start_time
         ops = op_func(pid)
         op_end_time_0 = self._adjusted_time() - data_start_time
-        self._drop_cache(self.drop_cache_service, self.drop_cache_port)
+        self._drop_cache()
         op_end_time = self._adjusted_time() - data_start_time
         op_elapsed_time = op_end_time - op_start_time
         op_elapsed_time_0 = op_end_time_0 - op_start_time
