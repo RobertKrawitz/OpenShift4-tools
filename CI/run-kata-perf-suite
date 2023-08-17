@@ -394,9 +394,9 @@ function process_profile() {
 function force_pull_base_image() {
     for n in $("${OC}" get node --no-headers |awk '{print $1}') ; do
 	if ((debugonly)) ; then
-	    echo "${OC}" debug --no-stdin=true --no-tty=true node/"$n" -- chroot /host sh -c ' podman pull quay.io/rkrawitz/clusterbuster'
+	    echo "${OC}" debug --no-stdin=true --no-tty=true node/"$n" -- chroot /host sh -c ' podman pull quay.io/rkrawitz/clusterbuster:latest quay.io/rkrawitz/clusterbuster-workloads:latest'
 	else
-	    "${OC}" debug --no-stdin=true --no-tty=true node/"$n" -- chroot /host sh -c ' podman pull quay.io/rkrawitz/clusterbuster' &
+	    "${OC}" debug --no-stdin=true --no-tty=true node/"$n" -- chroot /host sh -c ' podman pull quay.io/rkrawitz/clusterbuster:latest quay.io/rkrawitz/clusterbuster-workloads:latest' &
 	fi
     done
     if ((! debugonly)) ; then

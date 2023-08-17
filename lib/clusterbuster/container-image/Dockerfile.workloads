@@ -1,5 +1,4 @@
-ARG ARCH=${ARCH}
-FROM quay.io/rkrawitz/clusterbuster:${ARCH}-latest
+FROM quay.io/rkrawitz/clusterbuster:latest
 
 USER 0
 RUN microdnf --setopt=install_weak_deps=0 install -y \

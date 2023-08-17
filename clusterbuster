@@ -3241,7 +3241,7 @@ function create_all_secrets() {
 function create_system_configmap() {
     local -a systemfiles
     readarray -t systemfiles < <(list_configmaps | grep .)
-    if [[ ${#systemfiles[@]} > 0 && $sync_start -ne 0 && -n "$sync_namespace" && $sync_in_first_namespace -eq 0 ]] ; then
+    if [[ ${#systemfiles[@]} -gt 0 && $sync_start -ne 0 && -n "$sync_namespace" && $sync_in_first_namespace -eq 0 ]] ; then
 	create_configmaps "$sync_namespace" "systemconfigmap" "${systemfiles[@]}"
     fi
     local -a userfiles
@@ -3713,7 +3713,7 @@ fi
 iworkload=$requested_workload
 requested_workload=$(get_workload "$requested_workload") || help_extended "(Unknown workload '$iworkload')"
 arch=${arch:-$(uname -m)}
-container_image=${container_image:-quay.io/rkrawitz/clusterbuster:${arch}-latest}
+container_image=${container_image:-quay.io/rkrawitz/clusterbuster:latest}
 
 call_api -w "$requested_workload" -s "process_options" "${unknown_opts[@]}" || help "${unknown_opt_names[@]}"
 
