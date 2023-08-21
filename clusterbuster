@@ -224,7 +224,7 @@ declare xuuid=$uuid
 
 declare kata_runtime_class=kata
 declare image_pull_policy=
-declare container_image=
+declare container_image='quay.io/rkrawitz/clusterbuster-base:latest'
 
 declare accumulateddata=
 declare -a plurals=('s' '')
@@ -241,9 +241,17 @@ declare default_namespace_policy=restricted
 declare -i vm_cores=1
 declare -i vm_threads=1
 declare -i vm_sockets=1
+declare vm_memory=2Gi
 declare vm_grace_period=30
 declare vm_image='quay.io/kubevirt/fedora-container-disk-images:35'
 declare vm_evict_migrate=1
+declare vm_run_as_container=0
+declare -A workload_service_ports=()
+declare vm_user=cluster
+declare vm_password=buster
+declare -a vm_ssh_pubkey=()
+declare -A __sysctls=()
+declare -i __sysctls_retrieved=0
 
 declare OC=${OC:-${KUBECTL:-}}
 OC=${OC:-$(type -p oc)}
@@ -310,8 +318,8 @@ EOF
 
 function _help_extended() {
     if [[ -z "$*" ]] ; then
-	_helpmsg "$@"
-	cat <<'EOF'
+        _helpmsg "$@"
+        cat <<'EOF'
 
 Extended Options:
 EOF
@@ -527,25 +535,40 @@ $(print_workloads_supporting_reporting '                        - ')
        --virtiofsd-direct=[0,1]
                         Allow use of direct I/O for virtiofsd (default $virtiofsd_direct).
        --virtiofsd-threadpoolsize=n
-                        Use the specified thread pool size for virtiofsd (default 1).
+                        Use the specified thread pool size for virtiofsd
+                        (default 1).
 
     OpenShift Virtualization Options:
-       --vmthreads=<value>
+       --vm-threads=<value>
                         Specify the number of threads on each core (default $vm_threads).
-       --vmcores=<value>
+       --vm-cores=<value>
                         Specify the number of cores on each socket (default $vm_cores).
-       --vmsockets=<value>
+       --vm-sockets=<value>
                         Specify the number of sockets (default $vm_sockets).
-       --vmgraceperiod=<value>
+       --vm-memory=<value>
+                        Specify the amount of memory (default $vm_memory).
+       --vm-grace-period=<value>
                         Specify the period between when a vm is signaled to
                         shutdown and the point when KubeVirt will force off
                         the vm (default $vm_grace_period).
-       --vmimage=<image_url>
-                        Container vm disk image to use.
+       --vm-image=<image_url>
+                        Containerdisk image to use.
                         Default $vm_image
        --vm-migrate=[0,1]
-                        Allow VMs to migrate when evicted rather than be deleted.
-                        Default $vm_evict_migrate.
+                        Allow VMs to migrate when evicted rather than be
+                        deleted.  Default $vm_evict_migrate.
+       --vm-run-as-container=[0,1]
+                        Run the workload as a container rather than directly.
+       --vm-user=<user>
+                        Create the specified user on virtual machines.
+                        Default $vm_user.  Empty means no user.
+       --vm-password=<password>
+                        Create the specified password on virtual machines.
+                        Default $vm_password.  Empty means no password.
+       --vm-ssh-pubkey=<file>
+                        Inject the specified ssh key into the virtual machines.
+                        The file is checked to ensure that it is a public
+                        key.  Default none.
 
     Tuning object creation (short equivalents):
        --scale-ns=[0,1] Scale up the number of namespaces vs.
@@ -815,7 +838,6 @@ function process_option() {
 	livenessprobesleep*)	    liveness_probe_sleep_time=$optvalue		;;
 	privilege*)		    create_pods_privileged=$(bool "$optvalue")	;;
 	syncinfirst*)		    sync_in_first_namespace=$(bool "$optvalue") ;;
-	vmmigrate*)		    vm_evict_migrate=$(bool "$optvalue")	;;
 	scheduler)		    scheduler=$optvalue				;;
 	affinity)
 	    case "$optvalue" in
@@ -847,8 +869,14 @@ function process_option() {
         vmcores)                    vm_cores=$optvalue                          ;;
         vmsockets)                  vm_sockets=$optvalue                        ;;
         vmthreads)                  vm_threads=$optvalue                        ;;
+        vmmemory)                   vm_memory=$optvalue                         ;;
         vmgraceperiod)              vm_grace_period=$optvalue                   ;;
         vmimage)                    vm_image=$optvalue                          ;;
+	vmmigrate*)		    vm_evict_migrate=$(bool "$optvalue")	;;
+	vmrunascontainer)	    vm_run_as_container=$(bool "$optvalue")	;;
+	vmuser)			    vm_user=$optvalue				;;
+	vmpassword)		    vm_password=$optvalue			;;
+	vmsshpubkey)		    vm_ssh_pubkey+=("$optvalue")		;;
 	# Object creation
 	obj*spercall)		    objs_per_call=$optvalue			;;
 	parallel)		    parallel=$optvalue				;;
@@ -1003,6 +1031,18 @@ function requires_drop_cache() {
     call_api -w "$requested_workload" requires_drop_cache
 }
 
+function get_sysctls() {
+    if ((! __sysctls_retrieved)) && [[ -n "$requested_workload" ]] ; then
+	local key value
+	while read -r key value ; do
+	    if [[ -n "$key" ]] ; then
+		__sysctls[$key]="$value"
+	    fi
+	done <<< "$(call_api -w "$requested_workload" -s sysctls)"
+	__sysctls_retrieved=1
+    fi
+}
+
 function namespace_policy() {
     local policy
     if [[ $(type -t "deployment_type_${deployment_type,,}_policy") = function ]] ; then
@@ -1013,6 +1053,18 @@ function namespace_policy() {
         policy=$(call_api -w "$requested_workload" -s namespace_policy)
     fi
     echo "${policy:-${default_namespace_policy}}"
+}
+
+function vm_required_packages() {
+    call_api -w "$requested_workload" -s vm_required_packages
+}
+
+function vm_setup_commands() {
+    call_api -w "$requested_workload" -s vm_setup_commands
+}
+
+function listen_ports() {
+    call_api -w "$requested_workload" -s listen_ports
 }
 
 function deployment_type_vm_policy() {
@@ -1090,7 +1142,7 @@ function create_sync_service() {
     local initial_sync_clients=${3:-$sync_clients}
     if get_sync -q ; then
 	if [[ $namespace = "${namespaces_to_create[0]:-}" ]] ; then
-	    create_service -h -v "${basename}-sync-sync" "$sync_namespace" "${sync_namespace}-sync" "$sync_port" "$sync_ns_port"
+	    create_service -W -h -v "${basename}-sync-sync" "$sync_namespace" "${sync_namespace}-sync" "$sync_port" "$sync_ns_port"
 	    create_sync_deployment "$sync_namespace" "$((sync_clients * ${#namespaces_to_create[@]}))" "$((initial_sync_clients * ${#namespaces_to_create[@]}))"
 	fi
 	create_external_service "$namespace" "${basename}-sync-sync" "${global_sync_service}" "$sync_port" "$sync_ns_port"
@@ -1101,7 +1153,7 @@ function get_drop_cache() {
     local namespace=$1
     local instance=$2
     local replica=$3
-    requires_drop_cache && echo "svc-${namespace}-${workload}-${instance}-${replica}-dc:$drop_cache_port"
+    requires_drop_cache && echo "${namespace}-${workload}-${instance}-${replica}-dc:$drop_cache_port"
 }
 
 ################################################################
@@ -1903,10 +1955,23 @@ function default_security_context_content() {
     fi
 }
 
+function sysctls_security_context() {
+    get_sysctls
+    if [[ -n "${__sysctls[*]}" ]] ; then
+	echo "sysctls:"
+	local key=
+	for key in "${!__sysctls[@]}" ; do
+	    echo "- name: $key"
+	    echo "  value: ${__sysctls[$key]}"
+	done
+    fi
+}
+
 function default_security_context() {
     cat <<EOF
 securityContext:
 $(indent 2 default_security_context_content)
+$(indent 2 sysctls_security_context)
 EOF
 }
 
@@ -1914,6 +1979,7 @@ function privileged_security_context() {
     cat <<EOF
 securityContext:
 $(indent 2 privileged_security_context_content)
+$(indent 2 sysctls_security_context)
 EOF
 }
 
@@ -1921,6 +1987,7 @@ function restricted_security_context() {
     cat <<EOF
 securityContext:
 $(indent 2 restricted_security_context_content)
+$(indent 2 sysctls_security_context)
 EOF
 }
 
@@ -2032,32 +2099,37 @@ function mk_selector() {
 }
 
 function mk_yaml_args() {
-    function yamlize() {
-	local arg=$1
-	if [[ $arg =~ $'\n' ]] ; then
-	    echo "- |"$'\n'"  ${arg//$'\n'/$'\n  '}"
-	else
-	    echo "- \"$arg\""
-	fi
-    }
     local OPTARG
     local OPTIND=0
     local arg
-    while getopts 's' opt "$@" ; do
+    local vm_mode=0
+    args=()
+    while getopts 'Vs' opt "$@" ; do
 	case "$opt" in
+            V) vm_mode=1 ;;
 	    s)
 		while read -r arg ; do
-		    yamlize "$arg"
+                    args+=("$arg")
 		done
 		;;
 	    *)
 		;;
 	esac
     done
+    if [[ ${ARGLIST_FORMAT:-} = vm ]] ; then vm_mode=1; fi
     shift $((OPTIND-1))
-    for arg in "$@" ; do
-	yamlize "$arg"
-    done
+    args+=("$@")
+    if ((vm_mode)) ; then
+        IFS=' ' echo "${args[*]@Q}"
+    else
+        for arg in "$@" ; do
+	    if [[ $arg =~ $'\n' ]] ; then
+	        echo "- |"$'\n'"  ${arg//$'\n'/$'\n  '}"
+	    else
+	        echo "- \"$arg\""
+	    fi
+        done
+    fi
 }
 
 function create_standard_containers() {
@@ -2255,7 +2327,22 @@ EOF
 }
 
 function standard_environment() {
-    cat <<EOF
+    local vm_mode=0
+    local vm_container_mode=0
+    local OPTIND=0
+    while getopts VC opt "$@" ; do
+	case "$opt" in
+	    V) vm_mode=1 ;;
+	    C) vm_container_mode=1 ;;
+	    *)		 ;;
+	esac
+    done
+    if ((vm_container_mode)) ; then
+	echo -n "-e VERBOSE='$verbose' -e SYSTEM_PODFILE_DIR='$system_configmap_mount_dir' -e USER_PODFILE_DIR='$user_configmap_mount_dir' -e PYTHONPATH='$system_configmap_mount_dir' -e __CB_HOSTNAME=\$(hostname -s)"
+    elif ((vm_mode)) ; then
+	echo -n "VERBOSE='$verbose' SYSTEM_PODFILE_DIR='$system_configmap_mount_dir' USER_PODFILE_DIR='$user_configmap_mount_dir' PYTHONPATH='$system_configmap_mount_dir'"
+    else
+	cat <<EOF
 env:
 - name: VERBOSE
   value: "$verbose"
@@ -2266,6 +2353,7 @@ env:
 - name: PYTHONPATH
   value: "$system_configmap_mount_dir"
 EOF
+    fi
 }
 
 function volume_mounts_yaml() {
@@ -2473,7 +2561,7 @@ EOF
 
 function _really_create_objects() {
     if [[ $doit -ne 0 && -n $accumulateddata ]] ; then
-	__OC --validate=false apply -f - <<< "$accumulateddata" || {
+	__OC --validate=false apply -f - 1>&2 <<< "$accumulateddata" || {
 	    echo "Create objects failed:" 1>&2
 	    echo "$accumulateddata" 1>&2
 	    killthemall "Failed to create objects"
@@ -2703,8 +2791,11 @@ function create_service() {
     local key=name
     local prefix='svc-'
     local selector_value=
-    while getopts 'eEhHk:v:' opt ; do
+    local workload_service=1
+    while getopts 'eEhHk:v:Ww' opt ; do
 	case "$opt" in
+	    w) workload_service=1	 ;;
+	    W) workload_service=0	 ;;
 	    e) prefix=			 ;;
 	    E) prefix='svc-'		 ;;
 	    h) force_headless_services=1 ;;
@@ -2721,6 +2812,12 @@ function create_service() {
     local deployment=$2
     selector_value=${selector_value:-$deployment}
     shift 2
+    local portnum
+    if ((workload_service)) ; then
+	for portnum in "$@" ; do
+	    workload_service_ports[$portnum]=1
+	done
+    fi
     create_object -t Service -n "$namespace" "svc-${deployment}" <<EOF
 apiVersion: v1
 kind: Service
@@ -2855,49 +2952,88 @@ EOF
 }
 
 function create_vm_deployment() {
-    local namespace=$1
-    local instance=$2
-    local -i replicas=$4
-    local -i replica=0
-    local depname="${namespace}-${workload}-${instance}"
-    while (( replica++ < replicas )) ; do
-        local name="${depname}-${replica}"
-        local vmname
-	vmname=$(mkpodname "$name")
-        create_object -n "$namespace" "$name" <<EOF
-apiVersion: kubevirt.io/v1alpha3
-kind: VirtualMachine
-metadata:
-$(indent 2 standard_labels_yaml -c "$node_class" -l "$workload" "$namespace" "$instance")
-  name: "$vmname"
-$(indent 2 standard_deployment_metadata_yaml "$namespace" client)
-$(create_vm_spec -A "$affinity_yaml" ${scheduler:+-E "$scheduler"} -n "$vmname")
-EOF
-    done
-}
-
-function create_vm_spec() {
     function vm_evict_strategy() {
 	if ((vm_evict_migrate)) ; then
 	    echo "evictionStrategy: LiveMigrate"
 	fi
     }
+    function run_as_container() {
+	local -a ports=("${!workload_service_ports[@]}")
+	local port
+	local -a nports
+	for port in "${ports[@]}" ; do
+	    nports+=("-p ${port}:${port}")
+	done
+	if ((vm_run_as_container)) ; then
+	    local setup_command=
+	    local sysctls=
+	    local key
+	    local value
+	    for key in "${!__sysctls[@]}" ; do
+		sysctls+=" '--sysctl=$key=${__sysctls[$key]}'"
+	    done
+	    echo "podman run --rm --privileged $sysctls -P ${nports[*]} $(standard_environment -C) '-v${system_configmap_mount_dir}:${system_configmap_mount_dir}' '-v${user_configmap_mount_dir}:${user_configmap_mount_dir}' '$container_image' $setup_command"
+	fi
+    }
+    function install_podman_if_needed() {
+	if ((vm_run_as_container)) ; then
+	    # shellcheck disable=SC2016
+	    echo '- "if [[ x$(type -t podman) = x ]] ; then dnf install -y podman; fi"'
+	fi
+    }
+    function install_required_packages() {
+	local -a packages_needed=()
+	readarray -t packages_needed <<< "$(vm_required_packages)"
+	if [[ $vm_run_as_container -eq 0 && -n "${packages_needed[*]}" ]] ; then
+	    echo "- \"sudo dnf install -y ${packages_needed[*]}"\"
+	fi
+    }
+    function setup_commands() {
+	sed -E -e 's/(^.+$)/- sudo "\1"/' <<< "$(vm_setup_commands)"
+    }
+    function setup_sysctls() {
+	local key
+	for key in "${!__sysctls[@]}" ; do
+	    echo "- \"sudo sysctl -w '$key' '${__sysctls[$key]}'\""
+	done
+    }
+    function insert_ssh_keys() {
+	local file
+	for file in "$@" ; do
+	    if [[ -z "$file" ]] ; then continue; fi
+	    if [[ -f "$file" ]] ; then
+		local ftype
+		ftype=$(file "$file")
+		case "$ftype" in
+		    *'private key')
+			warn "$file is a private key, not inserting!" ;;
+		    *'public key')
+			local contents
+			read -r contents < "$file"
+			cat <<EOF
+- "echo '$contents' > \"$HOME/.ssh/${file##*/}\" && chmod 644 \"$HOME/.ssh/${file##*/}\""
+EOF
+			;;
+		    *)
+			warn "Do not recognize type of $file ($ftype), not inserting" ;;
+		esac
+	    else
+		warn "$file does not exist or is not a plain file"
+	    fi
+	done
+    }
+    get_sysctls
     local node_class=client
-    local vmname="$basename"
-    local node_selector=$node_selector
-    local scheduler_name=
-    while getopts 'A:n:c:r:s:E:' opt; do
-        case "$opt" in
-	    A) affinity_yaml=$OPTARG ;;
-	    c) node_class=$OPTARG    ;;
-            n) vmname=$OPTARG	     ;;
-	    r) runtime_class=$OPTARG ;;
-	    s) node_selector=$OPTARG ;;
-	    E) scheduler_name=$OPTARG;;
-	    *)			     ;;
-        esac
-    done
-    [[ -n "$vmname" ]] || fatal "vmname is required"
+    local namespace=$1
+    local instance=$2
+    local secret_count=$3
+    local -i replicas=$4
+    local containers=$5
+    local sync_service=
+    local sync_port_num=
+    local sync_ns_port_num=
+    local drop_cache_service=
+    local drop_cache_port_num=
     pin_node=$(get_pin_node "$node_class")
     if [[ -z "$affinity_yaml" ]] ; then
 	if [[ -n "${pin_node:-}" ]] ; then
@@ -2906,28 +3042,50 @@ function create_vm_spec() {
 	    affinity_yaml="$(mk_selector "$node_selector")"
 	fi
     fi
-    cat <<EOF
+    local -i replica=0
+    local depname="${namespace}-${workload}-${instance}"
+    while (( replica++ < replicas )) ; do
+        local name="${depname}-${replica}"
+        local vmname
+	vmname=$(mkpodname "$name")
+	IFS=: read -r sync_service sync_port_num sync_ns_port_num <<< "$(get_sync)"
+	IFS=: read -r drop_cache_service drop_cache_port_num <<< "$(get_drop_cache "$namespace" "$instance" "$replica")"
+        create_object -n "$namespace" "$name" <<EOF
+apiVersion: kubevirt.io/v1alpha3
+kind: VirtualMachine
+metadata:
+$(indent 2 standard_labels_yaml -c "$node_class" -l "$workload" "$namespace" "$instance" "$replica")
+  name: "$vmname"
+$(indent 2 standard_deployment_metadata_yaml "$namespace" client)
 spec:
   running: true
   template:
     metadata:
-$(indent 6 standard_labels_yaml -c "$node_class" -l "$workload" "$namespace" "$instance")
+$(indent 6 standard_labels_yaml -c "$node_class" -l "$workload" "$namespace" "$instance" "$replica")
         kubevirt-vm: "$vmname"
 $(indent 6 standard_deployment_metadata_yaml "$namespace" client)
 $(indent 6 standard_pod_metadata_yaml "$namespace" client)
     spec:
-${scheduler_name:+$(indent 6 <<< "schedulerName: $scheduler_name")}
+${scheduler:+$(indent 6 <<< "schedulerName: $scheduler")}
 $(indent 6 vm_evict_strategy)
       domain:
         cpu:
           cores: $vm_cores
           sockets: $vm_sockets
           threads: $vm_threads
+        memory:
+          guest: $vm_memory
         devices:
           disks:
             - name: containerdisk
               disk:
                 bus: virtio
+            - name: systemconfigmap-${namespace}
+              serial: systemconfigmap
+              volumeName: systemconfigmap-${namespace}
+            - name: userconfigmap-${namespace}
+              serial: userconfigmap
+              volumeName: userconfigmap-${namespace}
 $(indent 8 container_resources_yaml)
       terminationGracePeriodSeconds: $vm_grace_period
 $(indent 6 <<< "$affinity_yaml")
@@ -2935,7 +3093,36 @@ $(indent 6 <<< "$affinity_yaml")
         - name: containerdisk
           containerDisk:
             image: $vm_image
+        - name: systemconfigmap-${namespace}
+          configMap:
+            name: systemconfigmap-${namespace}
+        - name: userconfigmap-${namespace}
+          configMap:
+            name: userconfigmap-${namespace}
+        - name: cloudinitdisk
+          cloudInitNoCloud:
+            userData: |-
+              #cloud-config
+              ${vm_user:+user: $vm_user}
+              ${vm_user:+username: $vm_user}
+              ${vm_password:+password: $vm_password}
+              chpasswd: { expire: False }
+              bootcmd:
+                - "sudo mkdir '$system_configmap_mount_dir' '$user_configmap_mount_dir'"
+                - "sudo mount -o ro /dev/disk/by-id/ata-QEMU_HARDDISK_systemconfigmap '$system_configmap_mount_dir'"
+                - "sudo mount -o ro /dev/disk/by-id/ata-QEMU_HARDDISK_userconfigmap '$user_configmap_mount_dir'"
+$(indent 16 insert_ssh_keys "${vm_ssh_pubkey[@]}")
+                $(install_podman_if_needed)
+                $(install_required_packages)
+$(indent 16 setup_commands)
+$(indent 16 setup_sysctls)
+              runcmd:
+                - "$(standard_environment -V) $(run_as_container)$(if [[ -n "${arglist_function}" ]] ; then
+     ARGLIST_FORMAT=vm "${arglist_function}" "${system_configmap_mount_dir}/" "$@" "0" -- "$namespace" "c0" \
+     "$basetime" "$baseoffset" "$(ts)" "$exit_at_end" "$sync_service" "$sync_port_num" "$sync_ns_port_num" \
+     "$drop_cache_service" "$drop_cache_port_num" ; fi)"
 EOF
+    done
 }
 
 function create_replication_deployment() {
@@ -3134,7 +3321,6 @@ function create_drop_cache_deployment() {
     while ((replica++ < replicas)) ; do
 	local name="${namespace}-${workload}-${instance}-${replica}"
 	local dcname="${name}-dc"
-	create_service -H -k replica "$namespace" "${dcname}" "$drop_cache_port"
 	create_object -t Pod -n "$namespace" "${namespace}-${workload}-${instance}-${replica}-dc" <<EOF
 apiVersion: v1
 kind: Pod
@@ -3713,7 +3899,6 @@ fi
 iworkload=$requested_workload
 requested_workload=$(get_workload "$requested_workload") || help_extended "(Unknown workload '$iworkload')"
 arch=${arch:-$(uname -m)}
-container_image=${container_image:-quay.io/rkrawitz/clusterbuster:latest}
 
 call_api -w "$requested_workload" -s "process_options" "${unknown_opts[@]}" || help "${unknown_opt_names[@]}"
 
@@ -3749,10 +3934,14 @@ case "${deployment_type,,}" in
     replicaset|rs)         deployment_type=ReplicaSet; exit_at_end=0 ;;
     deployment|dep|deploy) deployment_type=Deployment; exit_at_end=0 ;;
     pod) deployment_type=pod                                         ;;
-    vm) deployment_type=vm                                           ;;
+    vm)
+	if ((containers_per_pod > 1)) ; then
+	    fatal "ERROR: containers_per_pod must equal 1 for vm deployments"
+	    help
+	fi
+	deployment_type=vm                                           ;;
     *)
-	echo "--deployment_type must be pod, vm, deployment, or replicaset"
-	help
+	fatal "ERROR: --deployment_type must be pod, vm, deployment, or replicaset"
 esac
 
 if [[ -z $OC && $doit -gt 0 ]] ; then

@@ -207,6 +207,18 @@ The following APIs are supported:
   Return the type of workload for reporting purposes.  Defaults to the
   name of the workload.  Should be used if the workload is equivalent
   to another workload for reporting purposes.
+  
+* `<workload>_vm_required_packages`
+
+  Return a list of packages, one per line, that are required to run
+  the workload.
+
+* `<workload>_vm_setup_commands`
+
+  Return a list of commands, one per line, that must be run on
+  CNV/Kubevirt VMs in order to prepare for running the workload.
+  Normally package requirements should be provided in
+  `vm_required_packages`.
 
 #### Workload Client (Pod) API
 

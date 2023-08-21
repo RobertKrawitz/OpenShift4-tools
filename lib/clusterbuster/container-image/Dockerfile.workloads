@@ -1,4 +1,4 @@
-FROM quay.io/rkrawitz/clusterbuster:latest
+FROM quay.io/rkrawitz/clusterbuster-base:latest
 
 USER 0
 RUN microdnf --setopt=install_weak_deps=0 install -y \

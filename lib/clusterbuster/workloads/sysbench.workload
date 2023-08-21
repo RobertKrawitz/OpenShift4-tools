@@ -129,6 +129,12 @@ function sysbench_supports_reporting() {
     :
 }
 
+function sysbench_vm_required_packages() {
+    cat <<'EOF'
+sysbench
+EOF
+}
+
 function sysbench_report_options() {
     if [[ $___sysbench_workload = fileio ]] ; then
 	cat <<EOF

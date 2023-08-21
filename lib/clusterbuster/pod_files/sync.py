@@ -286,7 +286,11 @@ def sync_one(sock, tmp_sync_file_base: str, tmp_error_file: str, start_time: flo
                         ts = jdata['timestamp']
                         if 'have' in jdata and isinstance(jdata['have'], dict):
                             for name, addr in jdata['have'].items():
-                                net_clients[name] = addr
+                                if name.startswith('eth0@'):
+                                    timebase._timestamp(f"Using {address[0]} for {name}")
+                                    net_clients[name] = address[0]
+                                else:
+                                    net_clients[name] = addr
                     except Exception as exc:
                         timebase._timestamp(f"Failed to parse JSON data: {exc}")
                         continue

@@ -17,7 +17,16 @@ declare OC=${OC:-${KUBECTL:-}}
 OC=${OC:-$(type -p oc)}
 OC=${OC:-$(type -p kubectl)}	# kubectl might not work, though...
 
-declare images=("quay.io/rkrawitz/clusterbuster:latest" "quay.io/rkrawitz/clusterbuster-workloads:latest")
+declare image_tag=latest
+
+while getopts 't:' opt ; do
+    case "$opt" in
+	t) image_tag=$OPTARG ;;
+	*)		     ;;
+    esac
+done
+
+declare images=("quay.io/rkrawitz/clusterbuster-base:$image_tag" "quay.io/rkrawitz/clusterbuster-workloads:$image_tag")
 
 if [[ -n "$*" ]] ; then
     images=("$@")

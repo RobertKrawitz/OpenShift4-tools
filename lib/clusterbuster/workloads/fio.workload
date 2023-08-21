@@ -55,8 +55,9 @@ function fio_create_deployment() {
     local containers_per_pod=${5:-1}
     local -i instance
     container_image="quay.io/rkrawitz/clusterbuster-workloads:latest"
-    create_sync_service "$namespace" "$((containers_per_pod * processes_per_pod * replicas * count))" \
-				  "$((containers_per_pod * replicas * count))"
+    create_sync_service "$namespace" \
+			"$((containers_per_pod * processes_per_pod * replicas * count))" \
+			"$(((containers_per_pod * replicas * count) + (replicas * count * ___fio_drop_cache)))"
     for instance in $(seq "$first_deployment" $((count + first_deployment - 1))) ; do
 	create_standard_deployment  -a fio_arglist -p \
 				    "$namespace" "$instance" "$secret_count" "$replicas" "$containers_per_pod"
@@ -200,6 +201,13 @@ function fio_process_options() {
 
 function fio_supports_reporting() {
     :
+}
+
+function fio_vm_required_packages() {
+    cat <<'EOF'
+fio
+fio-engine-libaio
+EOF
 }
 
 function fio_generate_metadata() {
