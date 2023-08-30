@@ -1548,10 +1548,6 @@ function _fail_helper()  {
 }
 
 function _log_helper() {
-    function monitor_oc() {
-	until get_run_failed ; do sleep 5 ; done
-	____OC exec --stdin=false "$@" -- sh -c "touch '$sync_flag_file'" >/dev/null 2>&1
-    }
     local OPTIND=0
     local OPTARG
     local fail_helper=
@@ -1569,7 +1565,6 @@ function _log_helper() {
 	echo "*** Injecting forced timeout error"
 	sleep infinity
     fi
-    monitor_oc "$@"&
     until [[ $(____OC get pod -ojsonpath='{.status.phase}' "$@" 2>/dev/null) != 'Running' ]] ; do
 	# Need to produce periodic output to stderr to prevent oc exec connection from prematurely terminating
 	____OC exec --stdin=false "$@" -- sh -c "while [[ ! -f '$sync_flag_file' ]] ; do sleep 5; echo KEEPALIVE 1>&2; done; cat '$sync_flag_file'; sleep 5; echo DONE 1>&2" 2>/dev/null && break
