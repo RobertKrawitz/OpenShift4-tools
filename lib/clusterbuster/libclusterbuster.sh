@@ -23,11 +23,17 @@
 declare -Ag __registered_workloads__=()
 declare -Ag __workload_aliases__=()
 declare -Ag debug_conditions=()
+export PIDS_TO_NOT_KILL="$$ $BASHPID"
 
 function timestamp() {
     while IFS= read -r 'LINE' ; do
 	printf "%s %s\n" "$(TZ=GMT-0 date '+%Y-%m-%dT%T.%N' | cut -c1-26)" "$LINE"
     done
+}
+
+function protect_pids() {
+    debug protect_pids "Protected pids $PIDS_TO_NOT_KILL + $*"
+    PIDS_TO_NOT_KILL+=" $*"
 }
 
 function register_debug_condition() {
@@ -387,6 +393,7 @@ function childrenof() {
 	fi
     }
     local -A exclude=()
+    local OPTARG
     local OPTIND=0
     while getopts 'e:' opt "$@" ; do
 	case "$opt" in
@@ -394,6 +401,13 @@ function childrenof() {
 	    *)                    ;;
 	esac
     done
+    if [[ -n "$PIDS_TO_NOT_KILL" ]] ; then
+	debug protect_pids "killthemall will not kill $PIDS_TO_NOT_KILL"
+	local pid
+	for pid in $PIDS_TO_NOT_KILL ; do
+	    exclude[$pid]=1
+	done
+    fi
     shift $((OPTIND-1))
     local target=$1
     local -A ps_parents=()
@@ -411,6 +425,7 @@ function childrenof() {
 	# output even if there's a failure.
 	if [[ -z "${!exclude[$pid]:-}" && "${ps_commands[$pid]}" != 'tee'* && "${ps_commands[$pid]}" != *'clusterbuster-report'* ]] ; then
 	    if is_descendent "$pid" "$target" ; then
+		debug protect_pids "   killing $pid"
 		echo "$pid"
 	    fi
 	fi
@@ -418,7 +433,12 @@ function childrenof() {
 }
 
 function killthemall() {
-    echo "FATAL: ${*:-Exiting!}" 1>&2
+    local signal=TERM
+    if [[ ${1:-} = '-'* ]] ; then
+	signal=${1#-}
+	shift
+    fi
+    echo "FATAL ERROR: ${*:-Exiting!}" 1>&2
     # Selectively kill all processes.  We don't want to kill
     # processes between us and the root, or processes that
     # aren't actually clusterbuster (e. g. reporting)
@@ -428,7 +448,7 @@ function killthemall() {
     # killthemall can livelock under the wrong circumstances.
     # Make sure that that doesn't happen; we want to control
     # our own exit.
-    trap : TERM
+    trap '' TERM
     if [[ -n "${pids_to_kill[*]}" ]] ; then
 	/bin/kill -TERM "${pids_to_kill[@]}" >/dev/null 2>&1
 	if (( $$ == BASHPID )) ; then
