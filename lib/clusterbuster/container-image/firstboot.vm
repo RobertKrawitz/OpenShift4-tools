@@ -1,0 +1,14 @@
+#!/bin/sh
+
+sleep 10
+
+# We need weak dependencies of podman to run it successfully.
+dnf install -y \
+    fio \
+    fio-engine-libaio \
+    procps-ng \
+    python3 \
+    sysbench \
+    uperf \
+    util-linux
+poweroff

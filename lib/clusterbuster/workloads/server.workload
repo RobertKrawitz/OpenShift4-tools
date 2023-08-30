@@ -180,12 +180,6 @@ function server_supports_reporting() {
     :
 }
 
-function server_vm_setup_commands() {
-    cat <<EOF
-sudo sysctl -w net.ipv4.ip_local_port_range='$___server_port ((___server_port + ___server_port_addrs))'
-EOF
-}
-
 function server_report_options() {
     cat <<EOF
 "msg_size": $___msg_size,

@@ -243,7 +243,7 @@ declare -i vm_threads=1
 declare -i vm_sockets=1
 declare vm_memory=2Gi
 declare vm_grace_period=30
-declare vm_image='quay.io/kubevirt/fedora-container-disk-images:35'
+declare vm_image='quay.io/rkrawitz/clusterbuster-vm:latest'
 declare vm_evict_migrate=1
 declare vm_run_as_container=0
 declare -A workload_service_ports=()
@@ -1199,7 +1199,7 @@ function set_run_failed() {
 	    sync_pod+=("$pod")
 	fi
     done <<< "$(____OC get pod -A --no-headers -l "${basename}-sync=${uuid}")"
-    ____OC exec --stdin=false "${sync_pod[@]}" -- sh -c "touch '$sync_error_file'"
+    ____OC exec --stdin=false "${sync_pod[@]}" -- sh -c "echo 'Please see logs for details.' >> '$sync_error_file'"
 }
 
 function supports_metrics() {
@@ -1349,7 +1349,7 @@ function run_status_monitor_1() {
 
     _____OC get pod "$@" -w -o jsonpath='{.metadata.namespace} {.metadata.name} {.status.phase}{"\n"}' &
     local oc_proc=$!
-    trap 'kill -9 "$oc_proc" 1>&2; return 1' PIPE
+    trap 'kill -9 "$oc_proc" >/dev/null 2>&1; return 1' PIPE
     while ! get_run_failed ; do
 	printf '++Mark++ ++Mark+ %(%s)T%s' -1 $'\n'
 	sleep 1
@@ -1468,7 +1468,8 @@ function _monitor_pods() {
 		    fi
 		else
 		    if ((timestamp > pod_progress_timeout)) ; then
-			killthemall "No progress with pods after $pod_start_timeout seconds, ${#starting_pods[@]} pods still pending."
+			set_run_failed "No progress with pods after $pod_start_timeout seconds, ${#starting_pods[@]} pods still pending."
+			return 1
 		    fi
 		    if ((pod_progress_timeout-timestamp <= 30)) ; then
 			local p_seconds=seconds
@@ -1567,7 +1568,7 @@ function _log_helper() {
     fi
     until [[ $(____OC get pod -ojsonpath='{.status.phase}' "$@" 2>/dev/null) != 'Running' ]] ; do
 	# Need to produce periodic output to stderr to prevent oc exec connection from prematurely terminating
-	____OC exec --stdin=false "$@" -- sh -c "while [[ ! -f '$sync_flag_file' ]] ; do sleep 5; echo KEEPALIVE 1>&2; done; cat '$sync_flag_file'; sleep 5; echo DONE 1>&2" 2>/dev/null && break
+	____OC exec --stdin=false "$@" -- sh -c "while [[ ! -f '$sync_flag_file' && ! -f '$sync_error_file' ]] ; do sleep 5; echo KEEPALIVE 1>&2; done; cat '$sync_flag_file'; sleep 5; echo DONE 1>&2" 2>/dev/null && break
 	sleep 5
     done
     # Tell the pod monitor to stop.
@@ -1629,7 +1630,7 @@ function _get_logs_poll() {
 	# the other one.
 	wait -n
 	# shellcheck disable=SC2046
-	kill $(jobs -p)
+	kill $(jobs -p) 2>/dev/null
 	wait
 	if ((--counter > 0)) ; then
 	    echo ','
@@ -1904,6 +1905,7 @@ function _retrieve_artifacts() {
     local always_retrieve_artifacts=${1:-}
     get_run_failed && always_retrieve_artifacts=1
     if [[ -n "$artifactdir" && ! -f "$artifactdir/.artifacts" ]] ; then
+	echo "Retrieving run artifacts" | echo_if_desired 1>&2
 	mkdir -p "$artifactdir/Logs"
 	mkdir -p "$artifactdir/Describe"
 	touch "$artifactdir/.artifacts"
@@ -3047,27 +3049,26 @@ function create_vm_deployment() {
 	    echo "podman run --rm --privileged $sysctls -P ${nports[*]} $(standard_environment -C) '-v${system_configmap_mount_dir}:${system_configmap_mount_dir}' '-v${user_configmap_mount_dir}:${user_configmap_mount_dir}' '$container_image' $setup_command"
 	fi
     }
-    function install_podman_if_needed() {
-	if ((vm_run_as_container)) ; then
-	    # shellcheck disable=SC2016
-	    echo '- "if [[ x$(type -t podman) = x ]] ; then dnf install -y podman; fi"'
-	fi
-    }
     function install_required_packages() {
 	local -a packages_needed=()
 	readarray -t packages_needed <<< "$(vm_required_packages)"
 	if [[ $vm_run_as_container -eq 0 && -n "${packages_needed[*]}" ]] ; then
-	    echo "- \"sudo dnf install -y ${packages_needed[*]}"\"
+	    echo "- \"dnf install -y ${packages_needed[*]}"\"
 	fi
     }
     function setup_commands() {
-	sed -E -e 's/(^.+$)/- sudo "\1"/' <<< "$(vm_setup_commands)"
+	sed -E -e 's/(^.+$)/- "\1"/' <<< "$(vm_setup_commands)"
+	if ((vm_run_as_container)) ; then
+	    echo "- sudo dnf install -y podman"
+	fi
     }
     function setup_sysctls() {
-	local key
-	for key in "${!__sysctls[@]}" ; do
-	    echo "- \"sudo sysctl -w '$key' '${__sysctls[$key]}'\""
-	done
+	if ((! vm_run_as_container)) ; then
+	    local key
+	    for key in "${!__sysctls[@]}" ; do
+		echo "- \"sysctl -w '$key=${__sysctls[$key]}'\""
+	    done
+	fi
     }
     function insert_ssh_keys() {
 	local file
@@ -3180,11 +3181,10 @@ $(indent 6 <<< "$affinity_yaml")
               ${vm_password:+password: $vm_password}
               chpasswd: { expire: False }
               bootcmd:
-                - "sudo mkdir '$system_configmap_mount_dir' '$user_configmap_mount_dir'"
-                - "sudo mount -o ro /dev/disk/by-id/ata-QEMU_HARDDISK_systemconfigmap '$system_configmap_mount_dir'"
-                - "sudo mount -o ro /dev/disk/by-id/ata-QEMU_HARDDISK_userconfigmap '$user_configmap_mount_dir'"
+                - "mkdir '$system_configmap_mount_dir' '$user_configmap_mount_dir'"
+                - "mount -o ro /dev/disk/by-id/ata-QEMU_HARDDISK_systemconfigmap '$system_configmap_mount_dir'"
+                - "mount -o ro /dev/disk/by-id/ata-QEMU_HARDDISK_userconfigmap '$user_configmap_mount_dir'"
 $(indent 16 insert_ssh_keys "${vm_ssh_pubkey[@]}")
-                $(install_podman_if_needed)
                 $(install_required_packages)
 $(indent 16 setup_commands)
 $(indent 16 setup_sysctls)

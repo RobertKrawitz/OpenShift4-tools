@@ -1,0 +1,5 @@
+FROM scratch
+
+WORKDIR /disk
+ARG ARCH
+ADD --chown=107:107 base-image-${ARCH}x.qcow2 /disk/

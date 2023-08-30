@@ -203,13 +203,6 @@ function fio_supports_reporting() {
     :
 }
 
-function fio_vm_required_packages() {
-    cat <<'EOF'
-fio
-fio-engine-libaio
-EOF
-}
-
 function fio_generate_metadata() {
     local -a jobs=()
     local -i jobidx=1

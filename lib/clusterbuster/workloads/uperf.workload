@@ -213,12 +213,6 @@ function uperf_supports_reporting() {
     :
 }
 
-function uperf_vm_required_packages() {
-    cat <<'EOF'
-uperf
-EOF
-}
-
 function uperf_generate_metadata() {
     local -a jobs=()
     local -i jobidx=1
