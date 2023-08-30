@@ -258,7 +258,20 @@ OC=${OC:-$(type -p oc)}
 OC=${OC:-$(type -p kubectl)}	# kubectl might not work, though...
 
 function fatal() {
+    local OPTIND
+    local waitforit=0
+    local opt
+    while getopts 'w' opt "$@" ; do
+	case "$opt" in
+	    w) waitforit=1 ;;
+	    *)             ;;
+	esac
+    done
+    shift "$((OPTIND-1))"
     echo "$*" 1>&2
+    if ((waitforit)) ; then
+	wait
+    fi
     exit 1
 }
 
@@ -279,16 +292,13 @@ export CB_LIBPATH=${CB_LIBPATH:-$__libdir__}
 
 function _helpmsg() {
     local opt
-    for opt in "$@" ; do
-	echo "Unknown option $opt"
-    done
+    (IFS=$'\n'; echo "$*"; if [[ -n "$*" ]] ; then echo; fi)
 cat <<EOF
 Clusterbuster is a tool to permit you to load a configurable workload
 onto an OpenShift cluster.  ClusterBuster focuses primarily on workload
 scalability, including synchronization of multi-instance workloads.
 
 Usage: ${__topsc__:-0} [options] [extra args]
-
     Help:
        -h              Print basic help information.
        -H              Print extended help.
@@ -305,21 +315,21 @@ Usage: ${__topsc__:-0} [options] [extra args]
                        examples/clusterbuster directory.
        -n              Print what would be done without doing it
        -o              Specify report format, as --report-format
-       -P workload     workload (mandatory), one of:
-$(print_workloads '                       - ')
        -q              Do not print verbose log messages (default)
        -Q              Don't report creation of individual objects (default
                        report them)
        -v              Print verbose log messages.
+       -w workload     workload (mandatory), one of:
+$(print_workloads '                       - ')
        --opt[=val]     Set the specified option.
                        Use ${__topsc__##*/} -H to list the available options.
 EOF
 }
 
 function _help_extended() {
-    if [[ -z "$*" ]] ; then
-        _helpmsg "$@"
-        cat <<'EOF'
+    if [[ -n "$*" ]] ; then
+	_helpmsg "$@"
+	cat <<'EOF'
 
 Extended Options:
 EOF
@@ -1108,6 +1118,13 @@ function ____OC() {
     "$OC" "$@"
 }
 
+function _____OC() {
+    # When the oc/kubectl command must run in the same process
+    # as the caller.
+    debug kubectl "$OC" "$@"
+    exec "$OC" "$@"
+}
+
 function namespace_exists() {
     local ns=$1
     ____OC get ns "$ns" >/dev/null 2>&1
@@ -1159,6 +1176,31 @@ function get_drop_cache() {
 ################################################################
 # Logging
 ################################################################
+
+function get_run_failed() {
+    test -f "${cb_tempdir}/___run_failed"
+}
+
+function set_run_failed() {
+    get_run_failed && return
+    touch "${cb_tempdir}/___run_failed"
+    local namespace
+    local pod
+    local ignore
+    local namespace_retrieved=
+    while read -r namespace pod ignore ; do
+	if [[ -n "$namespace" && -n "$pod" ]] ; then
+	    if [[ -z "$namespace_retrieved" ]] ; then
+		namespace_retrieved=$namespace
+		sync_pod+=("-n" "$namespace")
+	    elif [[ "$namespace" != "$namespace_retrieved" ]] ; then
+		killthemall "Namespace mismatch: $namespace vs $namespace_retrieved"
+	    fi
+	    sync_pod+=("$pod")
+	fi
+    done <<< "$(____OC get pod -A --no-headers -l "${basename}-sync=${uuid}")"
+    ____OC exec --stdin=false "${sync_pod[@]}" -- sh -c "touch '$sync_error_file'"
+}
 
 function supports_metrics() {
     if ((metrics_support < 0)) ; then
@@ -1302,15 +1344,24 @@ function ts() {
     echo "${sec}.${ns:0:6}"
 }
 
+function run_status_monitor_1() {
+    # We need to kill the actual monitor reasonably quickly if the job fails.
+
+    _____OC get pod "$@" -w -o jsonpath='{.metadata.namespace} {.metadata.name} {.status.phase}{"\n"}' &
+    local oc_proc=$!
+    trap 'kill -9 "$oc_proc" 1>&2; return 1' PIPE
+    while ! get_run_failed ; do
+	printf '++Mark++ ++Mark+ %(%s)T%s' -1 $'\n'
+	sleep 1
+    done
+    kill -9 "$oc_proc" 1>&2
+}
+
 function run_status_monitor() {
-    function run_status_monitor_1() {
-	____OC get pod "$@" -w -o jsonpath='{.metadata.namespace} {.metadata.name} {.status.phase}{"\n"}'
-    }
-    (while : ; do sleep 1; printf '++Mark++ ++Mark+ %(%s)T%s' -1 $'\n'; done &)
     if [[ -n "$artifactdir" ]] ; then
 	mkdir -p "$artifactdir"
 	rm -f "$artifactdir/.artifacts"
-	run_status_monitor_1 "$@" | tee >(timestamp > "${artifactdir}/monitor.log")
+	run_status_monitor_1 "$@" | stdbuf -i0 -o0 -e0 tee >(grep -v '\+\+Mark\+\+' | timestamp >"${artifactdir}/monitor.log")
     else
 	run_status_monitor_1 "$@"
     fi
@@ -1343,7 +1394,7 @@ function _monitor_pods() {
     fi
     local -i message_printed=0
     while read -r namespace name status ; do
-	if [[ -n "${cb_tempdir:-}" && -f "$cb_tempdir/___run_complete" ]] ; then
+	if [[ -n "${cb_tempdir:-}" && ( -f "$cb_tempdir/___run_complete" || -f "$cb_tempdir/___run_failed" ) ]] ; then
 	    if [[ -z "${injected_errors[timeout]:-}" ]] ; then
 		return 0
 	    else
@@ -1367,7 +1418,8 @@ function _monitor_pods() {
 		    echo "Tail end of logs:" 1>&2
 		    # TODO: Need to get logs from each container
 		    ____OC logs -n "$namespace" "$name" |tail -20 1>&2
-		    killthemall "Pod -n $namespace $name failed"
+		    set_run_failed
+		    if ((get_logs_pid > 1)) ; then kill -INT "$get_logs_pid"; fi
 		    return 1
 		    ;;
 		pending|containercreating)
@@ -1391,6 +1443,7 @@ function _monitor_pods() {
 	    local timestamp=$status
 	    if [[ -z "${injected_errors[timeout]:-}" ]] && ! supports_api -w "$requested_workload" supports_reporting ; then
 		if (( ${#running_pods[@]} + finished_pod_count > 0 && other_pod_count == 0 )) ; then
+		    set_run_failed
 		    sleep "$workload_run_time"
 		    return
 		fi
@@ -1431,8 +1484,7 @@ function _monitor_pods() {
 		message_printed=0
 	    fi
 	    if ((timeout > 0 && timestamp > timeout)) ; then
-		retrieve_successful_logs=1 _retrieve_artifacts
-		killthemall "Monitor pods timeout!"
+		set_run_failed
 	    fi
 	fi
     done
@@ -1454,10 +1506,10 @@ function run_logger() {
     done
     shift $((OPTIND-1))
     "$@" </dev/null
-    # shellcheck disable=SC2046
     if [[ -n "${pids_to_kill[*]}" ]] ; then
 	exec 2>/dev/null
 	kill -USR2 "${pids_to_kill[@]}"
+	# shellcheck disable=SC2046
 	[[ -n "$(jobs -p)" ]] && kill $(jobs -p)
     fi
 }
@@ -1476,13 +1528,16 @@ function _fail_helper()  {
 		return
 		;;
 	    Running)
-		# Need to produce periodic output to stderr to prevent oc exec connection from prematurely terminating
-		faildata="$(____OC exec --stdin=false "$@" -- sh -c "while [[ ! -f '$sync_error_file' ]] ; do sleep 5; echo KEEPALIVE 1>&2; done; cat '$sync_error_file'" 2>/dev/null)"
+		# Need to produce periodic output to stderr to prevent
+		# oc exec connection from prematurely terminating.
+		# If the flag file exists, we need to exit even if there's
+		# no error flag.
+		faildata="$(____OC exec --stdin=false "$@" -- sh -c "while [[ ! -f '$sync_error_file' && ! -f '$sync_flag_file' ]] ; do sleep 5; echo KEEPALIVE 1>&2; done; cat '$sync_error_file'" 2>/dev/null)"
 		if [[ -n "$faildata" ]] ; then
-		    ____OC exec --stdin=false "$@" -- sh -c "rm -f '$sync_error_file'"
+		    set_run_failed
 		    echo "Run failed:" 1>&2
 		    echo "${faildata:-}" 1>&2
-		    killthemall "Run failed, exiting!"
+		    return
 		fi
 		;;
 	    *)
@@ -1493,6 +1548,10 @@ function _fail_helper()  {
 }
 
 function _log_helper() {
+    function monitor_oc() {
+	until get_run_failed ; do sleep 5 ; done
+	____OC exec --stdin=false "$@" -- sh -c "touch '$sync_flag_file'" >/dev/null 2>&1
+    }
     local OPTIND=0
     local OPTARG
     local fail_helper=
@@ -1510,6 +1569,7 @@ function _log_helper() {
 	echo "*** Injecting forced timeout error"
 	sleep infinity
     fi
+    monitor_oc "$@"&
     until [[ $(____OC get pod -ojsonpath='{.status.phase}' "$@" 2>/dev/null) != 'Running' ]] ; do
 	# Need to produce periodic output to stderr to prevent oc exec connection from prematurely terminating
 	____OC exec --stdin=false "$@" -- sh -c "while [[ ! -f '$sync_flag_file' ]] ; do sleep 5; echo KEEPALIVE 1>&2; done; cat '$sync_flag_file'; sleep 5; echo DONE 1>&2" 2>/dev/null && break
@@ -1523,6 +1583,7 @@ function _log_helper() {
 }
 
 function _get_logs_poll() {
+    trap '' TERM
     local pod
     local status
     local counter=$#
@@ -1542,6 +1603,7 @@ function _get_logs_poll() {
 		Error|Failed)
 		    pod_status_found=1
 		    echo "Status of pod $pod failed!" 1>&2
+		    set_run_failed
 		    return 1
 		    ;;
 		''|Succeeded)	# Might be an old pod not yet deleted
@@ -1568,6 +1630,11 @@ function _get_logs_poll() {
 	    run_logger -p "$mypid" -- _log_helper -e _fail_helper -- $pod &
 	fi
 	trap 'kill $(jobs -p) 2>/dev/null 1>&2 && wait' USR2
+	# Wait for either the monitor or the logger to exit and terminate
+	# the other one.
+	wait -n
+	# shellcheck disable=SC2046
+	kill $(jobs -p)
 	wait
 	if ((--counter > 0)) ; then
 	    echo ','
@@ -1578,11 +1645,14 @@ function _get_logs_poll() {
 function get_logs_poll() {
     local tfile
     tfile=$(mktemp ${cb_tempdir:+-p "$cb_tempdir"} -t '_clusterbusterlogs.XXXXXXXXXX') || fatal "Cannot create temporary file"
-    trap 'retrieve_successful_logs=1 _retrieve_artifacts; if [[ -n "${tfile:-}" && -f "$tfile" ]] ; then rm -f "$tfile"; unset tfile; fi; echo "Status: Fail"; return 1' INT TERM HUP USR1
+    trap 'retrieve_successful_logs=1 _retrieve_artifacts 1; if [[ -n "${tfile:-}" && -f "$tfile" ]] ; then rm -f "$tfile"; unset tfile; fi; echo "Status: Fail"; return 1' INT TERM HUP USR1
     _get_logs_poll "$*" > "$tfile"
     local status=$?
     if ((status == 0)) ; then
-	echo -n '"Results":'; cat < "$tfile"
+	local results
+	results="$(cat "$tfile")"
+	if [[ -z "$results" ]] ; then results='{}'; fi
+	echo -n '"Results": '"$results"
     else
 	echo "Collecting error report" 1>&2
 	echo -n '"Results": {}'
@@ -1807,6 +1877,7 @@ function _get_logs() {
     local second_local_ts
     local status=$failure_status
     local do_retrieve_artifacts=1
+    protect_pids "$BASHPID"
     read -r first_local_ts remote_ts second_local_ts <<< "$(get_pod_and_local_timestamps "${@:2}")"
     if [[ -z "$remote_ts" ]] ; then
 	killthemall "Unable to retrieve sync timestamp"
@@ -1814,7 +1885,7 @@ function _get_logs() {
     local -i reported=0
     local tfile1=
     local tfile2=
-    trap 'if [[ -n "$tfile2" && -f "$tfile2" ]] ; then rm -f "$tfile1" "$tfile2" ; fi; if ((! reported)) ; _report_failure; reported=1; fi; retrieve_successful_logs=1 _retrieve_artifacts; return 1' TERM
+    trap 'if [[ -n "$tfile2" && -f "$tfile2" ]] ; then rm -f "$tfile1" "$tfile2" ; fi; if ((! reported)) ; _report_failure; reported=1; fi; retrieve_successful_logs=1 _retrieve_artifacts 2; return 1' TERM
     tfile1=$(mktemp ${cb_tempdir:+-p "$cb_tempdir"} -t '_clusterbusterlogs1.XXXXXXXXXX') || fatal "Cannot create temporary file"
     tfile2=$(mktemp ${cb_tempdir:+-p "$cb_tempdir"} -t '_clusterbusterlogs2.XXXXXXXXXX') || fatal "Cannot create temporary file"
     "$@" > "$tfile1" && {
@@ -1836,6 +1907,7 @@ EOF
 
 function _retrieve_artifacts() {
     local always_retrieve_artifacts=${1:-}
+    get_run_failed && always_retrieve_artifacts=1
     if [[ -n "$artifactdir" && ! -f "$artifactdir/.artifacts" ]] ; then
 	mkdir -p "$artifactdir/Logs"
 	mkdir -p "$artifactdir/Describe"
@@ -1849,8 +1921,10 @@ function _retrieve_artifacts() {
 	local container
 	local status
 	while read -r namespace pod container status; do
-	    if [[ ($namespace != "$sync_namespace" || $sync_in_first_namespace != 0) && -z $always_retrieve_artifacts &&
-		      $retrieve_successful_logs -eq 0 && ($status = Running || $status = Completed) ]] ; then
+	    if [[ ($namespace != "$sync_namespace" || $sync_in_first_namespace -ne 0) &&
+		      -z $always_retrieve_artifacts &&
+		      $retrieve_successful_logs -eq 0 &&
+		      ($status = Running || $status = Completed || $status = Succeeded) ]] ; then
 		continue
 	    fi
 	    local podname="${namespace}:${pod}"
@@ -1892,6 +1966,7 @@ function _retrieve_artifacts() {
 }
 
 function print_report() {
+    trap '' TERM
     if [[ $report_format = raw ]] ; then
 	cat
     else
@@ -1901,6 +1976,7 @@ function print_report() {
 
 function get_logs() {
     trap - TERM
+    protect_pids "$BASHPID"
     local log_cmd
     if supports_api -w "$requested_workload" supports_reporting ; then
 	log_cmd=get_logs_poll
@@ -1916,6 +1992,7 @@ function get_logs() {
 		return 0
 	    return 1
 	else
+	    trap '' TERM
 	    _get_logs "$log_cmd" "$@" | print_report
 	    return $((PIPESTATUS[0] || PIPESTATUS[1]))
 	fi
@@ -3668,7 +3745,7 @@ function do_logging() {
     ((logs_expected > 0)) || return 0
     trap 'if ((get_logs_pid > 1)) ; then kill -TERM "$get_logs_pid"; wait "$get_logs_pid" 2>/dev/null; get_logs_pid=0; fi; return 1' TERM
 
-    local -a sync_pods=()
+    local -a sync_pod=()
     local namespace
     local pod
     local ignore
@@ -3678,15 +3755,16 @@ function do_logging() {
 	if [[ -n "$namespace" && -n "$pod" ]] ; then
 	    if [[ -z "$namespace_retrieved" ]] ; then
 		namespace_retrieved=$namespace
-		sync_pods+=("-n" "$namespace")
+		sync_pod+=("-n" "$namespace")
 	    elif [[ "$namespace" != "$namespace_retrieved" ]] ; then
 		killthemall "Namespace mismatch: $namespace vs $namespace_retrieved"
 	    fi
-	    sync_pods+=("$pod")
+	    sync_pod+=("$pod")
 	fi
     done <<< "$(____OC get pod -A --no-headers -l "${basename}-sync=${uuid}")"
-    get_logs "${sync_pods[@]}" &
+    get_logs "${sync_pod[@]}" &
     get_logs_pid=$!
+    protect_pids "$get_logs_pid $BASHPID"
     if ((timeout > 0)) ; then
 	local -i itimeout=$timeout
 	local -i finis=0
@@ -3723,12 +3801,13 @@ function do_logging() {
 	    fi
 	done
 	if (( finis <= 0 )) ; then
-	    retrieve_successful_logs=1 _retrieve_artifacts
 	    if ((finis < 0)) ; then
-		killthemall "Run failed"
+		warn "Run failed"
 	    else
-		killthemall "Run did not terminate in $itimeout seconds"
+		warn "Run did not terminate in $itimeout seconds"
 	    fi
+	    set_run_failed
+	    kill -INT "$get_logs_pid"
 	fi
     fi
     if (( get_logs_pid > 1 )) ; then
@@ -3794,7 +3873,9 @@ function run_clusterbuster_2() {
 	    artifactdir="$(expand_string "$artifactdir")"
 	    mkdir -p "$artifactdir" || fatal "Can't create log directory $artifactdir"
 	    echo "${saved_argv[@]@Q}" > "$artifactdir/commandline"
-	    exec 2> >(tee >(tr "\r" "\n" > "$artifactdir/stderr.log") >&2)
+	    # The process substitutions need to be protected against signals; otherwise they will terminate
+	    # causing upstream broken pipes and loss of error data.
+	    exec 2> >(trap '' TERM INT HUP USR1 USR2; stdbuf -i0 -o0 -e0 tee >(trap '' TERM INT HUP USR1 USR2; stdbuf -i0 -o0 -e0 tr "\r" "\n" > "$artifactdir/stderr.log") >&2)
 	fi
     fi
     allocate_namespaces || return 1
@@ -3830,6 +3911,7 @@ function run_clusterbuster_2() {
 }
 
 function run_clusterbuster_1() {
+    protect_pids "$BASHPID"
     local -i status=0
     run_clusterbuster_2
     status=$?
@@ -3842,7 +3924,7 @@ function run_clusterbuster_1() {
     fi
 
     if ((status)) ; then
-	fatal "Clusterbuster failed!"
+	fatal -w "Clusterbuster failed!"
     else
 	if [[ $take_prometheus_snapshot -gt 0 && -n "$artifactdir" ]] ; then
 	    retrieve_prometheus_snapshot "$artifactdir"
@@ -3859,16 +3941,17 @@ function remove_tmpdir() {
     [[ -n "${cb_tempdir:-}" && -d "$cb_tempdir" && $cb_tempdir = "/tmp/cbtmp_"* ]] && rm -rf "$cb_tempdir" && unset cb_tempdir
 }
 
-trap "remove_tmpdir; exit" EXIT
-trap "remove_tmpdir; exit 1" TERM INT HUP
+trap 'if (($$ == BASHPID)) ; then wait; fi; remove_tmpdir; exit' EXIT
+trap 'remove_tmpdir; if (($$ == BASHPID)) ; then wait; fi; exit 1' TERM INT HUP
 cb_tempdir=$(umask 77; mktemp -d -p /tmp -t cbtmp_XXXXXXXX) || fatal "Can't create temporary directory"
+export TMPDIR=$cb_tempdir
 
 declare -a __workloads__
 load_workloads "$CB_LIBPATH"
 
 set_metrics_file default
 
-while getopts ":B:Eef:Hhno:P:Qqv-:" opt ; do
+while getopts ":B:Eef:Hhno:P:w:Qqv-:" opt ; do
     case "$opt" in
 	B) process_option "basename=$OPTARG"	 ;;
 	E) process_option "exit_at_end=0"	 ;;
@@ -3882,6 +3965,7 @@ while getopts ":B:Eef:Hhno:P:Qqv-:" opt ; do
 	Q) process_option "reportobjectcreate=0" ;;
 	q) process_option "verbose=0"		 ;;
 	v) process_option "verbose=1"		 ;;
+	w) process_option "workload=$OPTARG"     ;;
 	-) process_option "$OPTARG"		 ;;
 	*) help "$OPTARG"			 ;;
     esac
@@ -3893,14 +3977,14 @@ shift $((OPTIND - 1))
 extra_args=("$@")
 
 if [[ -z "$requested_workload" ]] ; then
-    help "Workload must be specified with -P"
+    help "Workload must be specified with --workload"
 fi
 
 iworkload=$requested_workload
 requested_workload=$(get_workload "$requested_workload") || help_extended "(Unknown workload '$iworkload')"
 arch=${arch:-$(uname -m)}
 
-call_api -w "$requested_workload" -s "process_options" "${unknown_opts[@]}" || help "${unknown_opt_names[@]}"
+call_api -w "$requested_workload" -s "process_options" "${unknown_opts[@]}" || help "${unknown_opt_names[@]/#/Unknown option }"
 
 if supports_api -w "$requested_workload" list_user_configmaps ; then
     readarray -t userfiles < <(list_user_configmaps)
@@ -3936,12 +4020,11 @@ case "${deployment_type,,}" in
     pod) deployment_type=pod                                         ;;
     vm)
 	if ((containers_per_pod > 1)) ; then
-	    fatal "ERROR: containers_per_pod must equal 1 for vm deployments"
-	    help
+	    help "ERROR: containers_per_pod must equal 1 for vm deployments"
 	fi
 	deployment_type=vm                                           ;;
     *)
-	fatal "ERROR: --deployment_type must be pod, vm, deployment, or replicaset"
+	help "--deployment_type must be pod, vm, deployment, or replicaset"
 esac
 
 if [[ -z $OC && $doit -gt 0 ]] ; then
