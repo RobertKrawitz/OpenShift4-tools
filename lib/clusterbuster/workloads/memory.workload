@@ -19,13 +19,18 @@
 ################################################################
 
 declare -ig ___memory_size=1048576
+declare -ig ___memory_stride=0
+declare -ig ___memory_iterations=1
+declare -ig ___memory_interval=0
 declare -ig ___memory_scan=0
 
 function memory_arglist() {
     local mountdir=$1; shift
     while [[ "$1" != '--' ]] ; do shift; done; shift
-    mk_yaml_args "python3" "${mountdir}memory.py" "$@" \
-		 "$processes_per_pod" "$___memory_size" "$workload_run_time" "$___memory_scan"
+    mk_yaml_args "python3" "${mountdir}memory.py" "$@" "$processes_per_pod" \
+		 "$___memory_size" "$workload_run_time" "$___memory_scan" \
+		 "$___memory_stride" "$___memory_iterations" "$___memory_interval"
+		 
 }
 
 function memory_create_deployment() {
@@ -69,7 +74,17 @@ function memory_help_options() {
        --memory-size=<size>
                         Amount of memory to allocate
        --memory-scan=<0,1>
-                        Scan memory continuously
+                        Write scan memory continuously
+       --memory-stride=<size>
+                        Stride the specified number of bytes
+                        when scanning.  Default is system pagesize.
+                        Set to 1 to scan every byte.
+       --memory-iterations=<n>
+                        Run the scan for the specified number of
+                        iterations.
+       --memory-interval=<seconds>
+                        Sleep for the specified time between
+                        iterations.
 EOF
 }
 
@@ -79,9 +94,12 @@ function memory_process_options() {
     for opt in "$@" ; do
 	read -r noptname1 noptname optvalue <<< "$(parse_option "$opt")"
 	case "$noptname1" in
-	    memorysize)	   ___memory_size=$(parse_size "$optvalue") ;;
-	    memoryscan)	   ___memory_scan=$(bool "$optvalue")	    ;;
-	    *) 		   unknown_opts+=("$noptname ($noptname1)") ;;
+	    memorysize)	   ___memory_size=$(parse_size "$optvalue")	  ;;
+	    memoryscan)	   ___memory_scan=$(bool "$optvalue")	   	  ;;
+	    memorystride*) ___memory_stride=$(parse_size "$optvalue")	  ;;
+	    memoryiter*)   ___memory_iterations=$(parse_size "$optvalue") ;;
+	    memoryinter*)  ___memory_interval=$(parse_size "$optvalue")	  ;;
+	    *) 		   unknown_opts+=("$noptname ($noptname1)")	  ;;
 	esac
     done
     if [[ -n "${unknown_opts[*]:-}" ]] ; then
