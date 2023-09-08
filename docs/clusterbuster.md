@@ -368,7 +368,7 @@ This currently only documents the most commonly used members.
 * `clusterbuster_pod_client._idname(self, args: list = None, separator: str = ':')`
 
   Generate an identifier based on namespace, pod name, container name,
-  and process ID along with any other tokens desired by the workload.
+  and child index along with any other tokens desired by the workload.
   If a separator is provided, it is used to separate the tokens.
 
 * `clusterbuster_pod_client._podname(self)`
