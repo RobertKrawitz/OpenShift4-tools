@@ -72,6 +72,7 @@ class clusterbuster_pod_client(cb_util):
             self.__enable_sync = True
             self.__host_table = {}
             self.__reported_results = False
+            self.__child_idx = -1
             os.environ['__CB_SYNCHOST'] = self.__synchost
             os.environ['__CB_SYNCPORT'] = str(self.__syncport)
             os.environ['__CB_DROP_CACHE_HOST'] = self.__drop_cache_host
@@ -96,7 +97,6 @@ class clusterbuster_pod_client(cb_util):
                 if initialize_timing_if_needed:
                     self.__initialize_timing()
                 self._set_offset(self.__timing_parameters.get('local_offset_from_sync', 0))
-                self._child_idx = None
                 self.__processes = 1
                 self.__requested_ip_addresses = [f'{self.__pod}.{self.__namespace}']
             else:
@@ -133,7 +133,7 @@ class clusterbuster_pod_client(cb_util):
                     os._exit(1)
                 if child == 0:  # Child
                     self.__is_worker = True
-                    self._child_idx = i
+                    self.__child_idx = i
                     self._timestamp(f"About to run subprocess {i}")
                     try:
                         start_time = self._adjusted_time()
@@ -249,7 +249,7 @@ class clusterbuster_pod_client(cb_util):
         :param extra_components: Any extra components to be appended to the id
         :return: Identification string
         """
-        components = [self._namespace(), self._podname(), self._container(), str(os.getpid())]
+        components = [self._namespace(), self._podname(), self._container(), str(self.__child_idx)]
         if args is not None:
             components = components + [str(c) for c in args]
         return separator.join(components)
