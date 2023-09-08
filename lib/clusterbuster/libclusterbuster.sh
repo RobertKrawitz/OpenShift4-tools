@@ -82,11 +82,20 @@ function bool() {
 
 function parse_size() {
     local size
-    local echoarg=
-    if [[ $1 = '-n' ]] ; then
-	echoarg=-n
-	shift
-    fi
+    local OPTIND=0
+    local OPTARG
+    local opt
+    local delimiter=$'\n'
+    local -a answers=()
+    local trailer=
+    while getopts "nd:" opt "$@" ; do
+	case "$opt" in
+	    n) delimiter=' '     ;;
+	    d) delimiter=$OPTARG; trailer=$'\n' ;;
+	    *)			 ;;
+	esac
+    done
+    shift $((OPTIND-1))
     local sizes=$*
     sizes=${sizes//,/ }
     for size in $sizes ; do
@@ -106,11 +115,12 @@ function parse_size() {
 		ti|tib|tebibytes) size_multiplier=1099511627776  ;;
 		*) fatal "Cannot parse size $size"		 ;;
 	    esac
-	    echo $echoarg "$((sizen*size_multiplier)) "
+	    answers+=("$((sizen*size_multiplier))")
 	else
 	    fatal "Cannot parse size $size"
 	fi
     done
+    (IFS=$delimiter; echo -n "${answers[*]}$trailer")
 }
 
 function parse_optvalues() {
