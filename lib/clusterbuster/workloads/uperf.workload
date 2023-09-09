@@ -38,16 +38,10 @@ function uperf_server_arglist() {
     mk_yaml_args "python3" "${mountdir}uperf-server.py" "$@" "$___uperf_port"
 }
 
-function _uperf_create_security_context() {
-    cat <<EOF
-securityContext:
-$(indent 2 default_security_context_content)
-EOF
+function uperf_sysctls() {
     if [[ -z "$___uperf_interface_pod_server" ]] ; then
 	cat <<EOF
-  sysctls:
-  - name: net.ipv4.ip_local_port_range
-    value: $___uperf_port $((___uperf_port + ___uperf_port_addrs))
+net.ipv4.ip_local_port_range $___uperf_port $((___uperf_port + ___uperf_port_addrs))
 EOF
     fi
 }
@@ -108,13 +102,11 @@ function uperf_create_deployment() {
 				   -A "$(create_affinity_yaml "${namespace}-uperf-client-${instance}")" \
 				   -a uperf_server_arglist \
 				   ${server_annotation:+-N "$server_annotation"} \
-				   -S "$(_uperf_create_security_context)" \
 				   "$namespace" "$instance" "$secret_count" 1 1
 	create_standard_deployment -w uperf-client \
 				   -A "$(create_affinity_yaml "${namespace}-uperf-server-${instance}")" \
 				   -a uperf_client_arglist \
 				   ${client_annotation:+-N "$client_annotation"} \
-				   -S "$(_uperf_create_security_context)" \
 				   "$namespace" "$instance" "$secret_count" "$replicas" "$containers_per_pod"
     done
 }

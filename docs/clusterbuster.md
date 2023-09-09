@@ -203,10 +203,33 @@ The following APIs are supported:
   associated settings.
 
 * `<workload>_reporting_class`
-
   Return the type of workload for reporting purposes.  Defaults to the
   name of the workload.  Should be used if the workload is equivalent
   to another workload for reporting purposes.
+
+* `<workload>_namespace_policy`
+  Return the policy that should be used for creating namespaces
+  (normally privileged if privileged pods are required, or restricted
+  otherwise).
+
+* `<workload>_sysctls`
+  Return a list of sysctl names and values, one name and value per
+  line, space separated.
+
+* `<workload>_security_context`
+  Return the security context required for this workload.  Normally
+  this is generated from the namespace policy and sysctls.
+
+* `<workload>_vm_required_packages`
+  Return a list of packages, one per line, that are required to run
+  the workload.
+
+* `<workload>_vm_setup_commands`
+  Return a list of commands, one per line, that must be run on
+  CNV/Kubevirt VMs in order to prepare for running the workload.
+  Normally package requirements should be provided in
+  `vm_required_packages`.  This should not include any sysctls unless
+  they are needed on the host.
 
 #### Workload Client (Pod) API
 
@@ -531,7 +554,7 @@ There are two commands that can be used from the workload:
   Clusterbuster command line.  If you do use this, it is suggested
   that you call `do-sync` following `drop-cache`, but it is not
   mandatory.
-  
+
 When called in setup, the command should not use either `do-sync` or
 `drop-cache`.
 

@@ -32,6 +32,7 @@ declare __topdir__
 __topdir__="$(realpath "$(dirname "$(realpath -e "$0")")/..")"
 declare __libdir__="${__topdir__}/lib/clusterbuster"
 declare __clusterbuster__="${__topdir__}/clusterbuster"
+declare __force_pull_clusterbuster_image__="${__topdir__}/force_pull_clusterbuster_image"
 declare __analyze__="${__topdir__}/analyze-clusterbuster-report"
 declare __profiledir__="${__libdir__}/CI/profiles"
 declare __workloaddir__="${__libdir__}/CI/workloads"
@@ -388,19 +389,6 @@ function process_profile() {
 	done < "${__profiledir__}/${profile}.profile"
     else
 	fatal "Cannot find profile $profile in $__profiledir__"
-    fi
-}
-
-function force_pull_base_image() {
-    for n in $("${OC}" get node --no-headers |awk '{print $1}') ; do
-	if ((debugonly)) ; then
-	    echo "${OC}" debug --no-stdin=true --no-tty=true node/"$n" -- chroot /host sh -c ' podman pull quay.io/rkrawitz/clusterbuster:latest quay.io/rkrawitz/clusterbuster-workloads:latest'
-	else
-	    "${OC}" debug --no-stdin=true --no-tty=true node/"$n" -- chroot /host sh -c ' podman pull quay.io/rkrawitz/clusterbuster:latest quay.io/rkrawitz/clusterbuster-workloads:latest' &
-	fi
-    done
-    if ((! debugonly)) ; then
-	wait
     fi
 }
 
@@ -830,7 +818,7 @@ if ((! debugonly)) ; then
     trap 'if ((monitor_pid > 0)) ; then kill -9 "$monitor_pid"; monitor_pid=0; fi; interrupted=1; if ((job_pid > 0)) ; then kill -TERM "$job_pid"; echo Cleaning up 1>&2; fi; if ((fail < 2)); then fail=2; fi; finis "Run interrupted"' TERM INT HUP
     trap 'finis' EXIT
     if ((force_pull_image)) ; then
-	force_pull_base_image
+	"$__force_pull_clusterbuster_image__"
     fi
 fi
 

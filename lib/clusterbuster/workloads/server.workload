@@ -35,14 +35,10 @@ function server_server_arglist() {
 		 "$___server_port" "$___msg_size" "$((containers_per_pod * replicas_per_server))"
 }
 
-function _server_create_security_context() {
+function _server_sysctls() {
     if [[ -z "$___server_interface_pod_server" ]] ; then
 	cat <<EOF
-securityContext:
-$(indent 2 default_security_context_content)
-  sysctls:
-  - name: net.ipv4.ip_local_port_range
-    value: $___server_port $((___server_port + ___server_port_addrs))
+net.ipv4.ip_local_port_range $___server_port $((___server_port + ___server_port_addrs))
 EOF
     fi
 }
@@ -109,13 +105,11 @@ function server_create_deployment() {
 				   -A "$(create_affinity_yaml "${namespace}-server-client-${instance}")" \
 				   -a server_server_arglist \
 				   ${server_annotation:+-N "$server_annotation"} \
-				   -S "$(_server_create_security_context)" \
 				   "$namespace" "$instance" "$secret_count" 1 1
 	create_standard_deployment -w server-client \
 				   -A "$(create_affinity_yaml "${namespace}-server-server-${instance}")" \
 				   -a server_client_arglist \
 				   ${client_annotation:+-N "$client_annotation"} \
-				   -S "$(_server_create_security_context)" \
 				   "$namespace" "$instance" "$secret_count" "$replicas" "$containers_per_pod"
     done
 }

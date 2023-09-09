@@ -18,6 +18,7 @@ import time
 import socket
 import json
 import os
+import re
 import sys
 import subprocess
 import signal
@@ -43,7 +44,7 @@ class clusterbuster_pod_client(cb_util):
                 self.__drop_cache_port = None
             self.__external_sync_only = True
             self.__enable_sync = True
-            self.__pod = socket.gethostname()
+            self.__pod = os.environ.get('__CB_HOSTNAME', socket.gethostname())
         else:
             self.__external_sync_only = False
             print(f'Args: {" ".join(argv)}', file=sys.stderr)
@@ -90,7 +91,7 @@ class clusterbuster_pod_client(cb_util):
                     while True:
                         signal.pause()
             if child == 0:
-                self.__pod = socket.gethostname()
+                self.__pod = os.environ.get('__CB_HOSTNAME', socket.gethostname())
                 self._args = argv[12:]
                 self.__timing_parameters = {}
                 self.__timing_initialized = False
@@ -343,7 +344,9 @@ oc logs -n '{self._namespace()}' '{self._podname()}' -c '{self._container()}'
             os._exit(1)
 
     def _resolve_host(self, addr):
-        if '@' in addr:
+        if not self.__is_raw_ip(addr) and ('sync' not in addr or '@' in addr):
+            if '@' not in addr:
+                addr = f'eth0@{addr}'
             addr = f'{addr}.{self.__namespace}'
             answer = self.__request_ip_addresses([addr])
             if addr in answer:
@@ -352,6 +355,9 @@ oc logs -n '{self._namespace()}' '{self._podname()}' -c '{self._container()}'
                 raise socket.gaierror("Unable to resolve {addr}")
         else:
             return super()._resolve_host(addr)
+
+    def __is_raw_ip(self, addr):
+        return re.search(r'(^|@)?(([0-9]{1,3}\.){3}[0-9]{1,3}$)', addr) is not None
 
     def __request_ip_addresses(self, addresses: list):
         answer = {}
