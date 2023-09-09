@@ -23,6 +23,7 @@ declare -ig ___memory_stride=0
 declare -g ___memory_iterations=1
 declare -g ___memory_interval=0
 declare -ig ___memory_scan=0
+declare -ig ___memory_sync=1
 declare -g ___memory_random_seed=
 
 function memory_arglist() {
@@ -31,7 +32,7 @@ function memory_arglist() {
     mk_yaml_args "python3" "${mountdir}memory.py" "$@" "$processes_per_pod" \
 		 "$___memory_size" "${workload_run_time},${workload_run_time_max}" \
 		 "$___memory_scan" "$___memory_stride" "$___memory_iterations" \
-		 "$___memory_interval" "$___memory_random_seed"
+		 "$___memory_interval" "$___memory_random_seed" "$___memory_sync"
 }
 
 function memory_create_deployment() {
@@ -92,6 +93,11 @@ function memory_help_options() {
                         Use the specified value in combination with
                         the pod ID to randomize the run.  The seed
                         may be an arbitrary string.
+       --memory-sync-between-iterations=<0,1>
+                        Sync between each iteration.  Default is yes.
+                        Most useful to set this to no is when running
+                        random workloads when it is desired there to be
+                        overlap between operations.
 EOF
 }
 
@@ -107,6 +113,7 @@ function memory_process_options() {
 	    memoryiter*)   ___memory_iterations=$(parse_size "$optvalue")	;;
 	    memoryinter*)  ___memory_interval=$(parse_size -d, "$optvalue")	;;
 	    memoryrandom*) ___memory_random_seed=$(base64 -w 0 <<< "$optvalue") ;;
+	    memorysync*)   ___memory_sync=$(bool "$optvalue")			;;
 	    *) 		   unknown_opts+=("$noptname ($noptname1)")		;;
 	esac
     done
@@ -139,7 +146,8 @@ function memory_report_options() {
 "memory_interval": $(mk_num_list "$___memory_interval"),
 "memory_scan": $___memory_scan,
 "memory_iteration_time": [$workload_run_time, $workload_run_time_max],
-"memory_random_seed": "$___memory_random_seed"
+"memory_random_seed": "$___memory_random_seed",
+"memory_sync_between_iterations": "$___memory_sync"
 EOF
 }
 
