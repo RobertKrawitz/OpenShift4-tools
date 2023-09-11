@@ -43,7 +43,7 @@ function sysbench_create_deployment() {
     local replicas=${4:-1}
     local containers_per_pod=${5:-1}
     local -i instance
-    container_image="quay.io/rkrawitz/clusterbuster-workloads:${arch}-v1.2"
+    container_image="quay.io/rkrawitz/clusterbuster-workloads:${arch}-perf-ci-v1.2"
     create_sync_service "$namespace" \
 			"$((containers_per_pod * processes_per_pod * replicas * count))" \
 			"$((containers_per_pod * replicas * count))"
