@@ -24,6 +24,7 @@ class memory_client(clusterbuster_pod_client):
             self.__iterations = int(self._args[5])
             self.__interval = self.parse_param(self._args[6])
             self.__random_seed = self._args[7]
+            self.__sync_between_iterations = bool(int(self._args[8]))
             if not self.__stride or self.__stride <= 0:
                 self.__stride = resource.getpagesize()
         except Exception as err:
@@ -36,7 +37,7 @@ class memory_client(clusterbuster_pod_client):
         return answer
 
     def runone(self, size: int, stride: int, runtime: int, scan: bool):
-        pages = size / stride
+        pages = int(size / stride)
         self._timestamp(f"Running size {size} stride {stride} runtime {runtime} scan {scan}")
         # It's a lot more efficient space-wise to create a small byte array
         # and expand it than to create the entire byte array at once.
@@ -70,7 +71,8 @@ class memory_client(clusterbuster_pod_client):
         runs = []
 
         for loop in range(self.__iterations):
-            self._sync_to_controller(self._idname([loop]))
+            if self.__sync_between_iterations:
+                self._sync_to_controller(self._idname([loop]))
             self._timestamp(f"Iteration {loop}")
             run_size = self.randval(self.__memory)
             run_size = self.__stride * int((run_size + self.__stride - 1) / self.__stride)
@@ -80,6 +82,7 @@ class memory_client(clusterbuster_pod_client):
             runs.append({'size': run_size,
                          'runtime': run_time,
                          'start_time': start_time,
+                         'end_time': run_et + start_time,
                          'elapsed_time': run_et,
                          'iterations': run_loops})
             loops += run_loops
@@ -91,7 +94,8 @@ class memory_client(clusterbuster_pod_client):
         extras = {
             'scan': self.__scan,
             'loops': loops,
-            'runtime': elapsed_time,
+            'runtime': data_end_time - data_start_time,
+            'rate': loops / (data_end_time - data_start_time),
             'cases': runs
             }
         self._report_results(data_start_time, data_end_time, data_end_time - data_start_time,
