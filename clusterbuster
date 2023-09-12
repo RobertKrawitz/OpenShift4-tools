@@ -327,14 +327,10 @@ EOF
 }
 
 function _help_extended() {
-    if [[ -n "$*" ]] ; then
-	_helpmsg "$@"
-	cat <<'EOF'
+    _helpmsg "$@"
+    cat <<EOF
 
 Extended Options:
-EOF
-    fi
-    cat <<EOF
     General Options (short equivalents):
        --doit=<1,0>     Run the command or not (default 1) (inverse of -n)
        --jobname=name   Name of the job, for logging purposes.
@@ -647,12 +643,12 @@ EOF
 }
 
 function help() {
-    _help_extended "$@" | "${PAGER:-more}"
+    _help_extended | "${PAGER:-more}"
     exit 1
 }
 
 function help_extended() {
-    _help_extended "$@" | "${PAGER:-more}"
+    _help_extended | "${PAGER:-more}"
     exit 1
 }
 

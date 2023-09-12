@@ -153,6 +153,7 @@ class ClusterBusterReporter:
         :param report_width: Width of the report
         """
         self._jdata = deepcopy(jdata)
+        self._report_format = report_format
         self._format = report_format
         self._all_clients_are_on_the_same_node = self.__are_clients_all_on_same_node()
         self._found_pods = {}
@@ -312,7 +313,7 @@ class ClusterBusterReporter:
         return len(self._rows)-1
 
     def __format_memory_value(self, number):
-        return self._prettyprint(number, precision=3, suffix='B', integer=1)
+        return self._prettyprint(number, precision=3, suffix='B')
 
     def __format_byte_rate_value(self, number):
         return self._prettyprint(number, precision=3, base=1000, suffix='B/sec')

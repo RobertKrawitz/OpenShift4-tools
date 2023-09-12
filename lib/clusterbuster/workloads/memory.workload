@@ -21,18 +21,21 @@
 declare -g ___memory_size=1048576
 declare -ig ___memory_stride=0
 declare -g ___memory_iterations=1
-declare -g ___memory_interval=0
+declare -g ___memory_idle=0
 declare -ig ___memory_scan=0
 declare -ig ___memory_sync=1
 declare -g ___memory_random_seed=
+declare -g ___memory_iteration_runtime=10
+declare -ig ___memory_idle_first=2
 
 function memory_arglist() {
     local mountdir=$1; shift
     while [[ "$1" != '--' ]] ; do shift; done; shift
     mk_yaml_args "python3" "${mountdir}memory.py" "$@" "$processes_per_pod" \
-		 "$___memory_size" "${workload_run_time},${workload_run_time_max}" \
-		 "$___memory_scan" "$___memory_stride" "$___memory_iterations" \
-		 "$___memory_interval" "$___memory_random_seed" "$___memory_sync"
+		 "${workload_run_time}" "$___memory_size" "$___memory_scan" \
+		 "$___memory_stride" "$___memory_iterations" \
+		 "$___memory_idle" "$___memory_random_seed" "$___memory_sync" \
+		 "$___memory_iteration_runtime" "$___memory_idle_first"
 }
 
 function memory_create_deployment() {
@@ -73,22 +76,33 @@ EOF
 function memory_help_options() {
     cat <<'EOF'
     Memory Options:
-       --memory-size=<size[,max_size]>
+       --memory-size=<size[,max_size][,step]>
                         Amount of memory to allocate.  If two values
                         are provided, a random value between the two
-                        is used for each iteration.
+                        is used for each iteration.  Step allows specifying
+			the step size.
        --memory-scan=<0,1>
                         Write scan memory continuously
        --memory-stride=<size>
                         Stride the specified number of bytes
                         when scanning.  Default is system pagesize.
                         Set to 1 to scan every byte.
-       --memory-iterations=<n[,max_iterations]>
+       --memory-iterations=<n>
                         Run the scan for the specified number of
-                        iterations.
-       --memory-interval=<seconds[,max_seconds]>
+                        iterations.  Default is 1.
+       --memory-idle=<seconds[,max_seconds][,step]>
                         Sleep for the specified time between
                         iterations.
+       --memory-idle-first=<0,1,2>
+                        Sleep first before starting operations.
+                        Value of 2 means to randomly sleep or not
+                        for the first operation.  Default $memory_idle_first.
+       --memory-iteration-runtime=<seconds[,max_seconds][,step]>
+			The time for each iteration of the test.
+                        Default is not set, in which case the
+                        --workload-runtime and --memory-iterations
+                        control how long the test is run.  This may not
+                        be used if --memory-sync-between-iterations is set.
        --memory-random-seed=<seed>
                         Use the specified value in combination with
                         the pod ID to randomize the run.  The seed
@@ -107,23 +121,24 @@ function memory_process_options() {
     for opt in "$@" ; do
 	read -r noptname1 noptname optvalue <<< "$(parse_option "$opt")"
 	case "$noptname1" in
-	    memorysize)	   ___memory_size=$(parse_size -d, "$optvalue")		;;
-	    memoryscan)	   ___memory_scan=$(bool "$optvalue")			;;
-	    memorystride*) ___memory_stride=$(parse_size -d, "$optvalue")	;;
-	    memoryiter*)   ___memory_iterations=$(parse_size "$optvalue")	;;
-	    memoryinter*)  ___memory_interval=$(parse_size -d, "$optvalue")	;;
-	    memoryrandom*) ___memory_random_seed=$(base64 -w 0 <<< "$optvalue") ;;
-	    memorysync*)   ___memory_sync=$(bool "$optvalue")			;;
-	    *) 		   unknown_opts+=("$noptname ($noptname1)")		;;
+	    memorysize)		 ___memory_size=$(parse_size -d, "$optvalue")		  ;;
+	    memoryscan)		 ___memory_scan=$(bool "$optvalue")			  ;;
+	    memorystride*)	 ___memory_stride=$(parse_size "$optvalue")		  ;;
+	    memoryiterations)    ___memory_iterations=$(parse_size "$optvalue")		  ;;
+	    memoryiterationrun*) ___memory_iteration_runtime=$(parse_size -d, "$optvalue");;
+	    memoryidle*)	 ___memory_idle=$(parse_size -d, "$optvalue")		  ;;
+	    memoryrandom*)	 ___memory_random_seed=$(base64 -w 0 <<< "$optvalue")	  ;;
+	    memorysync*)	 ___memory_sync=$(bool "$optvalue")			  ;;
+	    memorytotal*)	 ___memory_total_runtime=$(parse_size "$optvalue")	  ;;
+	    *)			 unknown_opts+=("$noptname ($noptname1)")		  ;;
 	esac
     done
+    if ((___memory_sync && ___memory_total_runtime > 0)) ; then
+	fatal "--memory-total-runtime may not be set if --memory-sync is also set"
+    fi
     if [[ -n "${unknown_opts[*]:-}" ]] ; then
 	warn "Notice: the following options are not known: ${unknown_opts[*]}"
     fi
-}
-
-function memory_workload_reporting_class() {
-    echo generic
 }
 
 function memory_supports_reporting() {
@@ -143,9 +158,9 @@ function memory_report_options() {
 "memory_size": $(mk_num_list "$___memory_size"),
 "memory_stride": $___memory_stride,
 "memory_iterations": $___memory_iterations,
-"memory_interval": $(mk_num_list "$___memory_interval"),
+"memory_idle": $(mk_num_list "$___memory_idle"),
 "memory_scan": $___memory_scan,
-"memory_iteration_time": [$workload_run_time, $workload_run_time_max],
+"memory_iteration_time": $(mk_num_list "$___memory_iteration_runtime"),
 "memory_random_seed": "$___memory_random_seed",
 "memory_sync_between_iterations": "$___memory_sync"
 EOF
