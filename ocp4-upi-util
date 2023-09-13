@@ -804,8 +804,25 @@ function __setup_tftpboot() {
 
 function __setup_bm_if() {
     [[ -n "$bare_metal_interface" ]] || __fatal "No bare metal interface defined in bare_metal_interface"
-    nmcli con down "$bare_metal_interface" || true # Fine for this to fail
-    nmcli con del "$bare_metal_interface"
+    local line
+    # Purge any other masters for our bare metal interface
+    while read -r line ; do
+    	if [[ $line =~ ^[[:digit:]]+:\ +([^:]+):.*master ]] ; then
+	    nmcli con del "${BASH_REMATCH[1]}"
+    	fi
+    done <<< "$(ip addr show master "$cluster_network_bridge_name" 2>/dev/null || true)"
+    # Purge any stale instances of our bare metal interface
+    local name
+    local uuid
+    local type
+    local device
+    local rest
+    # shellcheck disable=SC2034
+    while read -r name uuid type device rest ; do
+    	if [[ $name = "$cluster_network_bridge_name" ]] ; then
+    	    nmcli con del "$uuid"
+    	fi
+    done <<< "$(nmcli con)"
     nmcli con add type bridge ifname "${cluster_network_bridge_name}" con-name "${cluster_network_bridge_name}" ipv4.method manual ipv4.addr "${bootstrap_ipaddr}"/24 ipv4.dns "${bootstrap_ipaddr}" ipv4.dns-priority 10 autoconnect yes bridge.stp no
     nmcli con add type bridge-slave autoconnect yes con-name "$bare_metal_interface" ifname "$bare_metal_interface" master "${cluster_network_bridge_name}"
     nmcli con reload "$bare_metal_interface"
