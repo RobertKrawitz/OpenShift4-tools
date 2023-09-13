@@ -803,11 +803,8 @@ function __setup_tftpboot() {
 }
 
 function __setup_bm_if() {
-    ip addr show dev "${cluster_network_bridge_name}" >/dev/null 2>&1 && return
-    [[ -n "$bare_metal_interface" ]] || {
-	__fatal "No bare metal interface defined in bare_metal_interface"
-    }
-    nmcli con down "$bare_metal_interface"
+    [[ -n "$bare_metal_interface" ]] || __fatal "No bare metal interface defined in bare_metal_interface"
+    nmcli con down "$bare_metal_interface" || true # Fine for this to fail
     nmcli con del "$bare_metal_interface"
     nmcli con add type bridge ifname "${cluster_network_bridge_name}" con-name "${cluster_network_bridge_name}" ipv4.method manual ipv4.addr "${bootstrap_ipaddr}"/24 ipv4.dns "${bootstrap_ipaddr}" ipv4.dns-priority 10 autoconnect yes bridge.stp no
     nmcli con add type bridge-slave autoconnect yes con-name "$bare_metal_interface" ifname "$bare_metal_interface" master "${cluster_network_bridge_name}"
