@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import argparse
 import json
 import re
 import sys
@@ -35,14 +36,14 @@ class ClusterBusterReporter:
     """
 
     @staticmethod
-    def report_one(item: str, jdata: dict, format: str, **kwargs):
+    def report_one(item: str, jdata: dict, report_format: str, extras=None):
         jdata['metadata']['RunArtifactDir'] = item
-        if format == 'none' or format is None:
+        if report_format == 'none' or report_format is None:
             return
-        if format == 'raw-python':
+        if report_format == 'raw-python':
             print(jdata)
             return
-        if format == 'raw':
+        if report_format == 'raw':
             json.dump(jdata, sys.stdout, indent=2)
             return
         if 'workload_reporting_class' in jdata['metadata']:
@@ -50,20 +51,32 @@ class ClusterBusterReporter:
         else:
             try:
                 workload = jdata["metadata"]["workload"]
-            except Exception:
+            except KeyError:
                 raise TypeError("Unable to identify workload")
         if 'runtime_class' not in jdata['metadata']:
-            runtime_class = jdata['metadata']['options']['runtime_classes'].get('default')
+            try:
+                runtime_class = jdata['metadata']['options']['runtime_classes'].get('default')
+            except KeyError:
+                runtime_class = None
             if runtime_class:
                 jdata['metadata']['runtime_class'] = runtime_class
+        failed_load = False
+        load_failed_exception = None
         try:
             imported_lib = importlib.import_module(f'..{workload}_reporter', __name__)
+        except SyntaxError as exc:
+            failed_load = True
+            load_failed_exception = exc
+        except (KeyboardInterrupt, BrokenPipeError):
+            sys.exit(1)
         except Exception:
             print(f'Warning: no handler for workload {workload}, issuing generic summary report', file=sys.stderr)
-            return ClusterBusterReporter(jdata, format).create_report()
+            return ClusterBusterReporter(jdata, report_format, extras=extras).create_report()
+        if failed_load:
+            raise type(load_failed_exception)(f"Cannot load reporter for {workload}: {load_failed_exception}")
         for i in inspect.getmembers(imported_lib):
             if i[0] == f'{workload}_reporter':
-                return i[1](jdata, format).create_report(**kwargs)
+                return i[1](jdata, report_format, extras=extras).create_report()
 
     @staticmethod
     def validate_dir(dirname: str):
@@ -92,7 +105,7 @@ class ClusterBusterReporter:
         return answers
 
     @staticmethod
-    def report(items, format: str, **kwargs):
+    def report(items, report_format: str, extras=None):
         answers = list()
         if not items:
             items = [None]
@@ -101,39 +114,43 @@ class ClusterBusterReporter:
         for item in ClusterBusterReporter.enumerate_dirs(items):
             with open(item) as f:
                 try:
-                    answers.append(ClusterBusterReporter.report_one(os.path.dirname(item), json.load(f), format, **kwargs))
+                    answers.append(ClusterBusterReporter.report_one(os.path.dirname(item), json.load(f), report_format,
+                                                                    extras=extras))
+                except (KeyboardInterrupt, BrokenPipeError):
+                    sys.exit(1)
                 except Exception:
                     print(f'Warning (continuing): unable to load {item}: {traceback.format_exc()}', file=sys.stderr)
         for item in items:
             jdata = dict()
             if isinstance(item, str):
                 continue
-            if isinstance(item, io.TextIOBase):
+            if isinstance(item, io.TextIOBase) or item is None:
+                if item is None:
+                    item = sys.stdin
                 try:
                     jdata = json.load(item)
+                except (KeyboardInterrupt, BrokenPipeError):
+                    sys.exit(1)
                 except Exception:
                     print(f'Warning (continuing): unable to load {item}: {traceback.format_exc()}', file=sys.stderr)
-            elif item is None:
-                try:
-                    jdata = json.load(sys.stdin)
-                except Exception:
-                    print(f'Warning (continuing): unable to load <stdin>: {traceback.format_exc()}', file=sys.stderr)
             elif isinstance(item, dict):
                 jdata = item
             else:
-                raise Exception(f"Unrecognized item {item}")
-            answers.append(ClusterBusterReporter.report_one("N/A", jdata, format, **kwargs))
+                raise TypeError(f"Unrecognized item {item}")
+            answers.append(ClusterBusterReporter.report_one("N/A", jdata, report_format, extras=extras))
         return answers
 
     @staticmethod
-    def print_report(items, format: str, outfile=sys.stdout, **kwargs):
-        answers = ClusterBusterReporter.report(items, format, **kwargs)
-        if format.endswith('python'):
+    def print_report(items, report_format: str, outfile=sys.stdout, extras=None):
+        answers = ClusterBusterReporter.report(items, report_format=report_format, extras=None)
+        if report_format.endswith('python'):
             print(answers, file=outfile)
-        elif format.startswith('json'):
+        elif report_format.startswith('json'):
             json.dump(answers, outfile, indent=2)
-        elif format != "none":
-            print("\n\n".join(answers), file=outfile)
+        elif report_format != "none":
+            answer = "\n\n".join([answer for answer in answers if (answer is not None and answer != '')])
+            if answer is not None and answer != '':
+                print(answer, file=outfile)
 
     @staticmethod
     def list_report_formats():
@@ -144,7 +161,36 @@ class ClusterBusterReporter:
                 'parseable-summary-python', 'parseable-verbose-python'
                 ]
 
-    def __init__(self, jdata: dict, report_format: str, indent: int = 2, report_width=78):
+    @staticmethod
+    def get_start_and_end(jdata: dict):
+        start_time = None
+        end_time = None
+        try:
+            worker_results = jdata['Results']['worker_results']
+            for result in worker_results:
+                pod = 'Unknown_pod'
+                ns = 'Unknown_namespace'
+                container = 'Unknown_container'
+                process = 'Unknown_process'
+                try:
+                    ns = result.get('ns', 'Unknown-namespace')
+                    pod = result.get('pod', 'Unknown-pod')
+                    container = result.get('container', 'Unknown-container')
+                    process = str(result.get('process', result.get('process_id', 'Unknown-process')))
+                    start = result['timing_parameters']['xtime_adjustment']
+                    end = start + result['data_end_time']
+                    if start_time is None or start < start_time:
+                        start_time = start
+                    if end_time is None or end > end_time:
+                        end_time = end
+                except KeyError as exc:
+                    instance = f"{process}.{container}.{pod}.{ns}"
+                    print(f"Warning: could not retrieve start and end times for {instance}: {exc}", file=sys.stderr)
+        except KeyError as exc:
+            print(f"Could not retrieve start and end times: {exc}")
+        return start_time, end_time
+
+    def __init__(self, jdata: dict, report_format: str, indent: int = 2, report_width=78, extras=None):
         """
         Initializer for generic ClusterBuster report
         :param jdata: JSON data to report
@@ -152,7 +198,11 @@ class ClusterBusterReporter:
         :param indent: Per-level indentation
         :param report_width: Width of the report
         """
-        self._jdata = deepcopy(jdata)
+        parser = argparse.ArgumentParser(description='Parse report')
+        parser.add_argument('--no-summary', action='store_true', help='Do not print standard summary')
+        self._base_args, self.__extra_args = parser.parse_known_args(extras)
+        self._jdata = jdata
+        self._abs_start, self._abs_end = ClusterBusterReporter.get_start_and_end(jdata)
         self._report_format = report_format
         self._format = report_format
         self._all_clients_are_on_the_same_node = self.__are_clients_all_on_same_node()
@@ -173,6 +223,10 @@ class ClusterBusterReporter:
         self._add_explicit_timeline_vars(['data_start_time', 'data_end_time', 'pod_start_time', 'pod_create_time'])
         self._add_accumulators(['user_cpu_time', 'system_cpu_time', 'cpu_time', 'data_elapsed_time',
                                 'timing_parameters.sync_rtt_delta'])
+        if 'metrics' in self._jdata:
+            self.metrics = PrometheusMetrics(self._jdata['metrics'], self._abs_start, self._abs_end)
+        else:
+            self.metrics = None
 
     def create_report(self):
         """
@@ -312,6 +366,9 @@ class ClusterBusterReporter:
         self._rows.append(rowhash)
         return len(self._rows)-1
 
+    def _get_metric_value(self, metric_name: str, time: float, selector: dict = None):
+        return self.metrics.get_value_by_key(metric_name, time, selector)
+
     def __format_memory_value(self, number):
         return self._prettyprint(number, precision=3, suffix='B')
 
@@ -340,29 +397,60 @@ class ClusterBusterReporter:
             self._summary['overlap_error'] = self._safe_div(((self._summary['data_start_interval'] +
                                                               self._summary['data_end_interval']) / 2),
                                                             self._summary['elapsed_time_average'])
-        if 'metrics' in self._jdata:
-            metrics = PrometheusMetrics(self._jdata['metrics'])
+        if self.metrics:
             self._summary['metrics'] = {}
             mtr = self._summary['metrics']
-            mtr['Maximum memory working set'] = metrics.get_max_value_by_key('containerMemoryWorkingSet-clusterbuster',
-                                                                             printfunc=self.__format_memory_value)
-            mtr['Receive bytes/sec'] = metrics.get_max_value_by_key('rxNetworkBytes-WorkerByNode',
-                                                                    printfunc=self.__format_byte_rate_value)
-            mtr['Transmit bytes/sec'] = metrics.get_max_value_by_key('txNetworkBytes-WorkerByNode',
-                                                                     printfunc=self.__format_byte_rate_value)
-            mtr['Receive packets/sec'] = metrics.get_max_value_by_key('rxNetworkPackets-WorkerByNode',
-                                                                      printfunc=self.__format_pkt_rate_value)
-            mtr['Transmit packets/sec'] = metrics.get_max_value_by_key('txNetworkPackets-WorkerByNode',
-                                                                       printfunc=self.__format_pkt_rate_value)
-            mtr['CPU utilization'] = {
-                'User': metrics.get_max_value_by_key('nodeCPUUser-Workers',
-                                                     printfunc=self.__format_cpu_value),
-                'System': metrics.get_max_value_by_key('nodeCPUSys-Workers',
-                                                       printfunc=self.__format_cpu_value),
-                'Total': metrics.get_max_value_by_key('nodeCPUUtil-Workers',
-                                                      printfunc=self.__format_cpu_value),
-                'Total Workers': metrics.get_max_value_by_key('containerCPU-clusterbuster',
-                                                              printfunc=self.__format_cpu_value)
+            mtr['Maximum memory'] = {
+                'Working set': self.metrics.get_max_value_by_key('containerMemoryWorkingSet-clusterbuster',
+                                                                 printfunc=self.__format_memory_value),
+                'In use': self.metrics.get_max_value_by_key('nodeMemoryInUse-Workers',
+                                                            printfunc=self.__format_memory_value)
+                }
+            mtr['Average memory'] = {
+                'Working set': self.metrics.get_avg_value_by_key('containerMemoryWorkingSet-clusterbuster',
+                                                                 printfunc=self.__format_memory_value),
+                'In use': self.metrics.get_avg_value_by_key('nodeMemoryInUse-Workers',
+                                                            printfunc=self.__format_memory_value)
+                }
+            mtr['Maximum network traffic'] = {
+                'Receive bytes/sec': self.metrics.get_max_value_by_key('rxNetworkBytes-WorkerByNode',
+                                                                       printfunc=self.__format_byte_rate_value),
+                'Transmit bytes/sec': self.metrics.get_max_value_by_key('txNetworkBytes-WorkerByNode',
+                                                                        printfunc=self.__format_byte_rate_value),
+                'Receive packets/sec': self.metrics.get_max_value_by_key('rxNetworkPackets-WorkerByNode',
+                                                                         printfunc=self.__format_pkt_rate_value),
+                'Transmit packets/sec': self.metrics.get_max_value_by_key('txNetworkPackets-WorkerByNode',
+                                                                          printfunc=self.__format_pkt_rate_value)
+                }
+            mtr['Average network traffic'] = {
+                'Receive bytes/sec': self.metrics.get_avg_value_by_key('rxNetworkBytes-WorkerByNode',
+                                                                       printfunc=self.__format_byte_rate_value),
+                'Transmit bytes/sec': self.metrics.get_avg_value_by_key('txNetworkBytes-WorkerByNode',
+                                                                        printfunc=self.__format_byte_rate_value),
+                'Receive packets/sec': self.metrics.get_avg_value_by_key('rxNetworkPackets-WorkerByNode',
+                                                                         printfunc=self.__format_pkt_rate_value),
+                'Transmit packets/sec': self.metrics.get_avg_value_by_key('txNetworkPackets-WorkerByNode',
+                                                                          printfunc=self.__format_pkt_rate_value)
+                }
+            mtr['Maximum CPU utilization'] = {
+                'User': self.metrics.get_max_value_by_key('nodeCPUUser-Workers',
+                                                          printfunc=self.__format_cpu_value),
+                'System': self.metrics.get_max_value_by_key('nodeCPUSys-Workers',
+                                                            printfunc=self.__format_cpu_value),
+                'Total': self.metrics.get_max_value_by_key('nodeCPUUtil-Workers',
+                                                           printfunc=self.__format_cpu_value),
+                'Total Workers': self.metrics.get_max_value_by_key('containerCPU-clusterbuster',
+                                                                   printfunc=self.__format_cpu_value)
+                }
+            mtr['Average CPU utilization'] = {
+                'User': self.metrics.get_avg_value_by_key('nodeCPUUser-Workers',
+                                                          printfunc=self.__format_cpu_value),
+                'System': self.metrics.get_avg_value_by_key('nodeCPUSys-Workers',
+                                                            printfunc=self.__format_cpu_value),
+                'Total': self.metrics.get_avg_value_by_key('nodeCPUUtil-Workers',
+                                                           printfunc=self.__format_cpu_value),
+                'Total Workers': self.metrics.get_avg_value_by_key('containerCPU-clusterbuster',
+                                                                   printfunc=self.__format_cpu_value)
                 }
 
     def _add_explicit_timeline_vars(self, vars_to_update: list):
@@ -505,7 +593,7 @@ class ClusterBusterReporter:
                 return self._fformat(result, precision)
             else:
                 return round(result, precision)
-        except Exception:
+        except (TypeError, ValueError, ZeroDivisionError):
             if number_only:
                 return 0
             else:
@@ -566,16 +654,16 @@ class ClusterBusterReporter:
                     name, value = option.split('=', 1)
                     try:
                         value = int(value)
-                    except Exception:
+                    except ValueError:
                         pass
                     args[name] = value
-                except Exception:
-                    raise Exception(f"Cannot parse option {option}: {traceback.format_exc()}")
+                except ValueError:
+                    raise ValueError(f"Cannot parse option {option}: {traceback.format_exc()}")
             val = self._prettyprint(val, **args)
         if rvar in dest and val != dest[rvar]:
             if orig_var is None:
                 orig_var = var
-            raise Exception(f"Would overwrite {orig_var}, {dest[rvar]} => {source[rvar]}")
+            raise PermissionError(f"Would overwrite {orig_var}, {dest[rvar]} => {source[rvar]}")
         dest[rvar] = val
 
     def __are_clients_all_on_same_node(self):
@@ -588,7 +676,9 @@ class ClusterBusterReporter:
         """
         node = None
         for obj in self._jdata['api_objects']:
-            if obj['kind'] == 'Pod' and 'clusterbuster-client' in obj['metadata']['labels'] and obj['metadata']['labels']['clusterbuster-client']:
+            if ((obj['kind'] == 'Pod' and
+                 'clusterbuster-client' in obj['metadata']['labels'] and
+                 obj['metadata']['labels']['clusterbuster-client'])):
                 if not node:
                     node = obj['spec']['nodeName']
                 elif obj['spec']['nodeName'] != node:
@@ -761,7 +851,9 @@ class ClusterBusterReporter:
                 if summary[var_avg] ** 2 > (summary[var_sq] / summary[var_counter]):
                     # If the numbers are very close, this is probably an arithmetic rounding problem
                     if (summary[var_sq] / summary[var_counter]) / summary[var_avg] ** 2 < 0.99999999999:
-                        print(f"Warning: taking sqrt of negative number: avg**2 {summary[var_avg] ** 2}, var_sq {(summary[var_sq] / summary[var_counter])}", file=sys.stderr)
+                        avgsq = summary[var_avg] ** 2
+                        varsq = summary[var_sq] / summary[var_counter]
+                        print(f"Warning: taking sqrt of negative number: avg**2 {avgsq}, var_sq {varsq}", file=sys.stderr)
                     summary[var_stdev] = 0
                 else:
                     summary[var_stdev] = ((summary[var_sq] / summary[var_counter]) - (summary[var_avg] ** 2)) ** 0.5
@@ -774,7 +866,7 @@ class ClusterBusterReporter:
         try:
             idx = n.index(' ')
             return n[:idx]
-        except Exception:
+        except ValueError:
             return num
 
     def __isnum(self, num):
@@ -782,7 +874,7 @@ class ClusterBusterReporter:
         try:
             _ = float(num)
             return True
-        except Exception:
+        except ValueError:
             return False
 
     def __compute_report_width(self, results: dict, indentation: int = None):
@@ -810,7 +902,7 @@ class ClusterBusterReporter:
             else:
                 try:
                     nwidth = len(str(int(float(self.__strip_suffix(results[key])))))
-                except Exception:
+                except (TypeError, ValueError):
                     nwidth = 0
                 fwidth = len(key.strip())
             if fwidth > width:
@@ -891,7 +983,7 @@ class ClusterBusterReporter:
                 else:
                     try:
                         nwidth = len(str(int(float(self.__strip_suffix(value)))))
-                    except Exception:
+                    except (TypeError, ValueError):
                         value = str(value).strip()
                         if len(value) > integer_width:
                             nwidth = None
@@ -1005,6 +1097,9 @@ class ClusterBusterReporter:
         else:
             cmdline = self._wrap_text(' '.join(self._jdata['metadata']['expanded_command_line']))
         results['Overview']['Command line'] = cmdline
-        outfile = io.StringIO()
-        self.__print_report(results, outfile=outfile, value_column=key_width, integer_width=integer_width)
-        return outfile.getvalue()
+        if self._base_args.no_summary:
+            return ''
+        else:
+            outfile = io.StringIO()
+            self.__print_report(results, outfile=outfile, value_column=key_width, integer_width=integer_width)
+            return outfile.getvalue()

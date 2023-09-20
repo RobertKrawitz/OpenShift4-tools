@@ -2,7 +2,7 @@
 
 import time
 import signal
-import random
+from random import randint, seed, random
 import resource
 import math
 import os
@@ -29,6 +29,10 @@ class memory_client(clusterbuster_pod_client):
             self.__sync_between_iterations = bool(int(self._args[8]))
             self.__iteration_runtime = self.parse_param(self._args[9])
             self.__sleep_first = int(self._args[10])
+            self.__run_in_subproc = bool(int(self._args[11]))
+            self.__start_probability = None if self._args[12] == '' else float(self._args[12])
+            if self.__start_probability is not None and (self.__start_probability < 0 or self.__start_probability > 1):
+                raise ValueError(f"Start probability must be between 0 and 1 ({self.__start_probability})")
             if self.__runtime > 0:
                 self.__iterations = int(self.__runtime)
             if not self.__stride or self.__stride <= 0:
@@ -47,70 +51,80 @@ class memory_client(clusterbuster_pod_client):
         answer[2] = max(1, min(answer[2], answer[1] - answer[0]))
         return answer
 
-    def runone_child(self, fd, start_time: float, size: int, stride: int, runtime: float, scan: bool):
+    def runone_op(self, start_time: float, iteration: int, size: int, stride: int, runtime: float, scan: bool):
         pages = int(size / stride)
         # It's a lot more efficient space-wise to create a small byte array
         # and expand it than to create the entire byte array at once.
         # Creating it all at once temporarily doubles the memory requirement,
         # while expanding it this way does not consume extra memory.
+        prealloc_time = self._adjusted_time()
         memory_blk = bytearray(b'a')
         memory_blk *= size
-        loops = 0
+        alloc_time = self._adjusted_time()
+        run_pages = 0
         if scan:
-            while runtime < 0 or self._adjusted_time() - start_time < runtime:
-                char = 32 + (loops % 192)
+            while runtime < 0 or self._adjusted_time() - alloc_time < runtime:
+                char = 32 + (run_pages % 192)
                 for i in range(pages):
                     memory_blk[i * stride] = char
-                loops += 1
+                run_pages += 1
         elif runtime >= 0:
             time.sleep(runtime)
         else:
             signal.pause()
-        os.write(fd, str(loops * stride).encode())
+        prefree_time = self._adjusted_time()
+        if self.__sync_between_iterations:
+            self._sync_to_controller(self._idname([iteration]))
+        return [run_pages * pages, prealloc_time, alloc_time, prefree_time]
 
-    def runone(self, size: int, stride: int, runtime: float, scan: bool):
+    def runone_child(self, fd, *args):
+        os.write(fd, ' '.join([str(val) for val in self.runone_op(*args)]))
+
+    def runone(self, *args):
         # Ensure that we definitely do free the memory we've used by
         # running the worker in a subprocess.
-        r = None
-        w = None
         start_time = self._adjusted_time()
-        loops = 0
-        r, w = os.pipe()
-        pid = os.fork()
-        if pid == 0:
-            try:
-                self.runone_child(w, start_time, size, stride, runtime, scan)
-            except Exception as exc:
-                self._timestamp(f"Run child failed: {exc}")
-                os._exit(1)
-            os._exit(0)
+        run_pages = 0
+        if self.__run_in_subproc:
+            r, w = os.pipe()
+            pid = os.fork()
+            if pid == 0:
+                try:
+                    self.runone_child(w, start_time, *args)
+                except Exception as exc:
+                    self._timestamp(f"Run child failed: {exc}")
+                    os._exit(1)
+                os._exit(0)
+            else:
+                try:
+                    try:
+                        w.close()
+                    except Exception:
+                        pass
+                    try:
+                        run_pages, prealloc_time, alloc_time, prefree_time = [int(x) for x in os.read(r, 4096).decode().split(' ')]
+                    except Exception as e:
+                        self._timestamp(f"Read failed: {e}")
+                finally:
+                    try:
+                        r.close()
+                    except Exception:
+                        pass
+                    try:
+                        cpid, status = os.waitpid(pid)
+                        if status:
+                            raise Exception(f"Child failed, status {int(status / 256)}")
+                    except Exception:
+                        pass
         else:
-            try:
-                try:
-                    w.close()
-                except Exception:
-                    pass
-                try:
-                    loops = int(os.read(r, 4096).decode())
-                except Exception as e:
-                    self._timestamp(f"Read failed: {e}")
-            finally:
-                try:
-                    r.close()
-                except Exception:
-                    pass
-                try:
-                    cpid, status = os.waitpid(pid)
-                    if status:
-                        raise Exception(f"Child failed, status {int(status / 256)}")
-                except Exception:
-                    pass
-            return loops, start_time, self._adjusted_time() - start_time
+            run_pages, prealloc_time, alloc_time, prefree_time = self.runone_op(start_time, *args)
+        return run_pages, start_time, prealloc_time, alloc_time, prefree_time, self._adjusted_time()
 
-    def randval(self, interval: list):
-        if interval[1] == interval[0]:
-            return interval[0]
-        return int(min(interval[1], max(interval[0], interval[0] + (interval[2] * random.randint(0, math.ceil((interval[1] - interval[0]) / interval[2]))))))
+    def randval(self, i: list):
+        if i[1] == i[0]:
+            return i[0]
+        else:
+            return int(min(i[1], max(i[0], i[0] + (i[2] * randint(0, math.ceil((i[1] - i[0]) / i[2]))))))
 
     def minval(self, interval: list):
         return interval[0]
@@ -122,7 +136,7 @@ class memory_client(clusterbuster_pod_client):
         return (interval[0] + interval[1]) / 2
 
     def runit(self, process: int):
-        random.seed(self._idname(self.__random_seed))
+        seed(self._idname(self.__random_seed))
         pages = 0
         elapsed_time = 0
         user, system = self._cputimes()
@@ -139,10 +153,15 @@ class memory_client(clusterbuster_pod_client):
             self._timestamp(f"Presleeping {sleep_time}")
             time.sleep(sleep_time)
         elif self.__sleep_first > 1:
-            prob = random.random()
-            random.seed(self._idname(self.__random_seed))
-            if prob > ((self.avgval(self.__iteration_runtime) /
-                        (self.avgval(self.__iteration_runtime) + self.avgval(self.__idle)))):
+            rand = random()
+            # Choice of start probability should not affect
+            # the rest of the randomization
+            seed(self._idname(self.__random_seed))
+            if self.__start_probability is None:
+                self.__start_probability = ((self.avgval(self.__iteration_runtime) /
+                                             (self.avgval(self.__iteration_runtime) +
+                                              self.avgval(self.__idle))))
+            if rand > self.__start_probability:
                 sleep_time = self.randval(self.__idle)
                 self._timestamp(f"Presleeping {sleep_time}")
                 time.sleep(sleep_time)
@@ -160,13 +179,17 @@ class memory_client(clusterbuster_pod_client):
                 elif run_time > desired_end_time - curtime - (max_sleep if self.__sleep_first == 0 else 0):
                     run_time = desired_end_time - curtime
             self._timestamp(f"Running size {run_size} stride {self.__stride} runtime {run_time} scan {self.__scan}")
-            run_pages, start_time, run_et = self.runone(run_size, self.__stride,
-                                                        run_time, self.__scan)
+            run_pages, start_time, prealloc_time, alloc_time, prefree_time, end_time = self.runone(iteration,
+                                                                                                   run_size, self.__stride,
+                                                                                                   run_time, self.__scan)
             runs.append({'size': run_size,
                          'runtime': run_time,
                          'start_time': start_time,
-                         'end_time': run_et + start_time,
-                         'elapsed_time': run_et,
+                         'prealloc_time': prealloc_time,
+                         'alloc_time': alloc_time,
+                         'prefree_time': prefree_time,
+                         'end_time': end_time,
+                         'elapsed_time': end_time - start_time,
                          'pages': run_pages})
             pages += run_pages
             elapsed_time += elapsed_time

@@ -23,17 +23,19 @@ class PrometheusMetrics:
     Handle Prometheus metrics for ClusterBuster
     """
 
-    def __init__(self, metrics_data: dict):
+    def __init__(self, metrics_data: dict, start: float = None, end: float = None):
         """
         Initializer for Prometheus metrics for ClusterBuster
         :param metrics_data: Metrics data from ClusterBuster report
         """
         self._metrics = metrics_data
+        self.__start = start
+        self.__end = end
 
     def has_metric(self, metric: str):
         return metric in self._metrics
 
-    def get_all_matching_metric_data_from_data(self, data: dict, selector: dict = None):
+    def __get_all_matching_metric_data_from_data(self, data: dict, selector: dict = None):
         results = [elt for elt in data]
         if selector:
             for key, desired_value in selector.items():
@@ -47,13 +49,13 @@ class PrometheusMetrics:
                             if re.search(desired_value, vector['metric'][key]):
                                 new_results.append(vector)
                         else:
-                            raise Exception(f'selector element {desired_value} should be list or string')
+                            raise TypeError(f'selector element {desired_value} should be list or string')
                 results = new_results
                 if len(results) == 0:
                     return new_results
         return results
 
-    def get_all_matching_metric_data(self, metric_name: str, selector: dict = None):
+    def __get_all_matching_metric_data(self, metric_name: str, selector: dict = None):
         """
         Retrieve metrics data by name, with optional sub-selection.
         Selectors are a dict of metrics key name and desired target value.
@@ -65,11 +67,11 @@ class PrometheusMetrics:
         """
         try:
             data = self._metrics[metric_name]['data']
-        except Exception:
+        except KeyError:
             return None
-        return self.get_all_matching_metric_data_from_data(data, selector=selector)
+        return self.__get_all_matching_metric_data_from_data(data, selector=selector)
 
-    def get_unique_matching_metric_data(self, metric_name: str, selector: dict = None):
+    def __get_unique_matching_metric_data(self, metric_name: str, selector: dict = None):
         """
         Retrieve metrics data by name, with optional sub-selection.
         Selectors are a dict of metrics key name and desired target value.
@@ -81,15 +83,15 @@ class PrometheusMetrics:
         """
         try:
             data = self._metrics[metric_name]['data']
-        except Exception:
+        except KeyError:
             return None
-        answer = self.get_all_matching_metric_data_from_data(data, selector=selector)
+        answer = self.__get_all_matching_metric_data_from_data(data, selector=selector)
         if len(answer) == 1:
-            return self.get_metric_values(answer[0])
+            return self.__get_metric_values(answer[0])
         else:
-            raise Exception(f"Non-unique results for metric {metric_name}, selector {selector}")
+            raise ValueError(f"Non-unique results for metric {metric_name}, selector {selector}")
 
-    def get_unique_matching_metric_data_from_data(self, data: dict, selector: dict = None):
+    def __get_unique_matching_metric_data_from_data(self, data: dict, selector: dict = None):
         """
         Retrieve metrics data by name, with optional sub-selection.
         Selectors are a dict of metrics key name and desired target value.
@@ -99,15 +101,15 @@ class PrometheusMetrics:
         :param metric_name: name of desired metric
         :param selector: dictionary of desired values.
         """
-        answer = self.get_all_matching_metric_data_from_data(data, selector=selector)
+        answer = self.__get_all_matching_metric_data_from_data(data, selector=selector)
         if len(answer) == 1:
-            return self.get_metric_values(answer[0])
+            return self.__get_metric_values(answer[0])
         elif len(answer) == 0:
             return {}
         else:
-            raise Exception(f"Non-unique results for metric, selector {selector}")
+            raise ValueError(f"Non-unique results for metric, selector {selector}")
 
-    def get_metric_keys(self, metrics_results: dict, key: str):
+    def __get_metric_keys(self, metrics_results: dict, key: str):
         """
         Retrieve the list of named values for the specified key
         :param metrics_results: metrics results returned from get_metrics_data
@@ -115,13 +117,13 @@ class PrometheusMetrics:
         :return: list of names
         """
         if not isinstance(metrics_results, list):
-            raise Exception("get_metric_keys should be called on a list")
+            raise TypeError("get_metric_keys should be called on a list")
         answer = {}
         for elt in metrics_results:
-            answer[self.get_metric_key(elt, key)] = 1
+            answer[self.__get_metric_key(elt, key)] = 1
         return sorted(answer.keys())
 
-    def get_metric_key(self, metrics_results: dict, key: str):
+    def __get_metric_key(self, metrics_results: dict, key: str):
         """
         Retrieve the value of a key for the specified metrics result
         :param metrics_results: one element of metrics results returned from get_metrics_data
@@ -130,12 +132,14 @@ class PrometheusMetrics:
         """
         try:
             metric = metrics_results['metric']
-            try:
-                return metric[key]
-            except Exception:
-                raise Exception(f"No value for '{key}' in metrics metadata")
-        except Exception:
-            raise Exception("metrics_results does not appear to be a valid metrics result")
+        except KeyError:
+            raise TypeError("metrics_results does not appear to be a valid metrics result")
+        # This isn't the same case; we have something that looks valid, but
+        # doesn't have what we want.
+        try:
+            return metric[key]
+        except KeyError:
+            raise KeyError(f"No value for '{key}' in metrics metadata")
 
     def __safe_convert_to_float(self, result: str):
         """
@@ -144,39 +148,75 @@ class PrometheusMetrics:
         """
         try:
             return float(result)
-        except Exception:
+        except ValueError:
             return result
 
-    def get_metric_values(self, metrics_results: dict):
+    def __get_metric_values(self, metrics_results: dict):
         """
         Retrieve the raw metrics value or value vector from the specified result.
-        :param metrics_results: one element of metrics results returned from get_metrics_data
+        :param metrics_results: one element of metrics results returned from __get_metrics_data
         """
         if 'value' in metrics_results:
             raw_results = [metrics_results['value']]
         elif 'values' in metrics_results:
             raw_results = metrics_results['values']
         else:
-            raise Exception("metrics_results does not appear to be a valid metrics result")
+            raise TypeError("metrics_results does not appear to be a valid metrics result")
         return [[elt[0], self.__safe_convert_to_float(elt[1])] for elt in raw_results]
 
-    def get_max_value(self, values: list):
+    def __filter_metrics_by_time(self, mode: str, values: list, start: float = -1, end: float = -1):
+        if start is not None and start < 0:
+            start = self.__start
+        if end is not None and end < 0:
+            end = self.__end
+
+        if start is None and end is None:
+            return values
+        answer = []
+        if mode != 'value' and mode != 'rate':
+            raise ValueError(f"Illegal filter mode '{mode}', must be either 'rate' or 'value'")
+        if mode == 'value' or start is None:
+            for value in values:
+                if (start is None or value[0] >= start) and (end is None or value[0] <= end):
+                    answer.append(value)
+        else:
+            for i in range(1, len(values) - 1):
+                prev = answer[i - 1]
+                cur = answer[i]
+                if prev[0] >= start and cur[0] <= end:
+                    answer.append(cur)
+        return answer
+
+    def __find_metric_value_by_time(self, values: list, time: float):
+        if time < values[0][0] or time > values[len(values) - 1][0]:
+            return None
+        else:
+            for i in range(1, len(values) - 1):
+                prev = values[i - 1]
+                cur = values[i]
+                if prev[0] <= time and cur[0] > time:
+                    return prev[1]
+            return cur[1]
+
+    def __get_max_value(self, values: list, start: float = -1, end: float = -1):
         """
         Retrieve the maximum value and the specified value vector.
         :param values: values vector
         """
+        values = self.__filter_metrics_by_time('value', values)
         answer = None
         for value in values:
             if not answer or value[1] > answer:
                 answer = value[1]
         return answer
 
-    def get_max_rate(self, values: list):
+    def __get_max_rate(self, values: list, start: float = -1, end: float = -1):
         """
         Retrieve the maximum rate (per second) and corresponding interval
         from the specified value vector.
         :param values: values vector
         """
+        values = self.__filter_metrics_by_time('rate', values)
         answer = None
         if len(values) > 2:
             for i in range(1, len(values) - 1):
@@ -185,34 +225,90 @@ class PrometheusMetrics:
                     answer = rate
         return answer
 
-    def __build_metrics_tree(self, keys: list, data: dict, path: dict, op: str = 'rate', printfunc=None):
+    def __get_avg_value(self, values: list, start: float = -1, end: float = -1):
+        """
+        Retrieve the average value and the specified value vector.
+        :param values: values vector
+        """
+        values = self.__filter_metrics_by_time('value', values)
+        if len(values) > 0:
+            answer = 0
+            for value in values:
+                answer += value[1]
+            return answer / len(values)
+        return None
+
+    def __get_avg_rate(self, values: list, start: float = -1, end: float = -1):
+        """
+        Retrieve the average rate (per second) and corresponding interval
+        from the specified value vector.
+        :param values: values vector
+        """
+        values = self.__filter_metrics_by_time('rate', values)
+        if len(values) > 1:
+            return (values[len(values) - 1][1] - values[0][1]) / (values[len(values) - 1][0] - values[0][0])
+        return None
+
+    def __build_metrics_tree(self, keys: list, data: dict, path: dict, op: str, printfunc=None, start: float = -1, end: float = -1):
         answer = {}
         nkeys = deepcopy(keys)
         mykey = nkeys.pop()
-        metrics_keys = self.get_metric_keys(data, mykey)
+        metrics_keys = self.__get_metric_keys(data, mykey)
         for subkey in metrics_keys:
             if len(nkeys) > 0:
                 answer[f'{mykey}: {subkey}'] = self.__build_metrics_tree(keys=nkeys, data=data,
                                                                          path={**path, mykey: [subkey]}, op=op,
                                                                          printfunc=printfunc)
             else:
-                metrics_data = self.get_unique_matching_metric_data_from_data(data, selector={**path, mykey: [subkey]})
-                if op == 'rate':
-                    answer[f'{mykey}: {subkey}'] = self.get_max_rate(metrics_data)
-                elif op == 'value':
-                    answer[f'{mykey}: {subkey}'] = self.get_max_value(metrics_data)
+                metrics_data = self.__get_unique_matching_metric_data_from_data(data, selector={**path, mykey: [subkey]})
+                if op == 'max_rate':
+                    answer[f'{mykey}: {subkey}'] = self.__get_max_rate(metrics_data)
+                elif op == 'max_value':
+                    answer[f'{mykey}: {subkey}'] = self.__get_max_value(metrics_data)
+                elif op == 'avg_rate':
+                    answer[f'{mykey}: {subkey}'] = self.__get_avg_rate(metrics_data)
+                elif op == 'avg_value':
+                    answer[f'{mykey}: {subkey}'] = self.__get_avg_value(metrics_data)
                 if printfunc:
                     answer[f'{mykey}: {subkey}'] = printfunc(answer[f'{mykey}: {subkey}'])
         return answer
 
-    def get_max_value_by_key(self, metric_name: str, selector: dict = None, printfunc=None):
-        metrics = self.get_all_matching_metric_data(metric_name, selector=selector)
+    def __get_op_by_key(self, op: str, metric_name: str, selector: dict = None, printfunc=None, start: float = -1, end: float = -1):
+        metrics = self.__get_all_matching_metric_data(metric_name, selector=selector)
         if metrics:
             keys = sorted(metrics[0]['metric'].keys())
-            return self.__build_metrics_tree(keys, metrics, {}, op='value', printfunc=printfunc)
+            return self.__build_metrics_tree(keys, metrics, {}, op, printfunc)
 
-    def get_max_rate_by_key(self, metric_name: str, selector: dict = None, printfunc=None):
-        metrics = self.get_all_matching_metric_data(metric_name, selector=selector)
+    def get_max_value_by_key(self, metric_name: str, selector: dict = None, printfunc=None, start: float = -1, end: float = -1):
+        return self.__get_op_by_key('max_value', metric_name, selector, printfunc)
+
+    def get_max_rate_by_key(self, metric_name: str, selector: dict = None, printfunc=None, start: float = -1, end: float = -1):
+        return self.__get_op_by_key('max_rate', metric_name, selector, printfunc)
+
+    def get_avg_value_by_key(self, metric_name: str, selector: dict = None, printfunc=None, start: float = -1, end: float = -1):
+        return self.__get_op_by_key('avg_value', metric_name, selector, printfunc)
+
+    def get_avg_rate_by_key(self, metric_name: str, selector: dict = None, printfunc=None, start: float = -1, end: float = -1):
+        return self.__get_op_by_key('avg_rate', metric_name, selector, printfunc)
+
+    def __build_metrics_value_tree(self, time: float, keys: list, data: dict, path: dict):
+        answer = {}
+        nkeys = deepcopy(keys)
+        mykey = nkeys.pop()
+        metrics_keys = self.__get_metric_keys(data, mykey)
+        for subkey in metrics_keys:
+            if len(nkeys) > 0:
+                answer[subkey] = self.__build_metrics_value_tree(time=time, keys=nkeys, data=data,
+                                                                 path={**path, mykey: [subkey]})
+            else:
+                metrics_data = self.__get_unique_matching_metric_data_from_data(data, selector={**path, mykey: [subkey]})
+                return self.__find_metric_value_by_time(metrics_data, time)
+        return answer
+
+    def get_value_by_key(self, metric_name: str, time: float, selector: dict = None):
+        metrics = self.__get_all_matching_metric_data(metric_name, selector=selector)
+        if self.__start is not None:
+            time += self.__start
         if metrics:
             keys = sorted(metrics[0]['metric'].keys())
-            return self.__build_metrics_tree(keys, metrics, {}, op='rate', printfunc=printfunc)
+            return self.__build_metrics_value_tree(time, keys, metrics, selector)

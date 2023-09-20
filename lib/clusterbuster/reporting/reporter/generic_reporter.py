@@ -20,5 +20,5 @@ from .ClusterBusterReporter import ClusterBusterReporter
 class generic_reporter(ClusterBusterReporter):
     # Not necessary to override anything; we're not adding anything on
     # top of the base class.
-    def __init__(self, jdata: dict, report_format: str):
-        super().__init__(jdata, report_format)
+    def __init__(self, jdata: dict, report_format: str, extras=None):
+        super().__init__(jdata, report_format, extras=extras)

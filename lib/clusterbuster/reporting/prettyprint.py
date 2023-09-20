@@ -25,7 +25,7 @@ def fformat(num: float, precision: int = 5):
             return f'{num:.{precision}f}'
         else:
             return str(round(num))
-    except Exception:
+    except TypeError:
         return str(num)
 
 
@@ -55,7 +55,7 @@ def prettyprint(num: float, precision: int = 5, integer: int = 0, base: int = No
         base = 1000
     try:
         num = float(num)
-    except Exception:
+    except ValueError:
         return str(num)
     num *= multiplier
     if integer or num == 0:
@@ -84,7 +84,7 @@ def prettyprint(num: float, precision: int = 5, integer: int = 0, base: int = No
         infix = 'i'
         base = 1024
     elif base != -10 or base != -1 or base != -1000:
-        raise Exception(f'Illegal base {base} for prettyprint; must be 1000 or 1024')
+        raise ValueError(f'Illegal base {base} for prettyprint; must be 1000 or 1024')
     if base > 0 and abs(num) >= base ** 5:
         return f'{fformat(num / (base ** 5), precision=precision)} P{infix}{suffix}'
     elif base > 0 and abs(num) >= base ** 4:

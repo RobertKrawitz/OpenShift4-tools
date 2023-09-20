@@ -19,8 +19,8 @@ from .ClusterBusterReporter import ClusterBusterReporter
 
 
 class fio_reporter(ClusterBusterReporter):
-    def __init__(self, jdata: dict, report_format: str):
-        super().__init__(jdata, report_format)
+    def __init__(self, jdata: dict, report_format: str, extras=None):
+        super().__init__(jdata, report_format, extras=extras)
         self._jobs = jdata['metadata']['workload_metadata']['jobs']
         self._job_names = list(self._jobs.keys())
         self._fio_operations = ['read', 'write', 'trim']
