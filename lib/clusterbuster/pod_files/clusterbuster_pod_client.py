@@ -273,6 +273,7 @@ class clusterbuster_pod_client(cb_util):
             'namespace': self._namespace(),
             'pod': self._podname(),
             'container': self._container(),
+            'process': self.__child_idx,
             'process_id': os.getpid(),
             'pod_create_time': self.__timing_parameters['controller_crtime'] - self.__timing_parameters['controller_basetime'],
             'pod_start_time': self.__timing_parameters['start_time'],
