@@ -1681,7 +1681,7 @@ function _report_volumes() {
 
 function _report_emptydirs() {
     if ((${#emptydirs[@]})) ; then
-	echo "emptydirVolumes: ["
+	echo '"emptydirVolumes": ['
 	local -a ed=("${emptydirs[@]}")
 	ed=("${ed[@]/#/}")
 	ed=("${ed[@]/%/}")
