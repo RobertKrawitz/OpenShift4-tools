@@ -252,6 +252,11 @@ declare vm_password=buster
 declare -a vm_ssh_pubkey=()
 declare -A __sysctls=()
 declare -i __sysctls_retrieved=0
+declare -A vm_emptydisks=()
+declare -A vm_emptydisk_options=()
+declare -a vm_emptydisk_list=()
+# We can't use vda, which is the system disk
+declare -r vm_emptydisk_suffixes="bcdefghijklmnopqrstuvwxyz"
 
 declare OC=${OC:-${KUBECTL:-}}
 OC=${OC:-$(type -p oc)}
@@ -553,6 +558,12 @@ $(print_workloads_supporting_reporting '                        - ')
                         Specify the number of sockets (default $vm_sockets).
        --vm-memory=<value>
                         Specify the amount of memory (default $vm_memory).
+       --vm-emptydisk=<size:[options:]mountpoint>
+                        Create and mount an emptydisk volume in each VM.  Options are:
+                        - cache=<mode>
+                        - mountopts=<options>
+                        - fstype=<filesystem>
+                        - fsopts=<mkfs opts>
        --vm-grace-period=<value>
                         Specify the period between when a vm is signaled to
                         shutdown and the point when KubeVirt will force off
@@ -744,6 +755,32 @@ function process_runtimeclass() {
     fi
 }
 
+function process_emptydisk() {
+    local size
+    local mountpoint
+    local -a args
+    IFS=: read -ra args <<< "$1"
+    local -i argcount=${#args[@]}
+    if ((argcount < 2)) ; then
+	fatal "Invalid emptydisk $1: size and mount point must be specified as size:[args:]mountpoint"
+    fi
+    size=${args[0]}
+    mountpoint=${args[$((argcount - 1))]}
+    if [[ $mountpoint != '/'* ]] ; then
+	fatal "Invalid emptydisk $1: path must be absolute"
+    fi
+    if [[ -n "${vm_emptydisks[$mountpoint]:-}" ]] ; then
+	fatal "Duplicate emptydisk mount specified ($1)"
+    fi
+    if ((argcount > 2)) ; then
+	vm_emptydisk_options["$mountpoint"]="$(IFS=:; echo "${args[*]:1:$((argcount - 2))}")"
+    else
+	vm_emptydisk_options["$mountpoint"]=""
+    fi
+    vm_emptydisks["$mountpoint"]=$size
+    vm_emptydisk_list+=("$mountpoint")
+}
+
 function set_metrics_file() {
     metrics_file=${1:-}
     case "$metrics_file" in
@@ -883,6 +920,7 @@ function process_option() {
 	vmuser)			    vm_user=$optvalue				;;
 	vmpassword)		    vm_password=$optvalue			;;
 	vmsshpubkey)		    vm_ssh_pubkey+=("$optvalue")		;;
+	vmemptydisk*)		    process_emptydisk "$optvalue"		;;
 	# Object creation
 	obj*spercall)		    objs_per_call=$optvalue			;;
 	parallel)		    parallel=$optvalue				;;
@@ -909,7 +947,7 @@ function process_option() {
 	    cleanup=$(bool "$optvalue")
 	    if ((! cleanup)) ; then cleanup_always=0; fi
 	    ;;
-	cleanupalways)	    	    
+	cleanupalways)
 	    cleanup_always=$(bool "$optvalue")
 	    if ((cleanup_always)) ; then cleanup=1; fi
 	    ;;
@@ -2481,6 +2519,7 @@ function namespace_yaml() {
 }
 
 function annotations_yaml() {
+    [[ -z "${pod_annotations[*]}" ]] && return
     local desired_class=${1:-client}
     local annotation
     echo "annotations:"
@@ -3091,6 +3130,66 @@ EOF
 	    fi
 	done
     }
+    function create_emptydisk_volumes() {
+	local -i id
+	if [[ -n "${vm_emptydisk_list[*]}" ]] ; then
+	    for id in $(seq 0 $((${#vm_emptydisk_list[@]} - 1))) ; do
+		local mountpoint=${vm_emptydisk_list[$id]}
+		cat << EOF
+- name: emptydisk-${id}
+  emptyDisk:
+    capacity: ${vm_emptydisks[$mountpoint]}
+EOF
+	    done
+	fi
+    }
+    function create_emptydisk_devices() {
+	local -i id
+	if [[ -n "${vm_emptydisk_list[*]}" ]] ; then
+	    for id in $(seq 0 $((${#vm_emptydisk_list[@]} - 1))) ; do
+		local mountpoint=${vm_emptydisk_list[$id]}
+		local -a extra_args
+		IFS=: read -ra extra_args <<< "${vm_emptydisk_options[$mountpoint]}"
+		local arg
+		local cache=
+		for arg in "${extra_args[@]}" ; do
+		    if [[ $arg = "cache="* ]] ; then
+			cache="  cache: ${arg/cache=/}"
+		    fi
+		done
+		cat << EOF
+- name: emptydisk-${id}
+  disk:
+    bus: virtio
+$cache
+EOF
+	    done
+	fi
+    }
+    function create_emptydisk_mounts() {
+	local -i id
+	if [[ -n "${vm_emptydisk_list[*]}" ]] ; then
+	    for id in $(seq 0 $((${#vm_emptydisk_list[@]} - 1))) ; do
+		local device="/dev/vd${vm_emptydisk_suffixes:$id:1}"
+		local mountpoint=${vm_emptydisk_list[$id]}
+		local mountopts=
+		local fs=ext4
+		local fsopts=
+		IFS=: read -ra extra_args <<< "${vm_emptydisk_options[$mountpoint]}"
+		for arg in "${extra_args[@]}" ; do
+		    case "$arg" in
+			"mountopts="*) mountopts="${arg/mountopts=/-o }";;
+			"fstype="*)    fs="${arg/fstype=/}"		;;
+			"fsopts="*)    fsopts="${arg/fsopts=/}"		;;
+			*)						;;
+		    esac
+		done
+		cat <<EOF
+- "'mkfs.$fs' $fsopts '$device' && mkdir -p '$mountpoint' && mount $mountopts '$device' '$mountpoint' && chmod 777 '$mountpoint'"
+EOF
+	    done
+	fi
+    }
     get_sysctls
     local node_class=client
     local namespace=$1
@@ -3149,6 +3248,7 @@ $(indent 6 vm_evict_strategy)
             - name: containerdisk
               disk:
                 bus: virtio
+$(indent 12 create_emptydisk_devices)
             - name: systemconfigmap-${namespace}
               serial: systemconfigmap
               volumeName: systemconfigmap-${namespace}
@@ -3162,6 +3262,7 @@ $(indent 6 <<< "$affinity_yaml")
         - name: containerdisk
           containerDisk:
             image: $vm_image
+$(indent 8 create_emptydisk_volumes)
         - name: systemconfigmap-${namespace}
           configMap:
             name: systemconfigmap-${namespace}
@@ -3178,6 +3279,7 @@ $(indent 6 <<< "$affinity_yaml")
               chpasswd: { expire: False }
               bootcmd:
                 - "mkdir '$system_configmap_mount_dir' '$user_configmap_mount_dir'"
+$(indent 16 create_emptydisk_mounts)
                 - "mount -o ro /dev/disk/by-id/ata-QEMU_HARDDISK_systemconfigmap '$system_configmap_mount_dir'"
                 - "mount -o ro /dev/disk/by-id/ata-QEMU_HARDDISK_userconfigmap '$user_configmap_mount_dir'"
 $(indent 16 insert_ssh_keys "${vm_ssh_pubkey[@]}")
@@ -4035,11 +4137,13 @@ done
 
 job_name=${job_name:-${requested_workload:-}}
 
-((virtiofsd_direct)) && virtiofsd_args+=('"-o"' '"allow_direct_io"')
-((virtiofsd_writeback)) && virtiofsd_args+=('"-o"' '"writeback"')
-((virtiofsd_threadpoolsize)) && virtiofsd_args+=("\"--thread-pool-size=$virtiofsd_threadpoolsize\"")
-if [[ -n "${virtiofsd_args[*]:-}" ]] ; then
-    pod_annotations+=("io.katacontainers.config.hypervisor.virtio_fs_extra_args: '[$(IFS=,; echo "${virtiofsd_args[*]}")]'")
+if [[ ${runtime_class:-} = "$kata_runtime_class" ]] ; then
+    ((virtiofsd_direct)) && virtiofsd_args+=('"-o"' '"allow_direct_io"')
+    ((virtiofsd_writeback)) && virtiofsd_args+=('"-o"' '"writeback"')
+    ((virtiofsd_threadpoolsize)) && virtiofsd_args+=("\"--thread-pool-size=$virtiofsd_threadpoolsize\"")
+    if [[ -n "${virtiofsd_args[*]:-}" ]] ; then
+	pod_annotations+=("io.katacontainers.config.hypervisor.virtio_fs_extra_args: '[$(IFS=,; echo "${virtiofsd_args[*]}")]'")
+    fi
 fi
 
 (run_clusterbuster_1) 4>&2
