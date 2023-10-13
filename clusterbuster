@@ -1659,13 +1659,13 @@ function get_logs_poll() {
 function __report_one_volume() {
     local volname=$1
 	cat <<EOF
-  {
-     "name": "$volname",
-     "mount_path": "${volume_mount_paths[$volname]}",
-     "type": "${volume_types[$vname]}",
-     "type_key": "${volume_types[$vname]}",
-     "scoped_name": "${volume_scoped_names[$vname]}"
-  }
+ {
+  "name": "$volname",
+  "mount_path": "${volume_mount_paths[$volname]}",
+  "type": "${volume_types[$vname]}",
+  "type_key": "${volume_types[$vname]}",
+  "scoped_name": "${volume_scoped_names[$vname]}"
+ }
 EOF
 }
 
@@ -1720,7 +1720,7 @@ function _report_runtime_classes() {
 function _extract_metrics() {
     if supports_metrics && [[ -r "$metrics_file" ]] ; then
 	cat <<EOF
-"metrics": $("${__topdir__}/prom-extract" --define "namespace_re=${basename}-.*" -m "$metrics_file" --metrics-only --start_time="$prometheus_starting_timestamp" --epoch="$metrics_epoch" --post-settling-time=0),
+"metrics": $("${__topdir__}/prom-extract" --indent= --define "namespace_re=${basename}-.*" -m "$metrics_file" --metrics-only --start_time="$prometheus_starting_timestamp" --epoch="$metrics_epoch" --post-settling-time=0),
 EOF
     fi
 }
@@ -1795,61 +1795,61 @@ function _report_metadata_and_objects() {
     cat <<EOF
 "Status": "$status",
 "metadata": {
-  "kind": "clusterbusterResults",
-  "controller_first_start_timestamp": $first_start_timestamp,
-  "prometheus_starting_timestamp": $prometheus_exact_starting_timestamp,
-  "controller_second_start_timestamp": $second_start_timestamp,
-  "controller_end_timestamp": $enddate,
-  "controller_elapsed_time": $(bc <<< "$enddate - ${second_start_timestamp:-0}"),
-  "cluster_start_time": "$(readable_timestamp "${prometheus_starting_timestamp}")",
-  "job_name": "$job_name",
-  "uuid": "$uuid",
-  "workload": "$requested_workload",
-  "workload_reporting_class": "$(_workload_reporting_class)",
-  "kubernetes_version": $(indent_hang 2 __OC version -ojson),
-  "command_line": [$(quote_list "${saved_argv[@]}")],
-  "expanded_command_line": [$(quote_list "${processed_options[@]}")],
-  "runHost": "$(hostname -f)",
-  "workload_metadata": {$(indent_hang 2 generate_workload_metadata)},
-  "controller_presync_timestamp": $first_local_ts,
-  "sync_timestamp": $remote_ts,
-  "controller_postsync_timestamp": $second_local_ts,
-  "artifact_directory": "$artifactdir",
-$(indent 2 _get_csv_version -n openshift-sandboxed-containers-operator kata)
-$(indent 2 _get_kata_version)
-$(indent 2 _get_csv_version cnv)
-$(indent 2 _get_csv_version -f .spec.labels.full_version -n openshift-storage odf)
-  "options": {
-    "basename": "$basename",
-    "containers_per_pod": $containers_per_pod,
-    "deployments_per_namespace": $deps_per_namespace,
-    "namespaces": $namespaces,
-    "bytes_transfer": $bytes_transfer,
-    "bytes_transfer_max": $bytes_transfer_max,
-    "workload_run_time": $workload_run_time,
-    "workload_run_time_max": $workload_run_time_max,
-    "headless_services": $headless_services,
-    "drop_cache": $drop_node_cache,
-    "always_drop_cache": $drop_all_node_cache,
-    "pin_nodes": {$(_report_pin_nodes)},
-$(indent 4 _report_volumes)
-$(indent 4 _report_liveness_probe)
-    "secrets": $secrets,
-    "replicas": $replicas,
-    "container_image": "$container_image",
-    "node_selector": "$node_selector",
-$(indent 4 container_resources_json)
-    "runtime_classes": {$(_report_runtime_classes)},
-$(indent 4 _report_emptydirs)
-    "target_data_rate": $target_data_rate,
-    "workloadOptions": {
-$(indent 8 call_api -w "$requested_workload" "report_options")
-    }
+ "kind": "clusterbusterResults",
+ "controller_first_start_timestamp": $first_start_timestamp,
+ "prometheus_starting_timestamp": $prometheus_exact_starting_timestamp,
+ "controller_second_start_timestamp": $second_start_timestamp,
+ "controller_end_timestamp": $enddate,
+ "controller_elapsed_time": $(bc <<< "$enddate - ${second_start_timestamp:-0}"),
+ "cluster_start_time": "$(readable_timestamp "${prometheus_starting_timestamp}")",
+ "job_name": "$job_name",
+ "uuid": "$uuid",
+ "workload": "$requested_workload",
+ "workload_reporting_class": "$(_workload_reporting_class)",
+ "kubernetes_version": $(indent_hang 1 __OC version -ojson),
+ "command_line": [$(quote_list "${saved_argv[@]}")],
+ "expanded_command_line": [$(quote_list "${processed_options[@]}")],
+ "runHost": "$(hostname -f)",
+ "workload_metadata": {$(indent_hang 1 generate_workload_metadata)},
+ "controller_presync_timestamp": $first_local_ts,
+ "sync_timestamp": $remote_ts,
+ "controller_postsync_timestamp": $second_local_ts,
+ "artifact_directory": "$artifactdir",
+$(indent 1 _get_csv_version -n openshift-sandboxed-containers-operator kata)
+$(indent 1 _get_kata_version)
+$(indent 1 _get_csv_version cnv)
+$(indent 1 _get_csv_version -f .spec.labels.full_version -n openshift-storage odf)
+ "options": {
+  "basename": "$basename",
+  "containers_per_pod": $containers_per_pod,
+  "deployments_per_namespace": $deps_per_namespace,
+  "namespaces": $namespaces,
+  "bytes_transfer": $bytes_transfer,
+  "bytes_transfer_max": $bytes_transfer_max,
+  "workload_run_time": $workload_run_time,
+  "workload_run_time_max": $workload_run_time_max,
+  "headless_services": $headless_services,
+  "drop_cache": $drop_node_cache,
+  "always_drop_cache": $drop_all_node_cache,
+  "pin_nodes": {$(_report_pin_nodes)},
+$(indent 2 _report_volumes)
+$(indent 2 _report_liveness_probe)
+  "secrets": $secrets,
+  "replicas": $replicas,
+  "container_image": "$container_image",
+  "node_selector": "$node_selector",
+$(indent 2 container_resources_json)
+  "runtime_classes": {$(_report_runtime_classes)},
+$(indent 2 _report_emptydirs)
+  "target_data_rate": $target_data_rate,
+  "workloadOptions": {
+$(indent 3 call_api -w "$requested_workload" "report_options")
   }
+ }
 },
-$(indent 2 _extract_metrics)
-"nodes": $(__OC get nodes -ojson),
-"api_objects": $(__OC get all -A -l "${basename}-id=$uuid" -ojson |jq -r .items?),
+$(indent 1 _extract_metrics)
+"nodes": $(__OC get nodes -ojson | jq -c .),
+"api_objects": $(__OC get all -A -l "${basename}-id=$uuid" -ojson |jq -c .items?),
 "csvs": $(__OC get csv -A -ojson | jq -r '[foreach .items[]? as $item ([[],[]];0; {name: $item.metadata.name, namespace: $item.metadata.namespace, version: $item.spec.version})]')
 EOF
 }
@@ -1857,8 +1857,8 @@ EOF
 function _report_failure() {
     cat <<EOF
 {
-  "Results": {},
-$(indent 2 _report_metadata_and_objects "$failure_status")
+ "Results": {},
+$(indent 1 _report_metadata_and_objects "$failure_status")
 }
 EOF
 }
@@ -1886,8 +1886,8 @@ function _get_logs() {
     }
     cat > "$tfile2" <<EOF
 {
-$(indent 2 < "$tfile1"),
-$(indent 2 _report_metadata_and_objects "$status")
+$(indent 1 < "$tfile1"),
+$(indent 1 _report_metadata_and_objects "$status")
 }
 EOF
     ((reported)) || cat "$tfile2"

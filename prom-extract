@@ -178,6 +178,7 @@ try:
                         metavar='command', type=str)
     parser.add_argument('-D', '--define', help='Define template variable for metrics YAML; namespace_re to specify namespace regex',
                         metavar='name=value', action='append')
+    parser.add_argument('--indent', help='Indentation')
     parser.add_argument('command', metavar='command', help='command [args...]',
                         type=str, nargs='*')
     args = parser.parse_args()
@@ -341,6 +342,6 @@ try:
             if stdout_data:
                 results['rundata']['stdout'] = stdout_data
 
-    print(json.dumps(results, indent=4))
+    json.dump(results, indent=args.indent, fp=sys.stdout)
 except (KeyboardInterrupt, BrokenPipeError):
     sys.exit(1)
