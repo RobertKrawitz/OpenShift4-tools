@@ -221,12 +221,12 @@ function fio_generate_metadata() {
 			for ioengine in "${___fio_ioengines[@]}" ; do
 			    jobs+=("$(cat <<EOF
 $(printf '"%04d-%s-%d-%d-%d-%d-%s"' $((jobidx)) "$pattern" "$blocksize" "$iodepth" "$fdatasync" "$direct" "$ioengine"): {
-    "pattern": "$pattern",
-    "blocksize": $blocksize,
-    "iodepth": $iodepth,
-    "fdatasync": $fdatasync,
-    "direct": $direct,
-    "ioengine": "$ioengine"
+ "pattern": "$pattern",
+ "blocksize": $blocksize,
+ "iodepth": $iodepth,
+ "fdatasync": $fdatasync,
+ "direct": $direct,
+ "ioengine": "$ioengine"
 }
 EOF
 )")
