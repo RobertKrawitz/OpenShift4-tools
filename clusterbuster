@@ -1738,13 +1738,13 @@ function get_sync_logs_poll() {
 function __report_one_volume() {
     local volname=$1
 	cat <<EOF
-  {
-     "name": "$volname",
-     "mount_path": "${volume_mount_paths[$volname]}",
-     "type": "${volume_types[$vname]}",
-     "type_key": "${volume_types[$vname]}",
-     "scoped_name": "${volume_scoped_names[$vname]}"
-  }
+ {
+  "name": "$volname",
+  "mount_path": "${volume_mount_paths[$volname]}",
+  "type": "${volume_types[$vname]}",
+  "type_key": "${volume_types[$vname]}",
+  "scoped_name": "${volume_scoped_names[$vname]}"
+ }
 EOF
 }
 
@@ -1799,7 +1799,7 @@ function _report_runtime_classes() {
 function _extract_metrics() {
     if supports_metrics && [[ -r "$metrics_file" ]] ; then
 	cat <<EOF
-"metrics": $("${__topdir__}/prom-extract" --define "namespace_re=${basename}-.*" -m "$metrics_file" --metrics-only --start_time="$prometheus_starting_timestamp" --epoch="$metrics_epoch" --post-settling-time=0),
+"metrics": $("${__topdir__}/prom-extract" --indent= --define "namespace_re=${basename}-.*" -m "$metrics_file" --metrics-only --start_time="$prometheus_starting_timestamp" --epoch="$metrics_epoch" --post-settling-time=0),
 EOF
     fi
 }
@@ -1936,8 +1936,8 @@ EOF
 function _report_failure() {
     cat <<EOF
 {
-  "Results": {},
-$(indent 2 _report_metadata_and_objects "$failure_status")
+ "Results": {},
+$(indent 1 _report_metadata_and_objects "$failure_status")
 }
 EOF
 }
@@ -1965,8 +1965,8 @@ function _get_sync_logs() {
     }
     cat > "$tfile2" <<EOF
 {
-$(indent 2 < "$tfile1"),
-$(indent 2 _report_metadata_and_objects "$status")
+$(indent 1 < "$tfile1"),
+$(indent 1 _report_metadata_and_objects "$status")
 }
 EOF
     ((reported)) || cat "$tfile2"
