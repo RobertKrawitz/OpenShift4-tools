@@ -46,6 +46,8 @@ class fio_reporter(ClusterBusterReporter):
             if pjob not in dest:
                 dest[pjob] = {}
             for op in self._fio_operations:
+                if op not in source[job]['job_results']:
+                    continue
                 pop = f'operation: {op}'
                 source1 = source[job]['job_results'][op]
                 if source1['io_kbytes'] > 0:
@@ -87,10 +89,11 @@ class fio_reporter(ClusterBusterReporter):
         # function correctly.
         ClusterBusterReporter._generate_summary(self, results)
         sample_row = self._jdata['Results']['worker_results'][0]['results'][self._job_names[0]]['job_results']
-        results['FIO version'] = sample_row['fio version']
-        for k, v in sample_row['global options'].items():
-            if k not in ['rw', 'bs']:
-                results[k] = v
+        results['FIO version'] = sample_row.get('fio version', None)
+        if 'global options' in sample_row:
+            for k, v in sample_row['global options'].items():
+                if k not in ['rw', 'bs']:
+                    results[k] = v
         results['\nFIO job file'] = base64.b64decode(self._jdata['metadata']['options']['workloadOptions']['fio_job_file']).decode()
         results['\nJobs'] = {}
         self.__update_report(results['\nJobs'], self._summary['results'], 'max_max', int(self._summary['total_instances']))
