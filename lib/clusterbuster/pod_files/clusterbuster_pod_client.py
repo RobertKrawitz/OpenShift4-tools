@@ -33,11 +33,13 @@ class clusterbuster_pod_client(cb_util):
     """
 
     def __init__(self, initialize_timing_if_needed: bool = True, argv: list = sys.argv, external_sync_only: bool = False):
+        # We need to have the nonce very early to initialize.
         super().__init__(no_timestamp=external_sync_only)
         if external_sync_only:
             self.__synchost = os.environ.get('__CB_SYNCHOST')
             self.__syncport = int(os.environ.get('__CB_SYNCPORT'))
             self.__drop_cache_host = os.environ.get('__CB_DROP_CACHE_HOST', None)
+            self.__sync_nonce = os.environ.get('__CB_SYNC_NONCE', None)
             try:
                 self.__drop_cache_port = int(os.environ.get('__CB_DROP_CACHE_PORT'))
             except Exception:
@@ -54,18 +56,19 @@ class clusterbuster_pod_client(cb_util):
                 print("clusterbuster_pod_client: incomplete argument list", file=sys.stderr)
                 os._exit(1)
             print(f"clusterbuster_pod_client {argv}", file=sys.stderr)
-            self.__namespace = argv[1]
-            self.__container = argv[2]
-            self.__basetime = float(argv[3])
-            self.__baseoffset = float(argv[4])
-            self.__crtime = float(argv[5])
-            self.__exit_at_end = self._toBool(argv[6])
-            self.__synchost = argv[7]
-            self.__syncport = int(argv[8])
-            self.__sync_ns_port = int(argv[9])
-            self.__drop_cache_host = argv[10]
+            self.__sync_nonce = argv[1]
+            self.__namespace = argv[2]
+            self.__container = argv[3]
+            self.__basetime = float(argv[4])
+            self.__baseoffset = float(argv[5])
+            self.__crtime = float(argv[6])
+            self.__exit_at_end = self._toBool(argv[7])
+            self.__synchost = argv[8]
+            self.__syncport = int(argv[9])
+            self.__sync_ns_port = int(argv[10])
+            self.__drop_cache_host = argv[11]
             try:
-                self.__drop_cache_port = int(argv[11])
+                self.__drop_cache_port = int(argv[12])
             except Exception:
                 self.__drop_cache_port = None
             self.__is_worker = False
@@ -77,6 +80,7 @@ class clusterbuster_pod_client(cb_util):
             os.environ['__CB_SYNCHOST'] = self.__synchost
             os.environ['__CB_SYNCPORT'] = str(self.__syncport)
             os.environ['__CB_DROP_CACHE_HOST'] = self.__drop_cache_host
+            os.environ['__CB_SYNC_NONCE'] = self.__sync_nonce
             if self.__drop_cache_port:
                 os.environ['__CB_DROP_CACHE_PORT'] = str(self.__drop_cache_port)
             else:
@@ -92,7 +96,7 @@ class clusterbuster_pod_client(cb_util):
                         signal.pause()
             if child == 0:
                 self.__pod = os.environ.get('__CB_HOSTNAME', socket.gethostname())
-                self._args = argv[12:]
+                self._args = argv[13:]
                 self.__timing_parameters = {}
                 self.__timing_initialized = False
                 if initialize_timing_if_needed:
@@ -440,7 +444,7 @@ oc logs -n '{self._namespace()}' '{self._podname()}' -c '{self._container()}'
         lcommand = command.lower()
         if lcommand == 'sync' and (token is None or token == ''):
             token = f'{self._ts()} {self.__pod}-{random.randrange(1000000000)}'
-        token = f'{lcommand} {token}'.replace('%s', str(time.time()))
+        token = f'{self.__sync_nonce} {lcommand} {token}'.replace('%s', str(time.time()))
         self._timestamp(f"do_sync_command {command} {len(token)}")
         try:
             return self._send_message(self.__synchost, port, token, timeout=timeout)
