@@ -24,6 +24,7 @@ from cb_util import cb_util
 offset_from_controller = 0
 timebase = cb_util(offset_from_controller)
 nameserver_pid = None
+sync_nonce = None
 
 
 def kill_nameserver(timebase: cb_util):
@@ -97,6 +98,10 @@ class nameserver:
         client, address = self.sock.accept()
         try:
             tbuf = read_token(client)
+            nonce, tbuf = tbuf.split(' ', 1)
+            if nonce != sync_nonce:
+                self.timestamp(f"Received request with incorrect nonce {nonce} from {address}: {tbuf}")
+                return None, None, None
             command = tbuf[0:4].lower()
             payload = tbuf[4:].lstrip()
             self.timestamp(f"Accepted connection from {address}, command {command}, payload {payload}")
@@ -112,6 +117,8 @@ class nameserver:
     def process_command(self):
         try:
             client, address, json_payload = self.get_command()
+            if client is None and address is None and json_payload is None:
+                return
         except Exception as exc:
             self.timestamp(f"Unable to read command: {exc}")
             return
@@ -245,7 +252,7 @@ def fail_hard(payload: str):
 
 def sync_one(sock, tmp_sync_file_base: str, tmp_error_file: str, start_time: float,
              base_start_time: float, expected_clients: int, first_pass: bool):
-    timebase._timestamp(f"Listening on port {listen_port}, expect {expected_clients} client(s)")
+    timebase._timestamp(f"Listening on port {listen_port}, expect {expected_clients} client{'' if expected_clients == 1 else 's'}")
     try:
         timebase._listen(sock=sock, backlog=expected_clients)
     except Exception as err:
@@ -268,6 +275,16 @@ def sync_one(sock, tmp_sync_file_base: str, tmp_error_file: str, start_time: flo
         tbuf = read_token(client)
         if not tbuf:
             timebase._timestamp(f"Read token from {address} failed")
+            continue
+        try:
+            nonce, tbuf = tbuf.split(' ', 1)
+        except Exception as exc:
+            timebase._timestamp(f"Could not parse token {tbuf}: {exc}")
+            continue
+        # Don't acknowledge replies with incorrect nonce
+        if nonce != sync_nonce:
+            timebase._timestamp(f"Received request with incorrect nonce {nonce} from {address}: {tbuf}")
+            continue
         protected_clients.append(client)
         command = tbuf[0:4].lower()
         if expected_command:
@@ -312,7 +329,7 @@ def sync_one(sock, tmp_sync_file_base: str, tmp_error_file: str, start_time: flo
     if net_clients:
         msg = json.dumps({'have': net_clients})
         command = f'nsrq {msg}'
-        timebase._send_message('127.0.0.1', ns_port, command)
+        timebase._send_message('127.0.0.1', ns_port, f"{sync_nonce} {command}")
     timebase._timestamp("Sync complete")
     if command == 'rslt':
         return 2
@@ -322,15 +339,16 @@ def sync_one(sock, tmp_sync_file_base: str, tmp_error_file: str, start_time: flo
 
 print(sys.argv, file=sys.stderr)
 try:
-    sync_file = sys.argv[1]
-    error_file = sys.argv[2]
-    controller_timestamp_file = sys.argv[3]
-    predelay = float(sys.argv[4])
-    postdelay = float(sys.argv[5])
-    listen_port = int(sys.argv[6])
-    ns_port = int(sys.argv[7])
-    expected_clients = int(sys.argv[8])
-    initial_expected_clients = int(sys.argv[9])
+    sync_nonce = sys.argv[1]
+    sync_file = sys.argv[2]
+    error_file = sys.argv[3]
+    controller_timestamp_file = sys.argv[4]
+    predelay = float(sys.argv[5])
+    postdelay = float(sys.argv[6])
+    listen_port = int(sys.argv[7])
+    ns_port = int(sys.argv[8])
+    expected_clients = int(sys.argv[9])
+    initial_expected_clients = int(sys.argv[10])
     if initial_expected_clients < 0:
         initial_expected_clients = expected_clients
 except Exception as exc:

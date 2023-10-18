@@ -18,7 +18,7 @@
 # FIO workload
 ################################################################
 
-declare -ag ___fio_generic_options=()
+declare -ag ___fio_options=()
 declare -ag ___fio_blocksizes=(4096)
 declare -ag ___fio_patterns=(read)
 declare -ag ___fio_iodepths=(1)
@@ -44,7 +44,7 @@ function fio_arglist() {
 		 "$processes_per_pod" "$___fio_workdir" "$workload_run_time" "$user_configmap_mount_dir" \
 		 "${___fio_blocksizes[*]:-}" "${___fio_patterns[*]:-}" "${___fio_iodepths[*]:-}" \
 		 "${___fio_fdatasyncs[*]:-}" "${___fio_directs[*]:-}" "${___fio_ioengines[*]:-}" \
-		 "$___fio_ramp_time" "${___fio_generic_options[*]:-}"
+		 "$___fio_ramp_time" "${___fio_options[*]:-}"
 }
 
 function fio_create_deployment() {
@@ -99,8 +99,8 @@ function fio_help_options() {
                         - randrw    (random mixed read/write)
        --fio-blocksizes=<sizes>
                         Comma-separated list of I/O blocksizes to use.
-       --fio-general-option=<options>
-                        General fio option.  May be repeated.
+       --fio-option=<option>
+                        Miscellaneous fio option.  May be repeated.
        --fio-jobfile=<file>
                         Name of fio job file to use (defaults to generic).
        --fio-ioengines=<engines>
@@ -148,7 +148,7 @@ function fio_process_options() {
 	case "$noptname1" in
 	    fiopattern*)	fiopattern=$optvalue		         ;;     
 	    fioblocksize*)	fioblksize=$optvalue		         ;;     
-	    fiogenericoption)	___fio_generic_options+=("$optvalue")    ;;
+	    fioop*)		___fio_options+=("$optvalue")   	 ;;
 	    fiojobfile)		___fio_job_file=$optvalue		 ;;
 	    fioioengine*)	fioioengine=$optvalue			 ;;
 	    fioiodepth*)	fioiodepth=$optvalue			 ;;
@@ -221,12 +221,12 @@ function fio_generate_metadata() {
 			for ioengine in "${___fio_ioengines[@]}" ; do
 			    jobs+=("$(cat <<EOF
 $(printf '"%04d-%s-%d-%d-%d-%d-%s"' $((jobidx)) "$pattern" "$blocksize" "$iodepth" "$fdatasync" "$direct" "$ioengine"): {
-    "pattern": "$pattern",
-    "blocksize": $blocksize,
-    "iodepth": $iodepth,
-    "fdatasync": $fdatasync,
-    "direct": $direct,
-    "ioengine": "$ioengine"
+ "pattern": "$pattern",
+ "blocksize": $blocksize,
+ "iodepth": $iodepth,
+ "fdatasync": $fdatasync,
+ "direct": $direct,
+ "ioengine": "$ioengine"
 }
 EOF
 )")
@@ -255,7 +255,7 @@ function fio_report_options() {
     }
 	
     cat <<EOF
-"fio_general_options": "${___fio_general_options:-}",
+"fio_options": "${___fio_options:-}",
 "fio_job_file": "$(base64 -w 0 < "$___fio_processed_job_file")",
 "fio_ioengine": $(mk_str_list "${___fio_ioengines[@]}"),
 "fio_iodepth": $(mk_num_list "${___fio_iodepths[@]}"),

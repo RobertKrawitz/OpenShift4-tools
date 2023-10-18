@@ -2,6 +2,12 @@
 
 sleep 10
 
+# Needed for CentOS.  Should be harmless in Fedora.
+# sysbench doesn't need crb (code ready containers), so we won't run
+# crb enable
+dnf --setopt=install_weak_deps=0 --enablerepo=crb install -y \
+    epel-release \
+    epel-next-release
 # We need weak dependencies of podman to run it successfully.
 dnf install -y \
     fio \

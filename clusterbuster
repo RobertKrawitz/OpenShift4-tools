@@ -56,6 +56,8 @@ if [[ $# = 0 || $1 != "--DoIt=$0" ]] ; then
     chmod +x "$tmpsc"
     exec "$tmpsc" "--DoIt=$tmpsc" "$@"
 else
+    # Needed for stack traceback to get function arguments
+    shopt -s extdebug
     __realsc__=${1#--DoIt=}
     clean_startup
     export -n __topsc__ __topdir__
@@ -81,7 +83,7 @@ fi
 declare ___arg
 for ___arg in "$@" ; do
     if [[ "${___arg:-}" = '--force-abort'* ]] ; then
-	echo "*** Warning: will abort on any shell error!" 1>&2
+	echo "*** WARNING: will abort on any shell error!" 1>&2
 	set -e
 	set -o errtrace
 	#trap 'killthemall "Caught error, aborting!"' ERR
@@ -212,9 +214,10 @@ declare failure_status=Fail
 declare -i create_pods_privileged=0
 declare -i wait_forever=0
 declare -a pod_labels=()
-declare -i get_logs_pid=0
+declare -i get_sync_logs_pid=0
 declare -a extra_args=()
 declare -i metrics_interval=30
+declare -a sync_pod=()
 
 declare -r sync_flag_file="/tmp/syncfile";
 declare -r sync_error_file="/tmp/syncerror";
@@ -222,6 +225,10 @@ declare -r controller_timestamp_file="/tmp/timing.json";
 # shellcheck disable=2155
 declare uuid=$(uuidgen -r)
 declare xuuid=$uuid
+# Ensure that pods from other runs don't inadvertently attempt to
+# communicate with our sync pod
+declare sync_nonce=
+sync_nonce=$(uuidgen -r)
 
 declare kata_runtime_class=kata
 declare image_pull_policy=
@@ -253,6 +260,11 @@ declare vm_password=buster
 declare -a vm_ssh_pubkey=()
 declare -A __sysctls=()
 declare -i __sysctls_retrieved=0
+declare -A vm_emptydisks=()
+declare -A vm_emptydisk_options=()
+declare -a vm_emptydisk_list=()
+# We can't use vda, which is the system disk
+declare -r vm_emptydisk_suffixes="bcdefghijklmnopqrstuvwxyz"
 
 declare OC=${OC:-${KUBECTL:-}}
 OC=${OC:-$(type -p oc)}
@@ -557,6 +569,12 @@ $(print_workloads_supporting_reporting '                        - ')
                         Specify the number of sockets (default $vm_sockets).
        --vm-memory=<value>
                         Specify the amount of memory (default $vm_memory).
+       --vm-emptydisk=<size:[options:]mountpoint>
+                        Create and mount an emptydisk volume in each VM.  Options are:
+                        - cache=<mode>
+                        - mountopts=<options>
+                        - fstype=<filesystem>
+                        - fsopts=<mkfs opts>
        --vm-grace-period=<value>
                         Specify the period between when a vm is signaled to
                         shutdown and the point when KubeVirt will force off
@@ -748,6 +766,32 @@ function process_runtimeclass() {
     fi
 }
 
+function process_emptydisk() {
+    local size
+    local mountpoint
+    local -a args
+    IFS=: read -ra args <<< "$1"
+    local -i argcount=${#args[@]}
+    if ((argcount < 2)) ; then
+	fatal "Invalid emptydisk $1: size and mount point must be specified as size:[args:]mountpoint"
+    fi
+    size=${args[0]}
+    mountpoint=${args[$((argcount - 1))]}
+    if [[ $mountpoint != '/'* ]] ; then
+	fatal "Invalid emptydisk $1: path must be absolute"
+    fi
+    if [[ -n "${vm_emptydisks[$mountpoint]:-}" ]] ; then
+	fatal "Duplicate emptydisk mount specified ($1)"
+    fi
+    if ((argcount > 2)) ; then
+	vm_emptydisk_options["$mountpoint"]="$(IFS=:; echo "${args[*]:1:$((argcount - 2))}")"
+    else
+	vm_emptydisk_options["$mountpoint"]=""
+    fi
+    vm_emptydisks["$mountpoint"]=$size
+    vm_emptydisk_list+=("$mountpoint")
+}
+
 function set_metrics_file() {
     metrics_file=${1:-}
     case "$metrics_file" in
@@ -888,6 +932,7 @@ function process_option() {
 	vmuser)			    vm_user=$optvalue				;;
 	vmpassword)		    vm_password=$optvalue			;;
 	vmsshpubkey)		    vm_ssh_pubkey+=("$optvalue")		;;
+	vmemptydisk*)		    process_emptydisk "$optvalue"		;;
 	# Object creation
 	obj*spercall)		    objs_per_call=$optvalue			;;
 	parallel)		    parallel=$optvalue				;;
@@ -914,7 +959,7 @@ function process_option() {
 	    cleanup=$(bool "$optvalue")
 	    if ((! cleanup)) ; then cleanup_always=0; fi
 	    ;;
-	cleanupalways)	    	    
+	cleanupalways)
 	    cleanup_always=$(bool "$optvalue")
 	    if ((cleanup_always)) ; then cleanup=1; fi
 	    ;;
@@ -1126,6 +1171,16 @@ function _____OC() {
     exec "$OC" "$@"
 }
 
+function run_on_sync() {
+    get_run_aborted && return 1
+    ____OC exec "${sync_pod[@]}" -- "$@"
+}
+
+function run_on_sync_n() {
+    get_run_aborted && return 1
+    ____OC exec "${sync_pod[@]}" --stdin=false -- "$@"
+}
+
 function namespace_exists() {
     local ns=$1
     ____OC get ns "$ns" >/dev/null 2>&1
@@ -1178,29 +1233,83 @@ function get_drop_cache() {
 # Logging
 ################################################################
 
+# Based on https://gist.github.com/akostadinov/33bb2606afe1b334169dfbf202991d36
+function stack_trace() {
+    local -a stack=()
+    local stack_size=${#FUNCNAME[@]}
+    local -i start=${1:-1}
+    local -i max_frames=${2:-$stack_size}
+    ((max_frames > stack_size)) && max_frames=$stack_size
+    local -i i
+    local -i max_funcname=0
+    local -i stack_size_len=${#max_frames}
+    local -i max_filename_len=0
+
+    # to avoid noise we start with 1 to skip the stack function
+    for (( i = start; i < max_frames; i++ )); do
+	local func="${FUNCNAME[$i]:-(top level)}"
+	((${#func} > max_funcname)) && max_funcname=${#func}
+	local src="${BASH_SOURCE[$i]:-(no file)}"
+	if [[ $src = "$__realsc__" ]] ; then
+	    src="$__topsc__"
+	fi
+	((${#src} > max_filename_len)) && max_filename_len=${#src}
+    done
+    local stack_frame_str="    (%${stack_size_len}d)   %${max_filename_len}s:%d  %${max_funcname}s%s"
+    local -i arg_count=${BASH_ARGC[0]}
+    for (( i = start; i < max_frames; i++ )); do
+	local func="${FUNCNAME[$i]:-(top level)}"
+	local -i line="${BASH_LINENO[$(( i - 1 ))]}"
+	local src="${BASH_SOURCE[$i]:-(no file)}"
+	if [[ $src = "$__realsc__" ]] ; then
+	    src="$__topsc__"
+	fi
+	local -i frame_arg_count=${BASH_ARGC[$i]}
+	local argstr=
+	if ((frame_arg_count > 0)) ; then
+	    local -i j
+	    for ((j = arg_count + frame_arg_count - 1; j >= arg_count; j--)) ; do
+		argstr+=" ${BASH_ARGV[$j]}"
+	    done
+	fi
+	# We need a dynamically generated string to get the columns correct.
+	# shellcheck disable=SC2059
+	stack+=("$(printf "$stack_frame_str" "$((i - start))" "$src" "$line" "$func" "${argstr:+ $argstr}")")
+	arg_count=$((arg_count + frame_arg_count))
+    done
+    (IFS=$'\n'; echo "${stack[*]}")
+}
+
+function set_run_started() {
+    touch "${cb_tempdir}/___run_started"
+}
+
+function get_run_started() {
+    test -f "${cb_tempdir}/___run_started"
+}
+
+function set_run_aborted() {
+    touch "${cb_tempdir}/___run_aborted"
+}
+
+function get_run_aborted() {
+    test -f "${cb_tempdir}/___run_aborted"
+}
+
 function get_run_failed() {
-    test -f "${cb_tempdir}/___run_failed"
+    test -f "${cb_tempdir}/___run_failed" || test -f "${cb_tempdir}/___run_aborted"
 }
 
 function set_run_failed() {
-    get_run_failed && return
+    if get_run_failed ; then
+	echo "Secondary failure: ${*:-unknown reason}" 1>&2
+	stack_trace 1 2 1>&2
+	return
+    fi
+    echo "Setting failure status: ${*:-unknown reason}" 1>&2
+    stack_trace
     touch "${cb_tempdir}/___run_failed"
-    local namespace
-    local pod
-    local ignore
-    local namespace_retrieved=
-    while read -r namespace pod ignore ; do
-	if [[ -n "$namespace" && -n "$pod" ]] ; then
-	    if [[ -z "$namespace_retrieved" ]] ; then
-		namespace_retrieved=$namespace
-		sync_pod+=("-n" "$namespace")
-	    elif [[ "$namespace" != "$namespace_retrieved" ]] ; then
-		killthemall "Namespace mismatch: $namespace vs $namespace_retrieved"
-	    fi
-	    sync_pod+=("$pod")
-	fi
-    done <<< "$(____OC get pod -A --no-headers -l "${basename}-sync=${uuid}")"
-    ____OC exec --stdin=false "${sync_pod[@]}" -- sh -c "echo 'Please see logs for details.' >> '$sync_error_file'"
+    run_on_sync_n sh -c "echo 'Please see logs for details.' >> '$sync_error_file'" || set_run_aborted
 }
 
 function supports_metrics() {
@@ -1262,6 +1371,9 @@ function get_pod_and_local_timestamps() {
     local -i sync_prestart
     sync_prestart=$(date +%s)
     until __OC exec "$@" -- /bin/sh -c "date +%s.%N" </dev/null >/dev/null 2>/dev/null ; do
+	if get_run_failed || get_run_aborted ; then
+	    return 1
+	fi
 	local status
 	status=$(__OC get pod "$@" -o jsonpath="{.status.phase}" 2>/dev/null)
 	case "$status" in
@@ -1296,18 +1408,19 @@ function get_pod_and_local_timestamps() {
 EOF
     # shellcheck disable=SC2181
     if (( $? != 0 )) ; then
-	killthemall "Unable to write timing data to sync pod"
+	set_run_failed "Unable to write timing data to sync pod"
+	return 1
     fi
     echo "$first_local_ts" "$remote_ts" "$second_local_ts"
 }
 
 function start_prometheus_snapshot() {
     if ((!doit)) || ! supports_metrics ; then return 0; fi
-    echo "Starting Prometheus snapshot" | echo_if_desired 1>&2
+    echo "Starting Prometheus snapshot" | report_if_desired 1>&2
     _OC delete pod -n openshift-monitoring prometheus-k8s-0
     local -i retry=12
     until __OC get pod -n openshift-monitoring prometheus-k8s-0 >/dev/null 2>&1 ; do
-	echo "Promtheus pod did not start, $retry attempt(s) left" | echo_if_desired 1>&2
+	echo "Promtheus pod did not start, $retry attempt(s) left" | report_if_desired 1>&2
 	if ((retry <= 0)) ; then
 	    killthemall "Prometheus pod did not restart!"
 	fi
@@ -1317,13 +1430,14 @@ function start_prometheus_snapshot() {
     __OC wait --for=condition=Ready -n openshift-monitoring pod/prometheus-k8s-0 || killthemall "Prometheus pod did not become ready"
     set_start_timestamps || return 1
     # Wait for prometheus pod to fully initialize
+
     sleep "$metrics_epoch"
-    echo "Prometheus snapshot started" | echo_if_desired 1>&2
+    echo "Prometheus snapshot started" | report_if_desired 1>&2
 }
 
 function retrieve_prometheus_snapshot() {
     if ((!doit)) || ! supports_metrics ; then return 0; fi
-    echo "Retrieving Prometheus snapshot" | echo_if_desired 1>&2
+    echo "Retrieving Prometheus snapshot" | report_if_desired 1>&2
     local dir=${1:-$artifactdir}
     sleep 60
     prometheus_ending_timestamp=$(get_prometheus_pod_timestamp)
@@ -1331,7 +1445,7 @@ function retrieve_prometheus_snapshot() {
     promdb_name="promdb_$(readable_timestamp "$prometheus_starting_timestamp")_$(readable_timestamp "$prometheus_ending_timestamp")"
     local promdb_path="${dir:+${dir}/}${promdb_name}.tar"
     if __OC exec -n openshift-monitoring prometheus-k8s-0 -c prometheus -- /bin/sh -c "tar cf - . -C /prometheus --transform 's,^[.],./${promdb_name},' .; true" > "$promdb_path" ; then
-	echo "Prometheus snapshot retrieved" | echo_if_desired 1>&2
+	echo "Prometheus snapshot retrieved" | report_if_desired 1>&2
     else
 	echo "Unable to retrieve Prometheus snapshot"
     fi
@@ -1419,8 +1533,8 @@ function _monitor_pods() {
 		    echo "Tail end of logs:" 1>&2
 		    # TODO: Need to get logs from each container
 		    ____OC logs -n "$namespace" "$name" |tail -20 1>&2
-		    set_run_failed
-		    if ((get_logs_pid > 1)) ; then kill -INT "$get_logs_pid"; fi
+		    set_run_failed "Pod -n $namespace $name failed with $status"
+		    if ((get_sync_logs_pid > 1)) ; then kill -INT "$get_sync_logs_pid"; fi
 		    return 1
 		    ;;
 		pending|containercreating)
@@ -1444,7 +1558,7 @@ function _monitor_pods() {
 	    local timestamp=$status
 	    if [[ -z "${injected_errors[timeout]:-}" ]] && ! supports_api -w "$requested_workload" supports_reporting ; then
 		if (( ${#running_pods[@]} + finished_pod_count > 0 && other_pod_count == 0 )) ; then
-		    set_run_failed
+		    set_run_failed "Run failed: running pods ${#running_pods[@]} finished pods $finished_pod_count others $other_pod_count"
 		    sleep "$workload_run_time"
 		    return
 		fi
@@ -1456,14 +1570,14 @@ function _monitor_pods() {
 		    pod_progress_timeout=$((timestamp+pod_start_timeout))
 		    pods_pending="$pods_now_pending"
 		    if [[ -z "$pods_pending" ]] ; then
-			echo "All pods are running                                 " | echo_if_desired 1>&2
+			echo "All pods are running                                 " | report_if_desired 1>&2
 		    else
 			# If we've reported pods pending, and then more pods are running,
 			# we want to overprint the old message so it doesn't look like things
 			# are stuck.  However, to avoid log clutter, we don't do this unless
 			# a pending message was previously printed.
 			if ((message_printed)) ; then
-			    echo -ne "                                                  \r" | echo_if_desired 1>&2
+			    echo -ne "                                                  \r" | report_if_desired 1>&2
 			    message_printed=0
 			fi
 		    fi
@@ -1477,16 +1591,16 @@ function _monitor_pods() {
 			local p_pods=pods
 			if ((pod_progress_timeout-timestamp == 1)) ; then p_seconds=second; fi
 			if ((${#starting_pods[@]} == 1)) ; then p_pods=pod; fi
-			echo -ne "${#starting_pods[@]} $p_pods pending (will retry $((pod_progress_timeout-timestamp)) $p_seconds)\r" | echo_if_desired 1>&2
+			echo -ne "${#starting_pods[@]} $p_pods pending (will retry $((pod_progress_timeout-timestamp)) $p_seconds)\r" | report_if_desired 1>&2
 			message_printed=1
 		    fi
 		fi
 	    elif ((message_printed)) ; then
-		echo -ne "                                                  \r" | echo_if_desired 1>&2
+		echo -ne "                                                  \r" | report_if_desired 1>&2
 		message_printed=0
 	    fi
 	    if ((timeout > 0 && timestamp > timeout)) ; then
-		set_run_failed
+		set_run_failed "Timed out"
 	    fi
 	fi
     done
@@ -1524,7 +1638,7 @@ function _fail_helper()  {
     local faildata
     while : ; do
 	local podstatus
-	podstatus=$(____OC get pod -ojsonpath='{.status.phase}' "$@" 2>/dev/null)
+	podstatus=$(____OC get pod -ojsonpath='{.status.phase}' "${sync_pod[@]}" 2>/dev/null)
 	case "$podstatus" in
 	    Succeeded|Terminated)
 		return
@@ -1534,11 +1648,9 @@ function _fail_helper()  {
 		# oc exec connection from prematurely terminating.
 		# If the flag file exists, we need to exit even if there's
 		# no error flag.
-		faildata="$(____OC exec --stdin=false "$@" -- sh -c "while [[ ! -f '$sync_error_file' && ! -f '$sync_flag_file' ]] ; do sleep 5; echo KEEPALIVE 1>&2; done; cat '$sync_error_file'" 2>/dev/null)"
+		faildata="$(run_on_sync_n sh -c "while [[ ! -f '$sync_error_file' && ! -f '$sync_flag_file' ]] ; do sleep 5; echo KEEPALIVE 1>&2; done; cat '$sync_error_file'" 2>/dev/null)"
 		if [[ -n "$faildata" ]] ; then
-		    set_run_failed
-		    echo "Run failed:" 1>&2
-		    echo "${faildata:-}" 1>&2
+		    set_run_failed "Run failed: \n${faildata:-}"
 		    return
 		fi
 		;;
@@ -1561,89 +1673,95 @@ function _log_helper() {
     done
     shift $((OPTIND-1))
     if [[ -n "${fail_helper:-}" ]] ; then
-	"$fail_helper" "$@" &
+	"$fail_helper" &
     fi
     if [[ -n "${injected_errors[timeout]:-}" ]] ; then
 	echo "*** Injecting forced timeout error"
 	sleep infinity
     fi
-    until [[ $(____OC get pod -ojsonpath='{.status.phase}' "$@" 2>/dev/null) != 'Running' ]] ; do
+    local tmpfile="$cb_tempdir/_log_helper.out"
+    until [[ $(____OC get pod -ojsonpath='{.status.phase}' "${sync_pod[@]}" 2>/dev/null) != 'Running' ]] ; do
 	# Need to produce periodic output to stderr to prevent oc exec connection from prematurely terminating
-	____OC exec --stdin=false "$@" -- sh -c "while [[ ! -f '$sync_flag_file' && ! -f '$sync_error_file' ]] ; do sleep 5; echo KEEPALIVE 1>&2; done; cat '$sync_flag_file'; sleep 5; echo DONE 1>&2" 2>/dev/null && break
+	if run_on_sync_n sh -c "while [[ ! -f '$sync_flag_file' && ! -f '$sync_error_file' ]] ; do sleep 5; echo KEEPALIVE 1>&2; done; cat '$sync_flag_file'; sleep 5; echo DONE 1>&2" > "$tmpfile" 2>/dev/null &&
+		grep -q 'worker_results' "$tmpfile" && jq -c . "$tmpfile" >/dev/null 2>&1 ; then
+	    cat "$tmpfile"
+	    rm -f "$tmpfile"
+	    break
+	fi
+	get_run_failed && return 1
+	warn "Data retrieval failed!  Retrying"
 	sleep 5
     done
     # Tell the pod monitor to stop.
     if [[ -n "${cb_tempdir:-}" && -d "$cb_tempdir" ]] ; then
 	touch "$cb_tempdir/___run_complete"
     fi
-    ____OC exec --stdin=false "$@" -- sh -c "rm -f '$sync_flag_file'" || killthemall "Can't terminate sync"
+    local -i i
+    for ((i = 0; i < 5; i++)) ; do
+	run_on_sync_n sh -c "rm -f '$sync_flag_file'" && return
+	sleep 5
+    done
+    warn "Can't terminate sync"
 }
 
-function _get_logs_poll() {
+function _get_sync_logs_poll() {
     trap '' TERM
     local pod
     local status
-    local counter=$#
-    for pod in "$@" ; do
-	pod_status_found=0
-	while : ; do
-	    # shellcheck disable=SC2086
-	    status=$(__OC get pod $pod -o jsonpath="{.status.phase}" 2>/dev/null)
-	    case "$status" in
-		Running)
-		    break
-		    ;;
-		Pending)
-		    pod_status_found=1
-		    sleep 1
-		    ;;
-		Error|Failed)
-		    pod_status_found=1
-		    echo "Status of pod $pod failed!" 1>&2
-		    set_run_failed
-		    return 1
-		    ;;
-		''|Succeeded)	# Might be an old pod not yet deleted
-		    if ((pod_status_found)) ; then
-			echo "Unexpected status '$status' of pod $pod!" 1>&2
-			return 1
-		    else
-			sleep 1
-		    fi
-		    ;;
-		*)
-		    pod_status_found=1
+    pod_status_found=0
+    while : ; do
+	# shellcheck disable=SC2086
+	status=$(__OC get pod "${sync_pod[@]}" -o jsonpath="{.status.phase}" 2>/dev/null)
+	case "$status" in
+	    Running)
+		break
+		;;
+	    Pending)
+		pod_status_found=1
+		sleep 1
+		;;
+	    Error|Failed)
+		pod_status_found=1
+		set_run_failed "Status of pod $pod failed!"
+		return 1
+		;;
+	    ''|Succeeded)	# Might be an old pod not yet deleted
+		if ((pod_status_found)) ; then
 		    echo "Unexpected status '$status' of pod $pod!" 1>&2
 		    return 1
-		    ;;
-	    esac
-	done
-	# shellcheck disable=SC2086
-	local mypid=$BASHPID
-	monitor_pods -A -l "${basename}-monitor=$xuuid" &
-	# shellcheck disable=SC2086
-	if supports_api -w "$requested_workload" supports_reporting ; then
-	    # Ensure that if there's a lot of output that we don't remove the sync file before it has all been flushed out
-	    run_logger -p "$mypid" -- _log_helper -e _fail_helper -- $pod &
-	fi
-	trap 'kill $(jobs -p) 2>/dev/null 1>&2 && wait' USR2
-	# Wait for either the monitor or the logger to exit and terminate
-	# the other one.
-	wait -n
-	# shellcheck disable=SC2046
-	kill $(jobs -p) 2>/dev/null
-	wait
-	if ((--counter > 0)) ; then
-	    echo ','
-	fi
+		else
+		    sleep 1
+		fi
+		;;
+	    *)
+		pod_status_found=1
+		echo "Unexpected status '$status' of pod $pod!" 1>&2
+		return 1
+		;;
+	esac
     done
+    # shellcheck disable=SC2086
+    local mypid=$BASHPID
+    monitor_pods -A -l "${basename}-monitor=$xuuid" &
+    # shellcheck disable=SC2086
+    if supports_api -w "$requested_workload" supports_reporting ; then
+	# Ensure that if there's a lot of output that we don't remove the sync file before it has all been flushed out
+	run_logger -p "$mypid" -- _log_helper -e _fail_helper -- &
+    fi
+    trap 'kill $(jobs -p) 2>/dev/null 1>&2 && wait' USR2
+    # Wait for either the monitor or the logger to exit and terminate
+    # the other one.
+    wait -n
+    # shellcheck disable=SC2046
+    kill $(jobs -p) 2>/dev/null
+    wait
 }
 
-function get_logs_poll() {
+function get_sync_logs_poll() {
     local tfile
     tfile=$(mktemp ${cb_tempdir:+-p "$cb_tempdir"} -t '_clusterbusterlogs.XXXXXXXXXX') || fatal "Cannot create temporary file"
     trap 'retrieve_successful_logs=1 _retrieve_artifacts 1; if [[ -n "${tfile:-}" && -f "$tfile" ]] ; then rm -f "$tfile"; unset tfile; fi; echo "Status: Fail"; return 1' INT TERM HUP USR1
-    _get_logs_poll "$*" > "$tfile"
+    _get_sync_logs_poll > "$tfile"
     local status=$?
     if ((status == 0)) ; then
 	local results
@@ -1664,13 +1782,13 @@ function get_logs_poll() {
 function __report_one_volume() {
     local volname=$1
 	cat <<EOF
-  {
-     "name": "$volname",
-     "mount_path": "${volume_mount_paths[$volname]}",
-     "type": "${volume_types[$vname]}",
-     "type_key": "${volume_types[$vname]}",
-     "scoped_name": "${volume_scoped_names[$vname]}"
-  }
+ {
+  "name": "$volname",
+  "mount_path": "${volume_mount_paths[$volname]}",
+  "type": "${volume_types[$vname]}",
+  "type_key": "${volume_types[$vname]}",
+  "scoped_name": "${volume_scoped_names[$vname]}"
+ }
 EOF
 }
 
@@ -1686,7 +1804,7 @@ function _report_volumes() {
 
 function _report_emptydirs() {
     if ((${#emptydirs[@]})) ; then
-	echo "emptydirVolumes: ["
+	echo '"emptydirVolumes": ['
 	local -a ed=("${emptydirs[@]}")
 	ed=("${ed[@]/#/}")
 	ed=("${ed[@]/%/}")
@@ -1726,7 +1844,7 @@ function _extract_metrics() {
     if supports_metrics && [[ -r "$metrics_file" ]] ; then
 	sleep 60
 	cat <<EOF
-"metrics": $("${__topdir__}/prom-extract" --define "namespace_re=${basename}-.*" -m "$metrics_file" -s "$metrics_interval" --metrics-only --start_time="$((prometheus_starting_timestamp - metrics_epoch))" --post-settling-time="$((metrics_epoch*2))"),
+"metrics": $("${__topdir__}/prom-extract" --indent= --define "namespace_re=${basename}-.*" -m "$metrics_file" -s "$metrics_interval" --metrics-only --start_time="$((prometheus_starting_timestamp - metrics_epoch))" --post-settling-time="$((metrics_epoch*2))"),
 EOF
     fi
 }
@@ -1786,7 +1904,7 @@ function _get_kata_version() {
 EOF
 		return
 	    fi
-	done <<< "$(____OC get node -oname --no-headers)"
+	done <<< "$(____OC get node -oname --no-headers 2>/dev/null)"
     fi
 }
 
@@ -1801,82 +1919,82 @@ function _report_metadata_and_objects() {
     cat <<EOF
 "Status": "$status",
 "metadata": {
-  "kind": "clusterbusterResults",
-  "controller_first_start_timestamp": $first_start_timestamp,
-  "prometheus_starting_timestamp": $prometheus_exact_starting_timestamp,
-  "controller_second_start_timestamp": $second_start_timestamp,
-  "controller_end_timestamp": $enddate,
-  "controller_elapsed_time": $(bc <<< "$enddate - ${second_start_timestamp:-0}"),
-  "cluster_start_time": "$(readable_timestamp "${prometheus_starting_timestamp}")",
-  "job_name": "$job_name",
-  "uuid": "$uuid",
-  "workload": "$requested_workload",
-  "workload_reporting_class": "$(_workload_reporting_class)",
-  "kubernetes_version": $(indent_hang 2 __OC version -ojson),
-  "command_line": [$(quote_list "${saved_argv[@]}")],
-  "expanded_command_line": [$(quote_list "${processed_options[@]}")],
-  "runHost": "$(hostname -f)",
-  "workload_metadata": {$(indent_hang 2 generate_workload_metadata)},
-  "controller_presync_timestamp": $first_local_ts,
-  "sync_timestamp": $remote_ts,
-  "controller_postsync_timestamp": $second_local_ts,
-  "artifact_directory": "$artifactdir",
-$(indent 2 _get_csv_version -n openshift-sandboxed-containers-operator kata)
-$(indent 2 _get_kata_version)
-$(indent 2 _get_csv_version cnv)
-$(indent 2 _get_csv_version -f .spec.labels.full_version -n openshift-storage odf)
-  "options": {
-    "basename": "$basename",
-    "containers_per_pod": $containers_per_pod,
-    "deployments_per_namespace": $deps_per_namespace,
-    "namespaces": $namespaces,
-    "bytes_transfer": $bytes_transfer,
-    "bytes_transfer_max": $bytes_transfer_max,
-    "workload_run_time": $workload_run_time,
-    "workload_run_time_max": $workload_run_time_max,
-    "headless_services": $headless_services,
-    "drop_cache": $drop_node_cache,
-    "always_drop_cache": $drop_all_node_cache,
-    "pin_nodes": {$(_report_pin_nodes)},
-$(indent 4 _report_volumes)
-$(indent 4 _report_liveness_probe)
-    "secrets": $secrets,
-    "replicas": $replicas,
-    "container_image": "$container_image",
-    "node_selector": "$node_selector",
-$(indent 4 container_resources_json)
-    "runtime_classes": {$(_report_runtime_classes)},
-$(indent 4 _report_emptydirs)
-    "target_data_rate": $target_data_rate,
-    "workloadOptions": {
-$(indent 8 call_api -w "$requested_workload" "report_options")
-    }
+ "kind": "clusterbusterResults",
+ "controller_first_start_timestamp": $first_start_timestamp,
+ "prometheus_starting_timestamp": $prometheus_exact_starting_timestamp,
+ "controller_second_start_timestamp": $second_start_timestamp,
+ "controller_end_timestamp": $enddate,
+ "controller_elapsed_time": $(bc <<< "$enddate - ${second_start_timestamp:-0}"),
+ "cluster_start_time": "$(readable_timestamp "${prometheus_starting_timestamp}")",
+ "job_name": "$job_name",
+ "uuid": "$uuid",
+ "workload": "$requested_workload",
+ "workload_reporting_class": "$(_workload_reporting_class)",
+ "kubernetes_version": $(indent_hang 1 __OC version -ojson),
+ "command_line": [$(quote_list "${saved_argv[@]}")],
+ "expanded_command_line": [$(quote_list "${processed_options[@]}")],
+ "runHost": "$(hostname -f)",
+ "workload_metadata": {$(indent_hang 1 generate_workload_metadata)},
+ "controller_presync_timestamp": $first_local_ts,
+ "sync_timestamp": $remote_ts,
+ "controller_postsync_timestamp": $second_local_ts,
+ "artifact_directory": "$artifactdir",
+$(indent 1 _get_csv_version -n openshift-sandboxed-containers-operator kata)
+$(indent 1 _get_kata_version)
+$(indent 1 _get_csv_version cnv)
+$(indent 1 _get_csv_version -f .spec.labels.full_version -n openshift-storage odf)
+ "options": {
+  "basename": "$basename",
+  "containers_per_pod": $containers_per_pod,
+  "deployments_per_namespace": $deps_per_namespace,
+  "namespaces": $namespaces,
+  "bytes_transfer": $bytes_transfer,
+  "bytes_transfer_max": $bytes_transfer_max,
+  "workload_run_time": $workload_run_time,
+  "workload_run_time_max": $workload_run_time_max,
+  "headless_services": $headless_services,
+  "drop_cache": $drop_node_cache,
+  "always_drop_cache": $drop_all_node_cache,
+  "pin_nodes": {$(_report_pin_nodes)},
+$(indent 2 _report_volumes)
+$(indent 2 _report_liveness_probe)
+  "secrets": $secrets,
+  "replicas": $replicas,
+  "container_image": "$container_image",
+  "node_selector": "$node_selector",
+$(indent 2 container_resources_json)
+  "runtime_classes": {$(_report_runtime_classes)},
+$(indent 2 _report_emptydirs)
+  "target_data_rate": $target_data_rate,
+  "workloadOptions": {
+$(indent 3 call_api -w "$requested_workload" "report_options")
   }
+ }
 },
-$(indent 2 _extract_metrics)
-"nodes": $(__OC get nodes -ojson),
-"api_objects": $(__OC get all -A -l "${basename}-id=$uuid" -ojson |jq -r .items?),
-"csvs": $(__OC get csv -A -ojson | jq -r '[foreach .items[]? as $item ([[],[]];0; {name: $item.metadata.name, namespace: $item.metadata.namespace, version: $item.spec.version})]')
+$(indent 1 _extract_metrics)
+"nodes": $(__OC get nodes -ojson 2>/dev/null | jq -c .),
+"api_objects": $(__OC get all -A -l "${basename}-id=$uuid" -ojson 2>/dev/null |jq -c .items?),
+"csvs": $(__OC get csv -A -ojson 2>/dev/null | jq -r '[foreach .items[]? as $item ([[],[]];0; {name: $item.metadata.name, namespace: $item.metadata.namespace, version: $item.spec.version})]')
 EOF
 }
 
 function _report_failure() {
     cat <<EOF
 {
-  "Results": {},
-$(indent 2 _report_metadata_and_objects "$failure_status")
+ "Results": {},
+$(indent 1 _report_metadata_and_objects "$failure_status")
 }
 EOF
 }
 
-function _get_logs() {
+function _get_sync_logs() {
     local first_local_ts
     local remote_ts
     local second_local_ts
     local status=$failure_status
     local do_retrieve_artifacts=1
     protect_pids "$BASHPID"
-    read -r first_local_ts remote_ts second_local_ts <<< "$(get_pod_and_local_timestamps "${@:2}")"
+    read -r first_local_ts remote_ts second_local_ts <<< "$(get_pod_and_local_timestamps "${sync_pod[@]}")"
     if [[ -z "$remote_ts" ]] ; then
 	killthemall "Unable to retrieve sync timestamp"
     fi
@@ -1892,8 +2010,8 @@ function _get_logs() {
     }
     cat > "$tfile2" <<EOF
 {
-$(indent 2 < "$tfile1"),
-$(indent 2 _report_metadata_and_objects "$status")
+$(indent 1 < "$tfile1"),
+$(indent 1 _report_metadata_and_objects "$status")
 }
 EOF
     ((reported)) || cat "$tfile2"
@@ -1905,9 +2023,10 @@ EOF
 
 function _retrieve_artifacts() {
     local always_retrieve_artifacts=${1:-}
+    get_run_started || return 1
     get_run_failed && always_retrieve_artifacts=1
     if [[ -n "$artifactdir" && ! -f "$artifactdir/.artifacts" ]] ; then
-	echo "Retrieving run artifacts" | echo_if_desired 1>&2
+	echo "Retrieving run artifacts" | report_if_desired 1>&2
 	mkdir -p "$artifactdir/Logs"
 	mkdir -p "$artifactdir/Describe"
 	touch "$artifactdir/.artifacts"
@@ -1947,7 +2066,7 @@ function _retrieve_artifacts() {
 		    unset "jobs_pending[$job]"
 		done
 	    fi
-	done <<< "$(__OC get pod -A -l "${basename}-id=$uuid" -ojson | jq -r '[foreach .items[]? as $item ([[],[]];0; (if ($item.kind == "Pod") then ([foreach $item.spec.containers[]? as $container ([[],[]];0; $item.metadata.namespace + " " + $item.metadata.name + " " + $container.name + " " + $item.status.phase)]) else null end))] | flatten | map (select (. != null))[]')"
+	done <<< "$(__OC get pod -A -l "${basename}-id=$uuid" -ojson 2>/dev/null | jq -r '[foreach .items[]? as $item ([[],[]];0; (if ($item.kind == "Pod") then ([foreach $item.spec.containers[]? as $container ([[],[]];0; $item.metadata.namespace + " " + $item.metadata.name + " " + $container.name + " " + $item.status.phase)]) else null end))] | flatten | map (select (. != null))[]')"
 	for job in "${!jobs_pending[@]}" ; do
 	    wait "$job" || {
 		rm -f "$artifactdir/Logs/$name"
@@ -1973,26 +2092,26 @@ function print_report() {
     fi
 }
 
-function get_logs() {
+function get_sync_logs() {
     trap - TERM
     protect_pids "$BASHPID"
     local log_cmd
     if supports_api -w "$requested_workload" supports_reporting ; then
-	log_cmd=get_logs_poll
+	log_cmd=get_sync_logs_poll
     else
 	log_cmd=true
     fi
-    if supports_api -w "$requested_workload" supports_reporting && [[ -n "$*" ]]; then
+    if supports_api -w "$requested_workload" supports_reporting; then
 	if [[ -n "$artifactdir" ]] ; then
 	    # Even if reporting fails, make sure we capture the JSON
-	    _get_logs "$log_cmd" "$@" > "$artifactdir/clusterbuster-report.tmp.json" &&
+	    _get_sync_logs "$log_cmd" > "$artifactdir/clusterbuster-report.tmp.json" &&
 		mv "$artifactdir/clusterbuster-report.tmp.json" "$artifactdir/clusterbuster-report.json" &&
 		print_report < "$artifactdir/clusterbuster-report.json" &&
 		return 0
 	    return 1
 	else
 	    trap '' TERM
-	    _get_logs "$log_cmd" "$@" | print_report
+	    _get_sync_logs "$log_cmd" | print_report
 	    return $((PIPESTATUS[0] || PIPESTATUS[1]))
 	fi
     else
@@ -2245,9 +2364,9 @@ $(indent 2 standard_environment)
 $(indent 2 generate_environment)
   command:
 $(if [[ -n "${arglist_function}" ]] ; then
-     "${arglist_function}" "${system_configmap_mount_dir}/" "$@" "$container" -- "$namespace" "c$container" \
-     "$basetime" "$baseoffset" "$(ts)" "$exit_at_end" "$sync_service" "$sync_port_num" "$sync_ns_port_num" \
-     "$drop_cache_service" "$drop_cache_port_num" | indent 2 ; fi)
+     "${arglist_function}" "${system_configmap_mount_dir}/" "$@" "$container" -- \
+     "$sync_nonce" "$namespace" "c$container" "$basetime" "$baseoffset" "$(ts)" "$exit_at_end" "$sync_service" \
+     "$sync_port_num" "$sync_ns_port_num" "$drop_cache_service" "$drop_cache_port_num" | indent 2 ; fi)
 $(indent 2 volume_mounts_yaml "$namespace" "${instance}" "$secret_count")
 $(indent 2 <<< "${security_context:-}")
 EOF
@@ -2487,6 +2606,7 @@ function namespace_yaml() {
 }
 
 function annotations_yaml() {
+    [[ -z "${pod_annotations[*]}" ]] && return
     local desired_class=${1:-client}
     local annotation
     echo "annotations:"
@@ -2637,10 +2757,11 @@ EOF
 
 function _really_create_objects() {
     if [[ $doit -ne 0 && -n $accumulateddata ]] ; then
-	__OC --validate=false apply -f - 1>&2 <<< "$accumulateddata" || {
-	    echo "Create objects failed:" 1>&2
-	    echo "$accumulateddata" 1>&2
-	    killthemall "Failed to create objects"
+	__OC --validate=false apply -f - 2>&1 <<< "$accumulateddata" || {
+	    echo "Create objects failed:" 2>&1
+	    echo "$accumulateddata" 2>&1
+	    set_run_failed "Failed to create objects"
+	    return 1
 	}
     fi
 }
@@ -2696,9 +2817,9 @@ function create_object() {
     fi
 }
 
-function echo_if_desired() {
+function report_if_desired() {
     if (( report_object_creation )) ; then
-	cat
+	timestamp
     else
 	cat >/dev/null
     fi
@@ -2722,11 +2843,11 @@ function _create_object_from_file() {
 	[[ -r "$file" ]] || fatal "Can't read file $file!"
     done
     # shellcheck disable=SC2046
-    delete_object_safe "$objtype" $(_ns) "$objname"
+    delete_object_safe "$objtype" $(_ns) "$objname" 2>&1
     # shellcheck disable=SC2046
-    _OC create "$objtype" $(_ns) "$objname" "${@/#/--from-file=}" || killthemall "Unable to create object $objtype/$namespace:$objname"
+    _OC create "$objtype" $(_ns) "$objname" "${@/#/--from-file=}" 2>&1 || killthemall "Unable to create object $objtype/$namespace:$objname"
     # shellcheck disable=SC2046
-    _OC label "$objtype" $(_ns) "$objname" "${basename}base=true" 'clusterbusterbase=true' "${basename}-uuid=${uuid}" "${basename}-id=$uuid" "${basename}=true" || killthemall "Unable to label $objtype/$namespace:$objname"
+    _OC label "$objtype" $(_ns) "$objname" "${basename}base=true" 'clusterbusterbase=true' "${basename}-uuid=${uuid}" "${basename}-id=$uuid" "${basename}=true" 2>&1 || killthemall "Unable to label $objtype/$namespace:$objname"
     if (( doit )) ; then
 	if [[ -n "$artifactdir" ]] ; then
 	    mkdir -p "$artifactdir/$objtype"
@@ -2748,7 +2869,7 @@ function _create_object_from_file() {
 }
 
 function create_object_from_file() {
-    _create_object_from_file "$@" |echo_if_desired |timestamp 1>&2
+    _create_object_from_file "$@" |report_if_desired 1>&2
 }
 
 function create_namespace() {
@@ -2773,22 +2894,22 @@ function create_namespace() {
 	return 1
     fi
     if ((use_namespaces)) ; then
-	namespace_exists "$namespace" || create_object $force -t namespace "$namespace" <<EOF
+	namespace_exists "$namespace" || create_object $force -t namespace "$namespace" 2>&1 | report_if_desired  <<EOF
 apiVersion: v1
 kind: Namespace
 metadata:
   name: "${namespace}"
 $(indent 2 standard_labels_yaml $worker_label -t namespace)
 EOF
-	_OC label namespace --overwrite "$namespace" "pod-security.kubernetes.io/enforce=$policy"
-	_OC label namespace --overwrite "$namespace" "pod-security.kubernetes.io/audit=$policy"
-	_OC label namespace --overwrite "$namespace" "pod-security.kubernetes.io/warn=$policy"
+	_OC label namespace --overwrite "$namespace" "pod-security.kubernetes.io/enforce=$policy" 2>&1 | report_if_desired
+	_OC label namespace --overwrite "$namespace" "pod-security.kubernetes.io/audit=$policy" 2>&1 | report_if_desired
+	_OC label namespace --overwrite "$namespace" "pod-security.kubernetes.io/warn=$policy" 2>&1 | report_if_desired
 	if [[ $policy = privileged ]] ; then
 	    if ! __OC get serviceaccount -n "$namespace" "$namespace" >/dev/null 2>&1 ; then
-		_OC create serviceaccount -n "$namespace" "$namespace"
+		_OC create serviceaccount -n "$namespace" "$namespace" 2>&1 | report_if_desired
 	    fi
-	    _OC label serviceaccount -n "$namespace" "$namespace" "${basename}=true"
-	    _OC adm policy add-scc-to-user -n "$namespace" privileged -z "$namespace"
+	    _OC label serviceaccount -n "$namespace" "$namespace" "${basename}=true" 2>&1 | report_if_desired
+	    _OC adm policy add-scc-to-user -n "$namespace" privileged -z "$namespace" 2>&1 | report_if_desired
 	fi
     fi
 }
@@ -3097,6 +3218,66 @@ EOF
 	    fi
 	done
     }
+    function create_emptydisk_volumes() {
+	local -i id
+	if [[ -n "${vm_emptydisk_list[*]}" ]] ; then
+	    for id in $(seq 0 $((${#vm_emptydisk_list[@]} - 1))) ; do
+		local mountpoint=${vm_emptydisk_list[$id]}
+		cat << EOF
+- name: emptydisk-${id}
+  emptyDisk:
+    capacity: ${vm_emptydisks[$mountpoint]}
+EOF
+	    done
+	fi
+    }
+    function create_emptydisk_devices() {
+	local -i id
+	if [[ -n "${vm_emptydisk_list[*]}" ]] ; then
+	    for id in $(seq 0 $((${#vm_emptydisk_list[@]} - 1))) ; do
+		local mountpoint=${vm_emptydisk_list[$id]}
+		local -a extra_args
+		IFS=: read -ra extra_args <<< "${vm_emptydisk_options[$mountpoint]}"
+		local arg
+		local cache=
+		for arg in "${extra_args[@]}" ; do
+		    if [[ $arg = "cache="* ]] ; then
+			cache="  cache: ${arg/cache=/}"
+		    fi
+		done
+		cat << EOF
+- name: emptydisk-${id}
+  disk:
+    bus: virtio
+$cache
+EOF
+	    done
+	fi
+    }
+    function create_emptydisk_mounts() {
+	local -i id
+	if [[ -n "${vm_emptydisk_list[*]}" ]] ; then
+	    for id in $(seq 0 $((${#vm_emptydisk_list[@]} - 1))) ; do
+		local device="/dev/vd${vm_emptydisk_suffixes:$id:1}"
+		local mountpoint=${vm_emptydisk_list[$id]}
+		local mountopts=
+		local fs=ext4
+		local fsopts=
+		IFS=: read -ra extra_args <<< "${vm_emptydisk_options[$mountpoint]}"
+		for arg in "${extra_args[@]}" ; do
+		    case "$arg" in
+			"mountopts="*) mountopts="${arg/mountopts=/-o }";;
+			"fstype="*)    fs="${arg/fstype=/}"		;;
+			"fsopts="*)    fsopts="${arg/fsopts=/}"		;;
+			*)						;;
+		    esac
+		done
+		cat <<EOF
+- "'mkfs.$fs' $fsopts '$device' && mkdir -p '$mountpoint' && mount $mountopts '$device' '$mountpoint' && chmod 777 '$mountpoint'"
+EOF
+	    done
+	fi
+    }
     get_sysctls
     local node_class=client
     local namespace=$1
@@ -3155,6 +3336,7 @@ $(indent 6 vm_evict_strategy)
             - name: containerdisk
               disk:
                 bus: virtio
+$(indent 12 create_emptydisk_devices)
             - name: systemconfigmap-${namespace}
               serial: systemconfigmap
               volumeName: systemconfigmap-${namespace}
@@ -3168,6 +3350,7 @@ $(indent 6 <<< "$affinity_yaml")
         - name: containerdisk
           containerDisk:
             image: $vm_image
+$(indent 8 create_emptydisk_volumes)
         - name: systemconfigmap-${namespace}
           configMap:
             name: systemconfigmap-${namespace}
@@ -3184,6 +3367,7 @@ $(indent 6 <<< "$affinity_yaml")
               chpasswd: { expire: False }
               bootcmd:
                 - "mkdir '$system_configmap_mount_dir' '$user_configmap_mount_dir'"
+$(indent 16 create_emptydisk_mounts)
                 - "mount -o ro /dev/disk/by-id/ata-QEMU_HARDDISK_systemconfigmap '$system_configmap_mount_dir'"
                 - "mount -o ro /dev/disk/by-id/ata-QEMU_HARDDISK_userconfigmap '$user_configmap_mount_dir'"
 $(indent 16 insert_ssh_keys "${vm_ssh_pubkey[@]}")
@@ -3192,9 +3376,9 @@ $(indent 16 setup_commands)
 $(indent 16 setup_sysctls)
               runcmd:
                 - "$(standard_environment -V) $(run_as_container)$(if [[ -n "${arglist_function}" ]] ; then
-     ARGLIST_FORMAT=vm "${arglist_function}" "${system_configmap_mount_dir}/" "$@" "0" -- "$namespace" "c0" \
-     "$basetime" "$baseoffset" "$(ts)" "$exit_at_end" "$sync_service" "$sync_port_num" "$sync_ns_port_num" \
-     "$drop_cache_service" "$drop_cache_port_num" ; fi)"
+     ARGLIST_FORMAT=vm "${arglist_function}" "${system_configmap_mount_dir}/" "$@" "0" -- \
+     "$sync_nonce" "$namespace" "c0" "$basetime" "$baseoffset" "$(ts)" "$exit_at_end" "$sync_service" \
+     "$sync_port_num" "$sync_ns_port_num" "$drop_cache_service" "$drop_cache_port_num" ; fi)"
 EOF
     done
 }
@@ -3305,6 +3489,7 @@ $(indent 2 standard_environment)
   command:
   - "python3"
   - "$system_configmap_mount_dir/sync.py"
+  - "$sync_nonce"
   - "$sync_flag_file"
   - "$sync_error_file"
   - "$controller_timestamp_file"
@@ -3369,6 +3554,7 @@ $(indent 2 standard_environment)
   command:
   - "python3"
   - "${system_configmap_mount_dir}/drop_cache.py"
+  - "$sync_nonce"
   - "$namespace"
   - "c0"
   - "$basetime"
@@ -3456,6 +3642,7 @@ function allocate_namespaces() {
 	else
 	    sync_namespace="${basename}-sync"
 	fi
+	sync_pod=("-n" "$sync_namespace" "${basename}-sync")
     fi
 }
 
@@ -3563,6 +3750,7 @@ function create_all_objects() {
     local found_objtype
     local objtype=$1
     shift
+    get_run_failed && return 1
     while IFS= read -r 'line' ; do
 	if [[ $line = *'__KUBEFAIL__ '* ]] ; then
 	    echo "${line#__KUBEFAIL__ }" 1>&2
@@ -3600,54 +3788,45 @@ function _do_cleanup_1() {
 	esac
     done
     shift $((OPTIND-1))
-    local objects_to_clean=${1:-}
-    local objects_to_clean_sync=${2:-$objects_to_clean}
-    if [[ -n "$objects_to_clean" ]] ; then
-	objects_to_clean="-A $objects_to_clean"
-    else
+    local objects_to_clean
+    if ((use_namespaces && remove_namespaces)) ; then
 	objects_to_clean=ns
-    fi
-    if [[ -n "$objects_to_clean_sync" ]] ; then
-	objects_to_clean_sync="-A $objects_to_clean_sync"
     else
-	objects_to_clean_sync=ns
-    fi
+	objects_to_clean="-A all"
+	fi
     if ((force)) ; then
-	shift
 	# It appears that allowing processes to write to stderr inside
 	# a trap results in the subprocess not doing everything
 	# (in this case, oc delete doesn't complete).
 	exec >/dev/null
 	exec 2>/dev/null
 	# shellcheck disable=SC2086
-	____OC delete $objects_to_clean_sync -l "${basename}-sync" $ltimeout
+	____OC delete $objects_to_clean -l "${basename}-sync" $ltimeout
 	# shellcheck disable=SC2086
 	____OC delete $objects_to_clean -l "$basename" $ltimeout
     elif ((report_object_creation)) ; then
 	# shellcheck disable=SC2086
-	__OC delete $objects_to_clean_sync -l "${basename}-sync" $ltimeout 1>&2
+	__OC delete $objects_to_clean -l "${basename}-sync" $ltimeout 1>&2
 	# shellcheck disable=SC2086
 	__OC delete $objects_to_clean -l "${basename}" $ltimeout 1>&2
     else
 	# shellcheck disable=SC2086
-	__OC delete $objects_to_clean_sync -l "$basename-sync" $ltimeout 2>&1 |grep 'DEBUG kubectl:' 1>&2
+	__OC delete $objects_to_clean -l "${basename}-sync" $ltimeout 2>&1 |grep 'DEBUG kubectl:' 1>&2
 	# shellcheck disable=SC2086
 	__OC delete $objects_to_clean -l "$basename" $ltimeout 2>&1 |grep 'DEBUG kubectl:' 1>&2
     fi
 }
 
 function _do_cleanup() {
-    if ! _do_cleanup_1 "$@" ; then
+    if ! _do_cleanup_1 "$@" 2>&1 | timestamp 1>&2 ; then
 	if [[ -n "$force_cleanup_timeout" ]] ; then
 	    warn "*** Cleanup failed, doing a force delete!"
 	    if [[ $deployment_type = vm ]] ; then
-		__OC delete pod,configmap,secret,service,serviceaccout -A -l "${basename}-sync" --force --grace-period=0 1>&2
-		__OC delete vm,configmap,secret,service,serviceaccount -A  -l "$basename" --force --grace-period=0 1>&2
-	    else
-		__OC delete deployment,replicaset,pod,configmap,secret,service,serviceaccount -A  -l "$basename" --force --grace-period=0 1>&2
+		__OC delete all -A -l "${basename}-sync" --force --grace-period=0 2>&1 | timestamp 1>&2
 	    fi
+	    __OC delete all -A  -l "$basename" --force --grace-period=0 2>&1 | timestamp 1>&2
 	    if ((use_namespaces && remove_namespaces)) ; then
-		__OC delete namespace -l "$basename" --force --grace-period=0 1>&2
+		__OC delete namespace -l "$basename" --force --grace-period=0 2>&1 | timestamp 1>&2
 	    fi
 	fi
     fi
@@ -3667,18 +3846,7 @@ function do_cleanup() {
 	esac
     done
     shift "$OPTIND"
-    local objects_to_clean=
-    local objects_to_clean_sync=
-    local objtype
     (( doit )) || return 0
-    if ((use_namespaces && remove_namespaces)) ; then
-	objects_to_clean=namespace
-    elif [[ $deployment_type = vm ]] ; then
-	objects_to_clean_sync="configmap,secret,service,pod"
-	objects_to_clean="configmap,secret,service,vm"
-    else
-	objects_to_clean="deployment,replicaset,configmap,secret,service,pod"
-    fi
     if [[ -n "${injected_errors[precleanup]:-}" && $precleanup -gt 0 ]] ; then
 	warn "*** Injecting precleanup error ${inject_errors[precleanup]:-}"
 	sleep "${injected_errors[precleanup]:-}"
@@ -3690,7 +3858,7 @@ function do_cleanup() {
 	killthemall "Cleanup timed out!"
     fi
     # shellcheck disable=SC2086
-    _do_cleanup $force "$objects_to_clean" "$objects_to_clean_sync" || killthemall "Cleanup timed out!"
+    _do_cleanup $force || killthemall "Cleanup timed out!"
 }
 
 ################################################################
@@ -3716,7 +3884,7 @@ function create_secrets_top_level() {
 	    done
 	done
     fi
-    create_all_objects secrets
+    create_all_objects secrets || return 1
     if (( doit )) ; then
 	local secname=""
 	while (( ${#expected_secrets[@]} )) ; do
@@ -3735,37 +3903,27 @@ function create_secrets_top_level() {
 }
 
 function do_logging() {
+    if ((wait_forever)) ; then
+	while ! get_run_failed ; do
+	    sleep 5
+	done
+	return 1
+    fi
     ((wait_forever)) && sleep infinity
     ((report)) || return 0
     local -i logs_expected=0
     logs_expected="$(calculate_logs_required "$namespaces" "$deps_per_namespace" "$replicas" "$containers_per_pod")"
     ((logs_expected > 0)) || return 0
-    trap 'if ((get_logs_pid > 1)) ; then kill -TERM "$get_logs_pid"; wait "$get_logs_pid" 2>/dev/null; get_logs_pid=0; fi; return 1' TERM
+    trap 'if ((get_sync_logs_pid > 1)) ; then kill -TERM "$get_sync_logs_pid"; wait "$get_sync_logs_pid" 2>/dev/null; get_sync_logs_pid=0; fi; return 1' TERM
 
-    local -a sync_pod=()
-    local namespace
-    local pod
-    local ignore
-    local namespace_retrieved=
-    # shellcheck disable=SC2034
-    while read -r namespace pod ignore ; do
-	if [[ -n "$namespace" && -n "$pod" ]] ; then
-	    if [[ -z "$namespace_retrieved" ]] ; then
-		namespace_retrieved=$namespace
-		sync_pod+=("-n" "$namespace")
-	    elif [[ "$namespace" != "$namespace_retrieved" ]] ; then
-		killthemall "Namespace mismatch: $namespace vs $namespace_retrieved"
-	    fi
-	    sync_pod+=("$pod")
-	fi
-    done <<< "$(____OC get pod -A --no-headers -l "${basename}-sync=${uuid}")"
-    get_logs "${sync_pod[@]}" &
-    get_logs_pid=$!
-    protect_pids "$get_logs_pid $BASHPID"
+    get_sync_logs &
+    get_sync_logs_pid=$!
+    protect_pids "$get_sync_logs_pid $BASHPID"
     if ((timeout > 0)) ; then
 	local -i itimeout=$timeout
 	local -i finis=0
 	while (( timeout < 0 || timeout-- )) ; do
+	    get_run_failed && break
 	    # CreateContainerError is not necessarily fatal
 	    if __OC get pods -A -l "$basename" |grep -q -E -e '([^r]Error|Evicted|Crash)' ; then
 		echo "Run failed:" 1>&2
@@ -3799,17 +3957,16 @@ function do_logging() {
 	done
 	if (( finis <= 0 )) ; then
 	    if ((finis < 0)) ; then
-		warn "Run failed"
+		set_run_failed "Run failed"
 	    else
-		warn "Run did not terminate in $itimeout seconds"
+		set_run_failed "Run did not terminate in $itimeout seconds"
 	    fi
-	    set_run_failed
-	    kill -INT "$get_logs_pid"
+	    kill -INT "$get_sync_logs_pid"
 	fi
     fi
-    if (( get_logs_pid > 1 )) ; then
-	wait "$get_logs_pid" 2>/dev/null
-	get_logs_pid=0
+    if (( get_sync_logs_pid > 1 )) ; then
+	wait "$get_sync_logs_pid" 2>/dev/null
+	get_sync_logs_pid=0
     fi
 }
 
@@ -3853,9 +4010,9 @@ function run_clusterbuster_2() {
 	do_cleanup -p 1>&2 || return 1
     fi
     if ((cleanup_always)) ; then
-	trap 'echo "Cleaning up" 1>&2; doit=1; do_cleanup -f; if ((get_logs_pid > 0)) ; then wait "$get_logs_pid"; get_logs_pid=0; fi; killthemall ""; wait; remove_tmpdir; doit=1; do_cleanup -f; exit 1' TERM INT HUP
+	trap 'echo "Cleaning up" 1>&2; doit=1; do_cleanup -f; if ((get_sync_logs_pid > 0)) ; then wait "$get_sync_logs_pid"; get_sync_logs_pid=0; fi; killthemall ""; wait; remove_tmpdir; doit=1; do_cleanup -f; exit 1' TERM INT HUP
     else
-	trap 'echo "Not cleaning up" 1>&2; if ((get_logs_pid > 0)) ; then wait "$get_logs_pid"; get_logs_pid=0; fi; killthemall ""; wait; remove_tmpdir; exit 1' TERM HUP INT
+	trap 'echo "Not cleaning up" 1>&2; if ((get_sync_logs_pid > 0)) ; then wait "$get_sync_logs_pid"; get_sync_logs_pid=0; fi; killthemall ""; wait; remove_tmpdir; exit 1' TERM HUP INT
     fi
     if [[ $doit -gt 0 ]] ; then
 	if [[ -n "${artifactdir:-}" && $take_prometheus_snapshot -gt 0 ]] ; then
@@ -3899,6 +4056,7 @@ function run_clusterbuster_2() {
     (drop_host_caches)
     create_all_objects deployments || return 1
     (( doit )) || return 0
+    set_run_started
 
     do_logging || return 1
     if ((! status)) ; then
@@ -4041,11 +4199,13 @@ done
 
 job_name=${job_name:-${requested_workload:-}}
 
-((virtiofsd_direct)) && virtiofsd_args+=('"-o"' '"allow_direct_io"')
-((virtiofsd_writeback)) && virtiofsd_args+=('"-o"' '"writeback"')
-((virtiofsd_threadpoolsize)) && virtiofsd_args+=("\"--thread-pool-size=$virtiofsd_threadpoolsize\"")
-if [[ -n "${virtiofsd_args[*]:-}" ]] ; then
-    pod_annotations+=("io.katacontainers.config.hypervisor.virtio_fs_extra_args: '[$(IFS=,; echo "${virtiofsd_args[*]}")]'")
+if [[ ${runtime_class:-} = "$kata_runtime_class" ]] ; then
+    ((virtiofsd_direct)) && virtiofsd_args+=('"-o"' '"allow_direct_io"')
+    ((virtiofsd_writeback)) && virtiofsd_args+=('"-o"' '"writeback"')
+    ((virtiofsd_threadpoolsize)) && virtiofsd_args+=("\"--thread-pool-size=$virtiofsd_threadpoolsize\"")
+    if [[ -n "${virtiofsd_args[*]:-}" ]] ; then
+	pod_annotations+=("io.katacontainers.config.hypervisor.virtio_fs_extra_args: '[$(IFS=,; echo "${virtiofsd_args[*]}")]'")
+    fi
 fi
 
 (run_clusterbuster_1) 4>&2
