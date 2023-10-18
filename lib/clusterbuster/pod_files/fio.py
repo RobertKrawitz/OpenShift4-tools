@@ -99,8 +99,25 @@ I/O engines: {self._args[11]}""")
                                            f'--ioengine={ioengine}']
                                 command.extend(self.fio_generic_args)
                                 command.extend(['--output-format=json+', jobfile])
-                                with subprocess.Popen(command, stdout=subprocess.PIPE) as run:
-                                    result = json.loads(run.stdout.read())
+                                data = ''
+                                stderr = ''
+                                run_status = None
+                                fail_msg = ''
+                                with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE) as run:
+                                    line = run.stdout.readline().decode('ascii')
+                                    while line:
+                                        if line.startswith('fio:'):
+                                            fail_msg += line
+                                        else:
+                                            data += line
+                                        line = run.stdout.readline().decode('ascii')
+                                    stderr = run.stderr.read().decode('ascii')
+                                    run_status = run.poll()
+                                if stderr != '':
+                                    fail_msg += stderr
+                                if run_status != 0:
+                                    raise Exception(fail_msg if fail_msg != '' else 'Unknown error')
+                                result = json.loads(data)
                                 jtime = self._adjusted_time(jtime)
                                 jucpu, jscpu = self._cputimes(jucpu, jscpu)
                                 elapsed_time += jtime
