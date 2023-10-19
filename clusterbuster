@@ -3300,7 +3300,7 @@ EOF
 	IFS=: read -r sync_service sync_port_num sync_ns_port_num <<< "$(get_sync)"
 	IFS=: read -r drop_cache_service drop_cache_port_num <<< "$(get_drop_cache "$namespace" "$instance" "$replica")"
         create_object -n "$namespace" "$name" <<EOF
-apiVersion: kubevirt.io/v1alpha3
+apiVersion: kubevirt.io/v1
 kind: VirtualMachine
 metadata:
 $(indent 2 standard_labels_yaml -c "$node_class" -l "$workload" "$namespace" "$instance" "$replica")
