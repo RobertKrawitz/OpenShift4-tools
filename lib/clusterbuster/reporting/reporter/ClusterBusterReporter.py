@@ -148,9 +148,13 @@ class ClusterBusterReporter:
         elif report_format.startswith('json'):
             json.dump(answers, outfile, indent=2)
         elif report_format != "none":
-            answer = "\n\n".join([answer for answer in answers if (answer is not None and answer != '')])
-            if answer is not None and answer != '':
-                print(answer, file=outfile)
+            if report_format.startswith('parseable'):
+                delim = ''
+            else:
+                delim = '\n\n'
+            answers = [answer for answer in answers if (answer is not None and answer != '')]
+            if answers:
+                print(delim.join(answers), file=outfile)
 
     @staticmethod
     def list_report_formats():
@@ -912,12 +916,16 @@ class ClusterBusterReporter:
         return [width, integer_width]
 
     def __parseable_path(self, path: list):
-        answer = '.'.join([elt.replace(':', '') for elt in path]).lower().replace('\n', '')
+        dpath = list(os.path.split(self._jdata['metadata']['RunArtifactDir']))
+        dpath.append(self._jdata['metadata']['job_name'])
+        dpath.extend(path)
+        answer = '.'.join([elt.replace(':', '').replace('.', '_')
+                           for elt in dpath if elt not in [None, '', '.', '..']]).lower().replace('\n', '')
         for char in [' ', ',', '/', '"', "'"]:
             answer = answer.replace(char, '_')
         while '__' in answer:
             answer = answer.replace('__', '_')
-        return '.'.join([self._jdata['metadata']['job_name'], answer])
+        return answer
 
     def __indent(self, string: str, target_column: int):
         if 'parseable' in self._format:

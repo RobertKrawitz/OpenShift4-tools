@@ -42,7 +42,8 @@ class memory_reporter(ClusterBusterReporter):
             'header': 'Workload Memory In Use'
             },
         'jobs': {
-            'header': 'Jobs'
+            'header': 'Jobs',
+            'format': False
             },
         'max': {
             'header': 'Maximum Workload Request'
