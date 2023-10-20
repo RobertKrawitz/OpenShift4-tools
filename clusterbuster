@@ -269,6 +269,7 @@ declare -r vm_emptydisk_suffixes="bcdefghijklmnopqrstuvwxyz"
 declare OC=${OC:-${KUBECTL:-}}
 OC=${OC:-$(type -p oc)}
 OC=${OC:-$(type -p kubectl)}	# kubectl might not work, though...
+OC=$(type -p "$OC")
 
 function fatal() {
     local OPTIND
@@ -281,7 +282,7 @@ function fatal() {
 	esac
     done
     shift "$((OPTIND-1))"
-    echo "$*" 1>&2
+    timestamp <<< "$*" 1>&2
     if ((waitforit)) ; then
 	wait
     fi
@@ -289,10 +290,10 @@ function fatal() {
 }
 
 function warn() {
-    echo "$*" 1>&2
+    timestamp <<< "$*" 1>&2
 }
 
-if [[ -z "$OC" ]] ; then
+if [[ -z "$OC" || ! -x "$OC" ]] ; then
     fatal "Can't find kubectl or oc"
 fi
 
@@ -2894,7 +2895,7 @@ function create_namespace() {
 	return 1
     fi
     if ((use_namespaces)) ; then
-	namespace_exists "$namespace" || create_object $force -t namespace "$namespace" <<EOF 2>&1 | report_if_desired
+	namespace_exists "$namespace" || create_object $force -t namespace "$namespace" <<EOF 2>&1
 apiVersion: v1
 kind: Namespace
 metadata:
