@@ -2894,7 +2894,7 @@ function create_namespace() {
 	return 1
     fi
     if ((use_namespaces)) ; then
-	namespace_exists "$namespace" || create_object $force -t namespace "$namespace" 2>&1 | report_if_desired  <<EOF
+	namespace_exists "$namespace" || create_object $force -t namespace "$namespace" <<EOF 2>&1 | report_if_desired
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -2928,7 +2928,7 @@ function create_secrets() {
     for i in $(seq "$first_deployment" $((deps_per_namespace + first_deployment - 1))) ; do
 	for j in $(seq 0 $((secrets - 1))) ; do
 	    local secname="secret${namespace:+-$namespace}-${i}-${j}"
-	    create_object -t secret -n "$namespace" "$secname" <<EOF
+	    create_object -t secret -n "$namespace" "$secname" <<EOF 2>&1 | report_if_desired
 apiVersion: v1
 kind: Secret
 metadata:
@@ -3884,7 +3884,7 @@ function create_secrets_top_level() {
 	    done
 	done
     fi
-    create_all_objects secrets || return 1
+    create_all_objects secrets 2>&1 || return 1
     if (( doit )) ; then
 	local secname=""
 	while (( ${#expected_secrets[@]} )) ; do
