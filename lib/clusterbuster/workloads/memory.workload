@@ -27,6 +27,8 @@ declare -ig ___memory_sync=1
 declare -g ___memory_random_seed=
 declare -g ___memory_iteration_runtime=10
 declare -ig ___memory_idle_first=2
+declare -ig ___memory_subproc=0
+declare -g ___memory_start_probability=
 
 function memory_arglist() {
     local mountdir=$1; shift
@@ -35,7 +37,8 @@ function memory_arglist() {
 		 "${workload_run_time}" "$___memory_size" "$___memory_scan" \
 		 "$___memory_stride" "$___memory_iterations" \
 		 "$___memory_idle" "$___memory_random_seed" "$___memory_sync" \
-		 "$___memory_iteration_runtime" "$___memory_idle_first"
+		 "$___memory_iteration_runtime" "$___memory_idle_first" \
+		 "$___memory_subproc" "$___memory_start_probability"
 }
 
 function memory_create_deployment() {
@@ -80,13 +83,19 @@ function memory_help_options() {
                         Amount of memory to allocate.  If two values
                         are provided, a random value between the two
                         is used for each iteration.  Step allows specifying
-			the step size.
+                        the step size.
        --memory-scan=<0,1>
                         Write scan memory continuously
        --memory-stride=<size>
                         Stride the specified number of bytes
                         when scanning.  Default is system pagesize.
                         Set to 1 to scan every byte.
+       --memory-iteration-runtime=<seconds[,max_seconds][,step]>
+                        The time for each iteration of the test.
+                        Default is not set, in which case the
+                        --workload-runtime and --memory-iterations
+                        control how long the test is run.  This may not
+                        be used if --memory-sync-between-iterations is set.
        --memory-iterations=<n>
                         Run the scan for the specified number of
                         iterations.  Default is 1.
@@ -97,12 +106,6 @@ function memory_help_options() {
                         Sleep first before starting operations.
                         Value of 2 means to randomly sleep or not
                         for the first operation.  Default $memory_idle_first.
-       --memory-iteration-runtime=<seconds[,max_seconds][,step]>
-			The time for each iteration of the test.
-                        Default is not set, in which case the
-                        --workload-runtime and --memory-iterations
-                        control how long the test is run.  This may not
-                        be used if --memory-sync-between-iterations is set.
        --memory-random-seed=<seed>
                         Use the specified value in combination with
                         the pod ID to randomize the run.  The seed
@@ -112,6 +115,17 @@ function memory_help_options() {
                         Most useful to set this to no is when running
                         random workloads when it is desired there to be
                         overlap between operations.
+       --memory-start-probability=<"" | 0.000 - 1.000>
+                        Probability of memory allocation starting with
+                        memory allocation as opposed to sleeping.
+                        If empty, probability is calculated based on
+                        average duty cycle computed as the average
+                        iteration runtime divided by the sum of the
+                        average iteration runtime and the average idle
+                        runtime.
+       --memory-subproc=<0,1>
+                        Run iterations as subprocesses rather than function
+                        calls, to be certain that memory is released.
 EOF
 }
 
@@ -129,13 +143,11 @@ function memory_process_options() {
 	    memoryidle*)	 ___memory_idle=$(parse_size -d, "$optvalue")		  ;;
 	    memoryrandom*)	 ___memory_random_seed=$(base64 -w 0 <<< "$optvalue")	  ;;
 	    memorysync*)	 ___memory_sync=$(bool "$optvalue")			  ;;
-	    memorytotal*)	 ___memory_total_runtime=$(parse_size "$optvalue")	  ;;
+	    memorysubproc*)	 ___memory_subproc=$(bool "$optvalue")			  ;;
+	    memorystartprob*)	 ___memory_start_probability="$optvalue"		  ;;
 	    *)			 unknown_opts+=("$noptname ($noptname1)")		  ;;
 	esac
     done
-    if ((___memory_sync && ___memory_total_runtime > 0)) ; then
-	fatal "--memory-total-runtime may not be set if --memory-sync is also set"
-    fi
     if [[ -n "${unknown_opts[*]:-}" ]] ; then
 	warn "Notice: the following options are not known: ${unknown_opts[*]}"
     fi
@@ -156,13 +168,15 @@ function memory_report_options() {
 	
     cat <<EOF
 "memory_size": $(mk_num_list "$___memory_size"),
+"memory_scan": $___memory_scan,
 "memory_stride": $___memory_stride,
 "memory_iterations": $___memory_iterations,
-"memory_idle": $(mk_num_list "$___memory_idle"),
-"memory_scan": $___memory_scan,
 "memory_iteration_time": $(mk_num_list "$___memory_iteration_runtime"),
+"memory_idle": $(mk_num_list "$___memory_idle"),
 "memory_random_seed": "$___memory_random_seed",
-"memory_sync_between_iterations": "$___memory_sync"
+"memory_sync_between_iterations": "$___memory_sync",
+"memory_subproc": $___memory_subproc,
+"memory_start_probability": $(if [[ -n "$___memory_start_probability" ]] ; then printf '%f' "$___memory_start_probability" ; else echo -1; fi)
 EOF
 }
 

@@ -18,8 +18,8 @@ from .ClusterBusterReporter import ClusterBusterReporter
 
 
 class uperf_reporter(ClusterBusterReporter):
-    def __init__(self, jdata: dict, report_format: str):
-        super().__init__(jdata, report_format)
+    def __init__(self, jdata: dict, report_format: str, extras=None):
+        super().__init__(jdata, report_format, extras)
         fields_to_copy = []
         self._jobs = jdata['metadata']['workload_metadata']['jobs']
         self._job_names = list(self._jobs.keys())

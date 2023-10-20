@@ -216,6 +216,7 @@ declare -i wait_forever=0
 declare -a pod_labels=()
 declare -i get_sync_logs_pid=0
 declare -a extra_args=()
+declare -i metrics_interval=30
 declare -a sync_pod=()
 
 declare -r sync_flag_file="/tmp/syncfile";
@@ -410,6 +411,9 @@ $(print_workloads_supporting_reporting '                        - ')
        --metrics-epoch=<seconds>
                         Number of seconds to look back for metrics prior
                         to start of run (default $metrics_epoch)
+       --metrics-interval=<interval>
+                        Interval between data points for metrics collection.
+                        Default $metrics_interval.
        --force-no-metrics
                         Do not attempt anything that would use metrics
                         or the prometheus pod.
@@ -828,6 +832,7 @@ function process_option() {
 	artifactdir)		    artifactdir="$optvalue"			;;
 	metrics|metricsfile)	    set_metrics_file "$optvalue"		;;
 	metricsepoch)		    metrics_epoch=$optvalue			;;
+	metricsinterval)	    metrics_interval=$optvalue			;;
 	reportformat)		    report_format=$optvalue			;;
 	jsonreport)		    report_format=json				;;
 	rawreport)		    report_format=raw				;;
@@ -1134,7 +1139,7 @@ function __OC() {
     elif [[ $1 = exec || $1 = rsh ]] ; then
 	# Capture error output
 	(set -o pipefail; "$OC" "$@" 2>&1 1>&3 |sed -e "s/^/${*//\//\\/}: /" |timestamp 1>&2) 3>&1
-    elif [[ $1 = describe || $1 = get || $1 = status || $1 = logs ]] ; then
+    elif [[ $1 = describe || $1 = get || $1 = status || $1 = logs || $1 = version ]] ; then
 	"$OC" "$@"
     elif ((report_object_creation)) ; then
 	"$OC" "$@" 2>&1
@@ -1425,7 +1430,8 @@ function start_prometheus_snapshot() {
     __OC wait --for=condition=Ready -n openshift-monitoring pod/prometheus-k8s-0 || killthemall "Prometheus pod did not become ready"
     set_start_timestamps || return 1
     # Wait for prometheus pod to fully initialize
-    sleep 60
+
+    sleep "$metrics_epoch"
     echo "Prometheus snapshot started" | report_if_desired 1>&2
 }
 
@@ -1836,8 +1842,9 @@ function _report_runtime_classes() {
 
 function _extract_metrics() {
     if supports_metrics && [[ -r "$metrics_file" ]] ; then
+	sleep 60
 	cat <<EOF
-"metrics": $("${__topdir__}/prom-extract" --indent= --define "namespace_re=${basename}-.*" -m "$metrics_file" --metrics-only --start_time="$prometheus_starting_timestamp" --epoch="$metrics_epoch" --post-settling-time=0),
+"metrics": $("${__topdir__}/prom-extract" --indent= --define "namespace_re=${basename}-.*" -m "$metrics_file" -s "$metrics_interval" --metrics-only --start_time="$((prometheus_starting_timestamp - metrics_epoch))" --post-settling-time="$((metrics_epoch*2))"),
 EOF
     fi
 }

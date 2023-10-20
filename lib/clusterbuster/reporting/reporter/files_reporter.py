@@ -18,8 +18,8 @@ from .ClusterBusterReporter import ClusterBusterReporter
 
 
 class files_reporter(ClusterBusterReporter):
-    def __init__(self, jdata: dict, report_format: str):
-        super().__init__(jdata, report_format)
+    def __init__(self, jdata: dict, report_format: str, extras=None):
+        super().__init__(jdata, report_format, extras=extras)
         self._file_operations = ['create', 'read', 'remove']
         self._add_timeline_vars(['create.operation', 'read.operation', 'remove.operation'])
         self._add_accumulators(['create.user_cpu_time', 'create.system_cpu_time', 'create.cpu_time', 'create.operations',

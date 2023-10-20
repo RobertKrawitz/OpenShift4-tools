@@ -26,21 +26,20 @@ if 'CB_LIBPATH' in os.environ:
 parser = argparse.ArgumentParser(description='Generate ClusterBuster report')
 report_formats = ClusterBusterReporter.list_report_formats()
 
-parser.add_argument('-o', '--format', '--output_format', '--output', default='summary', metavar='format', type=str,
+parser.add_argument('-o', '--format', '--output_format', '--output', '--report-format',
+                    default='summary', metavar='format', type=str,
                     choices=report_formats, help=f'Report format: one of {", ".join(report_formats)}')
 parser.add_argument('--list_formats', action='store_true', help='List available report formats')
 parser.add_argument("files", metavar='file', type=str, nargs='*', help='Files to process')
 
-args = parser.parse_args()
+args, extras = parser.parse_known_args()
 if args.list_formats:
     print('\n'.join(sorted(report_formats)))
     sys.exit(1)
 
 try:
-    ClusterBusterReporter.print_report(args.files, format=args.format)
-except KeyboardInterrupt:
-    sys.exit(1)
-except BrokenPipeError:
+    ClusterBusterReporter.print_report(args.files, report_format=args.format, extras=extras)
+except (KeyboardInterrupt, BrokenPipeError):
     sys.exit(1)
 except Exception:
     print(f"Decoding JSON failed: {traceback.format_exc()}", file=sys.stderr)
