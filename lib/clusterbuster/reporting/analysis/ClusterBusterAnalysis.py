@@ -31,7 +31,7 @@ class ClusterBusterAnalyzeOne:
                 obj = obj[key]
                 keys = keys[1:]
             return obj
-        except Exception:
+        except KeyError:
             return default
 
     def Analyze(self):
@@ -60,7 +60,7 @@ class ClusterBusterAnalysis:
                 if i[0] == 'AnalyzePostprocess':
                     import_module = i[1]
                     break
-        except Exception:
+        except (SyntaxError, ModuleNotFoundError):
             pass
         if import_module is not None:
             return import_module(report, status, metadata).Postprocess()
@@ -85,6 +85,8 @@ class ClusterBusterAnalysis:
                 continue
             try:
                 imported_lib = importlib.import_module(f'..{self._report_type}.{workload}_analysis', __name__)
+            except (KeyboardInterrupt, BrokenPipeError):
+                sys.exit(0)
             except Exception as exc:
                 print(f'Warning: no analyzer for workload {workload} {exc}', file=sys.stderr)
                 continue
@@ -96,6 +98,8 @@ class ClusterBusterAnalysis:
                             report_type = type(report[workload])
                         elif report_type is not type(report[workload]):
                             raise TypeError(f"Incompatible report types for {workload}: expect {report_type}, found {type(report[workload])}")
+            except (KeyboardInterrupt, BrokenPipeError):
+                sys.exit(0)
             except Exception as exc:
                 raise exc
         if report_type == str:

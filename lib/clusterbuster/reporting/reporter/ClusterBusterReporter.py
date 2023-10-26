@@ -52,7 +52,7 @@ class ClusterBusterReporter:
             try:
                 workload = jdata["metadata"]["workload"]
             except KeyError:
-                raise TypeError("Unable to identify workload")
+                raise TypeError("cannot identify workload")
         if 'runtime_class' not in jdata['metadata']:
             try:
                 runtime_class = jdata['metadata']['options']['runtime_classes'].get('default')
@@ -64,16 +64,17 @@ class ClusterBusterReporter:
         load_failed_exception = None
         try:
             imported_lib = importlib.import_module(f'..{workload}_reporter', __name__)
-        except SyntaxError as exc:
-            failed_load = True
-            load_failed_exception = exc
-        except (KeyboardInterrupt, BrokenPipeError):
-            sys.exit(1)
-        except Exception:
-            print(f'Warning: no handler for workload {workload}, issuing generic summary report', file=sys.stderr)
-            return ClusterBusterReporter(jdata, report_format, extras=extras).create_report()
+        except KeyboardInterrupt:
+            raise KeyboardInterrupt()
+        except (SyntaxError, ModuleNotFoundError) as exc:
+            if isinstance(exc, ModuleNotFoundError) and exc.name.endswith(f"{workload}_reporter"):
+                print(f'Warning: no reporter for workload {workload}, issuing generic summary report', file=sys.stderr)
+                return ClusterBusterReporter(jdata, report_format, extras=extras).create_report()
+            else:
+                failed_load = True
+                load_failed_exception = exc
         if failed_load:
-            raise type(load_failed_exception)(f"Cannot load reporter for {workload}: {load_failed_exception}")
+            raise type(load_failed_exception)(f"{workload} reporter: {load_failed_exception.__class__.__name__}: {load_failed_exception}")
         for i in inspect.getmembers(imported_lib):
             if i[0] == f'{workload}_reporter':
                 return i[1](jdata, report_format, extras=extras).create_report()
@@ -112,14 +113,23 @@ class ClusterBusterReporter:
         elif not isinstance(items, list):
             items = [items]
         for item in ClusterBusterReporter.enumerate_dirs(items):
+            is_valid_fn = os.path.splitext(item)[1].lower() == '.json'
             with open(item) as f:
                 try:
-                    answers.append(ClusterBusterReporter.report_one(os.path.dirname(item), json.load(f), report_format,
+                    data = json.load(f)
+                    answers.append(ClusterBusterReporter.report_one(os.path.dirname(item), data, report_format,
                                                                     extras=extras))
                 except (KeyboardInterrupt, BrokenPipeError):
                     sys.exit(1)
+                except (json.decoder.JSONDecodeError, UnicodeDecodeError) as exc:
+                    if is_valid_fn:
+                        print(f'Cannot load {item}: JSON error: {exc}', file=sys.stderr)
+                    else:
+                        print(f'Unrecognized filename {item}, expect JSON', file=sys.stderr)
+                except (ModuleNotFoundError, SyntaxError) as exc:
+                    print(f'Cannot load {item}: {exc}', file=sys.stderr)
                 except Exception:
-                    print(f'Warning (continuing): unable to load {item}: {traceback.format_exc()}', file=sys.stderr)
+                    print(f'Cannot load {item}: {traceback.format_exc()}', file=sys.stderr)
         for item in items:
             jdata = dict()
             if isinstance(item, str):
@@ -131,8 +141,10 @@ class ClusterBusterReporter:
                     jdata = json.load(item)
                 except (KeyboardInterrupt, BrokenPipeError):
                     sys.exit(1)
+                except json.decoder.JSONDecodeError:
+                    print(f'Cannot load {item}: {exc}', file=sys.stderr)
                 except Exception:
-                    print(f'Warning (continuing): unable to load {item}: {traceback.format_exc()}', file=sys.stderr)
+                    print(f'Cannot load {item}: {traceback.format_exc()}', file=sys.stderr)
             elif isinstance(item, dict):
                 jdata = item
             else:
