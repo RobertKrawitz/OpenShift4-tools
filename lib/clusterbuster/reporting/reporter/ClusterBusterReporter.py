@@ -28,6 +28,17 @@ import inspect
 import traceback
 from .metrics.PrometheusMetrics import PrometheusMetrics
 from ..prettyprint import fformat, prettyprint
+from ..reporting_exceptions import ClusterBusterReportingException
+
+
+class ClusterBusterReporterException(ClusterBusterReportingException):
+    def __init__(self, *args):
+        super().__init__(args)
+
+
+class ClusterBusterReporterJobMismatchException(ClusterBusterReporterException):
+    def __init__(self, var: str, val1, val2):
+        super().__init(f"Mismatched {var} in status ({val1} vs {val2})")
 
 
 class ClusterBusterReporter:
@@ -37,6 +48,13 @@ class ClusterBusterReporter:
 
     @staticmethod
     def report_one(item: str, jdata: dict, report_format: str, extras=None):
+        isValid = False
+        try:
+            isValid = jdata['metadata']['kind'] == 'clusterbusterResults'
+        except KeyError:
+            pass
+        if not isValid:
+            raise TypeError(f'{item} does not contain a ClusterBuster report')
         jdata['metadata']['RunArtifactDir'] = item
         if report_format == 'none' or report_format is None:
             return
@@ -64,8 +82,8 @@ class ClusterBusterReporter:
         load_failed_exception = None
         try:
             imported_lib = importlib.import_module(f'..{workload}_reporter', __name__)
-        except KeyboardInterrupt:
-            raise KeyboardInterrupt()
+        except (KeyboardInterrupt, BrokenPipeError) as exc:
+            raise (exc)
         except (SyntaxError, ModuleNotFoundError) as exc:
             if isinstance(exc, ModuleNotFoundError) and exc.name.endswith(f"{workload}_reporter"):
                 print(f'Warning: no reporter for workload {workload}, issuing generic summary report', file=sys.stderr)
@@ -74,7 +92,9 @@ class ClusterBusterReporter:
                 failed_load = True
                 load_failed_exception = exc
         if failed_load:
-            raise type(load_failed_exception)(f"{workload} reporter: {load_failed_exception.__class__.__name__}: {load_failed_exception}")
+            raise type(load_failed_exception)("%s reporter: %s: %s" %
+                                              (workload, load_failed_exception.__class__.__name__,
+                                               load_failed_exception))
         for i in inspect.getmembers(imported_lib):
             if i[0] == f'{workload}_reporter':
                 return i[1](jdata, report_format, extras=extras).create_report()
@@ -121,6 +141,8 @@ class ClusterBusterReporter:
                                                                     extras=extras))
                 except (KeyboardInterrupt, BrokenPipeError):
                     sys.exit(1)
+                except TypeError:
+                    print(f'Cannot load {item}: not a ClusterBuster report')
                 except (json.decoder.JSONDecodeError, UnicodeDecodeError) as exc:
                     if is_valid_fn:
                         print(f'Cannot load {item}: JSON error: {exc}', file=sys.stderr)
@@ -141,7 +163,7 @@ class ClusterBusterReporter:
                     jdata = json.load(item)
                 except (KeyboardInterrupt, BrokenPipeError):
                     sys.exit(1)
-                except json.decoder.JSONDecodeError:
+                except json.decoder.JSONDecodeError as exc:
                     print(f'Cannot load {item}: {exc}', file=sys.stderr)
                 except Exception:
                     print(f'Cannot load {item}: {traceback.format_exc()}', file=sys.stderr)
@@ -682,6 +704,15 @@ class ClusterBusterReporter:
             raise PermissionError(f"Would overwrite {orig_var}, {dest[rvar]} => {source[rvar]}")
         dest[rvar] = val
 
+    def _get_workload_options(self):
+        """
+        Retrieve the workload options
+        """
+        try:
+            return self._jdata['metadata']['options']['workload_options']
+        except KeyError:
+            return self._jdata['metadata']['options']['workloadOptions']
+
     def __are_clients_all_on_same_node(self):
         """
         Determine whether all clients ran on the same node.  This is used to determine
@@ -1088,9 +1119,10 @@ class ClusterBusterReporter:
         Create textual report.
         """
         results = {}
+        metadata = self._jdata['metadata']
         results['Overview'] = {}
-        results['Overview']['Job Name'] = self._jdata['metadata']['job_name']
-        results['Overview']['Start Time'] = self._jdata['metadata']['cluster_start_time']
+        results['Overview']['Job Name'] = metadata['job_name']
+        results['Overview']['Start Time'] = metadata['cluster_start_time']
         if 'verbose' in self._format and len(self._rows):
             results['Detail'] = {}
             self._rows.sort(key=self.__row_name)
@@ -1103,19 +1135,19 @@ class ClusterBusterReporter:
         else:
             results['Overview']['Status'] = 'FAILED, no data generated'
 
-        results['Overview']['Workload'] = self._jdata['metadata']['workload']
-        results['Overview']['Job UUID'] = self._jdata['metadata']['uuid']
-        results['Overview']['Run host'] = self._jdata['metadata']['runHost']
-        results['Overview']['Artifact Directory'] = self._jdata['metadata'].get('artifact_directory', '')
-        results['Overview']['Kubernetes version'] = self._jdata['metadata']['kubernetes_version']['serverVersion']['gitVersion']
-        if 'openshiftVersion' in self._jdata['metadata']['kubernetes_version']:
-            results['Overview']['OpenShift Version'] = self._jdata['metadata']['kubernetes_version']['openshiftVersion']
+        results['Overview']['Workload'] = metadata['workload']
+        results['Overview']['Job UUID'] = metadata['uuid']
+        results['Overview']['Run host'] = metadata.get('run_host', metadata.get('runHost', ''))
+        results['Overview']['Artifact Directory'] = metadata.get('artifact_directory', '')
+        results['Overview']['Kubernetes version'] = metadata['kubernetes_version']['serverVersion']['gitVersion']
+        if 'openshiftVersion' in metadata['kubernetes_version']:
+            results['Overview']['OpenShift Version'] = metadata['kubernetes_version']['openshiftVersion']
         key_width, integer_width = self.__compute_report_width(results)
-        cmdline = ' '.join(self._jdata['metadata']['expanded_command_line'])
+        cmdline = ' '.join(metadata['expanded_command_line'])
         if 'parseable' in self._format:
-            cmdline = ' '.join(self._jdata['metadata']['expanded_command_line'])
+            cmdline = ' '.join(metadata['expanded_command_line'])
         else:
-            cmdline = self._wrap_text(' '.join(self._jdata['metadata']['expanded_command_line']))
+            cmdline = self._wrap_text(' '.join(metadata['expanded_command_line']))
         results['Overview']['Command line'] = cmdline
         if self._base_args.no_summary:
             return ''

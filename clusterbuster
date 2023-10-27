@@ -1934,7 +1934,7 @@ function _report_metadata_and_objects() {
  "kubernetes_version": $(indent_hang 1 __OC version -ojson),
  "command_line": [$(quote_list "${saved_argv[@]}")],
  "expanded_command_line": [$(quote_list "${processed_options[@]}")],
- "runHost": "$(hostname -f)",
+ "run_host": "$(hostname -f)",
  "workload_metadata": {$(indent_hang 1 generate_workload_metadata)},
  "controller_presync_timestamp": $first_local_ts,
  "sync_timestamp": $remote_ts,
@@ -1967,7 +1967,7 @@ $(indent 2 container_resources_json)
   "runtime_classes": {$(_report_runtime_classes)},
 $(indent 2 _report_emptydirs)
   "target_data_rate": $target_data_rate,
-  "workloadOptions": {
+  "workload_options": {
 $(indent 3 call_api -w "$requested_workload" "report_options")
   }
  }

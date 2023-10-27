@@ -78,7 +78,8 @@ class ClusterBusterAnalyzeSummaryGeneric(ClusterBusterAnalyzeOne):
                     if key not in answer[variable][run]:
                         answer[variable][run][key] = {}
                     answer[variable][run][key]['value'] = exp(value1['sum'] / value1['count'])
-                    if run != self._baseline and run in answer[variable] and self._baseline in answer[variable] and key in answer[variable][run] and key in answer[variable][self._baseline]:
+                    if ((run != self._baseline and run in answer[variable] and self._baseline in answer[variable] and
+                         key in answer[variable][run] and key in answer[variable][self._baseline])):
                         ratio = answer[variable][run][key]['value'] / answer[variable][self._baseline][key]['value']
                         answer[variable][run][key]['ratio'] = ratio
                         min_ratio = None
@@ -102,7 +103,7 @@ class ClusterBusterAnalyzeSummaryGeneric(ClusterBusterAnalyzeOne):
         for dimension in self._dimensions:
             if dimension in accumulator:
                 answer[dimension] = self.__report_one_dimension(accumulator[dimension])
-        answer['Overall'] = self.__report_one_dimension(accumulator['Overall'])
+        answer['Overall'] = self.__report_one_dimension(accumulator.get('Overall', []))
         return answer
 
     def __analyze_one(self, accumulator: dict, detail: dict, data: dict, values: dict, dimensions: list, case_name: str = None):
@@ -139,7 +140,11 @@ class ClusterBusterAnalyzeSummaryGeneric(ClusterBusterAnalyzeOne):
                             for dimension, dim_value in values.items():
                                 self.__accumulate(accumulator, run, dimension, dim_value, var, datum)
                             self.__accumulate(accumulator, run, 'Overall', 'Total', var, datum)
-                            if run != self._baseline and run in detail_row[var] and self._baseline in detail_row[var] and detail_row[var][self._baseline]['value'] > 0:
+                            if ((run != self._baseline and run in detail_row[var] and
+                                 'value' in detail_row[var][run] and
+                                 self._baseline in detail_row[var] and
+                                 'value' in detail_row[var][self._baseline] and
+                                 detail_row[var][self._baseline]['value'] > 0)):
                                 detail_row[var][run]['ratio'] = (detail_row[var][run]['value'] /
                                                                  detail_row[var][self._baseline]['value'])
                 detail[out_case_name] = detail_row

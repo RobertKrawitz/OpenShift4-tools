@@ -45,7 +45,8 @@ class FilesAnalysisBase(ClusterBusterAnalyzeOne):
                             for direct, data6 in data5.items():
                                 if direct == 0:
                                     continue
-                                case_label = f'Pods: {pods}, Dirs: {dirs}, Files: {files}, Blocksize: {blocksize}, Filesize: {filesize}'
+                                case_label = ('Pods: %d, Dirs: %d, Files: %d, Blocksize: %d, Filesize: %d' %
+                                              (pods, dirs, files, blocksize, filesize))
                                 detail_row = dict()
                                 for runtime, data7 in data6.items():
                                     if runtime not in summary:
@@ -98,7 +99,8 @@ class FilesAnalysisBase(ClusterBusterAnalyzeOne):
                         answer[run][op] = dict()
                     for subop, data2 in data1.items():
                         if subop in answer[run][op]:
-                            answer[run][op][subop]['ratio'] = answer[run][op][subop]['value'] / answer[self._baseline][op][subop]['value']
+                            answer[run][op][subop]['ratio'] = (answer[run][op][subop]['value'] /
+                                                               answer[self._baseline][op][subop]['value'])
                 for op in known_ops.keys():
                     if op not in times:
                         continue

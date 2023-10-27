@@ -19,7 +19,7 @@ class AnalyzePostprocess:
     Post-process ClusterBuster analysis
     """
 
-    def __init__(self, report, status, metadata):
+    def __init__(self, report, status, metadata, extras=None):
         self._report = report
         self._status = status
         self._metadata = metadata

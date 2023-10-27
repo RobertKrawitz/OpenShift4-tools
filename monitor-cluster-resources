@@ -213,6 +213,10 @@ def pformat(num: float, precision: int = 3):
             return f'{num:.{precision}f}'
         else:
             return str(round(num))
+    except (KeyboardInterrupt, BrokenPipeError):
+        sys.exit(1)
+    except TypeError:
+        return str(num)
     except Exception:
         return str(num)
 
@@ -241,8 +245,10 @@ def define_node(line: str):
 
 
 def fetch_node(node: str):
-    run_command(['sh', '-c', f'''
-kubectl get node {node} -ojson | jq -r '.metadata.name + "|" + .status.allocatable.cpu + "|" + .status.allocatable.memory + "|" + .status.allocatable.pods'''], define_node)
+    run_command(['kubectl', 'get', 'node', node,
+                 '-ojsonpath={%s}|{%s}|{%s}|{%s}{"\\n"}' % ('.metadata.name', '.status.allocatable.cpu',
+                                                            '.status.allocatable.memory', '.status.allocatable.pods')],
+                define_node)
 
 
 def mk_header():
@@ -255,7 +261,8 @@ def mk_header():
         line1_base = ''
         line2_base = f'Node{tab * n_timestamps}{(tab * len(resources_to_list)).join(all_nodes)}'
         if not args.no_summary:
-            line2_base += f'{tab}{"%Capacity" if not args.absolute else "Total"}{(tab * len(resources_to_list))}Pods changed'
+            line2_base += f'{tab}%s%sPods changed' % ("%Capacity" if not args.absolute else "Total",
+                                                      {(tab * len(resources_to_list))})
         line3_base = f'{"Timestamp"}{(tab * (n_timestamps - 1)) + ((tab + tab.join(resources_to_list)) * (len(all_nodes) + 1))}'
     else:
         line1a_base = ''
@@ -264,7 +271,9 @@ def mk_header():
         line1_base = f'Node{line1a_base}{nl}'
         line2_base = f'{(tab * len(resources_to_list)).join(all_nodes)}'
         if not args.no_summary:
-            line2_base += f'{(tab * len(resources_to_list))}{"%Capacity" if not args.absolute else "Total"}{(tab * len(resources_to_list))}Pods changed'
+            line2_base += '%s%s%sPods changed' % (tab * len(resources_to_list),
+                                                  "%Capacity" if not args.absolute else "Total",
+                                                  tab * len(resources_to_list))
         line3_base = f'{((tab.join(resources_to_list) + tab) * (len(all_nodes) + (0 if args.no_summary else 1)))}'
     summary_base = ''
     if not args.no_summary:
@@ -302,7 +311,8 @@ def get_node_data():
                 if args.exact:
                     answer.append(str(print_funcs[resource](totals[resource])))
                 else:
-                    answer.append(str(print_funcs[resource](totals[resource] / (len(nodes_schedulable) if not args.absolute else 1) if len(nodes_schedulable) > 0 else 0)))
+                    answer.append(str(print_funcs[resource](totals[resource] / (len(nodes_schedulable) if not args.absolute else 1)
+                                                            if len(nodes_schedulable) > 0 else 0)))
     return answer
 
 
@@ -324,7 +334,9 @@ def process_lines(lines: list):
     npods_removed = 0
     npods_changed = 0
     npods_total = 0
-    node_status(run_command(['kubectl', 'get', 'node', '-ojsonpath={range .items[*]}{.metadata.name}|u={.spec.unschedulable}{"\\n"}{end}'], process_stdout=True))
+    node_status(run_command(['kubectl', 'get', 'node',
+                             '-ojsonpath={range .items[*]}{.metadata.name}|u={.spec.unschedulable}{"\\n"}{end}'],
+                            process_stdout=True))
     for line in lines:
         pod, status, node, cpu, memory = line.split('|')
         if status != 'Running':
@@ -376,7 +388,8 @@ def process_lines(lines: list):
             else:
                 npods_changed += 1
             pods_changed.append(f'{prefix}{node}.{pod}')
-            if not args.once and not args.quiet and not args.veryquiet and (not pod_node or pod_node in all_nodes) and node in all_nodes:
+            if ((not args.once and not args.quiet and not args.veryquiet and
+                 (not pod_node or pod_node in all_nodes) and node in all_nodes)):
                 timestamp(f'{tab.join(get_node_data())}{tab}{prefix}{node}.{pod}')
     if args.once:
         data = get_node_data()
@@ -445,9 +458,9 @@ def run_command(cmd, process_stdout=None, process_stderr=None):
 
 
 try:
-    run_command(['sh', '-c', '''
-    kubectl get node -ojson | jq -r 'foreach .items[]? as $item ([[],[]];0; ($item.metadata.name + "|" + $item.status.allocatable.cpu + "|" + $item.status.allocatable.memory + "|" + $item.status.allocatable.pods))'
-    '''],
+    run_command(['kubectl', 'get', 'node',
+                 ('-ojsonpath={range .items[*]}{%s}{%s}{%s}{%s}{"\\n"}{end}' %
+                  ('.metadata.name', '.status.allocatable.cpu', '.status.allocatable.memory', '.status.allocatable.pods'))],
                 define_node)
 
     if not args.no_headers:
@@ -476,5 +489,5 @@ try:
             first_time = True
             last_row = None
             exit_next = True
-except KeyboardInterrupt:
+except (KeyboardInterrupt, BrokenPipeError):
     sys.exit()
