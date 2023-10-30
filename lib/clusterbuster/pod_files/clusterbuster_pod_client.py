@@ -222,8 +222,8 @@ class clusterbuster_pod_client(cb_util):
         """
         self._timestamp("Dropping local cache")
         subprocess.run('sync')
-        self._timestamp("Dropping host cache")
         if self.__drop_cache_host and self.__drop_cache_port:
+            self._timestamp("Dropping host cache")
             with self._connect_to(self.__drop_cache_host, self.__drop_cache_port) as sock:
                 self._timestamp(f"    Connected to {self.__drop_cache_host}:{self.__drop_cache_port}")
                 sock.recv(1)

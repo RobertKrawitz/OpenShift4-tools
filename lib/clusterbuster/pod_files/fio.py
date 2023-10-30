@@ -31,8 +31,9 @@ class fio_client(clusterbuster_pod_client):
             else:
                 self.fio_ioengines = []
             self.fio_ramptime = self._toSizes(self._args[10])
-            if self._args[11]:
-                self.fio_generic_args = re.split(r'\s+', self._args[11])
+            self.fio_drop_cache = self._toBool(self._args[11])
+            if self._args[12]:
+                self.fio_generic_args = re.split(r'\s+', self._args[12])
             else:
                 self.fio_generic_args = []
         except Exception as err:
@@ -61,7 +62,6 @@ class fio_client(clusterbuster_pod_client):
             os.makedirs(dirname)
         self._timestamp("Starting file creation")
         subprocess.run(['dd', 'if=/dev/zero', f'of={filename}', f'bs={str(blocksize)}', f'count={str(blocks)}'])
-        subprocess.run(['sync'])
         self._timestamp("File created")
 
     def runone(self, jobfile: str):
@@ -71,12 +71,13 @@ class fio_client(clusterbuster_pod_client):
         ucpu, scpu = self._cputimes()
         jobidx = 1
         self._timestamp(f"""
-Sizes:       {self._args[6]}
-Patterns:    {self._args[7]}
-I/O depths:  {self._args[8]}
-Fdatasync:   {self._args[9]}
-Direct I/O:  {self._args[10]}
-I/O engines: {self._args[11]}""")
+Sizes:       {self.fio_blocksizes}
+Patterns:    {self.fio_patterns}
+I/O depths:  {self.fio_iodepths}
+Fdatasync:   {self.fio_fdatasyncs}
+Direct I/O:  {self.fio_directs}
+I/O engines: {self.fio_ioengines}
+Drop cache:  {self.fio_drop_cache}""")
         self._timestamp("Creating workfile")
         self.prepare_data_file(jobfile)
         self._timestamp("Created workfile")
@@ -87,7 +88,8 @@ I/O engines: {self._args[11]}""")
                         for direct in self.fio_directs:
                             for ioengine in self.fio_ioengines:
                                 jobname = '%04d-%s-%d-%d-%d-%d-%s' % (jobidx, pattern, size, iodepth, fdatasync, direct, ioengine)
-                                self._drop_cache()
+                                if self.fio_drop_cache:
+                                    self._drop_cache()
                                 self._sync_to_controller(jobname)
                                 if jobidx == 1:
                                     self._timestamp("Running...")
@@ -96,7 +98,9 @@ I/O engines: {self._args[11]}""")
                                 jucpu, jscpu = self._cputimes()
                                 command = ["fio", f'--rw={pattern}', f'--runtime={self.runtime}', f'--bs={size}',
                                            f'--iodepth={iodepth}', f'--fdatasync={int(fdatasync)}', f'--direct={int(direct)}',
-                                           f'--ioengine={ioengine}']
+                                           f'--ioengine={ioengine}', '--allow_file_create=0']
+                                if not self.fio_drop_cache:
+                                    command.append('--invalidate=0')
                                 command.extend(self.fio_generic_args)
                                 command.extend(['--output-format=json+', jobfile])
                                 data = ''

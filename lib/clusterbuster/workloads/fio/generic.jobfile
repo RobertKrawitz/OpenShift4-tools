@@ -11,6 +11,7 @@ write_lat_log = fio
 log_avg_msec = 1000
 write_hist_log = fio
 log_hist_msec = 10000
+invalidate = %{___fio_drop_cache}
 # log_hist_coarseness = 4 # 76 bins
 
 [job-tmp]
