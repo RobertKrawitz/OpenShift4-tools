@@ -34,7 +34,7 @@ class CIAnalysis(ClusterBusterAnalyzeOne):
             if len(variables) == 1:
                 subanswer = {
                     'uuid': self._metadata['jobs'][key]['uuid'],
-                    'test_description': { 'name': desc, }
+                    'test_description': {'name': desc}
                     }
                 for name, val in answer['test_description'].items():
                     subanswer['test_description'][name] = val

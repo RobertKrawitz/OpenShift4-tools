@@ -17,14 +17,14 @@ from .ClusterBusterLoader import LoadOneReport
 
 
 class files_loader(LoadOneReport):
-    def __init__(self, name: str, report: dict, data: dict):
-        super().__init__(name, report, data)
+    def __init__(self, name: str, report: dict, data: dict, extras=None):
+        super().__init__(name, report, data, extras)
 
     def Load(self):
         if 'workload_metadata' in self._metadata and 'dirs_per_volume' in self._metadata['workload_metadata']:
             job_metadata = self._metadata['workload_metadata']
         else:
-            job_metadata = self._metadata['options']['workloadOptions']
+            job_metadata = self._metadata['options'].get('workload_options', self.metadata['options']['workloadOptions'])
         dirs = job_metadata['dirs_per_volume']
         files = job_metadata['files_per_dir']
         blocksize = job_metadata['file_block_size']

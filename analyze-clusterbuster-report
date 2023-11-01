@@ -19,6 +19,7 @@ import json
 import os
 from lib.clusterbuster.reporting.analysis.ClusterBusterAnalysis import ClusterBusterAnalysis
 from lib.clusterbuster.reporting.loader.ClusterBusterLoader import ClusterBusterLoader
+from lib.clusterbuster.reporting.reporting_exceptions import ClusterBusterReportingException
 
 if 'CB_LIBPATH' in os.environ:
     sys.path = [element for element in os.environ['CB_LIBPATH'].split(':')] + sys.path
@@ -32,21 +33,26 @@ parser.add_argument("-r", "--report-type", default=None, type=str, metavar='form
                     choices=analysis_formats, help=f'Analysis format: one of {", ".join(analysis_formats)}')
 parser.add_argument("-w", "--workload", type=str, help='Workloads to process', action='append')
 parser.add_argument("files", metavar='file', type=str, nargs='+', help='Files to process')
-args = parser.parse_args()
+args, extras = parser.parse_known_args()
 if args.list_formats:
     print('\n'.join(sorted(analysis_formats)))
     sys.exit(1)
 
 
-def analyze_clusterbuster_1(f, data):
-    report = ClusterBusterAnalysis(data, report_type=args.report_type).Analyze()
-    if report is None:
-        print("No report available", file=sys.stderr)
-        sys.exit(1)
-    elif isinstance(report, str):
-        print(report, file=f)
-    else:
-        json.dump(report, fp=f, indent=2)
+def analyze_clusterbuster_1(f, data, extras=None):
+    try:
+        report = ClusterBusterAnalysis(data, args.report_type, extras).Analyze()
+        if report is None:
+            print("No report available", file=sys.stderr)
+            sys.exit(1)
+        elif isinstance(report, str):
+            print(report, file=f)
+        else:
+            json.dump(report, fp=f, indent=2)
+    except (KeyboardInterrupt, BrokenPipeError):
+        sys.exit()
+    except ClusterBusterReportingException as exc:
+        print(f"Report failed: {exc}")
 
 
 def analyze_clusterbuster(f):
@@ -59,7 +65,7 @@ def analyze_clusterbuster(f):
         dir_args = args.files
     if args.workload:
         dir_args = [f'{f}:job_pattern=^({"|".join(args.workload)})-' for f in dir_args]
-    analyze_clusterbuster_1(f, ClusterBusterLoader().loadFromSpecs(dir_args))
+    analyze_clusterbuster_1(f, ClusterBusterLoader(extras).loadFromSpecs(dir_args), extras)
 
 
 try:

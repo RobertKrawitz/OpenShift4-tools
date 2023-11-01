@@ -21,13 +21,37 @@ import re
 from datetime import datetime
 from ..reporter.ClusterBusterReporter import ClusterBusterReporter
 import json
+import traceback
+import argparse
+from ..reporting_exceptions import ClusterBusterReportingException
+
+
+class ClusterBusterLoaderException(ClusterBusterReportingException):
+    pass
+
+
+class ClusterBusterLoaderJobMismatchException(ClusterBusterLoaderException):
+    def __init__(self, name: str, var: str, val1, val2):
+        self.message = (f"Mismatched {var} in result {name}: ({val1} vs {val2})")
+
+
+class ClusterBusterLoaderInvalidResults(ClusterBusterLoaderException):
+    def __init__(self, name):
+        self.message = (f"Invalid results in {name}")
+
+
+simpleVarsToCheck = ['uuid', 'run_host', 'cnv_version', 'kata_version', 'kata_containers_version']
 
 
 class LoadOneReport:
-    def __init__(self, name: str, report: dict, data: dict):
+    def __init__(self, name: str, report: dict, data: dict, extras=None):
         self._name = name
         self._data = data
         self._report = report
+        self._extras = extras
+        parser = argparse.ArgumentParser(description="ClusterBuster loader")
+        parser.add_argument('--allow-mismatch', action='store_true')
+        args, extra_args = parser.parse_known_args(extras)
         try:
             self._metadata = self._report['metadata']
             self._summary = self._report['summary']
@@ -52,12 +76,17 @@ class LoadOneReport:
                 self._metrics = {}
         if 'baseline' not in data['metadata']:
             data['metadata']['baseline'] = name
+        if 'runHost' in self._metadata and 'run_host' not in self._metadata:
+            self._metadata['run_host'] = self._metadata['runHost']
         if name not in data['metadata']['jobs'] or 'uuid' not in data['metadata']['jobs'][name]:
             data['metadata']['jobs'][name] = dict()
             data['metadata']['jobs'][name]['start_time'] = self._metadata['cluster_start_time']
             data['metadata']['jobs'][name]['uuid'] = self._metadata['uuid']
             data['metadata']['jobs'][name]['server_version'] = self._metadata['kubernetes_version']['serverVersion']
-            data['metadata']['jobs'][name]['openshift_version'] = self._metadata['kubernetes_version'].get('openshiftVersion', 'Unknown')
+            try:
+                data['metadata']['jobs'][name]['openshift_version'] = self._metadata['kubernetes_version']['openshiftVersion']
+            except KeyError:
+                data['metadata']['jobs'][name]['openshift_version'] = 'Unknown'
             data['metadata']['jobs'][name]['run_host'] = self._metadata['runHost']
             data['metadata']['jobs'][name]['kata_containers_version'] = self._metadata.get('kata_containers_version', None)
             data['metadata']['jobs'][name]['kata_version'] = self._metadata.get('kata_version', None)
@@ -65,33 +94,34 @@ class LoadOneReport:
         else:
             if self._metadata['cluster_start_time'] < data['metadata']['jobs'][name]['start_time']:
                 data['metadata']['jobs'][name]['start_time'] = self._metadata['cluster_start_time']
-                if self._metadata['uuid'] != data['metadata']['jobs'][name]['uuid']:
-                    raise Exception(f"Mismatched uuid: {self._metadata['uuid']}, {data['metadata']['jobs'][name]['uuid']}")
-                if self._metadata['runHost'] != data['metadata']['jobs'][name]['run_host']:
-                    raise Exception(f"Mismatched run_host: {self._metadata['runHost']}, {data['metadata']['jobs'][name]['run_host']}")
-                if self._metadata['kubernetes_version']['openshiftVersion'] != data['metadata']['jobs'][name]['openshift_version']:
-                    raise Exception(f"Mismatched openshift_version: {self._metadata['kubernetes_version']['openshiftVersion']}, {data['metadata']['jobs'][name]['openshift_version']}")
-                if self._metadata['kubernetes_version']['serverVersion'] != data['metadata']['jobs'][name]['server_version']:
-                    raise Exception(f"Mismatched server_version: {self._metadata['kubernetes_version']['serverVersion']}, {data['metadata']['jobs'][name]['server_version']}")
-                if self._metadata.get('kata_version') != data['metadata']['jobs'][name]['kata_version']:
-                    raise Exception(f"Mismatched kata_version: {self._metadata.get('kata_version')}, {data['metadata']['jobs'][name]['kata_version']}")
-                if self._metadata.get('kata_containers_version') != data['metadata']['jobs'][name]['kata_containers_version']:
-                    raise Exception(f"Mismatched kata_containers_version: {self._metadata.get('kata_containers_version')}, {data['metadata']['jobs'][name]['kata_containers_version']}")
+            me = self._metadata
+            you = data['metadata']['jobs'][name]
+            if not args.allow_mismatch:
+                for var in simpleVarsToCheck:
+                    self.__CheckMatch(var, name, me, you)
+                self.__CheckMatch('openshift_version', name, me['kubernetes_version'],
+                                  you, 'openshiftVersion')
+                self.__CheckMatch('server_version', name, me['kubernetes_version'],
+                                  you, 'serverVersion')
         if self._metadata['kind'] != 'clusterbusterResults':
-            raise Exception("Invalid results file")
+            raise ClusterBusterLoaderInvalidResults()
         if 'runtime_class' in self._metadata:
             self._runtime_env = self._metadata['runtime_class']
         else:
             self._runtime_env = 'runc'
         data['metadata']['jobs'][name]['runtime_class'] = self._runtime_env
-        if self._metadata['kind'] != 'clusterbusterResults':
-            raise Exception("Invalid results file")
         try:
             self._client_pin_node = self._metadata['options']['pin_nodes']['client']
-        except Exception:
+        except KeyError:
             self._client_pin_node = None
         self._count = self._summary['total_instances']
         self._workload = self._metadata['workload']
+
+    def __CheckMatch(self, var: str, name: str, me: dict, you: dict, me_var=None):
+        if me_var is None:
+            me_var = var
+        if me.get(me_var) != you[var]:
+            raise ClusterBusterLoaderJobMismatchException(var, name, me[me_var], you[var])
 
     def _MakeHierarchy(self, hierarchy: dict, keys: list, value: dict = None):
         key = keys.pop(0)
@@ -111,7 +141,8 @@ class LoadReportSet:
     Analyze ClusterBuster reports
     """
 
-    def __init__(self, run: dict, name: str, answer: dict):
+    def __init__(self, run: dict, name: str, answer: dict, extras=None):
+        self.extras = extras
         self.reports = {}
         dirs = run['dirs']
         if dirs:
@@ -161,18 +192,25 @@ class LoadReportSet:
             workload = report['metadata']['workload']
             try:
                 imported_lib = importlib.import_module(f'..{workload}_loader', __name__)
+            except (KeyboardInterrupt, BrokenPipeError) as exc:
+                raise (exc)
             except Exception:
                 continue
             for i in inspect.getmembers(imported_lib):
                 if i[0] == f'{workload}_loader':
                     try:
-                        i[1](self.name, report, self.answer).Load()
+                        i[1](self.name, report, self.answer, self.extras).Load()
+                    except (KeyboardInterrupt, BrokenPipeError) as exc:
+                        raise (exc)
                     except Exception:
-                        print(f'Loading report {report["metadata"]["RunArtifactDir"]} failed: {sys.exc_info()}', file=sys.stderr)
+                        print('Loading report %s failed: %s' % (report["metadata"]["RunArtifactDir"],
+                                                                traceback.format_exc()),
+                              file=sys.stderr)
 
 
 class ClusterBusterLoader:
-    def __init__(self):
+    def __init__(self, extras=None):
+        self._extras = extras
         pass
 
     def _matches_patterns(self, f: str, patterns: list):
@@ -220,13 +258,14 @@ class ClusterBusterLoader:
                 basedirs = jdata['ran']
                 answer['metadata'] = jdata
                 del answer['metadata']['ran']
-            else:
-                basedirs = os.listdir(dirname)
-            dirs = [os.path.realpath(os.path.join(dirname, d))
-                    for d in basedirs if (not self._matches_patterns(d, [r'\.(FAIL|tmp)']) and
-                                          self._matches_patterns(d, job_patterns) and
-                                          os.path.isdir(os.path.join(dirname, d)) and
-                                          os.path.isfile(os.path.join(dirname, d, "clusterbuster-report.json")))]
+                dirs = [os.path.realpath(os.path.join(dirname, d))
+                        for d in basedirs if (not self._matches_patterns(d, [r'\.(FAIL|tmp)']) and
+                                              self._matches_patterns(d, job_patterns) and
+                                              os.path.isdir(os.path.join(dirname, d)) and
+                                              os.path.isfile(os.path.join(dirname, d, "clusterbuster-report.json")))]
+            elif os.path.isfile(os.path.join(dirname, "clusterbuster-report.json")):
+                dirs = [dirname]
+                run_name = dirname
             if not dirs:
                 print(f"No matching subdirectories found in '{dirname}'", file=sys.stderr)
                 dirs = []
@@ -255,5 +294,5 @@ class ClusterBusterLoader:
         for name, report in reports.items():
             if 'baseline' not in answer['metadata']:
                 answer['metadata']['baseline'] = name
-            LoadReportSet(reports[name], name, answer).Load()
+            LoadReportSet(reports[name], name, answer, extras=self._extras).Load()
         return answer

@@ -94,7 +94,8 @@ class cpusoaker_analysis(ClusterBusterAnalyzeOne):
                 row = [str(pods), '']
                 for run in runs[1:]:
                     run_value = self.get_value(data1, run, column, valfunc)
-                    run_ratio = run_value / baseline_value if isnumber(baseline_value) and baseline_value > 0 and isnumber(run_value) else ''
+                    run_ratio = run_value / baseline_value if (isnumber(baseline_value) and
+                                                               baseline_value > 0 and isnumber(run_value)) else ''
                     row.append(prettyprint(run_ratio, base=0, precision=3))
                 rows.append('\t'.join(row))
             answer += '\n'.join(rows) + '\n'
@@ -110,7 +111,8 @@ class cpusoaker_analysis(ClusterBusterAnalyzeOne):
                 row = [str(pods), '']
                 for run in runs[1:]:
                     run_value = self.get_value(data1, run, column, valfunc)
-                    run_delta = run_value - baseline_value if isnumber(baseline_value) and baseline_value > 0 and isnumber(run_value) else ''
+                    run_delta = run_value - baseline_value if (isnumber(baseline_value) and baseline_value > 0
+                                                               and isnumber(run_value)) else ''
                     row.append(prettyprint(run_delta, base=0, integer=integer, precision=3, multiplier=multiplier))
                 rows.append('\t'.join(row))
             answer += '\n'.join(rows) + '\n'

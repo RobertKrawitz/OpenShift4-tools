@@ -17,8 +17,8 @@ from .ClusterBusterLoader import LoadOneReport
 
 
 class uperf_loader(LoadOneReport):
-    def __init__(self, name: str, report: dict, data: dict):
-        super().__init__(name, report, data)
+    def __init__(self, name: str, report: dict, data: dict, extras=None):
+        super().__init__(name, report, data, extras)
 
     def Load(self):
         job_name = sorted(self._metadata['workload_metadata']['jobs'].keys())[0]
@@ -31,12 +31,12 @@ class uperf_loader(LoadOneReport):
         self._MakeHierarchy(self._data, ['uperf', self._count, msgsize, threads, self._name])
         root = self._data['uperf'][self._count][msgsize][threads][self._name]
         try:
+            if op == 'stream':
+                root['rate'] = job['data_rate']
+            elif op == 'rr':
+                root['ops_sec'] = job['ops_rate']
+                root['avg_time_op'] = job['total']['avg_time_avg']
+                root['max_time_op'] = job['total']['max_time_max']
             root[f'cpu_util_{op}'] = self._metrics['CPU utilization']['Total'][f'instance: {self._client_pin_node}']
-        except Exception:
+        except (TypeError, ValueError, KeyError):
             pass
-        if op == 'stream':
-            root['rate'] = job['data_rate']
-        elif op == 'rr':
-            root['ops_sec'] = job['ops_rate']
-            root['avg_time_op'] = job['total']['avg_time_avg']
-            root['max_time_op'] = job['total']['max_time_max']

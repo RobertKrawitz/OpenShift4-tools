@@ -13,16 +13,34 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from ..ClusterBusterAnalysis import ClusterBusterAnalysisException
+import argparse
+
+
+class ClusterBusterAnalysisJobMismatchException(ClusterBusterAnalysisException):
+    def __init__(self, var: str, job: str, val1, val2):
+        super().__init__(f"Mismatched {var} in {job}: ({val1} vs {val2})")
+
 
 class AnalyzePostprocess:
     """
     Post-process ClusterBuster analysis
     """
 
-    def __init__(self, report, status, metadata):
+    def __init__(self, report, status, metadata, extras=None):
         self._report = report
         self._status = status
         self._metadata = metadata
+        parser = argparse.ArgumentParser(description="ClusterBuster loader")
+        parser.add_argument('--allow-mismatch', action='store_true')
+        self._args, self._extra_args = parser.parse_known_args(extras)
+
+    def __CheckMatch(self, job: str, var: str, you: dict):
+        if self._report['metadata'][var] is None:
+            self._report['metadata'][var] = you.get(var, None)
+        elif you.get(var, None) is not None and you[var] != self._report['metadata'][var]:
+            raise ClusterBusterAnalysisJobMismatchException(var, job, you[var],
+                                                            self._report['metadata'][var])
 
     def Postprocess(self):
         self._report['metadata'] = {
@@ -36,16 +54,11 @@ class AnalyzePostprocess:
             'job_end': None,
             'job_runtime': None,
             }
-        for job, job_status in self._status['jobs'].items():
-            for var in ['result', 'job_start', 'job_end', 'job_runtime']:
-                if self._report['metadata'][var] is None:
-                    self._report['metadata'][var] = job_status.get(var, None)
-                elif job_status.get(var, None) is not None and job_status[var] != self._report['metadata'][var]:
-                    raise Exception(f'Mismatched {var} in status ({job_status[var]} vs {self._report["metadata"][var]}!')
-        for job, job_metadata in self._metadata['jobs'].items():
-            for var in ['uuid', 'run_host', 'openshift_version', 'kata_containers_version', 'kata_version']:
-                if self._report['metadata'][var] is None:
-                    self._report['metadata'][var] = job_metadata.get(var, None)
-                elif job_metadata.get(var, None) is not None and job_metadata[var] != self._report['metadata'][var]:
-                    raise Exception(f'Mismatched {var} in metadata ({job_metadata[var]} vs {self._report["metadata"][var]}!')
+        if not self._args.allow_mismatch:
+            for job, job_status in self._status['jobs'].items():
+                for var in ['result', 'job_start', 'job_end', 'job_runtime']:
+                    self.__CheckMatch(job, var, job_status)
+            for job, job_metadata in self._metadata['jobs'].items():
+                for var in ['uuid', 'run_host', 'openshift_version', 'kata_containers_version', 'kata_version']:
+                    self.__CheckMatch(job, var, job_metadata)
         return self._report

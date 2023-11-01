@@ -269,6 +269,7 @@ declare -r vm_emptydisk_suffixes="bcdefghijklmnopqrstuvwxyz"
 declare OC=${OC:-${KUBECTL:-}}
 OC=${OC:-$(type -p oc)}
 OC=${OC:-$(type -p kubectl)}	# kubectl might not work, though...
+OC=$(type -p "$OC")
 
 function fatal() {
     local OPTIND
@@ -281,7 +282,7 @@ function fatal() {
 	esac
     done
     shift "$((OPTIND-1))"
-    echo "$*" 1>&2
+    timestamp <<< "$*" 1>&2
     if ((waitforit)) ; then
 	wait
     fi
@@ -289,10 +290,10 @@ function fatal() {
 }
 
 function warn() {
-    echo "$*" 1>&2
+    timestamp <<< "$*" 1>&2
 }
 
-if [[ -z "$OC" ]] ; then
+if [[ -z "$OC" || ! -x "$OC" ]] ; then
     fatal "Can't find kubectl or oc"
 fi
 
@@ -1933,7 +1934,7 @@ function _report_metadata_and_objects() {
  "kubernetes_version": $(indent_hang 1 __OC version -ojson),
  "command_line": [$(quote_list "${saved_argv[@]}")],
  "expanded_command_line": [$(quote_list "${processed_options[@]}")],
- "runHost": "$(hostname -f)",
+ "run_host": "$(hostname -f)",
  "workload_metadata": {$(indent_hang 1 generate_workload_metadata)},
  "controller_presync_timestamp": $first_local_ts,
  "sync_timestamp": $remote_ts,
@@ -1966,7 +1967,7 @@ $(indent 2 container_resources_json)
   "runtime_classes": {$(_report_runtime_classes)},
 $(indent 2 _report_emptydirs)
   "target_data_rate": $target_data_rate,
-  "workloadOptions": {
+  "workload_options": {
 $(indent 3 call_api -w "$requested_workload" "report_options")
   }
  }
@@ -2894,7 +2895,7 @@ function create_namespace() {
 	return 1
     fi
     if ((use_namespaces)) ; then
-	namespace_exists "$namespace" || create_object $force -t namespace "$namespace" <<EOF 2>&1 | report_if_desired
+	namespace_exists "$namespace" || create_object $force -t namespace "$namespace" <<EOF 2>&1
 apiVersion: v1
 kind: Namespace
 metadata:

@@ -57,6 +57,8 @@ def get_ip_address(ifname: str):
     try:
         # 0x8915 is SIOCGIFADDR
         return socket.inet_ntoa(fcntl.ioctl(SOCKET.fileno(), 0x8915, struct.pack('256s', bytes(ifname, 'ascii')[:15]))[20:24])
+    except (KeyboardInterrupt, BrokenPipeError):
+        sys.exit()
     except Exception:
         return None
 

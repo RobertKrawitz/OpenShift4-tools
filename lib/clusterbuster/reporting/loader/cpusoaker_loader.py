@@ -17,8 +17,8 @@ from .ClusterBusterLoader import LoadOneReport
 
 
 class cpusoaker_loader(LoadOneReport):
-    def __init__(self, name: str, report: dict, data: dict):
-        super().__init__(name, report, data)
+    def __init__(self, name: str, report: dict, data: dict, extras=None):
+        super().__init__(name, report, data, extras)
 
     def Load(self):
         if not self._summary['total_pods']:
@@ -33,6 +33,6 @@ class cpusoaker_loader(LoadOneReport):
         try:
             root['memory'] = self._metrics['Maximum memory working set'][f'node: {self._client_pin_node}']
             root['memory_per_pod'] = root['memory'] / self._count
-        except Exception:
+        except (TypeError, KeyError, ZeroDivisionError):
             pass
         root['pod_starts_per_second'] = self._count / root['last_pod_start']

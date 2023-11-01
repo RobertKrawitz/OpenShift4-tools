@@ -18,8 +18,8 @@ import sys
 
 
 class fio_loader(LoadOneReport):
-    def __init__(self, name: str, report: dict, data: dict):
-        super().__init__(name, report, data)
+    def __init__(self, name: str, report: dict, data: dict, extras=None):
+        super().__init__(name, report, data, extras)
 
     def Load(self):
         jobs = sorted(self._metadata['workload_metadata']['jobs'])

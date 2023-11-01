@@ -97,6 +97,8 @@ def get_prometheus_default_url():
     try:
         with openshift.project('openshift-monitoring'):
             return 'https://%s' % openshift.selector(['route/prometheus-k8s']).objects()[0].as_dict()['spec']['host']
+    except (KeyboardInterrupt, BrokenPipeError):
+        sys.exit()
     except Exception as err:
         efail("Unable to retrieve prometheus-k8s route: %s" % err)
 
@@ -113,6 +115,8 @@ def get_prometheus_token_by_version():
 def get_prometheus_token():
     try:
         return 'Bearer %s' % get_prometheus_token_by_version()
+    except (KeyboardInterrupt, BrokenPipeError):
+        sys.exit()
     except Exception as err:
         efail("Unable to retrieve prometheus-k8s token: %s" % err)
 
@@ -126,6 +130,8 @@ def get_prometheus_timestamp():
                 result = openshift.selector('pod/prometheus-k8s-0').object().execute(['date', '+%s.%N'],
                                                                                      container_name='prometheus')
                 return datetime.utcfromtimestamp(float(result.out()))
+        except (KeyboardInterrupt, BrokenPipeError):
+            sys.exit()
         except Exception as err:
             if retries <= 0:
                 efail("Unable to retrieve date: %s" % err)
@@ -136,6 +142,8 @@ def get_prometheus_timestamp():
 def get_nodes():
     try:
         return json.loads([n.as_dict() for n in openshift.selector(['node']).objects()])
+    except (KeyboardInterrupt, BrokenPipeError):
+        sys.exit()
     except Exception as err:
         efail("Unable to retrieve cluster version: %s" % err)
 
@@ -248,6 +256,8 @@ try:
         if args.json_from_command and len(stdout_data) > 0:
             try:
                 json_output = json.loads("\n".join(a[1] for a in stdout_data))
+            except (KeyboardInterrupt, BrokenPipeError):
+                sys.exit()
             except json.decoder.JSONDecodeError as err:
                 eprint("Cannot decode command output as JSON: %s" % err)
 

@@ -16,6 +16,30 @@
 import sys
 import importlib
 import inspect
+import argparse
+from ..reporting_exceptions import ClusterBusterReportingException
+
+
+class ClusterBusterAnalysisException(ClusterBusterReportingException):
+    def __init__(self, *args):
+        super().__init__(args)
+
+
+class ClusterBusterAnalysisIncompatibleReportTypes(ClusterBusterAnalysisException):
+    def __init__(self, workload, report_type, you):
+        super().__init__("Incompatible report types for %s: expect %s, found %s" %
+                         (workload, report_type, you.__class__.__name__))
+
+
+class ClusterBusterAnalysisBadReportType(ClusterBusterAnalysisException):
+    def __init__(self, report_type):
+        super().__init__("Unexpected report type %s, expect either str or dict" %
+                         (report_type.__name__))
+
+
+class ClusterBusterAnalysisImportFailed(ClusterBusterAnalysisException):
+    def __init__(self, report_type, exc):
+        super().__init__(f"Failed to import module {report_type}: {exc}")
 
 
 class ClusterBusterAnalyzeOne:
@@ -31,7 +55,9 @@ class ClusterBusterAnalyzeOne:
                 obj = obj[key]
                 keys = keys[1:]
             return obj
-        except Exception:
+        except (KeyboardInterrupt, BrokenPipeError):
+            sys.exit()
+        except KeyError:
             return default
 
     def Analyze(self):
@@ -42,8 +68,12 @@ class ClusterBusterAnalysis:
     """
     Analyze ClusterBuster reports
     """
-    def __init__(self, data: dict, report_type=None):
+    def __init__(self, data: dict, report_type=None, extras=None):
         self._data = data
+        self._extras = extras
+        parser = argparse.ArgumentParser(description="ClusterBuster loader")
+        parser.add_argument('--allow-mismatch', action='store_true')
+        self._args, self._extra_args = parser.parse_known_args(extras)
         if report_type is None:
             report_type = 'ci'
         self._report_type = report_type
@@ -60,10 +90,13 @@ class ClusterBusterAnalysis:
                 if i[0] == 'AnalyzePostprocess':
                     import_module = i[1]
                     break
-        except Exception:
+        except (SyntaxError, ModuleNotFoundError):
             pass
         if import_module is not None:
-            return import_module(report, status, metadata).Postprocess()
+            try:
+                return import_module(report, status, metadata, self._extras).Postprocess()
+            except TypeError as exc:
+                raise ClusterBusterAnalysisImportFailed(self._report_type, exc) from None
         else:
             return report
 
@@ -83,21 +116,38 @@ class ClusterBusterAnalysis:
         for workload, workload_data in sorted(self._data.items()):
             if workload == 'metadata' or workload == 'status':
                 continue
+            failed_load = False
+            load_failed_exception = None
             try:
                 imported_lib = importlib.import_module(f'..{self._report_type}.{workload}_analysis', __name__)
+            except (KeyboardInterrupt, BrokenPipeError):
+                sys.exit(0)
+            except (SyntaxError, ModuleNotFoundError) as exc:
+                if isinstance(exc, ModuleNotFoundError) and exc.name.endswith(f"{workload}_analysis"):
+                    print(f'Warning: no analyzer for workload {workload}', file=sys.stderr)
+                    continue
+                else:
+                    failed_load = True
+                    load_failed_exception = exc
             except Exception as exc:
                 print(f'Warning: no analyzer for workload {workload} {exc}', file=sys.stderr)
                 continue
+            if failed_load:
+                raise type(load_failed_exception)('%s reporter: %s: %s' %
+                                                  (workload, load_failed_exception.__class__.__name__,
+                                                   load_failed_exception))
             try:
                 for i in inspect.getmembers(imported_lib):
                     if i[0] == f'{workload}_analysis':
                         report[workload] = i[1](workload, workload_data, metadata).Analyze()
                         if report_type is None:
                             report_type = type(report[workload])
-                        elif report_type is not type(report[workload]):
-                            raise TypeError(f"Incompatible report types for {workload}: expect {report_type}, found {type(report[workload])}")
+                        elif not isinstance(report[workload], report_type):
+                            raise ClusterBusterAnalysisIncompatibleReportTypes(workload, report_type, report[workload])
+            except (KeyboardInterrupt, BrokenPipeError):
+                sys.exit()
             except Exception as exc:
-                raise exc
+                raise exc from None
         if report_type == str:
             return self.__postprocess('\n\n'.join([str(v) for v in report.values()]), status, metadata)
         elif report_type == dict or report_type == list:
@@ -114,4 +164,4 @@ class ClusterBusterAnalysis:
         elif report_type is None:
             return None
         else:
-            raise TypeError(f"Unexpected report type {report_type}, expect either str or dict")
+            raise ClusterBusterAnalysisBadReportType(report_type)
