@@ -103,7 +103,7 @@ class ClusterBusterReporter:
     def validate_dir(dirname: str):
         if dirname.find('.FAIL') >= 0 or dirname.find('.tmp') >= 0:
             return False
-        if not re.search('(^|/)(cpusoaker|fio|uperf|files)-(kata|runc)-[0-9]+[^/]*$', dirname):
+        if not re.search(f'(^|/)([-_[:lower:][:digit:]]+)-([-[:lower:][:digit:]]+)-[0-9]+[^/]*$', dirname):
             return False
         return os.path.isfile(os.path.join(dirname, "clusterbuster-report.json"))
 
@@ -112,7 +112,7 @@ class ClusterBusterReporter:
         answers = list()
         for item in items:
             if isinstance(item, str):
-                if os.path.isfile(item):
+                if os.path.splitext(item)[1] == '.json' and os.path.isfile(item):
                     answers.append(item)
                 elif os.path.isdir(item):
                     if os.path.isfile(os.path.join(item, "clusterbuster-report.json")):
@@ -137,6 +137,10 @@ class ClusterBusterReporter:
             with open(item) as f:
                 try:
                     data = json.load(f)
+                    report = ClusterBusterReporter.report_one(os.path.dirname(item), data, report_format,
+                                                              extras=extras)
+                    if report:
+                        answers.append(report)
                     answers.append(ClusterBusterReporter.report_one(os.path.dirname(item), data, report_format,
                                                                     extras=extras))
                 except (KeyboardInterrupt, BrokenPipeError):

@@ -14,28 +14,29 @@
 # limitations under the License.
 
 
-class AnalyzePostprocess:
+from ..ClusterBusterAnalysis import ClusterBusterPostprocessBase
+
+
+class AnalyzePostprocess(ClusterBusterPostprocessBase):
     """
     Post-process ClusterBuster analysis
     """
 
     def __init__(self, report, status, metadata, extras=None):
-        self._report = report
-        self._status = status
-        self._metadata = metadata
+        super().__init__(report, status, metadata, extras)
 
     def Postprocess(self):
         metadata = {}
         for job, job_status in self._status['jobs'].items():
             if job not in metadata:
                 metadata[job] = {}
-            for var in ['result', 'job_start', 'job_end', 'job_runtime']:
+            for var in self.job_status_vars():
                 if var in job_status:
                     metadata[job][var] = job_status[var]
         for job, job_metadata in self._metadata['jobs'].items():
             if job not in metadata:
                 metadata[job] = {}
-            for var in ['uuid', 'run_host', 'openshift_version', 'kata_containers_version', 'kata_version']:
+            for var in self.job_metadata_vars():
                 if var in job_metadata:
                     metadata[job][var] = job_metadata[var]
         self._report['metadata'] = metadata

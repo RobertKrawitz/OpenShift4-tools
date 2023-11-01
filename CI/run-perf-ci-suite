@@ -69,7 +69,7 @@ declare -i pin_jobs=1
 declare -a workloads=()
 declare -a debugargs=()
 
-declare -a runtimeclasses=('' 'kata')
+declare -a runtimeclasses=('' 'kata' 'vm')
 declare -a extra_clusterbuster_args=()
 declare -A known_clusterbuster_options=()
 
@@ -643,15 +643,22 @@ function doit() {
 }
 
 function check_runtimeclass() {
+    function _check_runtimeclass() {
+	if [[ $runtimeclass = vm ]] ; then
+	    [[ -n "$(oc get hyperconverged --no-headers -A 2>/dev/null)" ]]
+	else
+	    oc get runtimeclass "$runtimeclass" >/dev/null 2>&1
+	fi
+    }
     local runtimeclass=${1:-runc}
     if [[ -z "${runtimeclass_ok[$runtimeclass]:-}" ]] ; then
-	if [[ -z "$runtimeclass" || $runtimeclass = runc ]] || oc get runtimeclass "$runtimeclass" >/dev/null 2>&1 ; then
-	    runtimeclass_ok[$runtimeclass]=0
-	else
+	if [[ -z "$runtimeclass" || $runtimeclass = runc ]] || _check_runtimeclass "$runtimeclass" ; then
 	    runtimeclass_ok[$runtimeclass]=1
+	else
+	    runtimeclass_ok[$runtimeclass]=0
 	fi
     fi
-    return ${runtimeclass_ok[$runtimeclass]}
+    (( ${runtimeclass_ok[$runtimeclass]} ))
 }
 
 function run_clusterbuster_1() {

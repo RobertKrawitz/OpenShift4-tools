@@ -519,6 +519,8 @@ $(print_workloads_supporting_reporting '                        - ')
                         Resource limits
        --runtimeclass=[class1,class2...]=class
                         Run the pods in the designated runtimeclass.
+                        --runtimeclass=vm is a synonym for
+                        --deployment_type=vm.
        --kata           Synonym for --runtimeclass=${kata_runtime_class}
        --tolerate=<key:operator:effect>
                         Apply the specified tolerations to created pods.
@@ -750,6 +752,10 @@ function process_pin_node() {
 
 function process_runtimeclass() {
     local runtimespec=$1
+    if [[ $runtimespec = 'vm' ]] ; then
+	deployment_type=vm
+	return
+    fi
     runtimespec=${runtimespec// /}
     runtime_class=$runtimespec
     [[ -n "$runtimespec" ]] || return
@@ -1835,9 +1841,13 @@ function _report_pin_nodes() {
 function _report_runtime_classes() {
     local -a runtimeclasses
     local class
-    for class in "${!runtime_classes[@]}" ; do
-	runtimeclasses+=("\"$class\": \"${runtime_classes[$class]}\"")
-    done
+    if [[ $deployment_type = "vm" ]] ; then
+	runtimeclasses=("\"default\": \"vm\"")
+    else
+	for class in "${!runtime_classes[@]}" ; do
+	    runtimeclasses+=("\"$class\": \"${runtime_classes[$class]}\"")
+	done
+    fi
     (IFS=$',\n '; echo "${runtimeclasses[*]}")
 }
 
@@ -3237,11 +3247,11 @@ EOF
 	if [[ -n "${vm_emptydisk_list[*]}" ]] ; then
 	    for id in $(seq 0 $((${#vm_emptydisk_list[@]} - 1))) ; do
 		local mountpoint=${vm_emptydisk_list[$id]}
-		local -a extra_args
-		IFS=: read -ra extra_args <<< "${vm_emptydisk_options[$mountpoint]}"
-		local arg
+		local -a emptydisk_args=()
+		IFS=: read -ra emptydisk_args <<< "${vm_emptydisk_options[$mountpoint]}"
+		local arg=
 		local cache=
-		for arg in "${extra_args[@]}" ; do
+		for arg in "${emptydisk_args[@]}" ; do
 		    if [[ $arg = "cache="* ]] ; then
 			cache="  cache: ${arg/cache=/}"
 		    fi
@@ -3264,8 +3274,9 @@ EOF
 		local mountopts=
 		local fs=ext4
 		local fsopts=
-		IFS=: read -ra extra_args <<< "${vm_emptydisk_options[$mountpoint]}"
-		for arg in "${extra_args[@]}" ; do
+		local -a emptydisk_args=()
+		IFS=: read -ra emptydisk_args <<< "${vm_emptydisk_options[$mountpoint]}"
+		for arg in "${emptydisk_args[@]}" ; do
 		    case "$arg" in
 			"mountopts="*) mountopts="${arg/mountopts=/-o }";;
 			"fstype="*)    fs="${arg/fstype=/}"		;;
@@ -4097,6 +4108,79 @@ function remove_tmpdir() {
     [[ -n "${cb_tempdir:-}" && -d "$cb_tempdir" && $cb_tempdir = "/tmp/cbtmp_"* ]] && rm -rf "$cb_tempdir" && unset cb_tempdir
 }
 
+function validate_options() {
+    [[ -z "$requested_workload" ]] && help "Workload must be specified with --workload"fi
+
+    local iworkload=$requested_workload
+    requested_workload=$(get_workload "$requested_workload") || help_extended "(Unknown workload '$iworkload')"
+    arch=${arch:-$(uname -m)}
+
+    call_api -w "$requested_workload" -s "process_options" "${unknown_opts[@]}" || help "${unknown_opt_names[@]/#/Unknown option }"
+
+    if supports_api -w "$requested_workload" list_user_configmaps ; then
+	readarray -t userfiles < <(list_user_configmaps)
+	configmap_files+=("${userfiles[@]}")
+    fi
+
+    if (( namespaces <= 0 )) ; then
+	namespaces=1
+	use_namespaces=0
+    fi
+    (( parallel_configmaps )) || parallel_configmaps=$parallel
+    (( parallel_secrets )) || parallel_secrets=$parallel
+    (( parallel_namespaces )) || parallel_namespaces=$parallel
+    (( parallel_deployments )) || parallel_deployments=$parallel
+
+    (( !objs_per_call_configmaps )) && objs_per_call_configmaps=$objs_per_call
+    (( !objs_per_call_secrets )) && objs_per_call_secrets=$objs_per_call
+    (( !objs_per_call_namespaces )) && objs_per_call_namespaces=$objs_per_call
+    (( !objs_per_call_deployments )) && objs_per_call_deployments=$objs_per_call
+
+    [[ -n "$report_format" ]] && report=1
+
+    if [[ -n "$metrics_file" && ! -r "$metrics_file" ]] ; then
+	fatal "Cannot read metrics file $metrics_file"
+    fi
+
+    case "${deployment_type,,}" in
+	# If we're using deployments or replicasets, we do not want
+	# to exit when workers complete, or the controller will
+	# immediately try to re-create them.
+	replicaset|rs)         deployment_type=ReplicaSet; exit_at_end=0 ;;
+	deployment|dep|deploy) deployment_type=Deployment; exit_at_end=0 ;;
+	pod) deployment_type=pod                                         ;;
+	vm)
+	    if ((containers_per_pod > 1)) ; then
+		help "ERROR: containers_per_pod must equal 1 for vm deployments"
+	    fi
+	    deployment_type=vm                                           ;;
+	*)
+	    help "--deployment_type must be pod, vm, deployment, or replicaset"
+    esac
+
+    [[ -z "$OC" && $doit -gt 0 ]] && fatal "Cannot find oc or kubectl command, exiting!"
+
+    resource_validation_failed=0
+    validate_resource resource_request "${resource_requests[@]}" || resource_validation_failed=1
+    validate_resource resource_limit "${resource_limits[@]}" || resource_validation_failed=1
+    ((resource_validation_failed)) && exit 1
+
+    for i in $(seq 0 $((emptydir_volumes-1)) ) ; do
+	emptydirs+=("/mnt/volume-$i")
+    done
+
+    job_name=${job_name:-${requested_workload:-}}
+
+    if [[ ${runtime_class:-} = "$kata_runtime_class" ]] ; then
+	((virtiofsd_direct)) && virtiofsd_args+=('"-o"' '"allow_direct_io"')
+	((virtiofsd_writeback)) && virtiofsd_args+=('"-o"' '"writeback"')
+	((virtiofsd_threadpoolsize)) && virtiofsd_args+=("\"--thread-pool-size=$virtiofsd_threadpoolsize\"")
+	if [[ -n "${virtiofsd_args[*]:-}" ]] ; then
+	    pod_annotations+=("io.katacontainers.config.hypervisor.virtio_fs_extra_args: '[$(IFS=,; echo "${virtiofsd_args[*]}")]'")
+	fi
+    fi
+}
+
 trap 'if (($$ == BASHPID)) ; then wait; fi; remove_tmpdir; exit' EXIT
 trap 'remove_tmpdir; if (($$ == BASHPID)) ; then wait; fi; exit 1' TERM INT HUP
 cb_tempdir=$(umask 77; mktemp -d -p /tmp -t cbtmp_XXXXXXXX) || fatal "Can't create temporary directory"
@@ -4132,81 +4216,6 @@ shift $((OPTIND - 1))
 # shellcheck disable=SC2034
 extra_args=("$@")
 
-if [[ -z "$requested_workload" ]] ; then
-    help "Workload must be specified with --workload"
-fi
-
-iworkload=$requested_workload
-requested_workload=$(get_workload "$requested_workload") || help_extended "(Unknown workload '$iworkload')"
-arch=${arch:-$(uname -m)}
-
-call_api -w "$requested_workload" -s "process_options" "${unknown_opts[@]}" || help "${unknown_opt_names[@]/#/Unknown option }"
-
-if supports_api -w "$requested_workload" list_user_configmaps ; then
-    readarray -t userfiles < <(list_user_configmaps)
-    configmap_files+=("${userfiles[@]}")
-fi
-
-if (( namespaces <= 0 )) ; then
-    namespaces=1
-    use_namespaces=0
-fi
-(( parallel_configmaps )) || parallel_configmaps=$parallel
-(( parallel_secrets )) || parallel_secrets=$parallel
-(( parallel_namespaces )) || parallel_namespaces=$parallel
-(( parallel_deployments )) || parallel_deployments=$parallel
-
-(( !objs_per_call_configmaps )) && objs_per_call_configmaps=$objs_per_call
-(( !objs_per_call_secrets )) && objs_per_call_secrets=$objs_per_call
-(( !objs_per_call_namespaces )) && objs_per_call_namespaces=$objs_per_call
-(( !objs_per_call_deployments )) && objs_per_call_deployments=$objs_per_call
-
-[[ -n "$report_format" ]] && report=1
-
-if [[ -n "$metrics_file" && ! -r "$metrics_file" ]] ; then
-    fatal "Cannot read metrics file $metrics_file"
-fi
-
-case "${deployment_type,,}" in
-    # If we're using deployments or replicasets, we do not want
-    # to exit when workers complete, or the controller will
-    # immediately try to re-create them.
-    replicaset|rs)         deployment_type=ReplicaSet; exit_at_end=0 ;;
-    deployment|dep|deploy) deployment_type=Deployment; exit_at_end=0 ;;
-    pod) deployment_type=pod                                         ;;
-    vm)
-	if ((containers_per_pod > 1)) ; then
-	    help "ERROR: containers_per_pod must equal 1 for vm deployments"
-	fi
-	deployment_type=vm                                           ;;
-    *)
-	help "--deployment_type must be pod, vm, deployment, or replicaset"
-esac
-
-if [[ -z $OC && $doit -gt 0 ]] ; then
-    fatal "Cannot find oc or kubectl command, exiting!"
-fi
-
-resource_validation_failed=0
-validate_resource resource_request "${resource_requests[@]}" || resource_validation_failed=1
-validate_resource resource_limit "${resource_limits[@]}" || resource_validation_failed=1
-if ((resource_validation_failed)) ; then
-    exit 1
-fi
-
-for i in $(seq 0 $((emptydir_volumes-1)) ) ; do
-    emptydirs+=("/mnt/volume-$i")
-done
-
-job_name=${job_name:-${requested_workload:-}}
-
-if [[ ${runtime_class:-} = "$kata_runtime_class" ]] ; then
-    ((virtiofsd_direct)) && virtiofsd_args+=('"-o"' '"allow_direct_io"')
-    ((virtiofsd_writeback)) && virtiofsd_args+=('"-o"' '"writeback"')
-    ((virtiofsd_threadpoolsize)) && virtiofsd_args+=("\"--thread-pool-size=$virtiofsd_threadpoolsize\"")
-    if [[ -n "${virtiofsd_args[*]:-}" ]] ; then
-	pod_annotations+=("io.katacontainers.config.hypervisor.virtio_fs_extra_args: '[$(IFS=,; echo "${virtiofsd_args[*]}")]'")
-    fi
-fi
+validate_options
 
 (run_clusterbuster_1) 4>&2
