@@ -321,7 +321,12 @@ def sync_one(sock, tmp_sync_file_base: str, tmp_error_file: str, start_time: flo
         elif command == 'fail':
             timebase._timestamp(f"Detected failure from {address}")
             fail_hard(payload)
-        elif command != 'sync':
+        elif command == 'sync':
+            if step_interval > 0:
+                timebase._timestamp(f"Waiting for {step_interval} seconds...")
+                time.sleep(step_interval)
+                timebase._timestamp("Done waiting")
+        else:
             timebase._timestamp(f"Unknown command from {address}: '{command}'")
         expected_clients -= 1
     if ts_clients:
@@ -345,10 +350,11 @@ try:
     controller_timestamp_file = sys.argv[4]
     predelay = float(sys.argv[5])
     postdelay = float(sys.argv[6])
-    listen_port = int(sys.argv[7])
-    ns_port = int(sys.argv[8])
-    expected_clients = int(sys.argv[9])
-    initial_expected_clients = int(sys.argv[10])
+    step_interval = float(sys.argv[7])
+    listen_port = int(sys.argv[8])
+    ns_port = int(sys.argv[9])
+    expected_clients = int(sys.argv[10])
+    initial_expected_clients = int(sys.argv[11])
     if initial_expected_clients < 0:
         initial_expected_clients = expected_clients
 except Exception as exc:

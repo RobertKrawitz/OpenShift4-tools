@@ -218,6 +218,7 @@ declare -i get_sync_logs_pid=0
 declare -a extra_args=()
 declare -i metrics_interval=30
 declare -a sync_pod=()
+declare workload_step_interval=0
 
 declare -r sync_flag_file="/tmp/syncfile";
 declare -r sync_error_file="/tmp/syncerror";
@@ -366,6 +367,7 @@ Extended Options:
                         starts before it starts running.
        --postdelay=N    Delay for the specified time after workload
                         completes.
+       --stepinterval=N	Delay the specified time between steps of the workload.
        --timeout=N      Time out reporting after N seconds
        --report_object_creation=<1,0>
                         Report creation of individual objects (default 1)
@@ -843,6 +845,7 @@ function process_option() {
 	prometheussnapshot)	    take_prometheus_snapshot=$(bool "$optvalue");;
 	predelay)		    predelay=$optvalue				;;
 	postdelay)		    postdelay=$optvalue				;;
+	stepinterval)		    workload_step_interval=$optvalue		;;
 	timeout)		    timeout=$optvalue				;;
 	failurestatus)		    failure_status=$optvalue			;;
 	parallellog*)		    parallel_log_retrieval=$optvalue		;;
@@ -3496,6 +3499,7 @@ $(indent 2 standard_environment)
   - "$controller_timestamp_file"
   - "$predelay"
   - "$postdelay"
+  - "$workload_step_interval"
   - "$sync_port"
   - "$sync_ns_port"
   - "$expected_clients"
