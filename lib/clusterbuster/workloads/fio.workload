@@ -32,6 +32,10 @@ declare -g  ___fio_workdir="/tmp"
 declare -g  ___fio_processed_job_file
 declare -ig  ___fio_drop_cache=1
 
+function fio_create_deployment() {
+    create_generic_deployment -p "$@"
+}
+
 function fio_arglist() {
     local mountdir=$1; shift
     local namespace=$1
@@ -45,37 +49,6 @@ function fio_arglist() {
 		 "${___fio_blocksizes[*]:-}" "${___fio_patterns[*]:-}" "${___fio_iodepths[*]:-}" \
 		 "${___fio_fdatasyncs[*]:-}" "${___fio_directs[*]:-}" "${___fio_ioengines[*]:-}" \
 		 "$___fio_ramp_time" "$___fio_drop_cache" "${___fio_options[*]:-}"
-}
-
-function fio_create_deployment() {
-    local namespace=$1
-    local count=${2:-1}
-    local secret_count=${3:-1}
-    local replicas=${4:-1}
-    local containers_per_pod=${5:-1}
-    local -i instance
-    container_image="quay.io/rkrawitz/clusterbuster-workloads:latest"
-    create_sync_service "$namespace" \
-			"$((containers_per_pod * processes_per_pod * replicas * count))" \
-			"$(((containers_per_pod * replicas * count) + (replicas * count * ___fio_drop_cache)))"
-    for instance in $(seq "$first_deployment" $((count + first_deployment - 1))) ; do
-	create_standard_deployment  -a fio_arglist -p \
-				    "$namespace" "$instance" "$secret_count" "$replicas" "$containers_per_pod"
-    done
-}
-
-function fio_calculate_logs_required() {
-    local -i namespaces=$1
-    local -i deps_per_namespace=${2:-1}
-    local -i replicas=${3:-1}
-    local -i containers_per_pod=${4:-1}
-    echo $((namespaces * containers_per_pod * processes_per_pod * replicas * deps_per_namespace))
-}
-
-function fio_list_configmaps() {
-    cat <<EOF
-$(find_on_path pod_files "fio.py")
-EOF
 }
 
 function fio_list_user_configmaps() {
@@ -197,10 +170,7 @@ function fio_process_options() {
     ___fio_processed_job_file=$(mktemp -p "$cb_tempdir" -t "02-fiojobXXXXXX") || fatal "Can't create temporary jobfile"
     expand_string "$(cat "$___fio_job_file")" 'workload_run_time=1' > "$___fio_preload_job_file"
     expand_string "$(cat "$___fio_job_file")" > "$___fio_processed_job_file"
-}
-
-function fio_supports_reporting() {
-    :
+    container_image="quay.io/rkrawitz/clusterbuster-workloads:latest"
 }
 
 function fio_generate_metadata() {

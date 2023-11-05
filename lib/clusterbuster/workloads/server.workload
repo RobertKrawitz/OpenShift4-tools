@@ -95,11 +95,14 @@ function server_create_deployment() {
     if ((((replicas * containers_per_pod * processes_per_pod) + 4) > ___server_port_addrs)) ; then
 	___server_port_addrs=$(((replicas * containers_per_pod * processes_per_pod) + 4))
     fi
-    create_sync_service "$namespace" "$((containers_per_pod * replicas * count))" "$(((containers_per_pod * replicas * count)+count))"
+    create_sync_service "$namespace" \
+			"$((containers_per_pod * replicas * count))" \
+			"$(((containers_per_pod * replicas * count)+count))"
 
-    for instance in $(seq "$first_deployment" $((count + first_deployment - 1))) ; do
+    for ((instance = first_deployment; instance < count + first_deployment; instance++)) ; do
 	if [[ -z "${___server_interface}" ]] ; then
-	    create_service -k replica -e "$namespace" "${namespace}-server-server-${instance}-1" $(seq "$___server_port" $((___server_port + ___server_port_addrs)))
+	    create_service -k replica -e "$namespace" "${namespace}-server-server-${instance}-1" \
+			   $(seq "$___server_port" $((___server_port + ___server_port_addrs)))
 	fi
 	create_standard_deployment -w server-server -p -c server \
 				   -A "$(create_affinity_yaml "${namespace}-server-client-${instance}")" \
@@ -119,14 +122,6 @@ function server_list_configmaps() {
 $(find_on_path pod_files "client.py")
 $(find_on_path pod_files "server.py")
 EOF
-}
-
-function server_calculate_logs_required() {
-    local -i namespaces=$1
-    local -i deps_per_namespace=${2:-1}
-    local -i replicas=${3:-1}
-    local -i containers_per_pod=${4:-1}
-    echo $((namespaces * containers_per_pod * replicas * deps_per_namespace))
 }
 
 function server_help_options() {
@@ -158,6 +153,7 @@ EOF
 function server_process_options() {
     local opt
     local -a unknown_opts=()
+    processes_per_pod=1
     for opt in "$@" ; do
 	read -r noptname1 noptname optvalue <<< "$(parse_option "$opt")"
 	case "$noptname1" in
@@ -174,10 +170,6 @@ function server_process_options() {
     if (( ___msg_size <= 0 )) ; then
 	fatal "Message size must be positive, exiting!"
     fi
-}
-
-function server_supports_reporting() {
-    :
 }
 
 function server_report_options() {

@@ -30,28 +30,6 @@ function synctest_arglist() {
 		 "$___synctest_count" "$___synctest_cluster_count" "$___synctest_sleep" "$processes_per_pod"
 }
 
-function synctest_create_deployment() {
-    local namespace=$1
-    local count=${2:-1}
-    local secret_count=${3:-1}
-    local replicas=${4:-1}
-    local containers_per_pod=${5:-1}
-    local -i instance
-    create_sync_service "$namespace" \
-				  "$((containers_per_pod * replicas * processes_per_pod * count))" \
-				  "$((containers_per_pod * replicas * count))"
-    for instance in $(seq "$first_deployment" $((count + first_deployment - 1))) ; do
-	create_standard_deployment -a synctest_arglist \
-				   "$namespace" "$instance" "$secret_count" "$replicas" "$containers_per_pod"
-    done
-}
-
-function synctest_list_configmaps() {
-    cat <<EOF
-$(find_on_path pod_files "synctest.py")
-EOF
-}
-
 function synctest_help_options() {
     cat <<'EOF'
     Synctest General Options:
@@ -88,14 +66,6 @@ function synctest_process_options() {
     fi
 }
 
-function synctest_calculate_logs_required() {
-    local -i namespaces=$1
-    local -i deps_per_namespace=${2:-1}
-    local -i replicas=${3:-1}
-    local -i containers_per_pod=${4:-1}
-    echo $((namespaces * processes_per_pod * containers_per_pod * replicas * deps_per_namespace))
-}
-
 function synctest_report_options() {
     cat <<EOF
 "synctest_count": $___synctest_count,
@@ -105,10 +75,6 @@ EOF
 
 function synctest_workload_reporting_class() {
     echo generic
-}
-
-function synctest_supports_reporting() {
-    :
 }
 
 register_workload synctest

@@ -25,6 +25,10 @@ declare -ig ___files_per_dir=1
 declare -ig ___files_direct=0
 declare -ig  ___files_drop_cache=1
 
+function files_create_deployment() {
+    create_generic_deployment -p "$@"
+}
+
 function files_arglist() {
     local mountdir=$1; shift
     local namespace=$1
@@ -40,36 +44,6 @@ function files_arglist() {
     mk_yaml_args "python3" "${mountdir}files.py" "$@" \
 		 "$___file_dirs_per_volume" "$___files_per_dir" "$___file_block_size" "$file_blocks" \
 		 "$processes_per_pod" "$___files_direct" "${mounts[@]}"
-}
-
-function files_create_deployment() {
-    local namespace=$1
-    local count=${2:-1}
-    local secret_count=${3:-1}
-    local replicas=${4:-1}
-    local containers_per_pod=${5:-1}
-    local -i instance
-    create_sync_service "$namespace" \
-			"$((containers_per_pod * processes_per_pod * replicas * count))" \
-			"$(((containers_per_pod * replicas * count) + (replicas * count * ___fio_drop_cache)))"
-    for instance in $(seq "$first_deployment" $((count + first_deployment - 1))) ; do
-	create_standard_deployment -a files_arglist -p \
-				   "$namespace" "$instance" "$secret_count" "$replicas" "$containers_per_pod"
-    done
-}
-
-function files_calculate_logs_required() {
-    local -i namespaces=$1
-    local -i deps_per_namespace=${2:-1}
-    local -i replicas=${3:-1}
-    local -i containers_per_pod=${4:-1}
-    echo $((namespaces * containers_per_pod * processes_per_pod * replicas * deps_per_namespace))
-}
-
-function files_list_configmaps() {
-    cat <<EOF
-$(find_on_path pod_files "files.py")
-EOF
 }
 
 function files_help_options() {
@@ -126,10 +100,6 @@ function files_process_options() {
 
 function files_requires_drop_cache() {
     ((___files_drop_cache))
-}
-
-function files_supports_reporting() {
-    :
 }
 
 function files_generate_metadata() {

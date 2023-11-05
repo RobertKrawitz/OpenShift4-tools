@@ -127,8 +127,9 @@ The following APIs are supported:
 
   Print a detailed documentation string describing all supported
   command line options for the workload.  Workload-specific options
-  should start with `--workload-`, but this is not enforced.  This
-  function is optional, and only need be provided if the workload accepts options.
+  should start with `--<workload>-`, but this is not enforced.  This
+  function is optional, and only need be provided if the workload
+  accepts options.
 
 * `<workload>_process_options  option[=value] options...`
 
@@ -142,13 +143,14 @@ The following APIs are supported:
 * `<workload>_supports_reporting`
 
   Return true (0) if the workload supports reporting, false (non-zero
-  status) otherwise.
+  status) otherwise.  Assumes true if not provided.
 
 * `<workload>_list_configmaps`
 
   Return a list of files that must be provided to the worker object
   for the workload to run.  This consists of files in
   `lib/clusterbuster/pod_files` that are required to run the workload.
+  This is only needed if files other than `<workload>.py` are required.
 
 * `<workload>_list_user_configmaps`
 
@@ -159,16 +161,16 @@ The following APIs are supported:
 * `<workload>_calculate_logs_required  namespaces deployments replicas containers`
 
   Calculate how many entities are expected to provide log files and
-  print that to stdout.  At present, it only matters whether this is
-  zero or non-zero; if it's zero, then clusterbuster will not monitor
-  the run, if it's non-zero, then clusterbuster will.
+  print that to stdout.  This is not normally necessary to provide,
+  as Clusterbuster will calculate it based on workload parameters.
 
 * `<workload>_create_deployment  namespace instance secret_count replicas containers_per_pod`
 
   Create the YAML needed to deploy the workload.  Normally this
   function will not actually generate the YAML directly; it will make
   calls back to `create_standard_deployment`.  It may make other
-  calls.  See `fio.workload` and `uperf.workload` in
+  calls; if this workload needs only a standard deployment, it is not
+  necessary to implement this.  See and `uperf.workload` in
   `lib/clusterbuster/workloads` for examples of the callbacks that it
   may make.
 
@@ -181,7 +183,8 @@ The following APIs are supported:
   arguments.  Some workloads consist of multiple components, such as a
   client or server, so there may be multiple such functions named
   `<workload>_<subworkload>_arglist` corresponding to `-a` arguments
-  to `create_standard_arglist`.
+  to `create_standard_arglist`.  This may also be used to set options
+  that this workload requires.
 
 * `<workload>_report_options`
 

@@ -25,7 +25,7 @@ function pausepod_create_containers_yaml() {
     local -i replicas=$4
     local -i containers_per_pod=$5
     local -i container
-    for container in $(seq 0 $((containers_per_pod - 1))) ; do
+    for ((container = 0; container < containers_per_pod; container++)) ; do
 	cat <<EOF
 - name: ${namespace}-${instance}-$container
   imagePullPolicy: $image_pull_policy
@@ -36,12 +36,12 @@ EOF
     done
 }
 
-function pausepod_supports_reporting() {
-    false
+function pausepod_arglist() {
+    :
 }
 
-function pausepod_list_configmaps() {
-    :
+function pausepod_supports_reporting() {
+    false
 }
 
 function pausepod_workload_reporting_class() {
@@ -52,17 +52,8 @@ function pausepod_calculate_logs_required() {
     echo 0
 }
 
-function pausepod_create_deployment() {
-    local namespace=$1
-    local count=${2:-1}
-    local secret_count=${3:-1}
-    local replicas=${4:-1}
-    local containers_per_pod=${5:-1}
-    local -i instance
-    for instance in $(seq "$first_deployment" $((count + first_deployment - 1))) ; do
-	create_standard_deployment -C "pausepod_create_containers_yaml" "$namespace" "$instance" \
-				   "$secret_count" "$replicas" "$containers_per_pod"
-    done
+function pausepod_process_options() {
+    processes_per_pod=1
 }
 
 function pausepod_document() {

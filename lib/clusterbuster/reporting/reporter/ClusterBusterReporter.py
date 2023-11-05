@@ -945,7 +945,8 @@ class ClusterBusterReporter:
         for key in results:
             if isinstance(results[key], dict):
                 fwidth, nwidth = self.__compute_report_width(results[key], indentation=indentation)
-                fwidth += indentation
+                if indentation is not None:
+                    fwidth += indentation
             else:
                 try:
                     nwidth = len(str(int(float(self.__strip_suffix(results[key])))))

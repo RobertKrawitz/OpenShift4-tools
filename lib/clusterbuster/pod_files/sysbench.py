@@ -18,21 +18,19 @@ class sysbench_client(clusterbuster_pod_client):
         try:
             super().__init__()
             self.np = '([0-9]+([kmgt]i)?)b'
-            self.drop_cache_service = self._args[0]
-            self.drop_cache_port = int(self._args[1])
-            self._set_processes(int(self._args[2]))
-            self.rundir = self._args[3]
-            self.runtime = int(self._args[4])
-            self.workload = self._args[5]
-            if self._args[6]:
-                self.sysbench_fileio_tests = self._splitStr(r'\s+', self._args[6])
+            self._set_processes(int(self._args[0]))
+            self.rundir = self._args[1]
+            self.runtime = int(self._args[2])
+            self.workload = self._args[3]
+            if self._args[4]:
+                self.sysbench_fileio_tests = self._splitStr(r'\s+', self._args[4])
             else:
                 self.sysbench_fileio_tests = ['seqwr', 'seqrewr', 'seqrd', 'rndrd', 'rndwr', 'rndrw']
-            if self._args[7]:
-                self.sysbench_fileio_modes = self._splitStr(r'\s+', self._args[7])
+            if self._args[5]:
+                self.sysbench_fileio_modes = self._splitStr(r'\s+', self._args[5])
             else:
                 self.sysbench_fileio_modes = ['sync']
-            self.sysbench_options = self._args[8:]
+            self.sysbench_options = self._args[6:]
             self.runit_cpu = self.runit_simple
             self.runit_memory = self.runit_simple
             self.runit_mutex = self.runit_simple

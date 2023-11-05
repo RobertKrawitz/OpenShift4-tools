@@ -476,12 +476,12 @@ dhcp-authoritative
 dhcp-lease-max=41
 dhcp-host=${bootstrap_mac},${ip_base}.${bootstrap_host},bootstrap
 EOF
-    for i in $(seq 0 "$((master_count - 1))") ; do
+    for ((i = 0; i < master_count; i++)) ; do
 	printf "dhcp-host=%s,${ip_base}.%d,master-%d\n" "$1" $((master_base+i)) "$i"
 	shift
     done
     i=0
-    for i in $(seq 0 "$((infra_count - 1))") ; do
+    for ((i = 0; i < infra_count; i++)) ; do
 	printf "dhcp-host=%s,${ip_base}.%d,infra-%d\n" "$1" $((infra_base+i)) "$i"
 	shift
     done
@@ -521,26 +521,26 @@ function __generate_service() {
 	    cat <<EOF
     server           bootstrap ${ip_base}.$((bootstrap_host)):${port} check inter 1s backup
 EOF
-	    for i in $(seq 0 "$((master_count - 1))") ; do
+	    for ((i = 0; i < master_count; i++)) ; do
 		cat <<EOF
     server           master-${i} ${ip_base}.$((master_base+i)):${port} check inter 1s
 EOF
 	    done
 	    ;;
 	worker)
-	    for i in $(seq 0 "$((infra_count - 1))") ; do
+	    for ((i = 0; i < infra_count; i++)) ; do
 		cat <<EOF
     server           infra-${i} ${ip_base}.$((infra_base+i)):${port} check inter 1s
 EOF
 	    done
 	    if ((masters_schedulable)) ; then
-		for i in $(seq 0 "$((master_count - 1))") ; do
+		for ((i = 0; i < master_count; i++)) ; do
 		    cat <<EOF
     server           master-${i} ${ip_base}.$((master_base+i)):${port} check inter 1s
 EOF
 		done
 	    fi
-	    for i in $(seq 0 "$((worker_count - 1))") ; do
+	    for ((i = 0; i < worker_count; i++)) ; do
 		cat <<EOF
     server           worker-${i} ${ip_base}.$((worker_base+i)):${port} check inter 1s
 EOF
