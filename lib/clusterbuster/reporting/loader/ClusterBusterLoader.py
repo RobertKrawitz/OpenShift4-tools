@@ -88,7 +88,7 @@ class LoadOneReport:
                 data['metadata']['jobs'][name]['openshift_version'] = self._metadata['kubernetes_version']['openshiftVersion']
             except KeyError:
                 data['metadata']['jobs'][name]['openshift_version'] = 'Unknown'
-            data['metadata']['jobs'][name]['run_host'] = self._metadata['runHost']
+            data['metadata']['jobs'][name]['run_host'] = self._metadata.get('run_host', self._metadata.get('runHost'))
             data['metadata']['jobs'][name]['kata_containers_version'] = self._metadata.get('kata_containers_version', None)
             data['metadata']['jobs'][name]['kata_version'] = self._metadata.get('kata_version', None)
             data['metadata']['jobs'][name]['cnv_version'] = self._metadata.get('cnv_version', None)

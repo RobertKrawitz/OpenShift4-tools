@@ -96,31 +96,16 @@ Drop cache:  {self.fio_drop_cache}""")
                                     data_start_time = self._adjusted_time()
                                 jtime = self._adjusted_time()
                                 jucpu, jscpu = self._cputimes()
-                                command = ["fio", f'--rw={pattern}', f'--runtime={self.runtime}', f'--bs={size}',
+                                command = ['fio', f'--rw={pattern}', f'--runtime={self.runtime}', f'--bs={size}',
                                            f'--iodepth={iodepth}', f'--fdatasync={int(fdatasync)}', f'--direct={int(direct)}',
                                            f'--ioengine={ioengine}', '--allow_file_create=0']
                                 if not self.fio_drop_cache:
                                     command.append('--invalidate=0')
                                 command.extend(self.fio_generic_args)
                                 command.extend(['--output-format=json+', jobfile])
-                                data = ''
-                                stderr = ''
-                                run_status = None
-                                fail_msg = ''
-                                with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE) as run:
-                                    line = run.stdout.readline().decode('ascii')
-                                    while line:
-                                        if line.startswith('fio:'):
-                                            fail_msg += line
-                                        else:
-                                            data += line
-                                        line = run.stdout.readline().decode('ascii')
-                                    stderr = run.stderr.read().decode('ascii')
-                                    run_status = run.poll()
-                                if stderr != '':
-                                    fail_msg += stderr
-                                if run_status != 0:
-                                    raise Exception(fail_msg if fail_msg != '' else 'Unknown error')
+                                success, data, stderr = self.run_command(command)
+                                if not success:
+                                    raise Exception(f'{" ".join(command)} failed: {stderr if stderr != "" else "Unknown error"}')
                                 result = json.loads(data)
                                 jtime = self._adjusted_time(jtime)
                                 jucpu, jscpu = self._cputimes(jucpu, jscpu)

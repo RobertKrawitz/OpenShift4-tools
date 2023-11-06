@@ -68,6 +68,7 @@ declare job_delay=0
 declare -i pin_jobs=1
 declare -a workloads=()
 declare -a debugargs=()
+declare extra_args=()
 
 declare -a runtimeclasses=('' 'kata' 'vm')
 declare -a extra_clusterbuster_args=()
@@ -519,8 +520,9 @@ function process_option() {
     local noptname
     local noptname1
     local optvalue
+    local workload
     # shellcheck disable=SC2034
-    read -r noptname1 noptname optvalue <<< "$(parse_option "$option")"
+    read -r noptname1 noptname optvalue workload <<< "$(parse_option -w "$option")"
     optvalue=$(splitarg "$optvalue")
     case "$noptname1" in
 	help*) help									;;
@@ -549,18 +551,34 @@ function process_option() {
 	prometheussnapshot) take_prometheus_snapshot=$(bool "$optvalue")		;;
 	uniqueprefix) unique_job_prefix=$(bool -Y "$optvalue")				;;
 	jobdelay) job_delay=$optvalue							;;
-
-	# Unknown option -- can we delegate?
-	*)
-	    if ! call_api -A -a process_option "$option" ; then
-		if check_clusterbuster_option "$noptname1" ; then
-		    extra_clusterbuster_args+=("--$option")
-		else
-		    fatal "Unknown option $option"
-		fi
-	    fi
-	    ;;
+	*) extra_args+=("$option")							;;
     esac
+}
+
+
+function process_workload_options() {
+    local workload="$1"
+    shift
+    extra_clusterbuster_args=()
+    call_api -s -w "$workload" initialize_options
+    local option
+    for option in "${extra_args[@]}" "$@" ; do
+	local noptname
+	local noptname1
+	local optvalue
+	local optworkload
+	# shellcheck disable=SC2034
+	read -r noptname1 noptname optvalue optworkload <<< "$(parse_option -w "$option")"
+	[[ -n "$optworkload" && $workload != "$optworkload" ]] && continue
+	optvalue=$(splitarg "$optvalue")
+	if ! call_api -A -a -w "$workload" process_option "$option" ; then
+	    if check_clusterbuster_option "$noptname1" ; then
+		extra_clusterbuster_args+=("--$noptname=$optvalue")
+	    else
+		fatal "Unknown option $option"
+	    fi
+	fi
+    done
 }
 
 if [[ -z "$OC" ]] ; then
@@ -709,6 +727,8 @@ function run_clusterbuster_1() {
     job_start=$(date +%s)
     echo
     echo "*** Running $jobname at $(date -Is -u)"
+    # Runtime class needs to be after any deployment_type argument so
+    # that VM will override.
     # shellcheck disable=SC2090
     doit "$__clusterbuster__" ${dontdoit:+"$dontdoit"} --uuid="$uuid" \
 	 --precleanup --image-pull-policy=IfNotPresent \
@@ -721,10 +741,10 @@ function run_clusterbuster_1() {
 	 ${timeout:+"--timeout=$timeout"} \
 	 ${jobname:+"--jobname=$jobname"} \
 	 ${tmp_jobdir:+"--artifactdir=$tmp_jobdir"} \
-	 ${runtimeclass:+"--runtimeclass=$runtimeclass"} \
          ${force_cleanup_timeout:+"--force-cleanup-i-know-this-is-dangerous=$force_cleanup_timeout"} \
 	 ${unique_job_prefix:+"--pod-prefix=$job_prefix"} \
 	 "${extra_clusterbuster_args[@]}" \
+	 ${runtimeclass:+"--runtimeclass=$runtimeclass"} \
 	 "$@" 2>&1 || status=$?
     if ((! debugonly)) ; then
 	job_end=$(date +%s)
@@ -832,5 +852,6 @@ fi
 for workload in "${workloads[@]}" ; do
     # Use a separate counter for each workload/runtime
     counter=0
+    process_workload_options "$workload"
     call_api -w "$workload" test "$job_runtime"
 done

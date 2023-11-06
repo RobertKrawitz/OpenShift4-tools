@@ -115,7 +115,7 @@ function fio_help_options() {
        --fio-ramptime=<ramp time>
                         Ramp-up and down time (default $___fio_ramp_time)
        --fio-fdatasync=<fdatasyncs>
-                        Comma-separated list of whether to use fdatasync 
+                        Comma-separated list of whether to use fdatasync
                         (default ${___fio_fdatasyncs[*]}), values are 0 or 1.
        --fio-filesize=<size>
                         File size (default $___fio_filesize)
@@ -146,8 +146,8 @@ function fio_process_options() {
     for opt in "$@" ; do
 	read -r noptname1 noptname optvalue <<< "$(parse_option "$opt")"
 	case "$noptname1" in
-	    fiopattern*)	fiopattern=$optvalue		         ;;     
-	    fioblocksize*)	fioblksize=$optvalue		         ;;     
+	    fiopattern*)	fiopattern=$optvalue		         ;;
+	    fioblocksize*)	fioblksize=$optvalue		         ;;
 	    fioop*)		___fio_options+=("$optvalue")   	 ;;
 	    fiojobfile)		___fio_job_file=$optvalue		 ;;
 	    fioioengine*)	fioioengine=$optvalue			 ;;
@@ -253,7 +253,7 @@ function fio_report_options() {
 	done
 	echo "[$(IFS=','; echo "${_strings[*]}")]"
     }
-	
+
     cat <<EOF
 "fio_options": "${___fio_options:-}",
 "fio_job_file": "$(base64 -w 0 < "$___fio_processed_job_file")",

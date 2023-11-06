@@ -64,4 +64,4 @@ function cpusoaker_supports_reporting() {
     :
 }
 
-register_workload cpusoaker cpu cpusoak 
+register_workload cpusoaker cpu cpusoak
