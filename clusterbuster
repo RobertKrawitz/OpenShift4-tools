@@ -218,6 +218,7 @@ declare -i get_sync_logs_pid=0
 declare -a extra_args=()
 declare -i metrics_interval=30
 declare -a sync_pod=()
+declare workload_step_interval=0
 
 declare -r sync_flag_file="/tmp/syncfile";
 declare -r sync_error_file="/tmp/syncerror";
@@ -366,6 +367,7 @@ Extended Options:
                         starts before it starts running.
        --postdelay=N    Delay for the specified time after workload
                         completes.
+       --stepinterval=N	Delay the specified time between steps of the workload.
        --timeout=N      Time out reporting after N seconds
        --report_object_creation=<1,0>
                         Report creation of individual objects (default 1)
@@ -849,6 +851,7 @@ function process_option() {
 	prometheussnapshot)	    take_prometheus_snapshot=$(bool "$optvalue");;
 	predelay)		    predelay=$optvalue				;;
 	postdelay)		    postdelay=$optvalue				;;
+	stepinterval)		    workload_step_interval=$optvalue		;;
 	timeout)		    timeout=$optvalue				;;
 	failurestatus)		    failure_status=$optvalue			;;
 	parallellog*)		    parallel_log_retrieval=$optvalue		;;
@@ -1423,11 +1426,11 @@ EOF
 
 function start_prometheus_snapshot() {
     if ((!doit)) || ! supports_metrics ; then return 0; fi
-    echo "Starting Prometheus snapshot" | report_if_desired 1>&2
+    report_if_desired "Starting Prometheus snapshot" 1>&2
     _OC delete pod -n openshift-monitoring prometheus-k8s-0
     local -i retry=12
     until __OC get pod -n openshift-monitoring prometheus-k8s-0 >/dev/null 2>&1 ; do
-	echo "Promtheus pod did not start, $retry attempt(s) left" | report_if_desired 1>&2
+	report_if_desired "Promtheus pod did not start, $retry attempt(s) left" 1>&2
 	if ((retry <= 0)) ; then
 	    killthemall "Prometheus pod did not restart!"
 	fi
@@ -1439,12 +1442,12 @@ function start_prometheus_snapshot() {
     # Wait for prometheus pod to fully initialize
 
     sleep "$metrics_epoch"
-    echo "Prometheus snapshot started" | report_if_desired 1>&2
+    report_if_desired "Prometheus snapshot started" 1>&2
 }
 
 function retrieve_prometheus_snapshot() {
     if ((!doit)) || ! supports_metrics ; then return 0; fi
-    echo "Retrieving Prometheus snapshot" | report_if_desired 1>&2
+    report_if_desired "Retrieving Prometheus snapshot" 1>&2
     local dir=${1:-$artifactdir}
     sleep 60
     prometheus_ending_timestamp=$(get_prometheus_pod_timestamp)
@@ -1452,9 +1455,9 @@ function retrieve_prometheus_snapshot() {
     promdb_name="promdb_$(readable_timestamp "$prometheus_starting_timestamp")_$(readable_timestamp "$prometheus_ending_timestamp")"
     local promdb_path="${dir:+${dir}/}${promdb_name}.tar"
     if __OC exec -n openshift-monitoring prometheus-k8s-0 -c prometheus -- /bin/sh -c "tar cf - . -C /prometheus --transform 's,^[.],./${promdb_name},' .; true" > "$promdb_path" ; then
-	echo "Prometheus snapshot retrieved" | report_if_desired 1>&2
+	report_if_desired "Prometheus snapshot retrieved" 1>&2
     else
-	echo "Unable to retrieve Prometheus snapshot"
+	echo "Unable to retrieve Prometheus snapshot" 1>&2
     fi
 }
 
@@ -1577,7 +1580,7 @@ function _monitor_pods() {
 		    pod_progress_timeout=$((timestamp+pod_start_timeout))
 		    pods_pending="$pods_now_pending"
 		    if [[ -z "$pods_pending" ]] ; then
-			echo "All pods are running                                 " | report_if_desired 1>&2
+			report_if_desired "All pods are running                                 " 1>&2
 		    else
 			# If we've reported pods pending, and then more pods are running,
 			# we want to overprint the old message so it doesn't look like things
@@ -1683,20 +1686,39 @@ function _log_helper() {
 	"$fail_helper" &
     fi
     if [[ -n "${injected_errors[timeout]:-}" ]] ; then
-	echo "*** Injecting forced timeout error"
+	echo "*** Injecting forced timeout error" 1>&2
 	sleep infinity
     fi
     local tmpfile="$cb_tempdir/_log_helper.out"
     until [[ $(____OC get pod -ojsonpath='{.status.phase}' "${sync_pod[@]}" 2>/dev/null) != 'Running' ]] ; do
 	# Need to produce periodic output to stderr to prevent oc exec connection from prematurely terminating
-	if run_on_sync_n sh -c "while [[ ! -f '$sync_flag_file' && ! -f '$sync_error_file' ]] ; do sleep 5; echo KEEPALIVE 1>&2; done; cat '$sync_flag_file'; sleep 5; echo DONE 1>&2" > "$tmpfile" 2>/dev/null &&
-		grep -q 'worker_results' "$tmpfile" && jq -c . "$tmpfile" >/dev/null 2>&1 ; then
+	# We want to capture all stderr output except for the KEEPALIVE and DONE messages.
+	# Unfortunately, bash does not allow direct redirection of file descriptors other than stdout into
+	# pipes, so we have to redirect stderr to stdout, stdout to an unused file descriptor (4 in this case,
+	# as we use 3 for other purposes).  The we pipe stdout (former stderr) through a grep command
+	# to filter out the status messages, timestamp them and send them back to stderr, and finally
+	# redirect fd 4 back to the temporary file.
+	# If that seems enough to make your head spin...well, it is.
+	if ( (run_on_sync_n sh -c "while [[ ! -f '$sync_flag_file' && ! -f '$sync_error_file' ]] ; do sleep 5; echo KEEPALIVE 1>&2; done; cat '$sync_flag_file'; sleep 5; echo DONE 1>&2") 2>&1 1>&4 | while read -r l; do if [[ $l != KEEPALIVE && $l != DONE ]] ; then echo "$l"; fi; done | timestamp 1>&2) 4> "$tmpfile" &&
+	       grep -q 'worker_results' "$tmpfile" && jq -c . "$tmpfile" >/dev/null 2>&1 ; then
+	    report_if_desired "Run complete, retrieving results" 1>&2
 	    cat "$tmpfile"
 	    rm -f "$tmpfile"
 	    break
 	fi
 	get_run_failed && return 1
-	warn "Data retrieval failed!  Retrying"
+	timestamp <<< "Data retrieval failed!  Retrying" 1>&2
+	# One cause of failure is problems with cert rotation or other causes interfering
+	# with communication with the apiserver.  The first connection after that resolves itself
+	# results in messages such as
+	# Error from server: error dialing backend: write tcp 192.168.216.10:55618->192.168.216.13:10250: use of closed network connection
+	# which will result in oc/kubectl get pod (or much of anything else) returning
+	# effectively an empty status.  So we want to make sure that our call to get
+	# pod status only comes after a successful 
+	until (( "$(____OC get pod -A --no-headers 2>/dev/null | wc -l)" > 10)) ; do
+	    get_run_failed && return 1
+	    sleep 5
+	done
 	sleep 5
     done
     # Tell the pod monitor to stop.
@@ -1708,7 +1730,7 @@ function _log_helper() {
 	run_on_sync_n sh -c "rm -f '$sync_flag_file'" && return
 	sleep 5
     done
-    warn "Can't terminate sync"
+    timestamp <<< "Info: Can't terminate sync" 1>&2
 }
 
 function _get_sync_logs_poll() {
@@ -1853,7 +1875,9 @@ function _report_runtime_classes() {
 
 function _extract_metrics() {
     if supports_metrics && [[ -r "$metrics_file" ]] ; then
+	report_if_desired "Waiting 60 seconds for metrics data collection to complete" 1>&2
 	sleep 60
+	report_if_desired "Retrieving system metrics data" 1>&2
 	cat <<EOF
 "metrics": $("${__topdir__}/prom-extract" --indent= --define "namespace_re=${basename}-.*" -m "$metrics_file" -s "$metrics_interval" --metrics-only --start_time="$((prometheus_starting_timestamp - metrics_epoch))" --post-settling-time="$((metrics_epoch*2))"),
 EOF
@@ -2019,6 +2043,7 @@ function _get_sync_logs() {
 	status=Success
 	do_retrieve_artifacts=
     }
+    report_if_desired "Generating run data" 1>&2
     cat > "$tfile2" <<EOF
 {
 $(indent 1 < "$tfile1"),
@@ -2037,7 +2062,7 @@ function _retrieve_artifacts() {
     get_run_started || return 1
     get_run_failed && always_retrieve_artifacts=1
     if [[ -n "$artifactdir" && ! -f "$artifactdir/.artifacts" ]] ; then
-	echo "Retrieving run artifacts" | report_if_desired 1>&2
+	report_if_desired "Retrieving run artifacts" 1>&2
 	mkdir -p "$artifactdir/Logs"
 	mkdir -p "$artifactdir/Describe"
 	touch "$artifactdir/.artifacts"
@@ -2830,7 +2855,11 @@ function create_object() {
 
 function report_if_desired() {
     if (( report_object_creation )) ; then
-	timestamp
+	if [[ -n "$*" ]] ; then
+	    timestamp <<< "$*"
+	else
+	    timestamp
+	fi
     else
 	cat >/dev/null
     fi
@@ -3507,6 +3536,7 @@ $(indent 2 standard_environment)
   - "$controller_timestamp_file"
   - "$predelay"
   - "$postdelay"
+  - "$workload_step_interval"
   - "$sync_port"
   - "$sync_ns_port"
   - "$expected_clients"

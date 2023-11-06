@@ -44,7 +44,7 @@ function fio_arglist() {
 		 "$processes_per_pod" "$___fio_workdir" "$workload_run_time" "$user_configmap_mount_dir" \
 		 "${___fio_blocksizes[*]:-}" "${___fio_patterns[*]:-}" "${___fio_iodepths[*]:-}" \
 		 "${___fio_fdatasyncs[*]:-}" "${___fio_directs[*]:-}" "${___fio_ioengines[*]:-}" \
-		 "$___fio_ramp_time" "${___fio_options[*]:-}"
+		 "$___fio_ramp_time" "$___fio_drop_cache" "${___fio_options[*]:-}"
 }
 
 function fio_create_deployment() {
