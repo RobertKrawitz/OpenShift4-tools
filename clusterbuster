@@ -1248,18 +1248,23 @@ function stack_trace() {
     local -i max_funcname=0
     local -i stack_size_len=${#max_frames}
     local -i max_filename_len=0
+    local -i max_line_len=0
 
     # to avoid noise we start with 1 to skip the stack function
     for (( i = start; i < max_frames; i++ )); do
 	local func="${FUNCNAME[$i]:-(top level)}"
 	((${#func} > max_funcname)) && max_funcname=${#func}
 	local src="${BASH_SOURCE[$i]:-(no file)}"
+	# Line number is used as a string here, not an int,
+	# since we want the length of it as a string.
+	local line="${BASH_LINENO[$(( i - 1 ))]}"
 	if [[ $src = "$__realsc__" ]] ; then
 	    src="$__topsc__"
 	fi
 	((${#src} > max_filename_len)) && max_filename_len=${#src}
+	((${#line} > max_line_len)) && max_line_len=${#line}
     done
-    local stack_frame_str="    (%${stack_size_len}d)   %${max_filename_len}s:%d  %${max_funcname}s%s"
+    local stack_frame_str="    (%${stack_size_len}d)   %${max_filename_len}s:%-${max_line_len}d  %${max_funcname}s%s"
     local -i arg_count=${BASH_ARGC[0]}
     for (( i = start; i < max_frames; i++ )); do
 	local func="${FUNCNAME[$i]:-(top level)}"
