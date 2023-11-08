@@ -1793,6 +1793,7 @@ function _get_sync_logs_poll() {
     # shellcheck disable=SC2046
     kill $(jobs -p) 2>/dev/null
     wait
+    return 0
 }
 
 function get_sync_logs_poll() {
@@ -2045,12 +2046,14 @@ function _get_sync_logs() {
     local -i reported=0
     local tfile1=
     local tfile2=
+    local -i retval=1
     trap 'if [[ -n "$tfile2" && -f "$tfile2" ]] ; then rm -f "$tfile1" "$tfile2" ; fi; if ((! reported)) ; _report_failure; reported=1; fi; retrieve_successful_logs=1 _retrieve_artifacts 2; return 1' TERM
     tfile1=$(mktemp ${cb_tempdir:+-p "$cb_tempdir"} -t '_clusterbusterlogs1.XXXXXXXXXX') || fatal "Cannot create temporary file"
     tfile2=$(mktemp ${cb_tempdir:+-p "$cb_tempdir"} -t '_clusterbusterlogs2.XXXXXXXXXX') || fatal "Cannot create temporary file"
     "$@" > "$tfile1" && {
 	status=Success
 	do_retrieve_artifacts=
+	retval=0
     }
     report_if_desired "Generating run data" 1>&2
     cat > "$tfile2" <<EOF
@@ -2063,7 +2066,8 @@ EOF
     reported=1
     rm -f "$tfile1" "$tfile2"
     # shellcheck disable=SC2086
-    _retrieve_artifacts $do_retrieve_artifacts
+    _retrieve_artifacts $do_retrieve_artifacts || return 1
+    return $retval
 }
 
 function _retrieve_artifacts() {
@@ -2140,20 +2144,15 @@ function print_report() {
 function get_sync_logs() {
     trap - TERM
     protect_pids "$BASHPID"
-    local log_cmd
-    if supports_api -w "$requested_workload" supports_reporting ; then
-	log_cmd=get_sync_logs_poll
-    else
-	log_cmd=true
-    fi
+    log_cmd=get_sync_logs_poll
     if supports_api -w "$requested_workload" supports_reporting; then
 	if [[ -n "$artifactdir" ]] ; then
 	    # Even if reporting fails, make sure we capture the JSON
-	    _get_sync_logs "$log_cmd" > "$artifactdir/clusterbuster-report.tmp.json" &&
-		mv "$artifactdir/clusterbuster-report.tmp.json" "$artifactdir/clusterbuster-report.json" &&
-		print_report < "$artifactdir/clusterbuster-report.json" &&
-		return 0
-	    return 1
+	    _get_sync_logs "$log_cmd" > "$artifactdir/clusterbuster-report.tmp.json"
+	    status=$?
+	    mv "$artifactdir/clusterbuster-report.tmp.json" "$artifactdir/clusterbuster-report.json" &&
+		print_report < "$artifactdir/clusterbuster-report.json"
+	    return $status
 	else
 	    trap '' TERM
 	    _get_sync_logs "$log_cmd" | print_report
@@ -4020,7 +4019,9 @@ function do_logging() {
     fi
     if (( get_sync_logs_pid > 1 )) ; then
 	wait "$get_sync_logs_pid" 2>/dev/null
+	local -i status=$?
 	get_sync_logs_pid=0
+	return $status
     fi
 }
 

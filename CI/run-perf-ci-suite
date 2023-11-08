@@ -476,6 +476,10 @@ $(list_profiles '                                - ')
         --unique-prefix         Prefix the pod names in each job with a
                                 distinct string to aid in later identification.
 
+    All other options listed below may be of the form
+    --option:<workload>=value to specify that the value should apply
+    only to a particular workload.
+
     Workload-specific options:
 $(_help_options_workloads)
 

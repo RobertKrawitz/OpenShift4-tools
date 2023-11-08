@@ -36,7 +36,7 @@ class byo_client(clusterbuster_pod_client):
             self._timestamp("Running setup iteration")
             os.environ['PATH'] = f"{self.workdir}:{os.environ['PATH']}"
             os.chdir(self.workdir)
-            self.run_command(self.command, '--setup', self.args)
+            self._run_command(self.command, '--setup', self.args)
         except Exception as err:
             self._abort(f"Init failed! {err} {' '.join(self._args)}")
 
@@ -47,7 +47,7 @@ class byo_client(clusterbuster_pod_client):
         data_start_time = self._adjusted_time()
         ucpu, scpu = self._cputimes()
         os.chdir(self.workdir)
-        success, answer, stderr = self.run_command(self.command, self.args)
+        success, answer, stderr = self._run_command(self.command, self.args)
         data_end_time = self._adjusted_time()
         ucpu, scpu = self._cputimes(ucpu, scpu)
         elapsed_time = data_end_time - data_start_time

@@ -21,7 +21,6 @@ import os
 import re
 import sys
 import subprocess
-import selectors
 import signal
 import random
 import traceback
@@ -333,54 +332,22 @@ class clusterbuster_pod_client(cb_util):
     def _get_drop_cache_port(self):
         return self.__drop_cache_port
 
-    def run_command(self, *cmd):
-        """ Run specified command, capturing stdout and stderr as array of timestamped lines.
-            Optionally fail if return status is non-zero.  Also optionally report
-            stdout and/or stderr to the appropriate file descriptors
+    def _run_command(self, *cmd):
+        """ Run specified command
         """
-
-        def mk_args(*args):
-            answer = []
-            for arg in args:
-                if isinstance(arg, list):
-                    answer.extend(arg)
-                elif isinstance(arg, dict):
-                    for k, v in arg.items():
-                        answer.append(str(k))
-                        answer.append(str(v))
-                else:
-                    answer.append(str(arg))
-            return answer
-        command = mk_args(*cmd)
-
-        with subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE) as command:
-            stdout_data = []
-            stderr_data = []
-
-            sel = selectors.DefaultSelector()
-            sel.register(command.stdout, selectors.EVENT_READ)
-            sel.register(command.stderr, selectors.EVENT_READ)
-            while True:
-                # Keep reading until we reach EOF on both channels.
-                # command.poll() is not a good criterion because the process
-                # might complete before everything has been read.
-                foundSomething = False
-                for key, _ in sel.select():
-                    data = key.fileobj.readline()
-                    if len(data) > 0:
-                        foundSomething = True
-                        data = data.decode().rstrip()
-                        if key.fileobj is command.stdout:
-                            stdout_data.append(data)
-                        elif key.fileobj is command.stderr:
-                            stderr_data.append(data)
-                            self._timestamp(data)
-                if not foundSomething:
-                    while command.poll() is None:
-                        time.sleep(1)
-                    if command.poll() != 0:
-                        return False, '\n'.join(stdout_data), '\n'.join(stderr_data)
-                    return True, '\n'.join(stdout_data), '\n'.join(stderr_data)
+        command = []
+        for arg in cmd:
+            if isinstance(arg, list):
+                command.extend(arg)
+            elif isinstance(arg, dict):
+                for k, v in arg.items():
+                    command.append(str(k))
+                    command.append(str(v))
+            else:
+                command.append(str(arg))
+        self._timestamp(f"Running {' '.join(command)}")
+        process = subprocess.run(command, capture_output=True, text=True)
+        return (True if process.returncode == 0 else False), process.stdout, process.stderr
 
     def __wait_forever(self):
         self._timestamp('Waiting forever')

@@ -103,10 +103,13 @@ Drop cache:  {self.fio_drop_cache}""")
                                     command.append('--invalidate=0')
                                 command.extend(self.fio_generic_args)
                                 command.extend(['--output-format=json+', jobfile])
-                                success, data, stderr = self.run_command(command)
+                                success, data, stderr = self._run_command(command)
                                 if not success:
                                     raise Exception(f'{" ".join(command)} failed: {stderr if stderr != "" else "Unknown error"}')
-                                result = json.loads(data)
+                                try:
+                                    result = json.loads(data)
+                                except json.decoder.JSONDecodeError as exc:
+                                    raise json.decoder.JSONDecodeError(f'{exc}: {data}\n\n{stderr}') from None
                                 jtime = self._adjusted_time(jtime)
                                 jucpu, jscpu = self._cputimes(jucpu, jscpu)
                                 elapsed_time += jtime
