@@ -53,7 +53,7 @@ function logger_help_options() {
                         Default $___log_xfer_count.  If zero, log
                         continuously (subject to log-xfertime).
        --log-delay=<sec>
-                        Time in seconds (may be fractional to delay 
+                        Time in seconds (may be fractional to delay
                         between I/O.  Default $___log_delay.
 EOF
 }

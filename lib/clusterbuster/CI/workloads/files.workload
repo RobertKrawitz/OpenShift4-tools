@@ -14,16 +14,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-declare -ga ___files_ninst=(1 4)
-declare -ga ___files_dirs_per_volume=(256)
-declare -ga ___files_per_dir=(256)
-declare -ga ___files_block_sizes=(4096 65536)
-declare -ga ___files_sizes=(0 4096 $((256 * 1024)))
-declare -ga ___files_directs=(0 1)
-declare -gi ___files_job_timeout=9000
-declare -ga ___files_params=()
-declare -gi ___files_min_direct=1024
-declare -gi ___files_drop_cache=1
+declare -ga ___files_ninst
+declare -ga ___files_dirs_per_volume
+declare -ga ___files_per_dir
+declare -ga ___files_block_sizes
+declare -ga ___files_sizes
+declare -ga ___files_directs
+declare -gi ___files_job_timeout
+declare -ga ___files_params
+declare -gi ___files_min_direct
+declare -gi ___files_drop_cache
 
 function files_test() {
     ___files_job_timeout=$(compute_timeout "$___files_job_timeout")
@@ -72,9 +72,23 @@ function files_test() {
     done
 }
 
+function files_initialize_options() {
+    ___files_ninst=(1 4)
+    ___files_dirs_per_volume=(256)
+    ___files_per_dir=(256)
+    ___files_block_sizes=(4096 65536)
+    ___files_sizes=(0 4096 $((256 * 1024)))
+    ___files_directs=(0 1)
+    ___files_job_timeout=9000
+    ___files_params=()
+    ___files_min_direct=1024
+    ___files_drop_cache=1
+}
+
 function files_process_option() {
     local opt=$1
-    read -r noptname1 noptname optvalue <<< "$(parse_option "$opt")"
+    read -r noptname1 noptname optvalue workload <<< "$(parse_option -w "$opt")"
+    [[ -n "$workload" && $workload != files ]] && return 2
     case "$noptname1" in
 	filesninst*)     readarray -t ___files_ninst <<< "$(parse_size "$optvalue")"		;;
 	filesdirs*)	 readarray -t ___files_dirs_per_volume <<< "$(parse_size "$optvalue")"	;;

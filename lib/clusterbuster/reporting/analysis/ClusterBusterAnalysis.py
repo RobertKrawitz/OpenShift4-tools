@@ -64,11 +64,31 @@ class ClusterBusterAnalyzeOne:
         pass
 
 
-class ClusterBusterAnalysis:
+class ClusterBusterAnalysisBase:
+    def __init__(self):
+        pass
+
+    def job_status_vars(self):
+        return ['result', 'job_start', 'job_end', 'job_runtime']
+
+    def job_metadata_vars(self):
+        return ['uuid', 'run_host', 'openshift_version', 'kata_containers_version', 'kata_version', 'cnv_version']
+
+
+class ClusterBusterPostprocessBase(ClusterBusterAnalysisBase):
+    def __init__(self, report, status, metadata, extras=None):
+        self._report = report
+        self._status = status
+        self._metadata = metadata
+        self._extra_args = extras
+
+
+class ClusterBusterAnalysis(ClusterBusterAnalysisBase):
     """
     Analyze ClusterBuster reports
     """
     def __init__(self, data: dict, report_type=None, extras=None):
+        super().__init__()
         self._data = data
         self._extras = extras
         parser = argparse.ArgumentParser(description="ClusterBuster loader")
@@ -152,10 +172,10 @@ class ClusterBusterAnalysis:
             return self.__postprocess('\n\n'.join([str(v) for v in report.values()]), status, metadata)
         elif report_type == dict or report_type == list:
             report['metadata'] = metadata
-            for v in ['uuid', 'run_host', 'openshift_version', 'kata_version', 'kata_containers_version', 'cnv_version']:
+            for v in self.job_metadata_vars():
                 if v in metadata:
                     report['metadata'][v] = metadata[v]
-            for v in ['result', 'job_start', 'job_end', 'job_runtime']:
+            for v in self.job_status_vars():
                 if v in status:
                     report['metadata'][v] = status[v]
             if 'failed' in status and len(status['failed']) > 0:

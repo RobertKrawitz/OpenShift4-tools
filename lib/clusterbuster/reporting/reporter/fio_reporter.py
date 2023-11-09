@@ -94,7 +94,7 @@ class fio_reporter(ClusterBusterReporter):
             for k, v in sample_row['global options'].items():
                 if k not in ['rw', 'bs']:
                     results[k] = v
-        results['\nFIO job file'] = base64.b64decode(self._jdata['metadata']['options']['workloadOptions']['fio_job_file']).decode()
+        results['\nFIO job file'] = base64.b64decode(self._get_workload_options()['fio_job_file']).decode()
         results['\nJobs'] = {}
         self.__update_report(results['\nJobs'], self._summary['results'], 'max_max', int(self._summary['total_instances']))
 

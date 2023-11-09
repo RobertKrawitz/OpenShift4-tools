@@ -521,6 +521,8 @@ $(print_workloads_supporting_reporting '                        - ')
                         Resource limits
        --runtimeclass=[class1,class2...]=class
                         Run the pods in the designated runtimeclass.
+                        --runtimeclass=vm is a synonym for
+                        --deployment_type=vm.
        --kata           Synonym for --runtimeclass=${kata_runtime_class}
        --tolerate=<key:operator:effect>
                         Apply the specified tolerations to created pods.
@@ -752,6 +754,10 @@ function process_pin_node() {
 
 function process_runtimeclass() {
     local runtimespec=$1
+    if [[ $runtimespec = 'vm' ]] ; then
+	deployment_type=vm
+	return
+    fi
     runtimespec=${runtimespec// /}
     runtime_class=$runtimespec
     [[ -n "$runtimespec" ]] || return
@@ -1271,18 +1277,23 @@ function stack_trace() {
     local -i max_funcname=0
     local -i stack_size_len=${#max_frames}
     local -i max_filename_len=0
+    local -i max_line_len=0
 
     # to avoid noise we start with 1 to skip the stack function
     for (( i = start; i < max_frames; i++ )); do
 	local func="${FUNCNAME[$i]:-(top level)}"
 	((${#func} > max_funcname)) && max_funcname=${#func}
 	local src="${BASH_SOURCE[$i]:-(no file)}"
+	# Line number is used as a string here, not an int,
+	# since we want the length of it as a string.
+	local line="${BASH_LINENO[$(( i - 1 ))]}"
 	if [[ $src = "$__realsc__" ]] ; then
 	    src="$__topsc__"
 	fi
 	((${#src} > max_filename_len)) && max_filename_len=${#src}
+	((${#line} > max_line_len)) && max_line_len=${#line}
     done
-    local stack_frame_str="    (%${stack_size_len}d)   %${max_filename_len}s:%d  %${max_funcname}s%s"
+    local stack_frame_str="    (%${stack_size_len}d)   %${max_filename_len}s:%-${max_line_len}d  %${max_funcname}s%s"
     local -i arg_count=${BASH_ARGC[0]}
     for (( i = start; i < max_frames; i++ )); do
 	local func="${FUNCNAME[$i]:-(top level)}"
@@ -1316,6 +1327,8 @@ function get_run_started() {
 }
 
 function set_run_aborted() {
+    echo "Run aborted: ${*:-unknown reason}" 1>&2
+    stack_trace
     touch "${cb_tempdir}/___run_aborted"
 }
 
@@ -1329,14 +1342,16 @@ function get_run_failed() {
 
 function set_run_failed() {
     if get_run_failed ; then
-	echo "Secondary failure: ${*:-unknown reason}" 1>&2
-	stack_trace 1 2 1>&2
+	if ! get_run_aborted ; then
+	    echo "Secondary failure: ${*:-unknown reason}" 1>&2
+	    stack_trace 1 2 1>&2
+	fi
 	return
     fi
-    echo "Setting failure status: ${*:-unknown reason}" 1>&2
+    echo "Run failed: ${*:-unknown reason}" 1>&2
     stack_trace
     touch "${cb_tempdir}/___run_failed"
-    run_on_sync_n sh -c "echo 'Please see logs for details.' >> '$sync_error_file'" || set_run_aborted
+    run_on_sync_n sh -c "echo 'Please see logs for details.' >> '$sync_error_file'" || touch "${cb_tempdir}/___run_aborted"
 }
 
 function supports_metrics() {
@@ -1443,11 +1458,11 @@ EOF
 
 function start_prometheus_snapshot() {
     if ((!doit)) || ! supports_metrics ; then return 0; fi
-    echo "Starting Prometheus snapshot" | report_if_desired 1>&2
+    report_if_desired "Starting Prometheus snapshot" 1>&2
     _OC delete pod -n openshift-monitoring prometheus-k8s-0
     local -i retry=12
     until __OC get pod -n openshift-monitoring prometheus-k8s-0 >/dev/null 2>&1 ; do
-	echo "Promtheus pod did not start, $retry attempt(s) left" | report_if_desired 1>&2
+	report_if_desired "Promtheus pod did not start, $retry attempt(s) left" 1>&2
 	if ((retry <= 0)) ; then
 	    killthemall "Prometheus pod did not restart!"
 	fi
@@ -1459,12 +1474,12 @@ function start_prometheus_snapshot() {
     # Wait for prometheus pod to fully initialize
 
     sleep "$metrics_epoch"
-    echo "Prometheus snapshot started" | report_if_desired 1>&2
+    report_if_desired "Prometheus snapshot started" 1>&2
 }
 
 function retrieve_prometheus_snapshot() {
     if ((!doit)) || ! supports_metrics ; then return 0; fi
-    echo "Retrieving Prometheus snapshot" | report_if_desired 1>&2
+    report_if_desired "Retrieving Prometheus snapshot" 1>&2
     local dir=${1:-$artifactdir}
     sleep 60
     prometheus_ending_timestamp=$(get_prometheus_pod_timestamp)
@@ -1472,9 +1487,9 @@ function retrieve_prometheus_snapshot() {
     promdb_name="promdb_$(readable_timestamp "$prometheus_starting_timestamp")_$(readable_timestamp "$prometheus_ending_timestamp")"
     local promdb_path="${dir:+${dir}/}${promdb_name}.tar"
     if __OC exec -n openshift-monitoring prometheus-k8s-0 -c prometheus -- /bin/sh -c "tar cf - . -C /prometheus --transform 's,^[.],./${promdb_name},' .; true" > "$promdb_path" ; then
-	echo "Prometheus snapshot retrieved" | report_if_desired 1>&2
+	report_if_desired "Prometheus snapshot retrieved" 1>&2
     else
-	echo "Unable to retrieve Prometheus snapshot"
+	echo "Unable to retrieve Prometheus snapshot" 1>&2
     fi
 }
 
@@ -1597,7 +1612,7 @@ function _monitor_pods() {
 		    pod_progress_timeout=$((timestamp+pod_start_timeout))
 		    pods_pending="$pods_now_pending"
 		    if [[ -z "$pods_pending" ]] ; then
-			echo "All pods are running                                 " | report_if_desired 1>&2
+			report_if_desired "All pods are running                                 " 1>&2
 		    else
 			# If we've reported pods pending, and then more pods are running,
 			# we want to overprint the old message so it doesn't look like things
@@ -1703,20 +1718,39 @@ function _log_helper() {
 	"$fail_helper" &
     fi
     if [[ -n "${injected_errors[timeout]:-}" ]] ; then
-	echo "*** Injecting forced timeout error"
+	echo "*** Injecting forced timeout error" 1>&2
 	sleep infinity
     fi
     local tmpfile="$cb_tempdir/_log_helper.out"
     until [[ $(____OC get pod -ojsonpath='{.status.phase}' "${sync_pod[@]}" 2>/dev/null) != 'Running' ]] ; do
 	# Need to produce periodic output to stderr to prevent oc exec connection from prematurely terminating
-	if run_on_sync_n sh -c "while [[ ! -f '$sync_flag_file' && ! -f '$sync_error_file' ]] ; do sleep 5; echo KEEPALIVE 1>&2; done; cat '$sync_flag_file'; sleep 5; echo DONE 1>&2" > "$tmpfile" 2>/dev/null &&
-		grep -q 'worker_results' "$tmpfile" && jq -c . "$tmpfile" >/dev/null 2>&1 ; then
+	# We want to capture all stderr output except for the KEEPALIVE and DONE messages.
+	# Unfortunately, bash does not allow direct redirection of file descriptors other than stdout into
+	# pipes, so we have to redirect stderr to stdout, stdout to an unused file descriptor (4 in this case,
+	# as we use 3 for other purposes).  The we pipe stdout (former stderr) through a grep command
+	# to filter out the status messages, timestamp them and send them back to stderr, and finally
+	# redirect fd 4 back to the temporary file.
+	# If that seems enough to make your head spin...well, it is.
+	if ( (run_on_sync_n sh -c "while [[ ! -f '$sync_flag_file' && ! -f '$sync_error_file' ]] ; do sleep 5; echo KEEPALIVE 1>&2; done; cat '$sync_flag_file'; sleep 5; echo DONE 1>&2") 2>&1 1>&4 | while read -r l; do if [[ $l != KEEPALIVE && $l != DONE ]] ; then echo "$l"; fi; done | timestamp 1>&2) 4> "$tmpfile" &&
+	       grep -q 'worker_results' "$tmpfile" && jq -c . "$tmpfile" >/dev/null 2>&1 ; then
+	    report_if_desired "Run complete, retrieving results" 1>&2
 	    cat "$tmpfile"
 	    rm -f "$tmpfile"
 	    break
 	fi
 	get_run_failed && return 1
-	warn "Data retrieval failed!  Retrying"
+	timestamp <<< "Data retrieval failed!  Retrying" 1>&2
+	# One cause of failure is problems with cert rotation or other causes interfering
+	# with communication with the apiserver.  The first connection after that resolves itself
+	# results in messages such as
+	# Error from server: error dialing backend: write tcp 192.168.216.10:55618->192.168.216.13:10250: use of closed network connection
+	# which will result in oc/kubectl get pod (or much of anything else) returning
+	# effectively an empty status.  So we want to make sure that our call to get
+	# pod status only comes after a successful
+	until (( "$(____OC get pod -A --no-headers 2>/dev/null | wc -l)" > 10)) ; do
+	    get_run_failed && return 1
+	    sleep 5
+	done
 	sleep 5
     done
     # Tell the pod monitor to stop.
@@ -1728,7 +1762,7 @@ function _log_helper() {
 	run_on_sync_n sh -c "rm -f '$sync_flag_file'" && return
 	sleep 5
     done
-    warn "Can't terminate sync"
+    timestamp <<< "Info: Can't terminate sync" 1>&2
 }
 
 function _get_sync_logs_poll() {
@@ -1782,6 +1816,7 @@ function _get_sync_logs_poll() {
     # shellcheck disable=SC2046
     kill $(jobs -p) 2>/dev/null
     wait
+    return 0
 }
 
 function get_sync_logs_poll() {
@@ -1861,15 +1896,21 @@ function _report_pin_nodes() {
 function _report_runtime_classes() {
     local -a runtimeclasses
     local class
-    for class in "${!runtime_classes[@]}" ; do
-	runtimeclasses+=("\"$class\": \"${runtime_classes[$class]}\"")
-    done
+    if [[ $deployment_type = "vm" ]] ; then
+	runtimeclasses=("\"default\": \"vm\"")
+    else
+	for class in "${!runtime_classes[@]}" ; do
+	    runtimeclasses+=("\"$class\": \"${runtime_classes[$class]}\"")
+	done
+    fi
     (IFS=$',\n '; echo "${runtimeclasses[*]}")
 }
 
 function _extract_metrics() {
     if supports_metrics && [[ -r "$metrics_file" ]] ; then
+	report_if_desired "Waiting 60 seconds for metrics data collection to complete" 1>&2
 	sleep 60
+	report_if_desired "Retrieving system metrics data" 1>&2
 	cat <<EOF
 "metrics": $("${__topdir__}/prom-extract" --indent= --define "namespace_re=${basename}-.*" -m "$metrics_file" -s "$metrics_interval" --metrics-only --start_time="$((prometheus_starting_timestamp - metrics_epoch))" --post-settling-time="$((metrics_epoch*2))"),
 EOF
@@ -2028,13 +2069,16 @@ function _get_sync_logs() {
     local -i reported=0
     local tfile1=
     local tfile2=
+    local -i retval=1
     trap 'if [[ -n "$tfile2" && -f "$tfile2" ]] ; then rm -f "$tfile1" "$tfile2" ; fi; if ((! reported)) ; _report_failure; reported=1; fi; retrieve_successful_logs=1 _retrieve_artifacts 2; return 1' TERM
     tfile1=$(mktemp ${cb_tempdir:+-p "$cb_tempdir"} -t '_clusterbusterlogs1.XXXXXXXXXX') || fatal "Cannot create temporary file"
     tfile2=$(mktemp ${cb_tempdir:+-p "$cb_tempdir"} -t '_clusterbusterlogs2.XXXXXXXXXX') || fatal "Cannot create temporary file"
     "$@" > "$tfile1" && {
 	status=Success
 	do_retrieve_artifacts=
+	retval=0
     }
+    report_if_desired "Generating run data" 1>&2
     cat > "$tfile2" <<EOF
 {
 $(indent 1 < "$tfile1"),
@@ -2045,7 +2089,8 @@ EOF
     reported=1
     rm -f "$tfile1" "$tfile2"
     # shellcheck disable=SC2086
-    _retrieve_artifacts $do_retrieve_artifacts
+    _retrieve_artifacts $do_retrieve_artifacts || return 1
+    return $retval
 }
 
 function _retrieve_artifacts() {
@@ -2053,7 +2098,7 @@ function _retrieve_artifacts() {
     get_run_started || return 1
     get_run_failed && always_retrieve_artifacts=1
     if [[ -n "$artifactdir" && ! -f "$artifactdir/.artifacts" ]] ; then
-	echo "Retrieving run artifacts" | report_if_desired 1>&2
+	report_if_desired "Retrieving run artifacts" 1>&2
 	mkdir -p "$artifactdir/Logs"
 	mkdir -p "$artifactdir/Describe"
 	touch "$artifactdir/.artifacts"
@@ -2122,15 +2167,15 @@ function print_report() {
 function get_sync_logs() {
     trap - TERM
     protect_pids "$BASHPID"
+    log_cmd=get_sync_logs_poll
     if supports_reporting "$requested_workload"; then
-	local log_cmd=get_sync_logs_poll
 	if [[ -n "$artifactdir" ]] ; then
 	    # Even if reporting fails, make sure we capture the JSON
-	    _get_sync_logs "$log_cmd" > "$artifactdir/clusterbuster-report.tmp.json" &&
-		mv "$artifactdir/clusterbuster-report.tmp.json" "$artifactdir/clusterbuster-report.json" &&
-		print_report < "$artifactdir/clusterbuster-report.json" &&
-		return 0
-	    return 1
+	    _get_sync_logs "$log_cmd" > "$artifactdir/clusterbuster-report.tmp.json"
+	    status=$?
+	    mv "$artifactdir/clusterbuster-report.tmp.json" "$artifactdir/clusterbuster-report.json" &&
+		print_report < "$artifactdir/clusterbuster-report.json"
+	    return $status
 	else
 	    trap '' TERM
 	    _get_sync_logs "$log_cmd" | print_report
@@ -2780,9 +2825,9 @@ EOF
 function _really_create_objects() {
     if [[ $doit -ne 0 && -n $accumulateddata ]] ; then
 	__OC --validate=false apply -f - 2>&1 <<< "$accumulateddata" || {
-	    echo "Create objects failed:" 2>&1
-	    echo "$accumulateddata" 2>&1
-	    set_run_failed "Failed to create objects"
+	    echo "Create objects failed:" 1>&2
+	    echo "$accumulateddata" 1>&2
+	    set_run_aborted "Failed to create objects"
 	    return 1
 	}
     fi
@@ -2841,7 +2886,11 @@ function create_object() {
 
 function report_if_desired() {
     if (( report_object_creation )) ; then
-	timestamp
+	if [[ -n "$*" ]] ; then
+	    timestamp <<< "$*"
+	else
+	    timestamp
+	fi
     else
 	cat >/dev/null
     fi
@@ -3248,7 +3297,7 @@ EOF
 		cat << EOF
 - name: emptydisk-${id}
   emptyDisk:
-    capacity: ${vm_emptydisks[$mountpoint]}
+    capacity: "${vm_emptydisks[$mountpoint]}"
 EOF
 	    done
 	fi
@@ -3258,11 +3307,11 @@ EOF
 	if [[ -n "${vm_emptydisk_list[*]}" ]] ; then
 	    for ((id = 0; id < ${#vm_emptydisk_list[@]}; id++)) ; do
 		local mountpoint=${vm_emptydisk_list[$id]}
-		local -a extra_args
-		IFS=: read -ra extra_args <<< "${vm_emptydisk_options[$mountpoint]}"
-		local arg
+		local -a emptydisk_args=()
+		IFS=: read -ra emptydisk_args <<< "${vm_emptydisk_options[$mountpoint]}"
+		local arg=
 		local cache=
-		for arg in "${extra_args[@]}" ; do
+		for arg in "${emptydisk_args[@]}" ; do
 		    if [[ $arg = "cache="* ]] ; then
 			cache="  cache: ${arg/cache=/}"
 		    fi
@@ -3285,8 +3334,9 @@ EOF
 		local mountopts=
 		local fs=ext4
 		local fsopts=
-		IFS=: read -ra extra_args <<< "${vm_emptydisk_options[$mountpoint]}"
-		for arg in "${extra_args[@]}" ; do
+		local -a emptydisk_args=()
+		IFS=: read -ra emptydisk_args <<< "${vm_emptydisk_options[$mountpoint]}"
+		for arg in "${emptydisk_args[@]}" ; do
 		    case "$arg" in
 			"mountopts="*) mountopts="${arg/mountopts=/-o }";;
 			"fstype="*)    fs="${arg/fstype=/}"		;;
@@ -3977,7 +4027,10 @@ function do_logging() {
 	local -i itimeout=$timeout
 	local -i finis=0
 	while (( timeout < 0 || timeout-- )) ; do
-	    get_run_failed && break
+	    if get_run_failed ; then
+		finis=-1
+		break
+	    fi
 	    # CreateContainerError is not necessarily fatal
 	    if __OC get pods -A -l "$basename" |grep -q -E -e '([^r]Error|Evicted|Crash)' ; then
 		echo "Run failed:" 1>&2
@@ -4020,7 +4073,9 @@ function do_logging() {
     fi
     if (( get_sync_logs_pid > 1 )) ; then
 	wait "$get_sync_logs_pid" 2>/dev/null
+	local -i status=$?
 	get_sync_logs_pid=0
+	return $status
     fi
 }
 
@@ -4113,7 +4168,7 @@ function run_clusterbuster_2() {
     set_run_started
 
     do_logging || return 1
-    if ((! status)) ; then
+    if ! get_run_failed || ((! status)) ; then
 	report_object_creation
     fi
     return 0
@@ -4139,6 +4194,7 @@ function run_clusterbuster_1() {
 	    retrieve_prometheus_snapshot "$artifactdir"
 	fi
     fi
+    get_run_failed && status=1
     return $status
 }
 
@@ -4148,6 +4204,79 @@ function run_clusterbuster_1() {
 
 function remove_tmpdir() {
     [[ -n "${cb_tempdir:-}" && -d "$cb_tempdir" && $cb_tempdir = "/tmp/cbtmp_"* ]] && rm -rf "$cb_tempdir" && unset cb_tempdir
+}
+
+function validate_options() {
+    [[ -z "$requested_workload" ]] && help "Workload must be specified with --workload"fi
+
+    local iworkload=$requested_workload
+    requested_workload=$(get_workload "$requested_workload") || help_extended "(Unknown workload '$iworkload')"
+    arch=${arch:-$(uname -m)}
+
+    call_api -w "$requested_workload" -s "process_options" "${unknown_opts[@]}" || help "${unknown_opt_names[@]/#/Unknown option }"
+
+    if supports_api -w "$requested_workload" list_user_configmaps ; then
+	readarray -t userfiles < <(list_user_configmaps)
+	configmap_files+=("${userfiles[@]}")
+    fi
+
+    if (( namespaces <= 0 )) ; then
+	namespaces=1
+	use_namespaces=0
+    fi
+    (( parallel_configmaps )) || parallel_configmaps=$parallel
+    (( parallel_secrets )) || parallel_secrets=$parallel
+    (( parallel_namespaces )) || parallel_namespaces=$parallel
+    (( parallel_deployments )) || parallel_deployments=$parallel
+
+    (( !objs_per_call_configmaps )) && objs_per_call_configmaps=$objs_per_call
+    (( !objs_per_call_secrets )) && objs_per_call_secrets=$objs_per_call
+    (( !objs_per_call_namespaces )) && objs_per_call_namespaces=$objs_per_call
+    (( !objs_per_call_deployments )) && objs_per_call_deployments=$objs_per_call
+
+    [[ -n "$report_format" ]] && report=1
+
+    if [[ -n "$metrics_file" && ! -r "$metrics_file" ]] ; then
+	fatal "Cannot read metrics file $metrics_file"
+    fi
+
+    case "${deployment_type,,}" in
+	# If we're using deployments or replicasets, we do not want
+	# to exit when workers complete, or the controller will
+	# immediately try to re-create them.
+	replicaset|rs)         deployment_type=ReplicaSet; exit_at_end=0 ;;
+	deployment|dep|deploy) deployment_type=Deployment; exit_at_end=0 ;;
+	pod) deployment_type=pod                                         ;;
+	vm)
+	    if ((containers_per_pod > 1)) ; then
+		help "ERROR: containers_per_pod must equal 1 for vm deployments"
+	    fi
+	    deployment_type=vm                                           ;;
+	*)
+	    help "--deployment_type must be pod, vm, deployment, or replicaset"
+    esac
+
+    [[ -z "$OC" && $doit -gt 0 ]] && fatal "Cannot find oc or kubectl command, exiting!"
+
+    resource_validation_failed=0
+    validate_resource resource_request "${resource_requests[@]}" || resource_validation_failed=1
+    validate_resource resource_limit "${resource_limits[@]}" || resource_validation_failed=1
+    ((resource_validation_failed)) && exit 1
+
+    for ((i = 0; i < emptydir_volumes; i++)) ; do
+	emptydirs+=("/mnt/volume-$i")
+    done
+
+    job_name=${job_name:-${requested_workload:-}}
+
+    if [[ ${runtime_class:-} = "$kata_runtime_class" ]] ; then
+	((virtiofsd_direct)) && virtiofsd_args+=('"-o"' '"allow_direct_io"')
+	((virtiofsd_writeback)) && virtiofsd_args+=('"-o"' '"writeback"')
+	((virtiofsd_threadpoolsize)) && virtiofsd_args+=("\"--thread-pool-size=$virtiofsd_threadpoolsize\"")
+	if [[ -n "${virtiofsd_args[*]:-}" ]] ; then
+	    pod_annotations+=("io.katacontainers.config.hypervisor.virtio_fs_extra_args: '[$(IFS=,; echo "${virtiofsd_args[*]}")]'")
+	fi
+    fi
 }
 
 trap 'if (($$ == BASHPID)) ; then wait; fi; remove_tmpdir; exit' EXIT
@@ -4185,81 +4314,6 @@ shift $((OPTIND - 1))
 # shellcheck disable=SC2034
 extra_args=("$@")
 
-if [[ -z "$requested_workload" ]] ; then
-    help "Workload must be specified with --workload"
-fi
-
-iworkload=$requested_workload
-requested_workload=$(get_workload "$requested_workload") || help_extended "(Unknown workload '$iworkload')"
-arch=${arch:-$(uname -m)}
-
-call_api -w "$requested_workload" -s "process_options" "${unknown_opts[@]}" || help "${unknown_opt_names[@]/#/Unknown option }"
-
-if supports_api -w "$requested_workload" list_user_configmaps ; then
-    readarray -t userfiles < <(list_user_configmaps)
-    configmap_files+=("${userfiles[@]}")
-fi
-
-if (( namespaces <= 0 )) ; then
-    namespaces=1
-    use_namespaces=0
-fi
-(( parallel_configmaps )) || parallel_configmaps=$parallel
-(( parallel_secrets )) || parallel_secrets=$parallel
-(( parallel_namespaces )) || parallel_namespaces=$parallel
-(( parallel_deployments )) || parallel_deployments=$parallel
-
-(( !objs_per_call_configmaps )) && objs_per_call_configmaps=$objs_per_call
-(( !objs_per_call_secrets )) && objs_per_call_secrets=$objs_per_call
-(( !objs_per_call_namespaces )) && objs_per_call_namespaces=$objs_per_call
-(( !objs_per_call_deployments )) && objs_per_call_deployments=$objs_per_call
-
-[[ -n "$report_format" ]] && report=1
-
-if [[ -n "$metrics_file" && ! -r "$metrics_file" ]] ; then
-    fatal "Cannot read metrics file $metrics_file"
-fi
-
-case "${deployment_type,,}" in
-    # If we're using deployments or replicasets, we do not want
-    # to exit when workers complete, or the controller will
-    # immediately try to re-create them.
-    replicaset|rs)         deployment_type=ReplicaSet; exit_at_end=0 ;;
-    deployment|dep|deploy) deployment_type=Deployment; exit_at_end=0 ;;
-    pod) deployment_type=pod                                         ;;
-    vm)
-	if ((containers_per_pod > 1)) ; then
-	    help "ERROR: containers_per_pod must equal 1 for vm deployments"
-	fi
-	deployment_type=vm                                           ;;
-    *)
-	help "--deployment_type must be pod, vm, deployment, or replicaset"
-esac
-
-if [[ -z $OC && $doit -gt 0 ]] ; then
-    fatal "Cannot find oc or kubectl command, exiting!"
-fi
-
-resource_validation_failed=0
-validate_resource resource_request "${resource_requests[@]}" || resource_validation_failed=1
-validate_resource resource_limit "${resource_limits[@]}" || resource_validation_failed=1
-if ((resource_validation_failed)) ; then
-    exit 1
-fi
-
-for ((i = 0; i < emptydir_volumes; i++)) ; do
-    emptydirs+=("/mnt/volume-$i")
-done
-
-job_name=${job_name:-${requested_workload:-}}
-
-if [[ ${runtime_class:-} = "$kata_runtime_class" ]] ; then
-    ((virtiofsd_direct)) && virtiofsd_args+=('"-o"' '"allow_direct_io"')
-    ((virtiofsd_writeback)) && virtiofsd_args+=('"-o"' '"writeback"')
-    ((virtiofsd_threadpoolsize)) && virtiofsd_args+=("\"--thread-pool-size=$virtiofsd_threadpoolsize\"")
-    if [[ -n "${virtiofsd_args[*]:-}" ]] ; then
-	pod_annotations+=("io.katacontainers.config.hypervisor.virtio_fs_extra_args: '[$(IFS=,; echo "${virtiofsd_args[*]}")]'")
-    fi
-fi
+validate_options
 
 (run_clusterbuster_1) 4>&2

@@ -22,19 +22,19 @@ class sysbench_reporter(ClusterBusterReporter):
     def __init__(self, jdata: dict, report_format: str, extras=None):
         super().__init__(jdata, report_format, extras)
         self._set_header_components(['namespace', 'pod', 'container', 'process_id'])
-        self._is_fileio = 'sysbench_fileio_tests' in jdata['metadata']['options']['workloadOptions']
+        self._is_fileio = 'sysbench_fileio_tests' in self._get_workload_operations()
         if self._is_fileio:
             self.__initialize_fileio(jdata)
         else:
             self.__initialize_simple(jdata)
 
     def __initialize_fileio(self, jdata):
-        if 'sysbench_fileio_modes' in jdata['metadata']['options']['workloadOptions']:
+        if 'sysbench_fileio_modes' in self._get_workload_operations():
             self._sysbench_operations = [f'fileio+{test}+{mode}'
-                                         for test in jdata['metadata']['options']['workloadOptions']['sysbench_fileio_tests']
-                                         for mode in jdata['metadata']['options']['workloadOptions']['sysbench_fileio_modes']]
+                                         for test in self._get_workload_operations()['sysbench_fileio_tests']
+                                         for mode in self._get_workload_operations()['sysbench_fileio_modes']]
         else:
-            self._sysbench_operations = jdata['metadata']['options']['workloadOptions']['sysbench_fileio_tests']
+            self._sysbench_operations = self._get_workload_operations()['sysbench_fileio_tests']
         self._sysbench_vars_to_copy = ['filesize:precision=3:suffix=B:base=1024',
                                        'blocksize:precision=3:suffix=B:base=1024', 'rdwr_ratio',
                                        'fsync_frequency', 'final_fsync_enabled', 'io_mode']

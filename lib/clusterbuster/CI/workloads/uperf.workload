@@ -14,16 +14,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-declare -ga ___uperf_msg_sizes=(64 1024 8192)
-declare -ga ___uperf_nthrs=(1 4)
-declare -ga ___uperf_ninst=(1 4)
-declare -ga ___uperf_test_types=(stream rr)
-declare -gi ___uperf_job_runtime=0
-declare -gi ___uperf_job_timeout=0
-declare -g ___uperf_interface=
-declare -g ___uperf_interface_server=
-declare -g ___uperf_interface_client=
-declare -g ___uperf_use_annotation=yes
+declare -ga ___uperf_msg_sizes
+declare -ga ___uperf_nthrs
+declare -ga ___uperf_ninst
+declare -ga ___uperf_test_types
+declare -gi ___uperf_job_runtime
+declare -gi ___uperf_job_timeout
+declare -g ___uperf_interface
+declare -g ___uperf_interface_server
+declare -g ___uperf_interface_client
+declare -g ___uperf_use_annotation
 
 function uperf_test() {
     local default_job_runtime=$1
@@ -50,7 +50,7 @@ function uperf_test() {
 				      ${uperf_interface:+--uperf_interface=$___uperf_interface:} \
 				      ${uperf_interface_server:+--uperf_interface_server=$___uperf_interface_server:} \
 				      ${uperf_interface_client:+--uperf_interface_client=$___uperf_interface_client:} \
-				      --uperf_interface="$___uperf_interface" --anti-affinity \
+				      --uperf_interface="$___uperf_interface" \
 				      ${___uperf_use_annotation:+--pod-annotation="io.katacontainers.config.hypervisor.default_vcpus: \"$nthr\""}
 		done
 	    done
@@ -58,9 +58,23 @@ function uperf_test() {
     done
 }
 
+function uperf_initialize_options() {
+    ___uperf_msg_sizes=(64 1024 8192)
+    ___uperf_nthrs=(1 4)
+    ___uperf_ninst=(1 4)
+    ___uperf_test_types=(stream rr)
+    ___uperf_job_runtime=0
+    ___uperf_job_timeout=0
+    ___uperf_interface=
+    ___uperf_interface_server=
+    ___uperf_interface_client=
+    ___uperf_use_annotation=yes
+}
+
 function uperf_process_option() {
     local opt=$1
-    read -r noptname1 noptname optvalue <<< "$(parse_option "$opt")"
+    read -r noptname1 noptname optvalue workload <<< "$(parse_option -w "$opt")"
+    [[ -n "$workload" && $workload != uperf ]] && return 2
     case "$noptname1" in
 	uperfmsg*)     readarray -t ___uperf_msg_sizes <<< "$(parse_size "$optvalue")"		;;
 	uperfnthr*)    readarray -t ___uperf_nthrs <<< "$(parse_size "$optvalue")"		;;
