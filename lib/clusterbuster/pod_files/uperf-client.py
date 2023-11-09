@@ -158,7 +158,7 @@ class uperf_client(clusterbuster_pod_client):
                     else:
                         pass
                     line = run.stdout.readline().decode('ascii')
-                status = run.poll()
+                status = run.wait()
                 if failed or status:
                     failure_message = f"Uperf failed: {status}"
                     failed = True

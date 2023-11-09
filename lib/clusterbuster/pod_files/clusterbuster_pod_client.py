@@ -332,6 +332,23 @@ class clusterbuster_pod_client(cb_util):
     def _get_drop_cache_port(self):
         return self.__drop_cache_port
 
+    def _run_command(self, *cmd):
+        """ Run specified command
+        """
+        command = []
+        for arg in cmd:
+            if isinstance(arg, list):
+                command.extend(arg)
+            elif isinstance(arg, dict):
+                for k, v in arg.items():
+                    command.append(str(k))
+                    command.append(str(v))
+            else:
+                command.append(str(arg))
+        self._timestamp(f"Running {' '.join(command)}")
+        process = subprocess.run(command, capture_output=True, text=True)
+        return (True if process.returncode == 0 else False), process.stdout, process.stderr
+
     def __wait_forever(self):
         self._timestamp('Waiting forever')
         signal.pause()

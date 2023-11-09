@@ -165,7 +165,7 @@ function memory_report_options() {
 	    echo "[$1, $1]"
 	fi
     }
-	
+
     cat <<EOF
 "memory_size": $(mk_num_list "$___memory_size"),
 "memory_scan": $___memory_scan,

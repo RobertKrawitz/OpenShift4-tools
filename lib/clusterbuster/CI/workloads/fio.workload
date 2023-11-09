@@ -14,23 +14,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-declare -ga ___fio_blocksizes=(1048576 4096)
-declare -ga ___fio_patterns=(read write randread randwrite readwrite randrw)
-declare -ga ___fio_directs=(1)
-declare -ga ___fio_fdatasyncs=(0)
-declare -ga ___fio_iodepths=(1 4)
-declare -ga ___fio_ioengines=(sync libaio)
-declare -ga ___fio_ninst=(1 4)
-declare -gi ___fio_job_runtime=0
-declare -g  ___fio_workdir=/var/tmp
-declare -gi ___fio_absolute_filesize=0
-declare -gi ___fio_max_absolute_filesize=0
-declare -g  ___fio_relative_filesize=2
-declare -g  ___fio_max_relative_filesize=$___fio_relative_filesize
-declare -gi ___fio_ramptime=5
-declare -gi ___fio_job_timeout=9000
-declare -gi ___fio_drop_cache=1
-declare -gi ___fio_pod_memsize=
+declare -ga ___fio_blocksizes
+declare -ga ___fio_patterns
+declare -ga ___fio_directs
+declare -ga ___fio_fdatasyncs
+declare -ga ___fio_iodepths
+declare -ga ___fio_ioengines
+declare -ga ___fio_ninst
+declare -gi ___fio_job_runtime
+declare -g  ___fio_workdir
+declare -gi ___fio_absolute_filesize
+declare -gi ___fio_max_absolute_filesize
+declare -g  ___fio_relative_filesize
+declare -g  ___fio_max_relative_filesize
+declare -gi ___fio_ramptime
+declare -gi ___fio_job_timeout
+declare -gi ___fio_drop_cache
+declare -gi ___fio_pod_memsize
+declare -gi ___fio_use_emptydisk
 
 function fio_test() {
     local default_job_runtime=$1
@@ -74,13 +75,36 @@ function fio_test() {
 			  --fio_ramp_time="$___fio_ramptime" \
 			  --fio_workdir="$___fio_workdir" \
 			  --fio-drop-cache="$___fio_drop_cache" \
+			  --vm-emptydisk="$(((((___fio_absolute_filesize * 11 / 10) + 1048575) / 1048576) * 1048576)):/var/tmp" \
 			  ${memory_annotation:+"$memory_annotation"}
     done
 }
 
+function fio_initialize_options() {
+    ___fio_blocksizes=(1048576 4096)
+    ___fio_patterns=(read write randread randwrite readwrite randrw)
+    ___fio_directs=(1)
+    ___fio_fdatasyncs=(0)
+    ___fio_iodepths=(1 4)
+    ___fio_ioengines=(sync libaio)
+    ___fio_ninst=(1 4)
+    ___fio_job_runtime=0
+    ___fio_workdir=/var/tmp
+    ___fio_absolute_filesize=0
+    ___fio_max_absolute_filesize=0
+    ___fio_relative_filesize=2
+    ___fio_max_relative_filesize=$___fio_relative_filesize
+    ___fio_ramptime=5
+    ___fio_job_timeout=9000
+    ___fio_drop_cache=1
+    ___fio_pod_memsize=
+    ___fio_use_emptydisk=1
+}
+
 function fio_process_option() {
     local opt=$1
-    read -r noptname1 noptname optvalue <<< "$(parse_option "$opt")"
+    read -r noptname1 noptname optvalue workload <<< "$(parse_option -w "$opt")"
+    [[ -n "$workload" && $workload != fio ]] && return 2
     case "$noptname1" in
 	fioblock*)       readarray -t ___fio_blocksizes <<< "$(parse_size "$optvalue")"	;;
 	fiopat*)         readarray -t ___fio_patterns <<< "${optvalue//,/ }"		;;

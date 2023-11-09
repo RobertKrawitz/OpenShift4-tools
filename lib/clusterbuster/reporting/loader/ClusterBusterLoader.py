@@ -27,17 +27,18 @@ from ..reporting_exceptions import ClusterBusterReportingException
 
 
 class ClusterBusterLoaderException(ClusterBusterReportingException):
-    pass
+    def __init__(self, *args):
+        super().__init__(args)
 
 
 class ClusterBusterLoaderJobMismatchException(ClusterBusterLoaderException):
-    def __init__(self, name: str, var: str, val1, val2):
-        self.message = (f"Mismatched {var} in result {name}: ({val1} vs {val2})")
+    def __init__(self, var: str, name: str, val1, val2):
+        super().__init__(f"Mismatched {var} in result {name}: ({val1} vs {val2})")
 
 
 class ClusterBusterLoaderInvalidResults(ClusterBusterLoaderException):
     def __init__(self, name):
-        self.message = (f"Invalid results in {name}")
+        super().__init__(f"Invalid results in {name}")
 
 
 simpleVarsToCheck = ['uuid', 'run_host', 'cnv_version', 'kata_version', 'kata_containers_version']
@@ -87,7 +88,7 @@ class LoadOneReport:
                 data['metadata']['jobs'][name]['openshift_version'] = self._metadata['kubernetes_version']['openshiftVersion']
             except KeyError:
                 data['metadata']['jobs'][name]['openshift_version'] = 'Unknown'
-            data['metadata']['jobs'][name]['run_host'] = self._metadata['runHost']
+            data['metadata']['jobs'][name]['run_host'] = self._metadata.get('run_host', self._metadata.get('runHost'))
             data['metadata']['jobs'][name]['kata_containers_version'] = self._metadata.get('kata_containers_version', None)
             data['metadata']['jobs'][name]['kata_version'] = self._metadata.get('kata_version', None)
             data['metadata']['jobs'][name]['cnv_version'] = self._metadata.get('cnv_version', None)
@@ -121,7 +122,7 @@ class LoadOneReport:
         if me_var is None:
             me_var = var
         if me.get(me_var) != you[var]:
-            raise ClusterBusterLoaderJobMismatchException(var, name, me[me_var], you[var])
+            raise ClusterBusterLoaderJobMismatchException(var, name, me.get(me_var), you[var])
 
     def _MakeHierarchy(self, hierarchy: dict, keys: list, value: dict = None):
         key = keys.pop(0)
@@ -202,6 +203,10 @@ class LoadReportSet:
                         i[1](self.name, report, self.answer, self.extras).Load()
                     except (KeyboardInterrupt, BrokenPipeError) as exc:
                         raise (exc)
+                    except ClusterBusterReportingException as exc:
+                        print('Loading report %s failed: %s' % (report["metadata"]["RunArtifactDir"],
+                                                                exc),
+                              file=sys.stderr)
                     except Exception:
                         print('Loading report %s failed: %s' % (report["metadata"]["RunArtifactDir"],
                                                                 traceback.format_exc()),
@@ -219,6 +224,18 @@ class ClusterBusterLoader:
                 if not re.search(pattern, f):
                     return False
         return True
+
+    def _create_report_spec_from_ci(self, dirname: str, job_patterns: list, answer: dict):
+        with open(os.path.join(dirname, "clusterbuster-ci-results.json")) as fp:
+            jdata = json.load(fp)
+        basedirs = jdata['ran']
+        answer['metadata'] = jdata
+        del answer['metadata']['ran']
+        return [os.path.realpath(os.path.join(dirname, d))
+                for d in basedirs if (not self._matches_patterns(d, [r'\.(FAIL|tmp)']) and
+                                      self._matches_patterns(d, job_patterns) and
+                                      os.path.isdir(os.path.join(dirname, d)) and
+                                      os.path.isfile(os.path.join(dirname, d, "clusterbuster-report.json")))]
 
     def _create_report_spec(self, arg: str):
         answer = {}
@@ -252,27 +269,20 @@ class ClusterBusterLoader:
                 name_suffixes.insert(0, run_name)
             run_name = "-".join(name_suffixes)
         if os.path.isdir(dirname):
+            dirs = []
             if os.access(os.path.join(dirname, "clusterbuster-ci-results.json"), os.R_OK):
-                with open(os.path.join(dirname, "clusterbuster-ci-results.json")) as fp:
-                    jdata = json.load(fp)
-                basedirs = jdata['ran']
-                answer['metadata'] = jdata
-                del answer['metadata']['ran']
-                dirs = [os.path.realpath(os.path.join(dirname, d))
-                        for d in basedirs if (not self._matches_patterns(d, [r'\.(FAIL|tmp)']) and
-                                              self._matches_patterns(d, job_patterns) and
-                                              os.path.isdir(os.path.join(dirname, d)) and
-                                              os.path.isfile(os.path.join(dirname, d, "clusterbuster-report.json")))]
+                dirs = self._create_report_spec_from_ci(dirname, job_patterns, answer)
+            elif os.access(os.path.join(dirname, "clusterbuster-ci", "clusterbuster-ci-results.json"), os.R_OK):
+                dirs = self._create_report_spec_from_ci(os.path.join(dirname, "clusterbuster-ci"), job_patterns, answer)
             elif os.path.isfile(os.path.join(dirname, "clusterbuster-report.json")):
                 dirs = [dirname]
                 run_name = dirname
             if not dirs:
-                print(f"No matching subdirectories found in '{dirname}'", file=sys.stderr)
+                print(f"No matching subdirectories for run {run_name} found in '{dirname}'", file=sys.stderr)
                 dirs = []
             answer['dirs'] = dirs
             answer['run_name'] = run_name
         else:
-            print(f"{dirname}: Not a directory")
             return None
         return answer
 

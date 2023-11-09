@@ -119,7 +119,7 @@ class sysbench_client(clusterbuster_pod_client):
                                        matchidx=[1, 2], is_float=True):
                     pass
                 line = run.stdout.readline().decode('ascii')
-            status = run.poll()
+            status = run.wait()
             if status:
                 raise Exception(f"Sysbench failed: {status}")
         op_answer['op_end'] = self._adjusted_time()
@@ -208,7 +208,7 @@ class sysbench_client(clusterbuster_pod_client):
                         elif self.simple_check(r'95th percentile: *([0-9.]+)', line, op_answer, 'p95_latency_sec'):
                             pass
                         line = run.stdout.readline().decode('ascii')
-                    status = run.poll()
+                    status = run.wait()
                     if status:
                         raise Exception(f"Sysbench failed: {status}")
                 op_answer['op_end'] = self._adjusted_time()

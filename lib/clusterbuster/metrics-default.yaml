@@ -260,7 +260,7 @@ metrics:
 
   - query: go_memstats_heap_inuse_bytes{job=~"apiserver|api|etcd"}
     metricName: goHeapInuseBytes
-  
+
   - query: go_gc_duration_seconds{job=~"apiserver|api|etcd",quantile="1"}
     metricName: goGCDurationSeconds
 

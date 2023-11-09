@@ -28,7 +28,9 @@ analysis_formats = ClusterBusterAnalysis.list_analysis_formats()
 
 parser.add_argument("-o", "--outfile", default=None, type=str, metavar='file', help='Output filename')
 parser.add_argument('--list_formats', action='store_true', help='List available report formats')
-parser.add_argument('--kata', action='store_true', help='Compare Kata with non-Kata results')
+parser.add_argument('--std_report', '--std-report', '--std', action='store_true',
+                    help='Compare results for standard runtime classes')
+parser.add_argument('--kata', action='store_true', help='Compare results for standard runtime classes')
 parser.add_argument("-r", "--report-type", default=None, type=str, metavar='format',
                     choices=analysis_formats, help=f'Analysis format: one of {", ".join(analysis_formats)}')
 parser.add_argument("-w", "--workload", type=str, help='Workloads to process', action='append')
@@ -57,10 +59,12 @@ def analyze_clusterbuster_1(f, data, extras=None):
 
 def analyze_clusterbuster(f):
     dir_args = []
-    if args.kata:
+    if args.std_report or args.kata:
         for arg in args.files:
             dir_args.append(f'{arg}:job_pattern=-runc-:name_suffix=runc')
             dir_args.append(f'{arg}:job_pattern=-kata-:name_suffix=kata')
+            if not args.kata:
+                dir_args.append(f'{arg}:job_pattern=-vm-:name_suffix=vm')
     else:
         dir_args = args.files
     if args.workload:

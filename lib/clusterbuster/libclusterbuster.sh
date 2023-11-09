@@ -137,11 +137,24 @@ function parse_optvalues() {
 }
 
 function parse_option() {
+    local OPTIND=0
+    local OPTARG
+    local echo_workload=
+    local workload=
+    local opt
+    while getopts 'w' opt "$@" ; do
+	case "$opt" in
+	    w) echo_workload=1 ;;
+	    *)		       ;;
+	esac
+    done
+    shift $((OPTIND-1))
     local option=$1
     option=${option## }
     option=${option%% }
-    if [[ $option =~ ^([^=]+)\ *=\ *([^\ ].*)? ]] ; then
-	option="${BASH_REMATCH[1]}=${BASH_REMATCH[2]}"
+    if [[ $option =~ ^([^=:]+)(:([[:alnum:]]+))?\ *=\ *([^\ ].*)? ]] ; then
+	workload="${BASH_REMATCH[3]}"
+	option="${BASH_REMATCH[1]}=${BASH_REMATCH[4]}"
     fi
     [[ -n "$option" ]] || return
     local optname
@@ -162,7 +175,7 @@ function parse_option() {
 	fi
     fi
     local noptname1=${noptname//_/}
-    echo "$noptname1 $noptname $optvalue"
+    echo "$noptname1 $noptname $optvalue${echo_workload:+ $workload}"
 }
 
 function _help_options_workloads() {
@@ -317,8 +330,7 @@ function workloads_supporting_api() {
 }
 
 function _call_api() {
-    (( $# < 1 )) && fatal "call_api [-w workload|-a] [-A] API args..."
-    local workload
+    local workload=
     local -a workloads=()
     local -i all=0
     local -i any_OK=0
@@ -335,14 +347,16 @@ function _call_api() {
     done
     local -i status=$any_OK
     shift $((OPTIND - 1))
-    local api=$1
+    local api=${1:-}
+    [[ -z "$api" ]] && fatal "call_api [-w workload|-a] [-A] API args..."
+    [[ -n "$workload" ]] && workloads+=("$workload")
     if ((all)) ; then
-	workloads=("${!__registered_workloads__[@]}")
-    elif [[ -n "$workload" ]] ; then
-	workloads=("$workload")
-    else
-	fatal "call_api $api does not have a workload specified!"
+	local lworkload
+	for lworkload in "${!__registered_workloads__[@]}" ; do
+	    [[ $lworkload != "$workload" ]] && workloads+=("$lworkload")
+	done
     fi
+    [[ -z "${workloads[*]}" ]] && fatal "call_api $api does not have a workload specified!"
     for workload in "${workloads[@]}" ; do
 	if supports_api -w "$workload" "$api" ; then
 	    "${__registered_workloads__[$workload]}" "$workload" "$@"
