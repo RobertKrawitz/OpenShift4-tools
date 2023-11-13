@@ -152,7 +152,7 @@ class sysbench_client(clusterbuster_pod_client):
                 self._timestamp(f'Preparing {" ".join(args)}')
                 subprocess.run(args, check=True)
 
-                self._drop_cache(self.drop_cache_service, self.drop_cache_port)
+                self._drop_cache()
                 self._sync_to_controller(f'{test}+{mode}+run')
                 op_user, op_sys = self._cputimes()
                 args = self.build_sysbench_cmd('run', f'--file-test-mode={test}', f'--file-io-mode={mode}')

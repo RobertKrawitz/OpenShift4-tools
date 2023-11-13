@@ -1328,7 +1328,7 @@ function get_run_started() {
 
 function set_run_aborted() {
     echo "Run aborted: ${*:-unknown reason}" 1>&2
-    stack_trace
+    stack_trace 1>&2
     touch "${cb_tempdir}/___run_aborted"
 }
 
@@ -1340,17 +1340,21 @@ function get_run_failed() {
     test -f "${cb_tempdir}/___run_failed" || test -f "${cb_tempdir}/___run_aborted"
 }
 
+function get_failure_reason() {
+    [[ -f "${cb_tempdir}/___run_failed" ]] && cat "${cb_tempdir}/___run_failed"
+}
+
 function set_run_failed() {
     if get_run_failed ; then
 	if ! get_run_aborted ; then
 	    echo "Secondary failure: ${*:-unknown reason}" 1>&2
-	    stack_trace 1 2 1>&2
+	    stack_trace 1 3 1>&2
 	fi
 	return
     fi
     echo "Run failed: ${*:-unknown reason}" 1>&2
-    stack_trace
-    touch "${cb_tempdir}/___run_failed"
+    stack_trace 1>&2
+    echo "${*:-unknown reason}" > "${cb_tempdir}/___run_failed"
     run_on_sync_n sh -c "echo 'Please see logs for details.' >> '$sync_error_file'" || touch "${cb_tempdir}/___run_aborted"
 }
 
@@ -1642,7 +1646,7 @@ function _monitor_pods() {
 		message_printed=0
 	    fi
 	    if ((timeout > 0 && timestamp > timeout)) ; then
-		set_run_failed "Timed out"
+		set_run_failed "Run timed out"
 	    fi
 	fi
     done
@@ -1692,7 +1696,7 @@ function _fail_helper()  {
 		# no error flag.
 		faildata="$(run_on_sync_n sh -c "while [[ ! -f '$sync_error_file' && ! -f '$sync_flag_file' ]] ; do sleep 5; echo KEEPALIVE 1>&2; done; cat '$sync_error_file'" 2>/dev/null)"
 		if [[ -n "$faildata" ]] ; then
-		    set_run_failed "Run failed: \n${faildata:-}"
+		    set_run_failed "Run failed: ${nl}${faildata:-}"
 		    return
 		fi
 		;;
@@ -4064,7 +4068,7 @@ function do_logging() {
 	done
 	if (( finis <= 0 )) ; then
 	    if ((finis < 0)) ; then
-		set_run_failed "Run failed"
+		set_run_failed "Run failed: $(get_failure_reason)"
 	    else
 		set_run_failed "Run did not terminate in $itimeout seconds"
 	    fi

@@ -19,7 +19,7 @@ from .ClusterBusterReporter import ClusterBusterReporter
 
 class server_reporter(ClusterBusterReporter):
     def __init__(self, jdata: dict, report_format: str, extras=None):
-        super().__init__(jdata, report_format, extras)
+        super().__init__(jdata, report_format, extras=extras)
         self._add_accumulators(['data_sent_bytes', 'passes', 'mean_latency_sec', 'max_latency_sec'])
         self._set_header_components(['namespace', 'pod', 'container'])
 

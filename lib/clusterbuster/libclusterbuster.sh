@@ -81,19 +81,19 @@ function bool() {
 }
 
 function parse_size() {
+    # We cannot use getopts here because negative sizes would
+    # look like options.
     local size
-    local OPTIND=0
-    local OPTARG
-    local opt
     local delimiter=$'\n'
     local -a answers=()
     local trailer=
-    while getopts "nd:" opt "$@" ; do
-	case "$opt" in
-	    n) delimiter=' '     ;;
-	    d) delimiter=$OPTARG; trailer=$'\n' ;;
-	    *)			 ;;
+    while [[ $1 = '-'[nd]* ]] ; do
+	case "$1" in
+	    -n) delimiter=' ' ;;
+	    -d) shift; delimiter=$2; trailer=$'\n' ;;
+	    -d*) delimiter=${1:2}; tralier=$'\n' ;;
 	esac
+	shift
     done
     shift $((OPTIND-1))
     local sizes=$*

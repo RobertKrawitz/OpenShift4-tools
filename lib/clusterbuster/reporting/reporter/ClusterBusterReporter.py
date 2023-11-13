@@ -38,7 +38,22 @@ class ClusterBusterReporterException(ClusterBusterReportingException):
 
 class ClusterBusterReporterJobMismatchException(ClusterBusterReporterException):
     def __init__(self, var: str, val1, val2):
-        super().__init(f"Mismatched {var} in status ({val1} vs {val2})")
+        super().__init__(f"Mismatched {var} in status ({val1} vs {val2})")
+
+
+class ClusterBusterBadReportException(ClusterBusterReportingException):
+    def __init__(self, item):
+        super().__init__(f"{item} is not a ClusterBuster report")
+
+
+class ClusterBusterUnrecognizedWorkloadException(ClusterBusterReportingException):
+    def __init__(self, item):
+        super().__init__(f"{item}: cannot identify workload")
+
+
+class ClusterBusterUnrecognizedItemException(ClusterBusterReportingException):
+    def __init__(self, item):
+        super().init__(f"Unrecognized item {item}")
 
 
 class ClusterBusterReporter:
@@ -54,7 +69,7 @@ class ClusterBusterReporter:
         except KeyError:
             pass
         if not isValid:
-            raise TypeError(f'{item} does not contain a ClusterBuster report')
+            raise ClusterBusterBadReportException(item)
         jdata['metadata']['RunArtifactDir'] = item
         if report_format == 'none' or report_format is None:
             return
@@ -70,7 +85,7 @@ class ClusterBusterReporter:
             try:
                 workload = jdata["metadata"]["workload"]
             except KeyError:
-                raise TypeError("cannot identify workload")
+                raise ClusterBusterUnrecognizedWorkloadException(item)
         if 'runtime_class' not in jdata['metadata']:
             try:
                 runtime_class = jdata['metadata']['options']['runtime_classes'].get('default')
@@ -78,23 +93,14 @@ class ClusterBusterReporter:
                 runtime_class = None
             if runtime_class:
                 jdata['metadata']['runtime_class'] = runtime_class
-        failed_load = False
-        load_failed_exception = None
         try:
             imported_lib = importlib.import_module(f'..{workload}_reporter', __name__)
-        except (KeyboardInterrupt, BrokenPipeError) as exc:
-            raise (exc)
         except (SyntaxError, ModuleNotFoundError) as exc:
             if isinstance(exc, ModuleNotFoundError) and exc.name.endswith(f"{workload}_reporter"):
                 print(f'Warning: no reporter for workload {workload}, issuing generic summary report', file=sys.stderr)
                 return ClusterBusterReporter(jdata, report_format, extras=extras).create_report()
             else:
-                failed_load = True
-                load_failed_exception = exc
-        if failed_load:
-            raise type(load_failed_exception)("%s reporter: %s: %s" %
-                                              (workload, load_failed_exception.__class__.__name__,
-                                               load_failed_exception))
+                raise type(exc)("%s reporter: %s: %s" % (workload, exc.__class__.__name__, exc)) from None
         for i in inspect.getmembers(imported_lib):
             if i[0] == f'{workload}_reporter':
                 return i[1](jdata, report_format, extras=extras).create_report()
@@ -103,7 +109,7 @@ class ClusterBusterReporter:
     def validate_dir(dirname: str):
         if dirname.find('.FAIL') >= 0 or dirname.find('.tmp') >= 0:
             return False
-        if not re.search(f'(^|/)([-_[:lower:][:digit:]]+)-([-[:lower:][:digit:]]+)-[0-9]+[^/]*$', dirname):
+        if not re.search('(^|/)([-_[:lower:][:digit:]]+)-([-[:lower:][:digit:]]+)-[0-9]+[^/]*$', dirname):
             return False
         return os.path.isfile(os.path.join(dirname, "clusterbuster-report.json"))
 
@@ -174,7 +180,7 @@ class ClusterBusterReporter:
             elif isinstance(item, dict):
                 jdata = item
             else:
-                raise TypeError(f"Unrecognized item {item}")
+                raise ClusterBusterUnrecognizedItemException(f"Unrecognized item {item}")
             answers.append(ClusterBusterReporter.report_one("N/A", jdata, report_format, extras=extras))
         return answers
 
