@@ -23,7 +23,7 @@ class AnalyzePostprocess(ClusterBusterPostprocessBase):
     """
 
     def __init__(self, report, status, metadata, extras=None):
-        super().__init__(report, status, metadata, extras)
+        super().__init__(report, status, metadata, extras=extras)
 
     def Postprocess(self):
         metadata = {}

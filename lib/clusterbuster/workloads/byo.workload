@@ -32,40 +32,11 @@ function byo_arglist() {
     mk_yaml_args "python3" "${mountdir}byo.py" "$@" "$processes_per_pod" "$___byo_workdir" "${___byo_args[@]}"
 }
 
-function byo_create_deployment() {
-    local namespace=$1
-    local count=${2:-1}
-    local secret_count=${3:-1}
-    local replicas=${4:-1}
-    local containers_per_pod=${5:-1}
-    local -i instance
-    create_sync_service "$namespace" "$((containers_per_pod * replicas * processes_per_pod * count))" \
-				  "$((containers_per_pod * replicas * count))"
-    for instance in $(seq "$first_deployment" $((count + first_deployment - 1))) ; do
-	create_standard_deployment -a byo_arglist \
-				   "$namespace" "$instance" "$secret_count" "$replicas" "$containers_per_pod"
-    done
-}
-
-function byo_list_configmaps() {
-    cat <<EOF
-$(find_on_path pod_files "byo.py")
-EOF
-}
-
 function byo_list_user_configmaps() {
     cat <<EOF
 $(find_on_path pod_files "${___byo_args[0]}")
 $(IFS=$'\n'; echo "${___byo_files[*]}")
 EOF
-}
-
-function byo_calculate_logs_required() {
-    local -i namespaces=$1
-    local -i deps_per_namespace=${2:-1}
-    local -i replicas=${3:-1}
-    local -i containers_per_pod=${4:-1}
-    echo $((namespaces * processes_per_pod * containers_per_pod * replicas * deps_per_namespace))
 }
 
 function byo_help_options() {
@@ -118,10 +89,6 @@ function byo_process_options() {
     if [[ -z "${___byo_args[*]}" ]] ; then
 	fatal "No command specified for byo workload"
     fi
-}
-
-function byo_supports_reporting() {
-    :
 }
 
 function byo_workload_reporting_class() {

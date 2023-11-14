@@ -194,15 +194,15 @@ class LoadReportSet:
             try:
                 imported_lib = importlib.import_module(f'..{workload}_loader', __name__)
             except (KeyboardInterrupt, BrokenPipeError) as exc:
-                raise (exc)
+                raise (exc) from None
             except Exception:
                 continue
             for i in inspect.getmembers(imported_lib):
                 if i[0] == f'{workload}_loader':
                     try:
-                        i[1](self.name, report, self.answer, self.extras).Load()
+                        i[1](self.name, report, self.answer, extras=self.extras).Load()
                     except (KeyboardInterrupt, BrokenPipeError) as exc:
-                        raise (exc)
+                        raise (exc) from None
                     except ClusterBusterReportingException as exc:
                         print('Loading report %s failed: %s' % (report["metadata"]["RunArtifactDir"],
                                                                 exc),
@@ -279,7 +279,7 @@ class ClusterBusterLoader:
                 run_name = dirname
             if not dirs:
                 print(f"No matching subdirectories for run {run_name} found in '{dirname}'", file=sys.stderr)
-                dirs = []
+                return None
             answer['dirs'] = dirs
             answer['run_name'] = run_name
         else:

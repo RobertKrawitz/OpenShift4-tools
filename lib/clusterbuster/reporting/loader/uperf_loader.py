@@ -18,7 +18,7 @@ from .ClusterBusterLoader import LoadOneReport
 
 class uperf_loader(LoadOneReport):
     def __init__(self, name: str, report: dict, data: dict, extras=None):
-        super().__init__(name, report, data, extras)
+        super().__init__(name, report, data, extras=extras)
 
     def Load(self):
         job_name = sorted(self._metadata['workload_metadata']['jobs'].keys())[0]

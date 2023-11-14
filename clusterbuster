@@ -1042,12 +1042,19 @@ function validate_resource() {
 # Workload API management
 ################################################################
 
+function supports_reporting() {
+    local workload="${1:-${requested_workload:-}}"
+    [[ -n "$workload" ]] &&
+	(! supports_api -w "$workload" supports_reporting ||
+	     call_api -w "$workload" supports_reporting)
+}
+
 function print_workloads_supporting_reporting() {
     local prefix="${1:-}"
     local workload
     while read -r workload ; do
-	echo "$prefix$workload"
-    done <<< "$(workloads_supporting_api supports_reporting)"
+	supports_reporting "$workload" && echo "$prefix$workload"
+    done <<< "$(print_workloads)"
 }
 
 function list_report_formats() {
@@ -1058,12 +1065,24 @@ function list_report_formats() {
 }
 
 function create_deployment() {
-    call_api -w "$requested_workload" create_deployment "$@"
+    if supports_api -w "$requested_workload" create_deployment ; then
+	call_api -w "$requested_workload" create_deployment "$@"
+    else
+	create_generic_deployment "$@"
+    fi
 }
 
 function calculate_logs_required() {
-    if supports_api -w "$requested_workload" supports_reporting ; then
-	call_api -w "$requested_workload" calculate_logs_required "$@"
+    if supports_reporting "$requested_workload" ; then
+	if supports_api -w "$requested_workload" calculate_logs_required ; then
+	    call_api -w "$requested_workload" calculate_logs_required "$@"
+	else
+	    local -i namespaces=$1
+	    local -i deps_per_namespace=${2:-1}
+	    local -i replicas=${3:-1}
+	    local -i containers_per_pod=${4:-1}
+	    echo $((namespaces * processes_per_pod * containers_per_pod * replicas * deps_per_namespace))
+	fi
     else
 	echo 1
     fi
@@ -1078,7 +1097,11 @@ $(find_on_path pod_files "drop_cache.py")
 $(find_on_path pod_files "do-sync")
 $(find_on_path pod_files "drop-cache")
 EOF
-    call_api -w "$requested_workload" -s list_configmaps |grep .
+    if supports_api -w "$requested_workload" list_configmaps ; then
+	call_api -w "$requested_workload" -s list_configmaps |grep .
+    else
+	find_on_path pod_files "${requested_workload}.py"
+    fi
 }
 
 function list_user_configmaps() {
@@ -1305,7 +1328,7 @@ function get_run_started() {
 
 function set_run_aborted() {
     echo "Run aborted: ${*:-unknown reason}" 1>&2
-    stack_trace
+    stack_trace 1>&2
     touch "${cb_tempdir}/___run_aborted"
 }
 
@@ -1317,17 +1340,21 @@ function get_run_failed() {
     test -f "${cb_tempdir}/___run_failed" || test -f "${cb_tempdir}/___run_aborted"
 }
 
+function get_failure_reason() {
+    [[ -f "${cb_tempdir}/___run_failed" ]] && cat "${cb_tempdir}/___run_failed"
+}
+
 function set_run_failed() {
     if get_run_failed ; then
 	if ! get_run_aborted ; then
 	    echo "Secondary failure: ${*:-unknown reason}" 1>&2
-	    stack_trace 1 2 1>&2
+	    stack_trace 1 3 1>&2
 	fi
 	return
     fi
     echo "Run failed: ${*:-unknown reason}" 1>&2
-    stack_trace
-    touch "${cb_tempdir}/___run_failed"
+    stack_trace 1>&2
+    echo "${*:-unknown reason}" > "${cb_tempdir}/___run_failed"
     run_on_sync_n sh -c "echo 'Please see logs for details.' >> '$sync_error_file'" || touch "${cb_tempdir}/___run_aborted"
 }
 
@@ -1575,7 +1602,7 @@ function _monitor_pods() {
 	else
 	    # Timestamp
 	    local timestamp=$status
-	    if [[ -z "${injected_errors[timeout]:-}" ]] && ! supports_api -w "$requested_workload" supports_reporting ; then
+	    if [[ -z "${injected_errors[timeout]:-}" ]] && ! supports_reporting "$requested_workload" ; then
 		if (( ${#running_pods[@]} + finished_pod_count > 0 && other_pod_count == 0 )) ; then
 		    set_run_failed "Run failed: running pods ${#running_pods[@]} finished pods $finished_pod_count others $other_pod_count"
 		    sleep "$workload_run_time"
@@ -1619,7 +1646,7 @@ function _monitor_pods() {
 		message_printed=0
 	    fi
 	    if ((timeout > 0 && timestamp > timeout)) ; then
-		set_run_failed "Timed out"
+		set_run_failed "Run timed out"
 	    fi
 	fi
     done
@@ -1669,7 +1696,7 @@ function _fail_helper()  {
 		# no error flag.
 		faildata="$(run_on_sync_n sh -c "while [[ ! -f '$sync_error_file' && ! -f '$sync_flag_file' ]] ; do sleep 5; echo KEEPALIVE 1>&2; done; cat '$sync_error_file'" 2>/dev/null)"
 		if [[ -n "$faildata" ]] ; then
-		    set_run_failed "Run failed: \n${faildata:-}"
+		    set_run_failed "Run failed: ${nl}${faildata:-}"
 		    return
 		fi
 		;;
@@ -1782,7 +1809,7 @@ function _get_sync_logs_poll() {
     local mypid=$BASHPID
     monitor_pods -A -l "${basename}-monitor=$xuuid" &
     # shellcheck disable=SC2086
-    if supports_api -w "$requested_workload" supports_reporting ; then
+    if supports_reporting "$requested_workload" ; then
 	# Ensure that if there's a lot of output that we don't remove the sync file before it has all been flushed out
 	run_logger -p "$mypid" -- _log_helper -e _fail_helper -- &
     fi
@@ -2145,7 +2172,7 @@ function get_sync_logs() {
     trap - TERM
     protect_pids "$BASHPID"
     log_cmd=get_sync_logs_poll
-    if supports_api -w "$requested_workload" supports_reporting; then
+    if supports_reporting "$requested_workload"; then
 	if [[ -n "$artifactdir" ]] ; then
 	    # Even if reporting fails, make sure we capture the JSON
 	    _get_sync_logs "$log_cmd" > "$artifactdir/clusterbuster-report.tmp.json"
@@ -2398,7 +2425,7 @@ function create_standard_containers() {
     local drop_cache_port_num=
     IFS=: read -r sync_service sync_port_num sync_ns_port_num <<< "$(get_sync)"
     IFS=: read -r drop_cache_service drop_cache_port_num <<< "$(get_drop_cache "$namespace" "$instance" "$replica")"
-    for container in $(seq 0 $((containers - 1))) ; do
+    for ((container = 0; container < containers; container++)) ; do
 	cat <<EOF
 - name: "c${container}"
   imagePullPolicy: $image_pull_policy
@@ -2602,7 +2629,7 @@ function volume_mounts_yaml() {
     (( secrets + ${#emptydirs[@]} + ${#configmap_files[@]} + ${#volumes[@]} + has_system_configmap + has_user_configmap )) || return;
     local -i i
     echo volumeMounts:
-    for i in $(seq 0 $((secrets - 1))) ; do
+    for ((i = 0; i < secrets; i++)) ; do
 	local name="secret-${namespace}-${deployment}-$i"
 	cat <<EOF
 - name: $name
@@ -2703,7 +2730,7 @@ function volumes_yaml() {
     (( secrets + ${#emptydirs[@]} + ${#configmap_files[@]} + ${#volumes[@]} + has_system_configmap + has_user_configmap )) || return;
     local -i i
     echo "volumes:"
-    for i in $(seq 0 $((secrets - 1))) ; do
+    for ((i = 0; i < secrets; i++)) ; do
 	local name="secret-${namespace}-${instance}-$i"
 	cat<<EOF
 - name: $name
@@ -2973,8 +3000,8 @@ function create_secrets() {
     local -i i
     local -i j
     (( secrets )) || return;
-    for i in $(seq "$first_deployment" $((deps_per_namespace + first_deployment - 1))) ; do
-	for j in $(seq 0 $((secrets - 1))) ; do
+    for ((i = first_deployment; i < deps_per_namespace + first_deployment; i++)) ; do
+	for ((j = 0; j < secrets; j++)) ; do
 	    local secname="secret${namespace:+-$namespace}-${i}-${j}"
 	    create_object -t secret -n "$namespace" "$secname" <<EOF 2>&1 | report_if_desired
 apiVersion: v1
@@ -3269,7 +3296,7 @@ EOF
     function create_emptydisk_volumes() {
 	local -i id
 	if [[ -n "${vm_emptydisk_list[*]}" ]] ; then
-	    for id in $(seq 0 $((${#vm_emptydisk_list[@]} - 1))) ; do
+	    for ((id = 0; i < ${#vm_emptydisk_list[@]}; i++)) ; do
 		local mountpoint=${vm_emptydisk_list[$id]}
 		cat << EOF
 - name: emptydisk-${id}
@@ -3282,7 +3309,7 @@ EOF
     function create_emptydisk_devices() {
 	local -i id
 	if [[ -n "${vm_emptydisk_list[*]}" ]] ; then
-	    for id in $(seq 0 $((${#vm_emptydisk_list[@]} - 1))) ; do
+	    for ((id = 0; id < ${#vm_emptydisk_list[@]}; id++)) ; do
 		local mountpoint=${vm_emptydisk_list[$id]}
 		local -a emptydisk_args=()
 		IFS=: read -ra emptydisk_args <<< "${vm_emptydisk_options[$mountpoint]}"
@@ -3305,7 +3332,7 @@ EOF
     function create_emptydisk_mounts() {
 	local -i id
 	if [[ -n "${vm_emptydisk_list[*]}" ]] ; then
-	    for id in $(seq 0 $((${#vm_emptydisk_list[@]} - 1))) ; do
+	    for ((id = 0; id < ${#vm_emptydisk_list[@]}; id++)) ; do
 		local device="/dev/vd${vm_emptydisk_suffixes:$id:1}"
 		local mountpoint=${vm_emptydisk_list[$id]}
 		local mountopts=
@@ -3515,6 +3542,37 @@ function create_standard_deployment() {
     esac
 }
 
+function create_generic_deployment() {
+    local OPTIND=0
+    local OPTARG=0
+    local pflag=
+    local arglist_function="${requested_workload}_arglist"
+    while getopts 'pa:' opt "$@" ; do
+	case "$opt" in
+	    p) pflag=-p ;;
+	    a) arglist_function="$OPTARG" ;;
+	    *)		;;
+	esac
+    done
+    shift $((OPTIND-1))
+    local namespace=$1
+    local count=${2:-1}
+    local secret_count=${3:-1}
+    local replicas=${4:-1}
+    local containers_per_pod=${5:-1}
+    local -i instance
+    local -i extra_sync_count=0
+    requires_drop_cache && extra_sync_count=1
+    create_sync_service "$namespace" \
+			"$((containers_per_pod * replicas * processes_per_pod * count))" \
+			"$(((containers_per_pod + extra_sync_count) * replicas * count))"
+    for ((instance = first_deployment; instance < count + first_deployment; instance++)) ; do
+	create_standard_deployment -a "$arglist_function" $pflag \
+				   "$namespace" "$instance" "$secret_count" "$replicas" "$containers_per_pod"
+    done
+}
+
+
 function create_container_sync() {
     local OPTARG
     local OPTIND=0
@@ -3718,7 +3776,7 @@ function find_first_deployment() {
 function create_all_namespaces() {
     local i
     local -a pids=()
-    for i in $(seq 0 "$((parallel_namespaces - 1))") ; do
+    for ((i = 0; i < parallel_namespaces; i++)) ; do
 	create_objects_n namespace "$parallel_namespaces" "$objs_per_call_namespaces" "$i" "$sleep_between_namespaces" &
 	pids+=("$!")
     done
@@ -3728,7 +3786,7 @@ function create_all_namespaces() {
 function create_all_secrets() {
     local i
     local -a pids=()
-    for i in $(seq 0 "$((parallel_secrets - 1))") ; do
+    for ((i = 0; i < parallel_secrets; i++)) ; do
 	create_objects_n secrets "$parallel_secrets" "$objs_per_call_secrets" "$i" "$sleep_between_secrets" "$deps_per_namespace" "$secrets" &
 	pids+=("$!")
     done
@@ -3743,7 +3801,7 @@ function create_system_configmap() {
     fi
     local -a userfiles
     readarray -t userfiles < <(list_user_configmaps | grep .)
-    for i in $(seq 0 "$((parallel_configmaps - 1))") ; do
+    for ((i = 0; i < parallel_configmaps; i++)) ; do
 	create_objects_n configmaps "$parallel_configmaps" "$objs_per_call_configmaps" "$i" "$sleep_between_configmaps" "systemconfigmap" "${systemfiles[@]}"&
 	pids+=("$!")
 	create_objects_n configmaps "$parallel_configmaps" "$objs_per_call_configmaps" "$i" "$sleep_between_configmaps" "userconfigmap" "${userfiles[@]}"&
@@ -3757,7 +3815,7 @@ function create_all_configmaps() {
     (( ${#configmap_files[@]} )) || return;
     local i
     local -a pids=()
-    for i in $(seq 0 "$((parallel_configmaps - 1))") ; do
+    for ((i = 0; i < parallel_configmaps; i++)) ; do
 	create_objects_n configmaps "$parallel_configmaps" "$objs_per_call_configmaps" "$i" "$sleep_between_configmaps" "configmap" "${configmap_files[@]}"&
 	pids+=("$!")
     done
@@ -3789,7 +3847,7 @@ function drop_host_caches() {
 function create_all_deployments() {
     local i
     local -a pids=()
-    for i in $(seq 0 "$((parallel_deployments - 1))") ; do
+    for ((i = 0; i < parallel_deployments; i++)) ; do
 	create_objects_n deployment "$parallel_deployments" "$objs_per_call_deployments" "$i" "$sleep_between_deployments" "$deps_per_namespace" "$secrets" "$replicas" "$containers_per_pod" &
 	pids+=("$!")
     done
@@ -3924,11 +3982,11 @@ function create_secrets_top_level() {
 	local -i k
 	local ns
 	local nsd
-	for i in $(seq 0 $((namespaces - 1))) ; do
+	for ((i = 0; i < namespaces; i++)) ; do
 	    ns="secret/secret-${basename}-${namespaces_to_create[$i]##*-}"
-	    for j in $(seq "$first_deployment" $((deps_per_namespace + first_deployment - 1))) ; do
+	    for ((j = 0; j < deps_per_namespace + first_deployment; j++)) ; do
 		nsd="${ns}-$j"
-		for k in $(seq 0 $((secrets - 1))) ; do
+		for ((k = 0; i < secrets; k++)) ; do
 		    expected_secrets["${nsd}-$k"]=1
 		done
 	    done
@@ -4010,7 +4068,7 @@ function do_logging() {
 	done
 	if (( finis <= 0 )) ; then
 	    if ((finis < 0)) ; then
-		set_run_failed "Run failed"
+		set_run_failed "Run failed: $(get_failure_reason)"
 	    else
 		set_run_failed "Run did not terminate in $itimeout seconds"
 	    fi
@@ -4209,7 +4267,7 @@ function validate_options() {
     validate_resource resource_limit "${resource_limits[@]}" || resource_validation_failed=1
     ((resource_validation_failed)) && exit 1
 
-    for i in $(seq 0 $((emptydir_volumes-1)) ) ; do
+    for ((i = 0; i < emptydir_volumes; i++)) ; do
 	emptydirs+=("/mnt/volume-$i")
     done
 

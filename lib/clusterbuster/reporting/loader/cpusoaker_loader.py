@@ -18,7 +18,7 @@ from .ClusterBusterLoader import LoadOneReport
 
 class cpusoaker_loader(LoadOneReport):
     def __init__(self, name: str, report: dict, data: dict, extras=None):
-        super().__init__(name, report, data, extras)
+        super().__init__(name, report, data, extras=extras)
 
     def Load(self):
         if not self._summary['total_pods']:

@@ -114,7 +114,7 @@ class ClusterBusterAnalysis(ClusterBusterAnalysisBase):
             pass
         if import_module is not None:
             try:
-                return import_module(report, status, metadata, self._extras).Postprocess()
+                return import_module(report, status, metadata, extras=self._extras).Postprocess()
             except TypeError as exc:
                 raise ClusterBusterAnalysisImportFailed(self._report_type, exc) from None
         else:
@@ -147,15 +147,12 @@ class ClusterBusterAnalysis(ClusterBusterAnalysisBase):
                     print(f'Warning: no analyzer for workload {workload}', file=sys.stderr)
                     continue
                 else:
-                    failed_load = True
-                    load_failed_exception = exc
+                    raise type(exc)('%s reporter: %s: %s' % (workload, exc.__class__.__name__, exc)) from None
             except Exception as exc:
                 print(f'Warning: no analyzer for workload {workload} {exc}', file=sys.stderr)
                 continue
             if failed_load:
-                raise type(load_failed_exception)('%s reporter: %s: %s' %
-                                                  (workload, load_failed_exception.__class__.__name__,
-                                                   load_failed_exception))
+                raise type(load_failed_exception)
             try:
                 for i in inspect.getmembers(imported_lib):
                     if i[0] == f'{workload}_analysis':

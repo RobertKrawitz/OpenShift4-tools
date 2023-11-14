@@ -18,7 +18,7 @@ from .ClusterBusterLoader import LoadOneReport
 
 class files_loader(LoadOneReport):
     def __init__(self, name: str, report: dict, data: dict, extras=None):
-        super().__init__(name, report, data, extras)
+        super().__init__(name, report, data, extras=extras)
 
     def Load(self):
         if 'workload_metadata' in self._metadata and 'dirs_per_volume' in self._metadata['workload_metadata']:

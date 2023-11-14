@@ -34,14 +34,14 @@ mgmt_masters=()
 master_macs=()
 mgmt_workers=()
 worker_macs=()
-for m in $(seq 0 $((n_masters - 1))) ; do
+for ((m = 0; m < n_masters; m++)) ; do
     masters+=("node-${m}.example.com")
     mgmt_masters+=("node-${m}-mm.example.com")
     mac=${emacaddrs[$m]}
     master_macs+=("$mac")
     install_disks[$mac]=${disks[$m]}
 done
-for m in $(seq $n_masters $((${#disks[@]} - 1))) ; do
+for ((m = n_masters; n < ${#disks[@]}; m++)) ; do
     mgmt_workers+=("node-${m}-mm.example.com")
     mac=${macaddrs[$m]}
     worker_macs+=("$mac")

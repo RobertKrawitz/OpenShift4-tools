@@ -92,11 +92,14 @@ function uperf_create_deployment() {
 	___uperf_port_addrs=$(((replicas * containers_per_pod * processes_per_pod) + 4))
     fi
     container_image="quay.io/rkrawitz/clusterbuster-workloads:latest"
-    create_sync_service "$namespace" "$((containers_per_pod * replicas * count))" "$(( (containers_per_pod * replicas * count) + count))"
+    create_sync_service "$namespace" \
+			"$((containers_per_pod * replicas * count))" \
+			"$(( (containers_per_pod * replicas * count) + count))"
 
-    for instance in $(seq "$first_deployment" $((count + first_deployment - 1))) ; do
+    for ((instance = first_deployment; instance < count + first_deployment; instance++)) ; do
 	if [[ -z "${___uperf_interface}" ]] ; then
-	    create_service -k replica -e "$namespace" "${namespace}-uperf-server-${instance}-1" $(seq "$___uperf_port" $((___uperf_port + ___uperf_port_addrs)))
+	    create_service -k replica -e "$namespace" "${namespace}-uperf-server-${instance}-1" \
+			   $(seq "$___uperf_port" $((___uperf_port + ___uperf_port_addrs)))
 	fi
 	create_standard_deployment -w uperf-server -p -c server \
 				   -A "$(create_affinity_yaml "${namespace}-uperf-client-${instance}")" \
@@ -119,14 +122,6 @@ $(find_on_path pod_files "uperf-mini.xml")
 $(find_on_path pod_files "uperf-rr.xml")
 $(find_on_path pod_files "uperf-stream.xml")
 EOF
-}
-
-function uperf_calculate_logs_required() {
-    local -i namespaces=$1
-    local -i deps_per_namespace=${2:-1}
-    local -i replicas=${3:-1}
-    local -i containers_per_pod=${4:-1}
-    echo $((namespaces * containers_per_pod * replicas * deps_per_namespace))
 }
 
 function uperf_help_options() {
@@ -169,6 +164,7 @@ EOF
 function uperf_process_options() {
     local opt
     local -a unknown_opts=()
+    processes_per_pod=1
     for opt in "$@" ; do
 	read -r noptname1 noptname optvalue <<< "$(parse_option "$opt")"
 	# shellcheck disable=SC2206
@@ -207,10 +203,6 @@ function uperf_process_options() {
 	    done
 	done
     done
-}
-
-function uperf_supports_reporting() {
-    :
 }
 
 function uperf_generate_metadata() {

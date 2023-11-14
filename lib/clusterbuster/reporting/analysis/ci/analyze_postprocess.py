@@ -28,7 +28,7 @@ class AnalyzePostprocess(ClusterBusterPostprocessBase):
     """
 
     def __init__(self, report, status, metadata, extras=None):
-        super().__init__(report, status, metadata, extras)
+        super().__init__(report, status, metadata, extras=extras)
         parser = argparse.ArgumentParser(description="ClusterBuster loader")
         parser.add_argument('--allow-mismatch', action='store_true')
         self._args, self._extra_args = parser.parse_known_args(extras)

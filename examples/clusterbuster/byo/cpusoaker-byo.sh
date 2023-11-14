@@ -29,7 +29,7 @@ declare -i start_time=0
 start_time=$(date +%s)
 
 while ((runtime < 0 || $(date +%s) - start_time < runtime)) ; do
-    for i in $(seq 1 $loops_per_iteration) ; do :; done
+    for ((i = 0; i < loops_per_iteration; i++)) ; do:; done
     iterations=$((iterations + loops_per_iteration))
 done
 

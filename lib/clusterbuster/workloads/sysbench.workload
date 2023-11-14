@@ -29,45 +29,10 @@ function sysbench_arglist() {
     while [[ "$1" != '--' ]] ; do shift; done; shift
     local workdir=${common_workdir:-${emptydirs[0]:-/tmp}}
     mk_yaml_args "python3" "${mountdir}sysbench.py" "$@" \
-		 "svc-${namespace}-sysbench-${instance}-${replica:-1}-dc" "$drop_cache_port" \
 		 "$processes_per_pod" "$workdir" "$workload_run_time" "$___sysbench_workload" \
 		 "${___sysbench_fileio_test_string:+$___sysbench_fileio_test_string}" \
 		 "${___sysbench_fileio_mode_string:+$___sysbench_fileio_mode_string}" \
 		 "${___sysbench_options[@]}"
-}
-
-function sysbench_create_deployment() {
-    local namespace=$1
-    local count=${2:-1}
-    local secret_count=${3:-1}
-    local replicas=${4:-1}
-    local containers_per_pod=${5:-1}
-    local -i instance
-    container_image="quay.io/rkrawitz/clusterbuster-workloads:latest"
-    create_sync_service "$namespace" \
-			"$((containers_per_pod * processes_per_pod * replicas * count))" \
-			"$((containers_per_pod * replicas * count))"
-    for instance in $(seq "$first_deployment" $((count + first_deployment - 1))) ; do
-	if [[ $___sysbench_workload = fileio ]] ; then
-	    create_drop_cache_deployment "$namespace" "$workload" "$instance" "$replicas"
-	fi
-	create_standard_deployment -a sysbench_arglist -e sysbench.py -p \
-				   "$namespace" "$instance" "$secret_count" "$replicas" "$containers_per_pod"
-    done
-}
-
-function sysbench_list_configmaps() {
-    cat <<EOF
-$(find_on_path pod_files "sysbench.py")
-EOF
-}
-
-function sysbench_calculate_logs_required() {
-    local -i namespaces=$1
-    local -i deps_per_namespace=${2:-1}
-    local -i replicas=${3:-1}
-    local -i containers_per_pod=${4:-1}
-    echo $((namespaces * containers_per_pod * processes_per_pod * replicas * deps_per_namespace))
 }
 
 function sysbench_help_options() {
@@ -116,17 +81,17 @@ function sysbench_process_options() {
 	    sysbenchfileiotest*) ___sysbench_fileio_test_string="${optvalue//,/ }" ;;
 	    sysbenchfileiomode*) ___sysbench_fileio_mode_string="${optvalue//,/ }" ;;
 	    sysbenchtime)	set_runtime "$optvalue"				   ;;
-	    sysbench*)		 _sysbench_set_option "$noptname1" "$opt"	   ;;
+	    sysbench*)		_sysbench_set_option "$noptname1" "$opt"	   ;;
 	    *) 			unknown_opts+=("$noptname ($noptname1)")	   ;;
 	esac
     done
+    if [[ $___sysbench_workload = fileio ]] ; then
+	requires_drop_cache=1
+    fi
     if [[ -n "${unknown_opts[*]:-}" ]] ; then
 	warn "Notice: the following options are not known: ${unknown_opts[*]}"
     fi
-}
-
-function sysbench_supports_reporting() {
-    :
+    container_image="quay.io/rkrawitz/clusterbuster-workloads:latest"
 }
 
 function sysbench_report_options() {
