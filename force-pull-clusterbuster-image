@@ -28,6 +28,10 @@ done
 
 declare images=("quay.io/rkrawitz/clusterbuster-base:$image_tag" "quay.io/rkrawitz/clusterbuster-workloads:$image_tag")
 
+if [[ -n "$("${OC}" get hyperconverged -A --no-headers 2>/dev/null)" ]] ; then
+    images+=("quay.io/rkrawitz/clusterbuster-vm:$image_tag")
+fi
+
 if [[ -n "$*" ]] ; then
     images=("$@")
 fi

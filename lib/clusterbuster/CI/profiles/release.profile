@@ -1,5 +1,7 @@
 # Clusterbuster release CI profile
 
+force-pull=1
+
 # instances : directories : files : blocksize : filesize : O_DIRECT
 files-params=1:256:256:4096:0:0
 files-params=1:256:256:4096:0:1

@@ -207,7 +207,9 @@ declare -a virtiofsd_args=()
 declare -i liveness_probe_frequency=0
 declare -i liveness_probe_sleep_time=0
 declare -i metrics_support=-1
-declare -i pod_start_timeout=60
+declare -i default_pod_start_timeout=60
+declare -i default_vm_start_timeout=180
+declare -i pod_start_timeout=-1
 declare pod_prefix=
 declare arch=
 declare failure_status=Fail
@@ -423,9 +425,6 @@ $(print_workloads_supporting_reporting '                        - ')
        --failure-status=<status>
                         Failures should be reported as specified rather
                         than "Fail"
-       --pod-start-timeout=<seconds>
-                        Wait specified time for pods to come on line.
-                        Default $pod_start_timeout
        --retrieve-successful-logs=<0|1>
                         If retrieving artifacts, retrieve logs for all
                         pods, not just failing pods.  Default $retrieve_successful_logs.
@@ -643,6 +642,9 @@ $(print_workloads_supporting_reporting '                        - ')
        --parallel_namespaces=N
        --parallel_deployments=N
        --wait_secrets   Wait for secrets to be created (default 1)
+       --pod-start-timeout=<seconds>
+                        Wait specified time for pods to come on line.
+                        Default $default_pod_start_timeout ($default_vm_start_timeout for VMs).
 
 Workload-specific options:
 $(_help_options_workloads)
@@ -2850,11 +2852,13 @@ function create_object() {
     local objtype=${deployment_type^}
     local objname=
     local force=0
-    while getopts 'n:t:f' opt "$@" ; do
+    local record_object=0
+    while getopts 'n:t:fr' opt "$@" ; do
 	case "$opt" in
 	    n) namespace=$OPTARG ;;
 	    t) objtype=$OPTARG   ;;
 	    f) force=1           ;;
+	    r) record_object=1	 ;;
 	    *)                   ;;
 	esac
     done
@@ -2871,6 +2875,14 @@ function create_object() {
 	    data+="$line$nl"
 	fi
     done
+    if ((record_object)) ; then
+	total_objects_created=$((total_objects_created+1))
+	if [[ -z ${objects_created[$objtype]:-} ]] ; then
+	    objects_created[$objtype]=1
+	else
+	    objects_created[$objtype]=$((${objects_created[$objtype]:-}+1))
+	fi
+    fi
     ((! data_found)) && return
     data+="$nl"
     if (( doit )) ; then
@@ -3382,7 +3394,7 @@ EOF
 	vmname=$(mkpodname "$name")
 	IFS=: read -r sync_service sync_port_num sync_ns_port_num <<< "$(get_sync)"
 	IFS=: read -r drop_cache_service drop_cache_port_num <<< "$(get_drop_cache "$namespace" "$instance" "$replica")"
-        create_object -n "$namespace" "$name" <<EOF
+        create_object -t VM -n "$namespace" "$name" <<EOF
 apiVersion: kubevirt.io/v1
 kind: VirtualMachine
 metadata:
@@ -3464,7 +3476,7 @@ function create_replication_deployment() {
     local instance=$2
     local -i replicas=$4
     local name="${namespace}-${workload}-${instance}"
-    create_object -n "$namespace" "$name" <<EOF
+    create_object -t "$deployment_type" -n "$namespace" "$name" <<EOF
 apiVersion: apps/v1
 kind: $deployment_type
 metadata:
@@ -4279,6 +4291,13 @@ function validate_options() {
 	((virtiofsd_threadpoolsize)) && virtiofsd_args+=("\"--thread-pool-size=$virtiofsd_threadpoolsize\"")
 	if [[ -n "${virtiofsd_args[*]:-}" ]] ; then
 	    pod_annotations+=("io.katacontainers.config.hypervisor.virtio_fs_extra_args: '[$(IFS=,; echo "${virtiofsd_args[*]}")]'")
+	fi
+    fi
+    if ((pod_start_timeout < 0)) ; then
+	if [[ $deployment_type = vm ]] ; then
+	    pod_start_timeout=$default_vm_start_timeout
+	else
+	    pod_start_timeout=$default_pod_start_timeout
 	fi
     fi
 }
