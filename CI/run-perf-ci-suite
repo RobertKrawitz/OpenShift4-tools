@@ -80,6 +80,7 @@ declare -i timedout=0
 declare -i counter=0
 declare -i hard_fail_on_error=0
 declare -i restart=0
+declare -i allow_overwrite=0
 declare -i started_prom_capture=0
 # shellcheck disable=2155
 declare uuid=$(uuidgen -r)
@@ -462,6 +463,8 @@ $(_document_workloads)
                                 Default is <empty> (i. e. default) and kata.
         --cleanup               Clean up all pods after last run.
         --job-delay=N           Delay N seconds between jobs (default $job_delay)
+        --allow-overwrite       Allow overwriting existing output jobs.
+                                Default no.
         --restart               Restart any failed or incomplete jobs from a
                                 prior run.  Default is no.  Can only be used
                                 with identical parameters to previous run.
@@ -546,6 +549,7 @@ function process_option() {
 	analysisformat*) analysis_format=$optvalue					;;
 	runtimeclass*) readarray -t runtimeclasses <<< "$(parse_optvalues "$optvalue")"	;;
 	restart) restart=$(bool "$optvalue")						;;
+	allowoverwrite) allow_overwrite=$(bool "$optvalue")				;;
 	runtimeout) run_timeout=$(parse_time "$optvalue")				;;
 	profile|runtype) process_profile "$optvalue"					;;
 	forcepull*) force_pull_image="$(bool "$optvalue")"				;;
@@ -824,6 +828,11 @@ if ((! debugonly)) ; then
 		    break
 		fi
 	    done
+	fi
+    elif ((! allow_overwrite)) ; then
+	if [[ -f "$artifactdir/clusterbuster-report.json" ]] ; then
+	    echo "$artifactdir/clusterbuster-report.json already exists, will not overwrite!" 1>&2
+	    exit 1
 	fi
     else
 	if [[ -n "$artifactdir" && -f "$artifactdir/clusterbuster-report.json" ]] ; then
