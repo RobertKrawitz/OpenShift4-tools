@@ -5,6 +5,7 @@ import subprocess
 import re
 import json
 import shutil
+import tempfile
 
 from clusterbuster_pod_client import clusterbuster_pod_client
 
@@ -96,20 +97,24 @@ Drop cache:  {self.fio_drop_cache}""")
                                     data_start_time = self._adjusted_time()
                                 jtime = self._adjusted_time()
                                 jucpu, jscpu = self._cputimes()
-                                command = ['fio', f'--rw={pattern}', f'--runtime={self.runtime}', f'--bs={size}',
-                                           f'--iodepth={iodepth}', f'--fdatasync={int(fdatasync)}', f'--direct={int(direct)}',
-                                           f'--ioengine={ioengine}', '--allow_file_create=0']
-                                if not self.fio_drop_cache:
-                                    command.append('--invalidate=0')
-                                command.extend(self.fio_generic_args)
-                                command.extend(['--output-format=json+', jobfile])
-                                success, data, stderr = self._run_command(command)
-                                if not success:
-                                    raise Exception(f'{" ".join(command)} failed: {stderr if stderr != "" else "Unknown error"}')
-                                try:
-                                    result = json.loads(data)
-                                except json.decoder.JSONDecodeError as exc:
-                                    raise json.decoder.JSONDecodeError(f'{exc}: {data}\n\n{stderr}') from None
+                                with tempfile.NamedTemporaryFile() as output:
+                                    outfile = output.name
+                                    command = ['fio', f'--rw={pattern}', f'--runtime={self.runtime}', f'--bs={size}',
+                                               f'--iodepth={iodepth}', f'--fdatasync={int(fdatasync)}', f'--direct={int(direct)}',
+                                               f'--ioengine={ioengine}', '--allow_file_create=0']
+                                    if not self.fio_drop_cache:
+                                        command.append('--invalidate=0')
+                                    command.extend(self.fio_generic_args)
+                                    command.extend(['--output-format=json+', f'--output={outfile}', jobfile])
+                                    success, data, stderr = self._run_command(command)
+                                    if not success:
+                                        raise Exception(f'{" ".join(command)} failed: {stderr if stderr != "" else "Unknown error"}')
+                                    try:
+                                        with open(outfile, mode='r') as f:
+                                            data = f.read()
+                                        result = json.loads(data)
+                                    except Exception as exc:
+                                        raise Exception(f"Failed to load data {data}: {exc}")
                                 jtime = self._adjusted_time(jtime)
                                 jucpu, jscpu = self._cputimes(jucpu, jscpu)
                                 elapsed_time += jtime

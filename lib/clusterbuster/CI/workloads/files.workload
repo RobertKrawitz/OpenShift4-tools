@@ -68,7 +68,8 @@ function files_test() {
 			  --files_per_dir="$___files_per_dir" \
 			  --file_block_size="$___files_block_size" \
 			  --files_direct="$___files_direct" \
-			  --filesize="$file_size"
+			  --filesize="$file_size" \
+			  --vm-emptydisk="$(((((dirs_per_volume * files_per_dir * filesize * 11 / 10) + 1048575) / 1048576) * 1048576)):/var/tmp"
     done
 }
 
