@@ -1744,6 +1744,10 @@ function _log_helper() {
 	    rm -f "$tmpfile"
 	    break
 	fi
+	if [[ ! -d "$cb_tempdir" ]] ; then
+	    timestamp <<< "Data retrieval failed!  Cannot retry" 1>&2
+	    return 1
+	fi
 	get_run_failed && return 1
 	timestamp <<< "Data retrieval failed!  Retrying" 1>&2
 	# One cause of failure is problems with cert rotation or other causes interfering
@@ -4271,6 +4275,11 @@ function validate_options() {
 	*)
 	    help "--deployment_type must be pod, vm, deployment, or replicaset"
     esac
+    if [[ ${deployment_type,,} != vm ]] ; then
+	vm_emptydisk_list=()
+	vm_emptydisks=()
+	vm_emptydisk_options=()
+    fi
 
     [[ -z "$OC" && $doit -gt 0 ]] && fatal "Cannot find oc or kubectl command, exiting!"
 
