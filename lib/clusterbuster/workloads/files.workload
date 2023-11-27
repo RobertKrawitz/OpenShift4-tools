@@ -40,7 +40,7 @@ function files_arglist() {
     local dc_port=0
     while [[ "$1" != '--' ]] ; do shift; done; shift
     local -i file_blocks=$((___file_size/___file_block_size))
-    local mounts=("${volume_mount_paths[@]}" "${emptydirs[@]}")
+    local mounts=("${volume_mount_paths[@]}" "${emptydirs[@]}" "${vm_emptydisk_list[@]}")
     mk_yaml_args "python3" "${mountdir}files.py" "$@" \
 		 "$___file_dirs_per_volume" "$___files_per_dir" "$___file_block_size" "$file_blocks" \
 		 "$processes_per_pod" "$___files_direct" "${mounts[@]}"

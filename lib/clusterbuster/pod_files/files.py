@@ -46,6 +46,7 @@ class files_client(clusterbuster_pod_client):
         buf = mmap.mmap(-1, self.blocksize)
         buf.write(b'a' * self.blocksize)
         ops = 0
+        files_created=0
         for bdir in self.dir_list:
             direc = f"{bdir}/p{pid}/{self._container()}"
             os.makedirs(direc)
@@ -56,13 +57,20 @@ class files_client(clusterbuster_pod_client):
                 ops = ops + 1
                 for fileidx in range(self.files_per_dir):
                     filename = f"{dirname}/{fileidx}"
-                    fd = os.open(filename, self.flags | os.O_WRONLY | os.O_CREAT)
+                    try:
+                        fd = os.open(filename, self.flags | os.O_WRONLY | os.O_CREAT)
+                    except Exception as exc:
+                        raise Exception(f"Create failed on {filename} (file {files_created}): {exc}") from None
                     ops = ops + 1
+                    files_created = files_created + 1
                     for block in range(self.block_count):
-                        answer = os.write(fd, buf)
-                        if answer != self.blocksize:
-                            raise os.IOError(f"Incomplete write to {filename}: {answer} bytes, expect {self.blocksize}")
-                        ops = ops + 1
+                        try:
+                            answer = os.write(fd, buf)
+                            if answer != self.blocksize:
+                                raise os.IOError(f"Incomplete write to {filename} (file {files_created}): {answer} bytes, expect {self.blocksize}")
+                            ops = ops + 1
+                        except Exception as exc:
+                            raise Exception(f"Write failed to {filename} (file {files_created}): {exc}") from None
                     os.close(fd)
         return ops
 
@@ -159,19 +167,19 @@ class files_client(clusterbuster_pod_client):
         return answer
 
     def runit(self, process: int):
-        self.removethem(os.getpid(), True)
+        self.removethem(process, True)
         data_start_time = self._adjusted_time()
 
         subprocess.run('sync')
-        answer_create = self.run_one_operation('Creating', 'Created', 'create', self.makethem, os.getpid(), data_start_time)
+        answer_create = self.run_one_operation('Creating', 'Created', 'create', self.makethem, process, data_start_time)
         self._timestamp("Sleeping for 60 seconds")
         time.sleep(60)
         self._timestamp('Back from sleep')
-        answer_read = self.run_one_operation('Reading', 'Read', 'read', self.readthem, os.getpid(), data_start_time)
+        answer_read = self.run_one_operation('Reading', 'Read', 'read', self.readthem, process, data_start_time)
         self._timestamp("Sleeping for 60 seconds")
         time.sleep(60)
         self._timestamp('Back from sleep')
-        answer_remove = self.run_one_operation('Removing', 'Remove', 'remove', self.removethem, os.getpid(), data_start_time)
+        answer_remove = self.run_one_operation('Removing', 'Remove', 'remove', self.removethem, process, data_start_time)
         create_et = answer_create['operation_end'] - answer_create['operation_start']
         # read_et = answer_read['operation_end'] - answer_read['operation_start']
         remove_et = answer_remove['operation_end'] - answer_remove['operation_start']

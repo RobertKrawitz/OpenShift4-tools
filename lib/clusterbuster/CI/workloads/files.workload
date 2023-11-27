@@ -26,6 +26,11 @@ declare -gi ___files_min_direct
 declare -gi ___files_drop_cache
 
 function files_test() {
+    function roundup() {
+	local -i base=$1
+	local -i interval=$2
+	echo $((((base + interval - 1) / interval) * interval))
+    }
     ___files_job_timeout=$(compute_timeout "$___files_job_timeout")
     if [[ -z "${___files_params[*]}" ]] ; then
 	for ninst in "${___files_ninst[@]}" ; do
@@ -60,6 +65,15 @@ function files_test() {
 	if ((___files_block_size > file_size && file_size > 0)) ; then
 	    ___files_block_size=$file_size
 	fi
+	local -i fs_block_size=4096 # Need a better way than hard coding this; assumes ext4
+	local -i inode_size_bytes=256 # Need a better way than hard coding this; assumes ext4
+	local -i bytes_per_file=file_size
+	if ((bytes_per_file < fs_block_size)) ; then bytes_per_file=fs_block_size; fi
+	bytes_per_file=$(roundup "$bytes_per_file" "$fs_block_size")
+	local -i inodes_required=$((1024 + ___files_dirs_per_volume + (___files_dirs_per_volume * ___files_per_dir)))
+	local -i bytes_required=$(((inodes_required * 256) + (bytes_per_file * ___files_dirs_per_volume * ___files_per_dir)))
+	# Add 12.5% overhead and round up to next MB
+	bytes_required=$(roundup $((bytes_required * 9 / 8)) 1048576)
 	job_name="${ninst}P-${___files_dirs_per_volume}D-${___files_per_dir}F-${___files_block_size}B-${file_size}S-${___files_direct}T"
 	# shellcheck disable=SC2090
 	run_clusterbuster -j "$job_name" -w files -t "$___files_job_timeout" -- \
@@ -68,7 +82,8 @@ function files_test() {
 			  --files_per_dir="$___files_per_dir" \
 			  --file_block_size="$___files_block_size" \
 			  --files_direct="$___files_direct" \
-			  --filesize="$file_size"
+			  --filesize="$file_size" \
+			  --vm-emptydisk="$bytes_required:fsopts=-N ${inodes_required}:/var/tmp"
     done
 }
 
