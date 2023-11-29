@@ -31,4 +31,4 @@ function cpusoaker_document() {
 EOF
 }
 
-register_workload cpusoaker cpu cpusoak 
+register_workload cpusoaker cpu cpusoak

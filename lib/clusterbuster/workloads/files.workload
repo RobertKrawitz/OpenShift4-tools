@@ -23,7 +23,8 @@ declare -ig ___file_block_size=0
 declare -ig ___file_dirs_per_volume=1
 declare -ig ___files_per_dir=1
 declare -ig ___files_direct=0
-declare -ig  ___files_drop_cache=1
+declare -ig ___files_drop_cache=1
+declare -ia ___file_dirs=()
 
 function files_create_deployment() {
     create_generic_deployment -p "$@"
@@ -40,10 +41,9 @@ function files_arglist() {
     local dc_port=0
     while [[ "$1" != '--' ]] ; do shift; done; shift
     local -i file_blocks=$((___file_size/___file_block_size))
-    local mounts=("${volume_mount_paths[@]}" "${emptydirs[@]}" "${vm_emptydisk_list[@]}")
     mk_yaml_args "python3" "${mountdir}files.py" "$@" \
 		 "$___file_dirs_per_volume" "$___files_per_dir" "$___file_block_size" "$file_blocks" \
-		 "$processes_per_pod" "$___files_direct" "${mounts[@]}"
+		 "$processes_per_pod" "$___files_direct" "${___files_dirs[@]}"
 }
 
 function files_help_options() {
@@ -87,6 +87,13 @@ function files_process_options() {
 	    filesize)		___file_size=$(parse_size "$optvalue")		;;
 	    filesdirect)	___files_direct=$(bool "$optvalue")		;;
 	    filesdrop*)		___files_drop_cache=$(bool "$optvalue")	 	;;
+	    filesdir*)
+		if [[ -z "$optvalue" ]] ; then
+		    ___files_dirs=()
+		else
+		    ___files_dirs+=("$optvalue")
+		fi
+		;;
 	    *) 			unknown_opts+=("$noptname ($noptname1)") 	;;
 	esac
     done
@@ -96,6 +103,7 @@ function files_process_options() {
     if (( ___file_block_size <= 0)) ; then
 	___file_block_size=___file_size
     fi
+    [[ -z "${___files_dirs[*]}" ]] && ___files_dirs=(/var/tmp/clusterbuster)
 }
 
 function files_requires_drop_cache() {
@@ -113,7 +121,8 @@ function files_report_options() {
 "file_block_size": $___file_block_size,
 "file_size": $___file_size,
 "files_direct": $___files_direct,
-"files_drop_cache": $___files_drop_cache
+"files_drop_cache": $___files_drop_cache,
+"files_dirs": $(mk_str_list "${___files_dirs[@]}")
 EOF
 }
 

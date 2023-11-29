@@ -94,7 +94,8 @@ done
 declare -i namespaces=1
 declare -i use_namespaces=1
 declare -i deps_per_namespace=1
-declare -i remove_namespaces=1
+declare -i remove_namespaces=-1
+declare -i create_namespaces_only=0
 declare -i secrets=0
 declare -i replicas=1
 declare -i parallel=1
@@ -128,7 +129,7 @@ declare -i affinity=0
 declare -i sync_affinity=0
 declare -A pin_nodes=()
 declare -A runtime_classes=()
-declare runtime_class
+declare runtime_class=
 declare scheduler=
 declare -i verbose=0
 declare -i wait_for_secrets=1
@@ -157,13 +158,9 @@ declare sync_namespace=
 declare -i scale_ns=0
 declare -i scale_deployments=1
 declare -i sync_start=1
-declare -a emptydirs=()
 declare -a volumes=()
-declare -A volume_mount_paths=()
-declare -A volume_types=()
-declare -A volume_type_keys=()
-declare -A volume_scoped_names=()
-declare common_workdir=
+declare -A mount_volume_map=()
+declare common_workdir=/var/tmp/clusterbuster
 declare -i report=0
 declare report_format=summary
 declare -i precleanup=1
@@ -183,7 +180,6 @@ declare -i has_system_configmap=1
 declare -i has_user_configmap=1
 declare node_selector='node-role.kubernetes.io/worker'
 declare -i processes_per_pod=1
-declare -i emptydir_volumes=0
 declare -i take_prometheus_snapshot=0
 declare first_start_timestamp=
 declare prometheus_starting_timestamp=
@@ -221,12 +217,15 @@ declare -a extra_args=()
 declare -i metrics_interval=30
 declare -a sync_pod=()
 declare workload_step_interval=0
+declare -i preserve_tmpdir=0
+declare vm_ssh_keyfile=
+declare -r ssh_alg=ed25519
 
 declare -r sync_flag_file="/tmp/syncfile";
 declare -r sync_error_file="/tmp/syncerror";
 declare -r controller_timestamp_file="/tmp/timing.json";
-# shellcheck disable=2155
-declare uuid=$(uuidgen -r)
+declare uuid
+uuid=$(uuidgen -r)
 declare xuuid=$uuid
 # Ensure that pods from other runs don't inadvertently attempt to
 # communicate with our sync pod
@@ -260,19 +259,15 @@ declare vm_run_as_container=0
 declare -A workload_service_ports=()
 declare vm_user=cluster
 declare vm_password=buster
-declare -a vm_ssh_pubkey=()
 declare -A __sysctls=()
 declare -i __sysctls_retrieved=0
-declare -A vm_emptydisks=()
-declare -A vm_emptydisk_options=()
-declare -a vm_emptydisk_list=()
-# We can't use vda, which is the system disk
-declare -r vm_emptydisk_suffixes="bcdefghijklmnopqrstuvwxyz"
 
 declare OC=${OC:-${KUBECTL:-}}
 OC=${OC:-$(type -p oc)}
 OC=${OC:-$(type -p kubectl)}	# kubectl might not work, though...
 OC=$(type -p "$OC")
+
+declare VIRTCTL=${VIRTCTL:-$(type -p virtctl)}
 
 function fatal() {
     local OPTIND
@@ -327,7 +322,9 @@ Usage: ${__topsc__:-0} [options] [extra args]
                        All objects are labeled with this name.
        -E              Don't exit after all operations are complete.
        -e              Exit after all operations are complete (default).
-       -f jobfile      Job file containing settings
+       -f jobfile      Job file containing settings.
+                       Continuations may be escaped with a trailing
+                       backslash.
                        A number of examples are provided in the
                        examples/clusterbuster directory.
        -n              Print what would be done without doing it
@@ -350,6 +347,8 @@ function _help_extended() {
 Extended Options:
     General Options (short equivalents):
        --doit=<1,0>     Run the command or not (default 1) (inverse of -n)
+       --create-namespaces-only
+                        Only create namespaces.
        --jobname=name   Name of the job, for logging purposes.
                         Defaults to the workload name
        --workload=type  Specify the workload (-P) (mandatory)
@@ -365,6 +364,8 @@ Extended Options:
        --remove-namespaces=<1,0>
                         Remove namespaces when cleaning up objects.  Only
                         applies when using clusterbuster-created namespaces.
+                        By default, namespaces are removed only if no
+                        namespaces previously existed.
        --predelay=N     Delay for the specified time after workload
                         starts before it starts running.
        --postdelay=N    Delay for the specified time after workload
@@ -486,24 +487,54 @@ $(print_workloads_supporting_reporting '                        - ')
        --drop_all_cache Drop the buffer cache on all workers.
 
     Generic workload storage options:
-       --emptydir=dir   Mount an emptydir volume at the specified mount point.
-       --volumes=N      Mount the specified number of emptydir volumes.
-                        If this is not provided, file-based workloads will
-                        use a default location, generally /tmp.
-       --volume=name:type:name_type:mount_name:mount_path
-                        Mount a specified persistent volume
-                        name is the name of the volume (required).
-                        type is the type of volume (required).
-                        mount_path is the path on which to mount the volume
+       --volume=name:type:mount_path:options
+                        Mount a specified volume.
+                        - name is the name of the volume
+                        - type is the type of volume.
+                          Currently supported volume types are:
+                          - emptydir (pods only; no name required)
+                          - emptydisk (VMs only; no name required)
+                          - pvc or persistentvolumeclaim
+                        - mount_path is the path on which to mount the volume
                             (required).
-                        type_key is the key for the volume (e. g.
-                            claimName for persistentVolumeClaim)
-                        scoped_name is the volume's name as recognized
-                            by the description.  All occurrences of %N
-                            are replaced by the namespace of the pod
-                            mounting the volume; all instances of %i
-                            are replaced by the instance of the pod
-                            within the namespace.
+                        Options currently supported include the following:
+                           - claimName is the name of a PVC if it differs
+                             from the volume name.  This allows use of
+                             different PVCs; all occurrences of %N
+                             are replaced by the namespace of the pod
+                             mounting the volume; all instances of %i
+                             are replaced by the instance of the pod
+                             within the namespace.
+                           - size in bytes (required for emptydisk; ignored for
+                             other volume types).
+                           - inodes in number (optional for emptydisk; ignored
+                             for other volume types).
+                           - bus (VMs; ignored for pods): bus to be used
+                             for the volume (default virtio)
+                           - cache (VMs): caching mode (none, writeback,
+                             writethrough; default none)
+                           - fstype (VMs): filesystem type to format
+                             the volume to; empty means to not format
+                             the volume (filesystem must already be present).
+                             fsopts (VMs): options to use for formatting
+                             the filesystem.
+                           - mountopts (VMs): mount options to be used.
+                        Notes:
+                          - A previously declared mount can be overridden
+                            by specifying a later mount with the same
+                            mountpoint.
+                          - A previously declared mount can be removed by
+                            specifying a mount with the same mountpoint
+                            and empty name and type.  Example:
+                            --volume=:emptydir:/var/tmp/clusterbuster
+                            --volume=::/var/tmp/clusterbuster
+                            will result in no mount on /var/tmp/clusterbuster
+                            unless later overridden.
+                          - All previously declared mounts can be removed
+                            by specifying a mount with no name, type,
+                            mountpoint, or options.  Example:
+                            --volume=::
+                            will remove all mounts from the list.
        --workdir=<dir>  Use the specified working directory for file I/O
 
     Pod Options:
@@ -573,12 +604,6 @@ $(print_workloads_supporting_reporting '                        - ')
                         Specify the number of sockets (default $vm_sockets).
        --vm-memory=<value>
                         Specify the amount of memory (default $vm_memory).
-       --vm-emptydisk=<size:[options:]mountpoint>
-                        Create and mount an emptydisk volume in each VM.  Options are:
-                        - cache=<mode>
-                        - mountopts=<options>
-                        - fstype=<filesystem>
-                        - fsopts=<mkfs opts>
        --vm-grace-period=<value>
                         Specify the period between when a vm is signaled to
                         shutdown and the point when KubeVirt will force off
@@ -597,10 +622,11 @@ $(print_workloads_supporting_reporting '                        - ')
        --vm-password=<password>
                         Create the specified password on virtual machines.
                         Default $vm_password.  Empty means no password.
-       --vm-ssh-pubkey=<file>
-                        Inject the specified ssh key into the virtual machines.
-                        The file is checked to ensure that it is a public
-                        key.  Default none.
+       --vm-ssh-keyfile=file
+                        Inject the public key of the specified key pair into
+                        VMs for log retrieval or other access purposes.
+                        Default none, in which case a temporary key
+                        is generated.
 
     Tuning object creation (short equivalents):
        --scale-ns=[0,1] Scale up the number of namespaces vs.
@@ -664,6 +690,9 @@ Advanced options (generally not required):
                         For testing purposes, inject the specified error
                         condition (documented only in code).
        --force-abort    Abort the run on any error.
+       --preserve-tmpdir
+                        Do not remove the temporary directory at
+                        end of the run
 
 Here is a brief description of all available workloads:
 $(_document_workloads)
@@ -718,24 +747,6 @@ function set_runtime() {
     fi
 }
 
-function parse_volume_spec() {
-    local volspec=$1
-    local vname=
-    local vtype=
-    local vmount_path=
-    IFS=':' read -r vname vtype vmount_path vtype_key vscoped_name <<< "$volspec"
-    if [[ -z "$vname" || -z "$vtype" || -z "$vmount_path" ]] ; then
-	echo "name, type, type_key, scoped name, and mount path must be provided"
-	echo "for volumes"
-	exit 1
-    fi
-    volumes+=("$vname")
-    volume_mount_paths["$vname"]=$vmount_path
-    volume_types["$vname"]=$vtype
-    volume_type_keys["$vname"]=$vtype_key
-    volume_scoped_names["$vname"]=$vscoped_name
-}
-
 function process_pin_node() {
     local nodespec=$1
     nodespec=${nodespec// /}
@@ -758,6 +769,7 @@ function process_runtimeclass() {
     local runtimespec=$1
     if [[ $runtimespec = 'vm' ]] ; then
 	deployment_type=vm
+	runtime_class=vm
 	return
     fi
     runtimespec=${runtimespec// /}
@@ -775,32 +787,6 @@ function process_runtimeclass() {
     else
 	runtime_classes[default]="$runtimespec"
     fi
-}
-
-function process_emptydisk() {
-    local size
-    local mountpoint
-    local -a args
-    IFS=: read -ra args <<< "$1"
-    local -i argcount=${#args[@]}
-    if ((argcount < 2)) ; then
-	fatal "Invalid emptydisk $1: size and mount point must be specified as size:[args:]mountpoint"
-    fi
-    size=${args[0]}
-    mountpoint=${args[$((argcount - 1))]}
-    if [[ $mountpoint != '/'* ]] ; then
-	fatal "Invalid emptydisk $1: path must be absolute"
-    fi
-    if [[ -n "${vm_emptydisks[$mountpoint]:-}" ]] ; then
-	fatal "Duplicate emptydisk mount specified ($1)"
-    fi
-    if ((argcount > 2)) ; then
-	vm_emptydisk_options["$mountpoint"]="$(IFS=:; echo "${args[*]:1:$((argcount - 2))}")"
-    else
-	vm_emptydisk_options["$mountpoint"]=""
-    fi
-    vm_emptydisks["$mountpoint"]=$size
-    vm_emptydisk_list+=("$mountpoint")
 }
 
 function set_metrics_file() {
@@ -839,6 +825,7 @@ function process_option() {
 	doit)			    doit=$(bool "$optvalue")			;;
 	quiet)			    verbose=$((! $(bool "$optvalue")))		;;
 	forceabort*)		    set -e					;;
+	preservetmpdir)		    preserve_tmpdir=$(bool "$optvalue")		;;
 	# Reporting
 	artifactdir)		    artifactdir="$optvalue"			;;
 	metrics|metricsfile)	    set_metrics_file "$optvalue"		;;
@@ -864,6 +851,7 @@ function process_option() {
 	workload)		    requested_workload=$optvalue		;;
 	basename)		    basename=$optvalue				;;
 	arch)			    arch=$optvalue				;;
+	createnamespacesonly)	    create_namespaces_only=1			;;
 	# Object definition
 	workdir)		    common_workdir=$optvalue			;;
 	configmapfile)		    configmap_files+=("$optvalue")		;;
@@ -872,13 +860,11 @@ function process_option() {
 	containersperpod)	    containers_per_pod=$optvalue		;;
 	deploymenttype)		    deployment_type=$optvalue			;;
 	deployments|depspername*)   deps_per_namespace=$optvalue		;;
-	emptydir)		    emptydirs+=("$optvalue")			;;
-	volumes)		    emptydir_volumes=$optvalue			;;
 	exitatend)		    exit_at_end=$(bool "$optvalue")		;;
 	imagepullpolicy)	    image_pull_policy=$optvalue			;;
 	namespaces)		    namespaces=$optvalue			;;
 	nodeselector)		    node_selector=$optvalue			;;
-	volume)			    parse_volume_spec "$optvalue"		;;
+	volume)			    volumes+=("$optvalue")			;;
 	processes|processesperpod)  processes_per_pod=$optvalue			;;
 	jobfile)		    process_job_file "$optvalue"		;;
 	pinnode)		    process_pin_node "$optvalue"		;;
@@ -943,8 +929,7 @@ function process_option() {
 	vmrunascontainer)	    vm_run_as_container=$(bool "$optvalue")	;;
 	vmuser)			    vm_user=$optvalue				;;
 	vmpassword)		    vm_password=$optvalue			;;
-	vmsshpubkey)		    vm_ssh_pubkey+=("$optvalue")		;;
-	vmemptydisk*)		    process_emptydisk "$optvalue"		;;
+	vmsshkey*)		    vm_ssh_keyfile=$optvalue			;;
 	# Object creation
 	obj*spercall)		    objs_per_call=$optvalue			;;
 	parallel)		    parallel=$optvalue				;;
@@ -1018,26 +1003,20 @@ function process_job_file() {
 	fatal "Job file $jobfile cannot be read"
     fi
     while IFS= read -r line ; do
+	# shellcheck disable=SC1003
+	while [[ $line = *'\' ]] ; do
+	    line=${line::-1}
+	    local tline
+	    IFS= read -r tline
+	    [[ -z "$tline" ]] && break
+	    line+="$tline"
+	done
 	line=${line%%#*}
 	line=${line## }
 	line=${line##	}
 	if [[ -z "$line" ]] ; then continue; fi
 	process_option "$line"
     done < "$jobfile"
-}
-
-function validate_resource() {
-    local rtype=$1
-    local token
-    local status=0
-    shift
-    for token in "$@" ; do
-	if [[ $token != *'='* ]] ; then
-	    warn "Invalid $rtype specification $token (must be <resource>=<quantity>)"
-	    status=1
-	fi
-    done
-    return $status
 }
 
 ################################################################
@@ -1852,37 +1831,59 @@ function get_sync_logs_poll() {
 }
 
 function __report_one_volume() {
-    local volname=$1
-	cat <<EOF
+    local volspec=$1
+    local emptyvolid=$2
+    local -a args
+    IFS=: read -ra args <<< "$volspec"
+    local name=${args[0]}
+    local type=${args[1],,}
+    if [[ ($type = emptydisk && $runtime_class != vm) ||
+	      ($type = emptydir && $runtime_class = vm) ]] ; then
+	return 0
+    fi
+    local mountpoint=${args[2]}
+    args=("${args[@]:3}")
+    [[ $type = pvc ]] && type=persistentvolumeclaim
+    cat <<EOF
  {
-  "name": "$volname",
-  "mount_path": "${volume_mount_paths[$volname]}",
-  "type": "${volume_types[$vname]}",
-  "type_key": "${volume_types[$vname]}",
-  "scoped_name": "${volume_scoped_names[$vname]}"
+  "name": "name",
+  "mount_path": "mountpoint",
+  "type": "$type",
+  "options": {
+EOF
+    local opt
+    local value
+    local -a all_options
+    for arg in "${args[@]}" ; do
+	IFS='=' read -r opt value <<< "$arg"
+	all_options+=("\"$opt\": \"$value\"")
+    done
+    (IFS=$','; echo "${options[*]}")
+    cat <<EOF
+  }
  }
 EOF
+    if [[ $type = 'empty'* ]] ; then
+	return 2
+    else
+	return 1
+    fi
 }
 
 function _report_volumes() {
     echo '"volumes": ['
+    local vol
     local -a vols=()
-    for volname in "${volumes[@]}" ; do
-	vols+=("$(__report_one_volume "$volname")")
+    local -i emptyvolid=0
+    for volspec in "${volumes[@]}" ; do
+	vol="$(__report_one_volume "$volspec" "$emptyvolid")"
+	[[ $? = 2 ]] && emptyvolid=$((emptyvolid+1))
+	if [[ -n "$vol" ]] ; then
+	    vols+=("$vol")
+	fi
     done
     (IFS=$',\n'; echo "${vols[*]}")
     echo '],'
-}
-
-function _report_emptydirs() {
-    if ((${#emptydirs[@]})) ; then
-	echo '"emptydirVolumes": ['
-	local -a ed=("${emptydirs[@]}")
-	ed=("${ed[@]/#/}")
-	ed=("${ed[@]/%/}")
-	(IFS=$',\n'; echo "${ed[*]}")
-	echo "],"
-    fi
 }
 
 function quote_list() {
@@ -2042,7 +2043,6 @@ $(indent 2 _report_liveness_probe)
   "node_selector": "$node_selector",
 $(indent 2 container_resources_json)
   "runtime_classes": {$(_report_runtime_classes)},
-$(indent 2 _report_emptydirs)
   "target_data_rate": $target_data_rate,
   "workload_options": {
 $(indent 3 call_api -w "$requested_workload" "report_options")
@@ -2159,6 +2159,13 @@ function _retrieve_artifacts() {
 	    }
 	    unset "jobs_pending[$job]"
 	done
+	if [[ $deployment_type = vm && -f "$VIRTCTL" && -f "$vm_ssh_keyfile" ]] ; then
+	    [[ ! -d "$artifactdir/VMLogs" ]] && mkdir "$artifactdir/VMLogs"
+	    while read -r namespace vm ; do
+		# virtctl scp assumes that any colons in the destination filename are remote.
+		"$VIRTCTL" scp -i "$vm_ssh_keyfile" -t "-oStrictHostKeyChecking=no" -t "-oGlobalKnownHostsFile=/dev/null" -t "-oUserKnownHostsFile=/dev/null" -t "-oLogLevel ERROR" "$vm.$namespace:/var/log/cloud-init-output.log" "$artifactdir/VMLogs/$namespace.$vm" </dev/null && mv "$artifactdir/VMLogs/$namespace.$vm" "$artifactdir/VMLogs/$namespace:$vm"
+	    done <<< "$(__OC get vm -A -l "${basename}-id=$uuid" --no-headers | awk '{print $1, $2}')"
+	fi
 	if ((failcount > 5)) ; then
 	    echo "+ $((failcount - 5)) more" 1>&2
 	fi
@@ -2629,10 +2636,19 @@ EOF
 }
 
 function volume_mounts_yaml() {
+    local OPTIND=0
+    local use_extra_volumes=1
+    while getopts V opt "$@" ; do
+	case "$opt" in
+	    V) use_extra_volumes=0 ;;
+	    *)			   ;;
+	esac
+    done
+    shift $((OPTIND-1))
     local namespace=$1
     local deployment=${2:-1}
     local secrets=${3:-1}
-    (( secrets + ${#emptydirs[@]} + ${#configmap_files[@]} + ${#volumes[@]} + has_system_configmap + has_user_configmap )) || return;
+    (( secrets + ${#configmap_files[@]} + ${#volumes[@]} + has_system_configmap + has_user_configmap )) || return;
     local -i i
     echo volumeMounts:
     for ((i = 0; i < secrets; i++)) ; do
@@ -2643,30 +2659,12 @@ function volume_mounts_yaml() {
   readOnly: true
 EOF
     done
-    if [[ -n "${emptydirs[*]:-}" ]] ; then
-	local vol
-	for vol in "${emptydirs[@]}" ; do
-	    cat <<EOF
-- name: ${vol##*/}
-  mountPath: "$vol"
-EOF
-	done
-    fi
     if [[ ($namespace != "$sync_namespace" || $sync_in_first_namespace -ne 0) && $has_user_configmap -ne 0 ]] ; then
 	cat <<EOF
 - name: "userconfigmap-${namespace}"
   mountPath: "${user_configmap_mount_dir}"
   readOnly: true
 EOF
-    fi
-    if [[ -n "${volumes[*]:-}" ]] ; then
-	local vol
-	for vol in "${volumes[@]:-}" ; do
-	    cat <<EOF
-- name: "$vol"
-  mountPath: "${volume_mount_paths[$vol]}"
-EOF
-	done
     fi
     if (( has_system_configmap )) ; then
 	cat <<EOF
@@ -2675,6 +2673,53 @@ EOF
   readOnly: true
 EOF
     fi
+    if ((use_extra_volumes)) ; then
+	local volspec
+	local -i emptyvolid=0
+	for volspec in "${volumes[@]}" ; do
+	    local -a args
+	    IFS=: read -ra args <<< "$volspec"
+	    local name=${args[0]}
+	    local type=${args[1]}
+	    local mountpoint=${args[2]}
+
+	    args=("${args[@]:3}")
+	    case "${type,,}" in
+		emptydir)
+		    name=cbemptydir$((emptyvolid++))
+		    cat <<EOF
+- name: $name
+  mountPath: "$mountpoint"
+EOF
+		    ;;
+		pvc|persistentvolumeclaim)
+		    cat <<EOF
+- name: $name
+  mountPath: "$mountpoint"
+EOF
+		    ;;
+		*)
+		    continue
+		    ;;
+	    esac
+	done
+    fi
+}
+
+function list_volume_mount_points() {
+    local volspec
+    for volspec in "${volumes[@]}" ; do
+	local name
+	local type
+	local mountpoint
+	local args
+	read -r name type mountpoint <<< "$volspec"
+	if [[ ($type = emptydisk && $runtime_class != vm) ||
+		  ($type = emptydir && $runtime_class = vm) ]] ; then
+	    continue
+	fi
+	echo "$mountpoint"
+    done
 }
 
 function namespace_yaml() {
@@ -2722,20 +2767,102 @@ function standard_pod_metadata_yaml() {
 
 function expand_volume() {
     local scoped_name=$1
-    local namespace=${2:+-$2}
-    local instance=${3:+-$3}
+    local namespace=${2:+$2}
+    local instance=${3:+$3}
+    local replica=${4:+$4}
     scoped_name=${scoped_name//%N/$namespace}
     scoped_name=${scoped_name//%i/$instance}
+    scoped_name=${scoped_name//%r/$replica}
     echo "$scoped_name"
 }
 
+function extra_volumes_yaml() {
+    local volspec
+    local -i emptyvolid=0
+    local opt
+    local value
+    for volspec in "${volumes[@]}" ; do
+	local -a args
+	IFS=: read -ra args <<< "$volspec"
+	local name=${args[0]}
+	local type=${args[1]}
+	local mountpoint=${args[2]}
+	args=("${args[@]:3}")
+	case "${type,,}" in
+	    pvc|persistentvolumeclaim)
+		local claim_name="$name"
+		local arg
+		local size=
+		for arg in "${args[@]}" ; do
+		    IFS='=' read -r opt value <<< "$arg"
+		    case "${opt,,}" in
+			claimname) claim_name="$value"   	 ;;
+			size)	   size="$(parse_size "$value")" ;;
+			*)					 ;;
+		    esac
+		done
+		claim_name=$(expand_volume "$claim_name" "$namespace" "$instance" "$replica")
+		cat <<EOF
+- name: $name
+  persistentVolumeClaim:
+    claimName: $claim_name
+${size:+    capacity: "$size"}
+EOF
+		;;
+	    emptydisk)
+		[[ ${runtime_class:-} != vm ]] && continue
+		local arg
+		local size=
+		for arg in "${args[@]}" ; do
+		    local opt
+		    local value
+		    IFS='=' read -r opt value <<< "$arg"
+		    case "${opt,,}" in
+			size)	   size="$(parse_size "$value")" ;;
+			*)					 ;;
+		    esac
+		done
+		name="cbemptydisk$((emptyvolid++))"
+		cat <<EOF
+- name: $name
+  emptyDisk:
+    capacity: "$size"
+EOF
+		;;
+	    emptydir)
+		[[ $runtime_class = vm ]] && continue
+		name="cbemptydir$((emptyvolid++))"
+		cat <<EOF
+- name: $name
+  emptydDir: {}
+EOF
+		;;
+	    *)  ;;
+	esac
+    done
+}
+
 function volumes_yaml() {
+    local OPTIND=0
+    local -i print_volumes=-1
+    local opt
+    local -i use_extra_volumes=1
+    while getopts 'ynV' opt ; do
+	case "$opt" in
+	    y) print_volumes=1     ;;
+	    n) print_volumes=0	   ;;
+	    V) use_extra_volumes=0 ;;
+	    *)		           ;;
+	esac
+    done
+    shift $((OPTIND-1))
     local namespace=$1
     local instance=${2:-1}
     local secrets=${3:-1}
-    (( secrets + ${#emptydirs[@]} + ${#configmap_files[@]} + ${#volumes[@]} + has_system_configmap + has_user_configmap )) || return;
+    (( print_volumes > 0)) && echo "volumes:"
+    (( secrets + ${#configmap_files[@]} + ${#volumes[@]} + has_system_configmap + has_user_configmap )) || return;
     local -i i
-    echo "volumes:"
+    (( print_volumes < 0)) && echo "volumes:"
     for ((i = 0; i < secrets; i++)) ; do
 	local name="secret-${namespace}-${instance}-$i"
 	cat<<EOF
@@ -2744,40 +2871,12 @@ function volumes_yaml() {
     secretName: $name
 EOF
     done
-
-    if [[ -n "${emptydirs[*]:-}" ]] ; then
-	local vol
-	for vol in "${emptydirs[@]}" ; do
-	    cat <<EOF
-- name: ${vol##*/}
-  emptydDir: {}
-EOF
-	done
-    fi
     if [[ ($namespace != "$sync_namespace" || $sync_in_first_namespace -ne 0) && $has_user_configmap -ne 0 ]] ; then
 	cat <<EOF
 - name: "userconfigmap-${namespace}"
   configMap:
     name: "userconfigmap-${namespace}"
 EOF
-    fi
-    if [[ -n "${volumes[*]:-}" ]] ; then
-	local vol
-	for vol in "${volumes[@]:-}" ; do
-	    cat <<EOF
-- name: "$vol"
-EOF
-	    if [[ -n "${volume_type_keys[$vol]}" ]] ; then
-		cat <<EOF
-  ${volume_types[$vol]}:
-    ${volume_type_keys[$vol]}: "$(expand_volume "${volume_scoped_names[$vol]}" "$namespace" "$instance")"
-EOF
-	    else
-		cat <<EOF
-  ${volume_types[$vol]}: {}
-EOF
-	    fi
-	done
     fi
     if (( has_system_configmap )) ; then
 	cat <<EOF
@@ -2787,6 +2886,7 @@ EOF
 EOF
 
     fi
+    ((use_extra_volumes)) && extra_volumes_yaml
 }
 
 function create_affinity_yaml() {
@@ -2985,7 +3085,10 @@ function create_namespace() {
 	return 1
     fi
     if ((use_namespaces)) ; then
-	namespace_exists "$namespace" || create_object $force -t namespace "$namespace" <<EOF 2>&1
+	local -i ns_exists=0
+	namespace_exists "$namespace" && ns_exists=1
+	((ns_exists && remove_namespaces == -1)) && remove_namespaces=0
+	((ns_exists)) || create_object $force -t namespace "$namespace" <<EOF 2>&1
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -3162,7 +3265,8 @@ function create_spec() {
     local scheduler_name
     local node_selector=$node_selector
     local replica=0
-    while getopts "A:c:r:s:E:PpR:" opt "$@" ; do
+    local use_extra_volumes=
+    while getopts "A:c:r:s:E:PpR:V" opt "$@" ; do
 	case "$opt" in
 	    A) affinity_yaml=$OPTARG ;;
 	    c) node_class=$OPTARG    ;;
@@ -3172,6 +3276,7 @@ function create_spec() {
 	    R) replica=$OPTARG	     ;;
 	    P)			     ;;
 	    p)			     ;;
+	    V) use_extra_volumes=-V  ;;
 	    *)                       ;;
 	esac
     done
@@ -3201,6 +3306,7 @@ function create_spec() {
     if [[ $runtime_class = runc ]] ; then
 	runtime_class=
     fi
+    # shellcheck disable=SC2046
     cat <<EOF
 spec:
   terminationGracePeriodSeconds: 1
@@ -3210,7 +3316,7 @@ ${runtime_class:+$(indent 2 <<< "runtimeClassName: \"$runtime_class\"")}
 ${affinity_yaml:+$(indent 2 <<< "$affinity_yaml")}
   containers:
 $(indent 2 "$create_container_function" -R "$replica" "$@")
-$(indent 2 volumes_yaml "$namespace" "$instance" "$secret_count")
+$(indent 2 volumes_yaml $use_extra_volumes "$namespace" "$instance" "$secret_count")
 EOF
 }
 
@@ -3235,6 +3341,92 @@ $(indent 2 standard_pod_metadata_yaml "$namespace" client)
 $(indent 2 standard_labels_yaml -c "$node_class" -l "$workload" "$namespace" "${instance}" "${replica}")
 $(create_spec -A "$affinity_yaml" -c "$node_class" ${scheduler:+-E "$scheduler"} -R "$replica" "$@")
   restartPolicy: Never
+EOF
+    done
+}
+
+function vm_volume_devices_yaml() {
+    local volspec
+    local -i emptydiskid=0
+    for volspec in "${volumes[@]}" ; do
+	local -a args
+	IFS=: read -ra args <<< "$volspec"
+	local name=${args[0]}
+	local type=${args[1]}
+	local mountpoint=${args[2]}
+	[[ ${type,,} = emptydir ]] && continue
+	args=("${args[@]:3}")
+	local opt
+	local value
+	local bus=virtio
+	local cache=
+	local arg
+	for arg in "${args[@]}" ; do
+	    IFS='=' read -r opt value <<< "$arg"
+	    case "$opt" in
+		bus)   bus="$value"   ;;
+		cache) cache="$value" ;;
+		*)		      ;;
+	    esac
+	done
+	[[ "${type,,}" = emptydisk ]] && name="cbemptydisk$((emptydiskid++))"
+	cat <<EOF
+- name: $name
+  serial: $name
+  disk:
+    bus: $bus
+${cache:+    cache: $cache}
+EOF
+    done
+}
+
+function vm_volume_mounts_yaml() {
+    local volspec
+    local -i emptydiskid=0
+    for volspec in "${volumes[@]}" ; do
+	IFS=: read -ra args <<< "$volspec"
+	local name=${args[0]}
+	local type=${args[1]}
+	local mountpoint=${args[2]}
+	[[ ${type,,} = emptydir ]] && continue
+	args=("${args[@]:3}")
+	local mountopts=
+	local fstype
+	if [[ ${type,,} = emptydisk ]] ; then
+	    fstype=ext4
+	else
+	    fstype=
+	fi
+	local fsopts=
+	local bus=virtio
+	local inodes=
+	for arg in "${args[@]}" ; do
+	    local opt
+	    local value
+	    IFS='=' read -r opt value <<< "$arg"
+	    case "$opt" in
+		bus)	   bus="$value"	      ;;
+		inodes)    inodes="$value"    ;;
+		mountopts) mountopts="$value" ;;
+		fstype)    fstype="$value"    ;;
+		fsopts)    fsopts="$value"    ;;
+		*)			      ;;
+	    esac
+	done
+	[[ "${type,,}" = emptydisk ]] && name="cbemptydisk$((emptydiskid++))"
+	name="${bus}-${name}"
+	if [[ -n "$fstype" ]] ; then
+	    local sinodes=
+	    [[ $fstype = ext* ]] && sinodes=${inodes:+"-N '$inodes'"}
+	    local force=
+	    [[ $fstype = xfs ]] && force=-f
+	    # shellcheck disable=SC2016
+	    command="'mkfs.${fstype}' $force $sinodes $fsopts '/dev/disk/by-id/$name' && "
+	fi
+	command+="mkdir -p '$mountpoint' && mount $mountopts '/dev/disk/by-id/$name' '$mountpoint' && chmod 777 '$mountpoint'"
+	set +x
+	cat <<EOF
+- "$command"
 EOF
     done
 }
@@ -3298,7 +3490,7 @@ function create_vm_deployment() {
 			local contents
 			read -r contents < "$file"
 			cat <<EOF
-- "echo '$contents' > \"$HOME/.ssh/${file##*/}\" && chmod 644 \"$HOME/.ssh/${file##*/}\""
+- "echo '$contents' >> \"$HOME/.ssh/authorized_keys\" && chmod 600 \"$HOME/.ssh/authorized_keys\""
 EOF
 			;;
 		    *)
@@ -3308,67 +3500,6 @@ EOF
 		warn "$file does not exist or is not a plain file"
 	    fi
 	done
-    }
-    function create_emptydisk_volumes() {
-	local -i id
-	if [[ -n "${vm_emptydisk_list[*]}" ]] ; then
-	    for ((id = 0; i < ${#vm_emptydisk_list[@]}; i++)) ; do
-		local mountpoint=${vm_emptydisk_list[$id]}
-		cat << EOF
-- name: emptydisk-${id}
-  emptyDisk:
-    capacity: "${vm_emptydisks[$mountpoint]}"
-EOF
-	    done
-	fi
-    }
-    function create_emptydisk_devices() {
-	local -i id
-	if [[ -n "${vm_emptydisk_list[*]}" ]] ; then
-	    for ((id = 0; id < ${#vm_emptydisk_list[@]}; id++)) ; do
-		local mountpoint=${vm_emptydisk_list[$id]}
-		local -a emptydisk_args=()
-		IFS=: read -ra emptydisk_args <<< "${vm_emptydisk_options[$mountpoint]}"
-		local arg=
-		local cache=
-		for arg in "${emptydisk_args[@]}" ; do
-		    if [[ $arg = "cache="* ]] ; then
-			cache="  cache: ${arg/cache=/}"
-		    fi
-		done
-		cat << EOF
-- name: emptydisk-${id}
-  disk:
-    bus: virtio
-$cache
-EOF
-	    done
-	fi
-    }
-    function create_emptydisk_mounts() {
-	local -i id
-	if [[ -n "${vm_emptydisk_list[*]}" ]] ; then
-	    for ((id = 0; id < ${#vm_emptydisk_list[@]}; id++)) ; do
-		local device="/dev/vd${vm_emptydisk_suffixes:$id:1}"
-		local mountpoint=${vm_emptydisk_list[$id]}
-		local mountopts=
-		local fs=ext4
-		local fsopts=
-		local -a emptydisk_args=()
-		IFS=: read -ra emptydisk_args <<< "${vm_emptydisk_options[$mountpoint]}"
-		for arg in "${emptydisk_args[@]}" ; do
-		    case "$arg" in
-			"mountopts="*) mountopts="${arg/mountopts=/-o }";;
-			"fstype="*)    fs="${arg/fstype=/}"		;;
-			"fsopts="*)    fsopts="${arg/fsopts=/}"		;;
-			*)						;;
-		    esac
-		done
-		cat <<EOF
-- "'mkfs.$fs' $fsopts '$device' && mkdir -p '$mountpoint' && mount $mountopts '$device' '$mountpoint' && chmod 777 '$mountpoint'"
-EOF
-	    done
-	fi
     }
     get_sysctls
     local node_class=client
@@ -3428,7 +3559,7 @@ $(indent 6 vm_evict_strategy)
             - name: containerdisk
               disk:
                 bus: virtio
-$(indent 12 create_emptydisk_devices)
+$(indent 12 vm_volume_devices_yaml)
             - name: systemconfigmap-${namespace}
               serial: systemconfigmap
               volumeName: systemconfigmap-${namespace}
@@ -3439,16 +3570,10 @@ $(indent 8 container_resources_yaml)
       terminationGracePeriodSeconds: $vm_grace_period
 $(indent 6 <<< "$affinity_yaml")
       volumes:
+$(indent 8 volumes_yaml -n "$namespace" "$instance" "$secret_count")
         - name: containerdisk
           containerDisk:
             image: $vm_image
-$(indent 8 create_emptydisk_volumes)
-        - name: systemconfigmap-${namespace}
-          configMap:
-            name: systemconfigmap-${namespace}
-        - name: userconfigmap-${namespace}
-          configMap:
-            name: userconfigmap-${namespace}
         - name: cloudinitdisk
           cloudInitNoCloud:
             userData: |-
@@ -3459,10 +3584,10 @@ $(indent 8 create_emptydisk_volumes)
               chpasswd: { expire: False }
               bootcmd:
                 - "mkdir '$system_configmap_mount_dir' '$user_configmap_mount_dir'"
-$(indent 16 create_emptydisk_mounts)
+$(indent 16 vm_volume_mounts_yaml)
                 - "mount -o ro /dev/disk/by-id/ata-QEMU_HARDDISK_systemconfigmap '$system_configmap_mount_dir'"
                 - "mount -o ro /dev/disk/by-id/ata-QEMU_HARDDISK_userconfigmap '$user_configmap_mount_dir'"
-$(indent 16 insert_ssh_keys "${vm_ssh_pubkey[@]}")
+$(indent 16 insert_ssh_keys "${vm_ssh_keyfile}.pub")
                 $(install_required_packages)
 $(indent 16 setup_commands)
 $(indent 16 setup_sysctls)
@@ -3588,7 +3713,6 @@ function create_generic_deployment() {
     done
 }
 
-
 function create_container_sync() {
     local OPTARG
     local OPTIND=0
@@ -3623,7 +3747,7 @@ $(indent 2 standard_environment)
   - "$sync_ns_port"
   - "$expected_clients"
   - "$initial_expected_clients"
-$(indent 2 volume_mounts_yaml "$namespace" 0 0)
+$(indent 2 volume_mounts_yaml -V "$namespace" 0 0)
 $(indent 2 restricted_security_context)
 EOF
 }
@@ -3644,7 +3768,7 @@ $(indent 2 standard_labels_yaml -c sync -S -t 'sync' 'sync' "${basename}-sync")
   selector:
     matchLabels:
       app: ${namespace}
-$(create_container_function=create_container_sync create_spec -P -s '' -c sync -r '' "$namespace" 0 0 "$@")
+$(create_container_function=create_container_sync create_spec -V -P -s '' -c sync -r '' "$namespace" 0 0 "$@")
 $(indent 2 <<< "$affinity_yaml")
   restartPolicy: Never
 EOF
@@ -3690,7 +3814,7 @@ $(indent 2 standard_environment)
   - "$sync_ns_port"
   - "none"
   - "$drop_cache_port"
-$(indent 2 volume_mounts_yaml "$namespace" 0 0)
+$(indent 2 volume_mounts_yaml -V "$namespace" 0 0)
   - mountPath: "/proc-sys-vm"
     name: "proc-sys-vm"
 EOF
@@ -3716,7 +3840,7 @@ $(indent 2 standard_labels_yaml -c dc -s dc -S -t drop-cache "$workload" "$names
   selector:
     matchLabels:
       replica: ${namespace}-${workload}-${instance}-${replica}
-$(create_container_function=create_container_drop_cache create_spec -P -s '' -c drop-cache -r '' "$namespace" "$instance" 0)
+$(create_container_function=create_container_drop_cache create_spec -V -P -s '' -c drop-cache -r '' "$namespace" "$instance" 0)
   - name: "proc-sys-vm"
     hostPath:
       path: "/proc/sys/vm"
@@ -3903,16 +4027,22 @@ function create_all_objects() {
 function _do_cleanup_1() {
     local ltimeout="${force_cleanup_timeout:+--timeout=${timeout}s}"
     local force=0
+    local -i precleanup=0
     local OPTIND=0
     local opt
-    while getopts 'f' opt "$@" ; do
+    while getopts 'fp' opt "$@" ; do
 	case "$opt" in
-	    f) force=1 ;;
-	    *)         ;;
+	    f) force=1 	    ;;
+	    p) precleanup=1 ;;
+	    *)		    ;;
 	esac
     done
     shift $((OPTIND-1))
     local objects_to_clean
+    if [[ $use_namespaces -ne 0 && $precleanup -ne 0 && $remove_namespaces -eq -1 &&
+	      -n "$(__OC get ns -l "${basename}-sync" 2>/dev/null; __OC get ns -l "${basename}" 2>/dev/null)" ]] ; then
+	remove_namespaces=0
+    fi
     if ((use_namespaces && remove_namespaces)) ; then
 	objects_to_clean=ns
     else
@@ -3960,29 +4090,30 @@ function _do_cleanup() {
 function do_cleanup() {
     local force=
     local OPTIND=0
-    local -i precleanup=0
+    local precleanup=
     local opt
+    local -a args=("$@")
     while getopts 'fp' opt "$@" ; do
 	case "$opt" in
-	    f) force=-f      ;;
-	    p) precleanup=1 ;;
+	    f) force=-f     ;;
+	    p) precleanup=-p;;
 	    *)              ;;
 	esac
     done
     shift "$OPTIND"
     (( doit )) || return 0
-    if [[ -n "${injected_errors[precleanup]:-}" && $precleanup -gt 0 ]] ; then
+    if [[ -n "${injected_errors[precleanup]:-}" && $precleanup = -p ]] ; then
 	warn "*** Injecting precleanup error ${inject_errors[precleanup]:-}"
 	sleep "${injected_errors[precleanup]:-}"
 	killthemall "Cleanup timed out!"
     fi
-    if [[ -n "${injected_errors[cleanup]:-}" && $precleanup -eq 0 ]] ; then
+    if [[ -n "${injected_errors[cleanup]:-}" && $precleanup = -p ]] ; then
 	warn "*** Injecting cleanup error ${inject_errors[cleanup]:-}"
 	sleep "${injected_errors[cleanup]:-}"
 	killthemall "Cleanup timed out!"
     fi
     # shellcheck disable=SC2086
-    _do_cleanup $force || killthemall "Cleanup timed out!"
+    _do_cleanup "$@" || killthemall "Cleanup timed out!"
 }
 
 ################################################################
@@ -4132,6 +4263,13 @@ function expand_string() {
     echo "$string"
 }
 
+function setup_namespaces() {
+    allocate_namespaces || return 1
+    if [[ $sync_start -ne 0 && -n "$sync_namespace" && $sync_in_first_namespace -eq 0 ]] ; then
+	create_namespace -S -f "$sync_namespace" 1>&2 || return 1
+    fi
+}
+
 function run_clusterbuster_2() {
     local -A expected_secrets=()
     local -i status=0
@@ -4161,12 +4299,9 @@ function run_clusterbuster_2() {
 	    exec 2> >(trap '' TERM INT HUP USR1 USR2; stdbuf -i0 -o0 -e0 tee >(trap '' TERM INT HUP USR1 USR2; stdbuf -i0 -o0 -e0 tr "\r" "\n" > "$artifactdir/stderr.log") >&2)
 	fi
     fi
-    allocate_namespaces || return 1
-    find_first_deployment || return 1
-    if [[ $sync_start -ne 0 && -n "$sync_namespace" && $sync_in_first_namespace -eq 0 ]] ; then
-	create_namespace -S -f "$sync_namespace" 1>&2 || return 1
-    fi
+    setup_namespaces || return 1
     create_all_objects namespaces || return 1
+    find_first_deployment || return 1
     if get_sync -q ; then
 	if (( use_namespaces )) ; then
 	    global_sync_service="svc-${sync_namespace}-sync.${sync_namespace}.svc.cluster.local"
@@ -4197,25 +4332,29 @@ function run_clusterbuster_2() {
 function run_clusterbuster_1() {
     protect_pids "$BASHPID"
     local -i status=0
-    run_clusterbuster_2
-    status=$?
-    if (( (cleanup_always || (cleanup && status == 0)) && doit)) ; then
-	do_cleanup || {
-	    if ((status == 0)) ; then
-		status=1
-	    fi
-	}
-    fi
-
-    if ((status)) ; then
-	fatal -w "Clusterbuster failed!"
+    if ((create_namespaces_only)) ; then
+	setup_namespaces
     else
-	if [[ $take_prometheus_snapshot -gt 0 && -n "$artifactdir" ]] ; then
-	    retrieve_prometheus_snapshot "$artifactdir"
+	run_clusterbuster_2
+	status=$?
+	if (( (cleanup_always || (cleanup && status == 0)) && doit)) ; then
+	    do_cleanup || {
+		if ((status == 0)) ; then
+		    status=1
+		fi
+	    }
 	fi
+
+	if ((status)) ; then
+	    fatal -w "Clusterbuster failed!"
+	else
+	    if [[ $take_prometheus_snapshot -gt 0 && -n "$artifactdir" ]] ; then
+		retrieve_prometheus_snapshot "$artifactdir"
+	    fi
+	fi
+	get_run_failed && status=1
+	return $status
     fi
-    get_run_failed && status=1
-    return $status
 }
 
 ################################################################
@@ -4223,11 +4362,112 @@ function run_clusterbuster_1() {
 ################################################################
 
 function remove_tmpdir() {
-    [[ -n "${cb_tempdir:-}" && -d "$cb_tempdir" && $cb_tempdir = "/tmp/cbtmp_"* ]] && rm -rf "$cb_tempdir" && unset cb_tempdir
+    if [[ -n "${cb_tempdir:-}" && -d "$cb_tempdir" && $cb_tempdir = "/tmp/cbtmp_"* ]] ; then
+	if ((preserve_tmpdir)) ; then
+	    warn "*** Preserving temporary directory $cb_tempdir"
+	else
+	    rm -rf "$cb_tempdir"
+	fi
+	unset cb_tempdir
+    fi
+}
+
+function validate_resource() {
+    local rtype=$1
+    local token
+    local status=0
+    shift
+    for token in "$@" ; do
+	if [[ $token != *'='* ]] ; then
+	    warn "Invalid $rtype specification $token (must be <resource>=<quantity>)"
+	    status=1
+	fi
+    done
+    return $status
+}
+
+function validate_volumes() {
+    local -a vol_errors=()
+    local -A mount_volume_map=()
+    local -A mount_name_map=()
+    local volspec
+    for volspec in "${volumes[@]}" ; do
+	local -a args
+	IFS=: read -ra args <<< "$volspec"
+	((${#args[@]} < 3)) && vol_errors+=("Volume name, type, and mountpoint must be specified for $volspec")
+	local name="${args[0]}"
+	local type="${args[1],,}"
+	local mountpoint="${args[2]}"
+	if [[ -z "$name" && -z "$type" && -z "$mountpoint" ]] ; then
+	    mount_volume_map=()
+	    continue
+	fi
+	mount_volume_map["$mountpoint"]="$volspec"
+	mount_name_map["$mountpoint"]="$name"
+	# Remove a mountpoint from the list
+	[[ -z "$type" ]] && continue
+	args=("${args[@]:3}")
+	case "${type}" in
+	    pvc|persistentvolumeclaim)
+		[[ -z "$name" ]] && warn "Name ignored for PVC: $volspec"
+		;;
+	    emptydisk|emptydir)
+		[[ -n "$name" ]] && warn "Name ignored for $type volume: $volspec"
+		;;
+	    *)
+		fatal "Unknown volume type $type"
+		;;
+	esac
+	local -i size=
+	for arg in "${args[@]}" ; do
+	    if [[ $arg != *'='* ]] ; then
+		vol_errors+=("Cannot parse volume argument $arg from $volspec")
+	    fi
+	    local opt
+	    local value
+	    IFS='=' read -r opt value <<< "$arg"
+	    case "${opt,,}" in
+		size)
+		    size=$(parse_size "$value") || vol_errors+=("Cannot parse size $value for $volspec")
+		    ((size <= 0)) && vol_errors+=("Volume size must be greater than zero for $volspec")
+		    ;;
+		*)
+		    ;;
+	    esac
+	done
+	if [[ $type = emptydisk && (-z "$size" || $size -le 0) ]] ; then
+	    vol_errors+=("Positive size must be provided for emptydisk volumes ($volspec)")
+	fi
+    done
+    local -A used_names=()
+    local name
+    for name in "${mount_name_map[@]}" ; do
+	if [[ -n "$name" && -n "${used_names[$name]:-}" ]] ; then
+	    vol_errors+=("Duplicate volume name $name")
+	fi
+	used_names[$name]=1
+    done
+    local nvolumes=()
+    local -A used_volumes=()
+    for volspec in "${volumes[@]}" ; do
+	local -a args
+	IFS=: read -ra args <<< "$volspec"
+	local mountpoint="${args[2]}"
+	if [[ -z "${used_volumes[$mountpoint]:-}" && $volspec = "${mount_volume_map[$mountpoint]}" ]] ; then
+	    used_volumes[$mountpoint]=1
+	    nvolumes+=("$volspec")
+	fi
+    done
+    if [[ -n "${vol_errors[*]}" ]] ; then
+	local errstr
+	errstr=$(IFS=$'\n'; echo -e "The following errors occurred while validating volumes:\n${vol_errors[*]}")
+	fatal "$errstr"
+    fi
+    volumes=("${nvolumes[@]}")
 }
 
 function validate_options() {
-    [[ -z "$requested_workload" ]] && help "Workload must be specified with --workload"fi
+    [[ -z "$requested_workload" ]] && help "Workload must be specified with --workload"
 
     local iworkload=$requested_workload
     requested_workload=$(get_workload "$requested_workload") || help_extended "(Unknown workload '$iworkload')"
@@ -4271,15 +4511,13 @@ function validate_options() {
 	    if ((containers_per_pod > 1)) ; then
 		help "ERROR: containers_per_pod must equal 1 for vm deployments"
 	    fi
-	    deployment_type=vm                                           ;;
+	    deployment_type=vm
+	    runtime_class=vm
+	    ;;
 	*)
 	    help "--deployment_type must be pod, vm, deployment, or replicaset"
+	    ;;
     esac
-    if [[ ${deployment_type,,} != vm ]] ; then
-	vm_emptydisk_list=()
-	vm_emptydisks=()
-	vm_emptydisk_options=()
-    fi
 
     [[ -z "$OC" && $doit -gt 0 ]] && fatal "Cannot find oc or kubectl command, exiting!"
 
@@ -4288,20 +4526,28 @@ function validate_options() {
     validate_resource resource_limit "${resource_limits[@]}" || resource_validation_failed=1
     ((resource_validation_failed)) && exit 1
 
-    for ((i = 0; i < emptydir_volumes; i++)) ; do
-	emptydirs+=("/mnt/volume-$i")
-    done
+    validate_volumes
 
     job_name=${job_name:-${requested_workload:-}}
 
-    if [[ ${runtime_class:-} = "$kata_runtime_class" ]] ; then
-	((virtiofsd_direct)) && virtiofsd_args+=('"-o"' '"allow_direct_io"')
-	((virtiofsd_writeback)) && virtiofsd_args+=('"-o"' '"writeback"')
-	((virtiofsd_threadpoolsize)) && virtiofsd_args+=("\"--thread-pool-size=$virtiofsd_threadpoolsize\"")
-	if [[ -n "${virtiofsd_args[*]:-}" ]] ; then
-	    pod_annotations+=("io.katacontainers.config.hypervisor.virtio_fs_extra_args: '[$(IFS=,; echo "${virtiofsd_args[*]}")]'")
-	fi
-    fi
+    case "$runtime_class" in
+	vm)
+	    if [[ -z "$vm_ssh_keyfile" ]] ; then
+		ssh-keygen -C '' -t "$ssh_alg" -q -f "$cb_tempdir/id_${ssh_alg}" -N ''
+		vm_ssh_keyfile="$cb_tempdir/id_${ssh_alg}"
+	    fi
+	    ;;
+	kata)
+	    ((virtiofsd_direct)) && virtiofsd_args+=('"-o"' '"allow_direct_io"')
+	    ((virtiofsd_writeback)) && virtiofsd_args+=('"-o"' '"writeback"')
+	    ((virtiofsd_threadpoolsize)) && virtiofsd_args+=("\"--thread-pool-size=$virtiofsd_threadpoolsize\"")
+	    if [[ -n "${virtiofsd_args[*]:-}" ]] ; then
+		pod_annotations+=("io.katacontainers.config.hypervisor.virtio_fs_extra_args: '[$(IFS=,; echo "${virtiofsd_args[*]}")]'")
+	    fi
+	    ;;
+	*)
+	    ;;
+    esac
     if ((pod_start_timeout < 0)) ; then
 	if [[ $deployment_type = vm ]] ; then
 	    pod_start_timeout=$default_vm_start_timeout
@@ -4321,7 +4567,7 @@ load_workloads "$CB_LIBPATH"
 
 set_metrics_file default
 
-while getopts ":B:Eef:Hhno:P:w:Qqv-:" opt ; do
+while getopts ":B:Eef:Hhno:P:w:QqvN-:" opt ; do
     case "$opt" in
 	B) process_option "basename=$OPTARG"	 ;;
 	E) process_option "exit_at_end=0"	 ;;
@@ -4329,6 +4575,7 @@ while getopts ":B:Eef:Hhno:P:w:Qqv-:" opt ; do
 	f) process_job_file "$OPTARG"		 ;;
 	h) help					 ;;
 	H) help_extended			 ;;
+	N) process_option "createnamespacesonly=1";;
 	n) process_option "doit=0"		 ;;
 	o) process_option "reportformat=$OPTARG" ;;
 	P) process_option "workload=$OPTARG"     ;;

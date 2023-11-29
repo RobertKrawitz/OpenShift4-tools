@@ -23,6 +23,7 @@
 declare -Ag __registered_workloads__=()
 declare -Ag __workload_aliases__=()
 declare -Ag debug_conditions=()
+shopt -s extdebug
 export PIDS_TO_NOT_KILL="$$ $BASHPID"
 
 function timestamp() {
@@ -95,7 +96,6 @@ function parse_size() {
 	esac
 	shift
     done
-    shift $((OPTIND-1))
     local sizes=$*
     sizes=${sizes//,/ }
     for size in $sizes ; do
@@ -137,26 +137,9 @@ function parse_optvalues() {
 }
 
 function parse_option() {
-    local OPTIND=0
-    local OPTARG
-    local echo_workload=
-    local workload=
-    local opt
-    while getopts 'w' opt "$@" ; do
-	case "$opt" in
-	    w) echo_workload=1 ;;
-	    *)		       ;;
-	esac
-    done
-    shift $((OPTIND-1))
     local option=$1
     option=${option## }
     option=${option%% }
-    if [[ $option =~ ^([^=:]+)(:([[:alnum:]]+))?\ *=\ *([^\ ].*)? ]] ; then
-	workload="${BASH_REMATCH[3]}"
-	option="${BASH_REMATCH[1]}=${BASH_REMATCH[4]}"
-    fi
-    [[ -n "$option" ]] || return
     local optname
     local optvalue
     optname=${option%%=*}
@@ -175,7 +158,7 @@ function parse_option() {
 	fi
     fi
     local noptname1=${noptname//_/}
-    echo "$noptname1 $noptname $optvalue${echo_workload:+ $workload}"
+    echo "$noptname1 $noptname $optvalue"
 }
 
 function _help_options_workloads() {
@@ -396,6 +379,66 @@ function get_workload() {
     else
 	return 1
     fi
+}
+function mk_num_list() {
+    echo "[$(IFS=','; echo "$*")]"
+}
+
+function mk_str_list() {
+    local _strings=()
+    local _arg
+    for _arg in "$@" ; do
+	_strings+=("\"$_arg\"")
+    done
+    echo "[$(IFS=','; echo "${_strings[*]}")]"
+}
+
+# Based on https://gist.github.com/akostadinov/33bb2606afe1b334169dfbf202991d36
+function stack_trace() {
+    local -a stack=()
+    local stack_size=${#FUNCNAME[@]}
+    local -i start=${1:-1}
+    local -i max_frames=${2:-$stack_size}
+    ((max_frames > stack_size)) && max_frames=$stack_size
+    local -i i
+    local -i max_funcname=0
+    local -i stack_size_len=${#max_frames}
+    local -i max_filename_len=0
+    local -i max_line_len=0
+
+    # to avoid noise we start with 1 to skip the stack function
+    for (( i = start; i < max_frames; i++ )); do
+	local func="${FUNCNAME[$i]:-(top level)}"
+	((${#func} > max_funcname)) && max_funcname=${#func}
+	local src="${BASH_SOURCE[$i]:-(no file)}"
+	# Line number is used as a string here, not an int,
+	# since we want the length of it as a string.
+	local line="${BASH_LINENO[$(( i - 1 ))]}"
+	[[ $src = "${__realsc__:-}" ]] && src="${__topsc__:-}"
+	((${#src} > max_filename_len)) && max_filename_len=${#src}
+	((${#line} > max_line_len)) && max_line_len=${#line}
+    done
+    local stack_frame_str="    (%${stack_size_len}d)   %${max_filename_len}s:%-${max_line_len}d  %${max_funcname}s%s"
+    local -i arg_count=${BASH_ARGC[0]}
+    for (( i = start; i < max_frames; i++ )); do
+	local func="${FUNCNAME[$i]:-(top level)}"
+	local -i line="${BASH_LINENO[$(( i - 1 ))]}"
+	local src="${BASH_SOURCE[$i]:-(no file)}"
+	[[ $src = "${__realsc__:-}" ]] && src="${__topsc__:-}"
+	local -i frame_arg_count=${BASH_ARGC[$i]}
+	local argstr=
+	if ((frame_arg_count > 0)) ; then
+	    local -i j
+	    for ((j = arg_count + frame_arg_count - 1; j >= arg_count; j--)) ; do
+		argstr+=" ${BASH_ARGV[$j]}"
+	    done
+	fi
+	# We need a dynamically generated string to get the columns correct.
+	# shellcheck disable=SC2059
+	stack+=("$(printf "$stack_frame_str" "$((i - start))" "$src" "$line" "$func" "${argstr:+ $argstr}")")
+	arg_count=$((arg_count + frame_arg_count))
+    done
+    (IFS=$'\n'; echo "${stack[*]}")
 }
 
 # The big red button if something goes wrong.

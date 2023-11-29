@@ -181,7 +181,7 @@ class ClusterBusterReporter:
                 jdata = item
             else:
                 raise ClusterBusterUnrecognizedItemException(f"Unrecognized item {item}")
-            answers.append(ClusterBusterReporter.report_one("N/A", jdata, report_format, extras=extras))
+            answers.append(ClusterBusterReporter.report_one(None, jdata, report_format, extras=extras))
         return answers
 
     @staticmethod

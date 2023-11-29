@@ -57,24 +57,19 @@ function cpusoaker_test_1() {
 
 function cpusoaker_test() {
     local default_job_runtime=$1
-    if ((___cpusoaker_replica_increment < 1)) ; then
-	echo "Replica increment must be at least 1" 1>&2
-	return
-    fi
-    if ((___cpusoaker_job_runtime <= 0)) ; then
-	___cpusoaker_job_runtime=$default_job_runtime
-    fi
-    ___cpusoaker_job_timeout=$(compute_timeout "$___cpusoaker_job_timeout")
     local -A runtimes_tested=()
     local runtime
     for runtime in "${runtimeclasses[@]}" ; do
-	local xruntime=${runtime:-runc}
-	if [[ -z "${runtimes_tested[$xruntime]:-}" ]] ; then
-	    if [[ $runtime = runc ]] || check_runtimeclass "$xruntime" >/dev/null 2>&1 ; then
-		runtimes_tested[$xruntime]=1
-		cpusoaker_test_1 "$runtime"
-	    fi
+	process_workload_options "$workload" "${runtimeclass:-pod}"
+	if ((___cpusoaker_replica_increment < 1)) ; then
+	    echo "Replica increment must be at least 1" 1>&2
+	    return 1
 	fi
+	if ((___cpusoaker_job_runtime <= 0)) ; then
+	    ___cpusoaker_job_runtime=$default_job_runtime
+	fi
+	___cpusoaker_job_timeout=$(compute_timeout "$___cpusoaker_job_timeout")
+	cpusoaker_test_1 "$runtime"
     done
 }
 
@@ -89,9 +84,13 @@ function cpusoaker_initialize_options() {
 
 function cpusoaker_process_option() {
     local opt=$1
-    read -r noptname1 noptname optvalue workload <<< "$(parse_option -w "$opt")"
-    [[ -n "$workload" && $workload != cpusoaker ]] && return 2
+    local noptname1
+    local noptname
+    local optvalue
+    # shellcheck disable=SC2034
+    read -r noptname1 noptname optvalue <<< "$(parse_ci_option "$opt" "$workload" "${runtimeclass:-pod}")"
     case "$noptname1" in
+	'')		    						;;
 	cpusoakerstarting*) ___cpusoaker_starting_replicas=$optvalue	;;
 	cpusoakerreplicai*) ___cpusoaker_replica_increment=$optvalue	;;
 	cpusoaker*runtime)  ___cpusoaker_job_runtime=$optvalue		;;

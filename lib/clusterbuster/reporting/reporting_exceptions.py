@@ -15,4 +15,4 @@
 
 class ClusterBusterReportingException(Exception):
     def __init__(self, *args):
-        super().__init__('\n'.join(list(*args)))
+        super().__init__('\n'.join([str(arg) for arg in args]))

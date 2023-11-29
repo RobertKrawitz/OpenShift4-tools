@@ -88,6 +88,8 @@ declare -a failures=()
 declare -a jobs=()
 declare -A job_runtimes=()
 declare -A runtimeclass_ok=()
+declare prerun=
+declare postrun=
 
 declare starting_timestamp=
 declare job_datestamp
@@ -220,6 +222,8 @@ function finis() {
 	    for job in "${jobs[@]}" ; do
 		printf "%10s %s\n" "${job_runtimes[$job]}" "$job"
 	    done
+	else
+	    fail=1
 	fi
 	if [[ -n "${failures[*]}" ]] ; then
 	    echo "Failing jobs:"
@@ -323,13 +327,17 @@ function splitarg() {
 function get_available_nodes() {
     local -a nodes
     local role
-    for role in 'node-role.kubernetes.io/clusterbuster=' 'node-role.kubernetes.io/worker=,node-role.kubernetes.io/master!=,node-role.kubernetes.io/infra!=' 'node-role.kubernetes.io/worker=' ; do
-	readarray -d ' ' -t nodes < <("${OC}" get node -l "$role" -o jsonpath='{.items[*].metadata.name}')
-	if ((${#nodes[@]} >= 1)) ; then
-	    echo "${nodes[*]}"
-	    return
-	fi
-    done
+    if ((debugonly)) ; then
+	echo node1 node2 node3
+    else
+	for role in 'node-role.kubernetes.io/clusterbuster=' 'node-role.kubernetes.io/worker=,node-role.kubernetes.io/master!=,node-role.kubernetes.io/infra!=' 'node-role.kubernetes.io/worker=' ; do
+	    readarray -d ' ' -t nodes < <("${OC}" get node -l "$role" -o jsonpath='{.items[*].metadata.name}')
+	    if ((${#nodes[@]} >= 1)) ; then
+		echo "${nodes[*]}"
+		return
+	    fi
+	done
+    fi
     (IFS=$'\n'; echo "${nodes[*]}")
 }
 
@@ -357,9 +365,13 @@ function set_pin_nodes() {
 
 function get_node_memory() {
     local node=$1
-    local mem
-    mem=$("${OC}" get node "$node" -ojsonpath='{.status.allocatable.memory}')
-    parse_size "$mem"
+    if ((debugonly)) ; then
+	echo "$((32 * 1024 * 1024 * 1024))"
+    else
+	local mem
+	mem=$("${OC}" get node "$node" -ojsonpath='{.status.allocatable.memory}')
+	parse_size "$mem"
+    fi
 }
 
 function list_profiles() {
@@ -379,17 +391,32 @@ function list_profiles() {
 
 function process_profile() {
     local profile=$1
-    if [[ -f "${__profiledir__}/${profile}.profile" ]] ; then
+    local profile_in_dir=0
+    if [[ $profile != *'/'* ]] ; then
+	profile="${__profiledir__}/${profile}.profile"
+	profile_in_dir=1
+    fi
+    if [[ -f "$profile" && -r "$profile" ]] ; then
 	local line=
 	while IFS= read -r line ; do
+	    # shellcheck disable=SC1003
+	    while [[ $line = *'\' ]] ; do
+		line=${line::-1}
+		local tline
+		IFS= read -r tline
+		[[ -z "$tline" ]] && break
+		line+="$tline"
+	    done
 	    line=${line%%#*}
 	    line=${line## }
 	    line=${line##	}
 	    if [[ -z "$line" ]] ; then continue; fi
 	    process_option "$line"
-	done < "${__profiledir__}/${profile}.profile"
-    else
+	done < "$profile"
+    elif ((profile_in_dir)) ; then
 	fatal "Cannot find profile $profile in $__profiledir__"
+    else
+	fatal "Cannot find profile $profile"
     fi
 }
 
@@ -477,8 +504,12 @@ $(list_profiles '                                - ')
                                 distinct string to aid in later identification.
 
     All other options listed below may be of the form
-    --option:<workload>=value to specify that the value should apply
-    only to a particular workload.
+    --option:<workload><runtime>=value to specify that the value should apply
+    only to a particular workload and runtimeclass.  Either workload or
+    runtimeclass may be omitted or be of the form
+    :workload
+    :workload1,workload2 (list)
+    :!workload (negation)
 
     Workload-specific options:
 $(_help_options_workloads)
@@ -508,6 +539,104 @@ function set_pin_node() {
     fi
 }
 
+function _check_ci_option() {
+    local noptname=$1
+    local workload=$2
+    local runtime=$3
+    if [[ $noptname = *':'* && (-n "$workload" || -n "$runtime") ]] ; then
+	local optbase=
+	local optworkload=
+	local optruntime=
+	# shellcheck disable=SC2034
+	IFS=: read -r optbase optworkload optruntime <<< "$noptname"
+	if [[ (-z "$workload" || -z "$optworkload" || $workload = "$optworkload") &&
+		  (-z "$runtime" || -z "$optruntime" || $runtime = "$optruntime") ]] ; then
+	    true
+	elif [[ $optworkload = *'!'* || $optworkload = *','* ||
+		    $optruntime = *'!'* || $optruntime = *','* ]] ; then
+	    local -a optworkloads
+	    local -a optruntimes
+	    IFS=, read -ra optworkloads <<< "$optworkload"
+	    IFS=, read -ra optruntimes <<< "$optruntime"
+	    local item
+	    if [[ -n "$workload" && -n "$optworkload" ]] ; then
+		local found=0
+		for item in "${optworkloads[@]}" ; do
+		    if [[ $item = "$workload" ]] ; then
+			found=1
+			break
+		    elif [[ $item = '!'* && ${item:1} = "$workload" ]] ; then
+			return 1
+		    fi
+		done
+		((found)) || return 1
+	    fi
+	    if [[ -n "$runtime" && -n "$optruntime" ]] ; then
+		local found=0
+		for item in "${optruntimes[@]}" ; do
+		    [[ $item = "$runtime" || ($item = '!'* && ${item:1} != "$runtime") ]] && return 0
+		done
+		return 1
+	    fi
+	    return 0
+	else
+	    return 1
+	fi
+    fi
+}
+
+function parse_ci_option() {
+    local option=$1
+    local workload=${2:-}
+    local runtime=${3:-}
+    local noptname1 noptname optvalue
+    read -r noptname1 noptname optvalue <<< "$(parse_option "$option")"
+    if _check_ci_option "$noptname" "$workload" "$runtime" ; then
+	echo "${noptname1/:*/} ${noptname/:*/} $optvalue"
+	return 0
+    else
+	return 1
+    fi
+}
+
+function test_parse() {
+    function _test_parse() {
+	if parse_ci_option "$@" >/dev/null ; then
+	    echo "Y  $(parse_ci_option "$@")"
+	else
+	    echo "   $(parse_ci_option "$@")"
+	fi
+    }
+
+    _test_parse volume:files,fio:!vm=test-pvc:pvc:/var/tmp/clusterbuster:size=auto:inodes=auto files vm
+    _test_parse volume:files,fio:!vm=test-pvc:pvc:/var/tmp/clusterbuster:size=auto:inodes=auto files pod
+    _test_parse volume:files,fio:!vm=test-pvc:pvc:/var/tmp/clusterbuster:size=auto:inodes=auto files kata
+    _test_parse volume:files,fio:vm=test-pvc:pvc:/var/tmp/clusterbuster:size=auto:inodes=auto files vm
+    _test_parse volume:files,fio:vm=test-pvc:pvc:/var/tmp/clusterbuster:size=auto:inodes=auto files pod
+    _test_parse volume:files,fio:vm=test-pvc:pvc:/var/tmp/clusterbuster:size=auto:inodes=auto files kata
+    _test_parse volume:files,fio:!vm=test-pvc:pvc:/var/tmp/clusterbuster:size=auto:inodes=auto fio vm
+    _test_parse volume:files,fio:!vm=test-pvc:pvc:/var/tmp/clusterbuster:size=auto:inodes=auto fio pod
+    _test_parse volume:files,fio:!vm=test-pvc:pvc:/var/tmp/clusterbuster:size=auto:inodes=auto fio kata
+    _test_parse volume:files,fio:vm=test-pvc:pvc:/var/tmp/clusterbuster:size=auto:inodes=auto fio vm
+    _test_parse volume:files,fio:vm=test-pvc:pvc:/var/tmp/clusterbuster:size=auto:inodes=auto fio pod
+    _test_parse volume:files,fio:vm=test-pvc:pvc:/var/tmp/clusterbuster:size=auto:inodes=auto fio kata
+    _test_parse volume:files,fio:!vm=test-pvc:pvc:/var/tmp/clusterbuster:size=auto:inodes=auto cpusoaker vm
+    _test_parse volume:files,fio:!vm=test-pvc:pvc:/var/tmp/clusterbuster:size=auto:inodes=auto cpusoaker pod
+    _test_parse volume:files,fio:!vm=test-pvc:pvc:/var/tmp/clusterbuster:size=auto:inodes=auto cpusoaker kata
+    _test_parse volume:files,fio:vm=test-pvc:pvc:/var/tmp/clusterbuster:size=auto:inodes=auto cpusoaker vm
+    _test_parse volume:files,fio:vm=test-pvc:pvc:/var/tmp/clusterbuster:size=auto:inodes=auto cpusoaker pod
+    _test_parse volume:files,fio:vm=test-pvc:pvc:/var/tmp/clusterbuster:size=auto:inodes=auto cpusoaker kata
+    _test_parse volume:files:!pod,!kata=test-pvc:pvc:/var/tmp/clusterbuster:size=auto:inodes=auto files vm
+    _test_parse volume:files:vm=test-pvc:pvc:/var/tmp/clusterbuster:size=auto:inodes=auto
+    _test_parse volume:files:vm=test-pvc:pvc:/var/tmp/clusterbuster:size=auto:inodes=auto files
+    _test_parse volume:files:vm,kata=test-pvc:pvc:/var/tmp/clusterbuster:size=auto:inodes=auto files vm
+    _test_parse volume:files:pod,kata=test-pvc:pvc:/var/tmp/clusterbuster:size=auto:inodes=auto files vm
+    _test_parse volume:files:!vm=test-pvc:pvc:/var/tmp/clusterbuster:size=auto:inodes=auto files vm
+    _test_parse volume:files:vm=test-pvc:pvc:/var/tmp/clusterbuster:size=auto:inodes=auto fio
+    _test_parse volume:files,fio:vm=test-pvc:pvc:/var/tmp/clusterbuster:size=auto:inodes=auto fio vm
+    _test_parse volume:files,fio:!vm=:emptydir:/var/tmp/clusterbuster:size=auto fio
+}
+
 function check_clusterbuster_option() {
     local option=$1
     if [[ -z "${known_clusterbuster_options[*]}" ]] ; then
@@ -526,7 +655,7 @@ function process_option() {
     local optvalue
     local workload
     # shellcheck disable=SC2034
-    read -r noptname1 noptname optvalue workload <<< "$(parse_option -w "$option")"
+    read -r noptname1 noptname optvalue <<< "$(parse_ci_option "$option")"
     optvalue=$(splitarg "$optvalue")
     case "$noptname1" in
 	help*) help									;;
@@ -559,10 +688,13 @@ function process_option() {
     esac
 }
 
-
 function process_workload_options() {
-    local workload="$1"
-    shift
+    local OPTIND=0
+    local opt
+    local OPTARG
+    local workload=${1:-}
+    local runtimeclass=${2:-}
+    shift 2
     extra_clusterbuster_args=()
     call_api -s -w "$workload" initialize_options
     local option
@@ -572,14 +704,16 @@ function process_workload_options() {
 	local optvalue
 	local optworkload
 	# shellcheck disable=SC2034
-	read -r noptname1 noptname optvalue optworkload <<< "$(parse_option -w "$option")"
-	[[ -n "$optworkload" && $workload != "$optworkload" ]] && continue
-	optvalue=$(splitarg "$optvalue")
-	if ! call_api -A -a -w "$workload" process_option "$option" ; then
-	    if check_clusterbuster_option "$noptname1" ; then
-		extra_clusterbuster_args+=("--$noptname=$optvalue")
-	    else
-		fatal "Unknown option $option"
+	read -r noptname1 noptname optvalue <<< "$(parse_option "$option" "$workload" "$runtimeclass")"
+	if [[ -n "$noptname1" ]] ; then
+	    optvalue=$(splitarg "$optvalue")
+	    if ! call_api -A -a -w "$workload" process_option "$option" ; then
+		if check_clusterbuster_option "$noptname1" ; then
+		    extra_clusterbuster_args+=("--$noptname=$optvalue")
+		else
+		    stack_trace
+		    fatal "Unknown option $option ($noptname1)"
+		fi
 	    fi
 	fi
     done
@@ -781,13 +915,6 @@ function run_clusterbuster_1() {
     return $status
 }
 
-function run_clusterbuster() {
-    for runtimeclass in "${runtimeclasses[@]}" ; do
-	run_clusterbuster_1 -r "$runtimeclass" "$@"
-    done
-    counter=$((counter+1))
-}
-
 if [[ -z "${workloads[*]}" ]] ; then
     readarray -t workloads <<< "$(print_workloads)"
 fi
@@ -853,9 +980,18 @@ if ((! debugonly)) ; then
     fi
 fi
 
+if [[ -n "$prerun" && -x "$prerun" ]] ; then
+    echo "Running pre-run"
+    "$prerun" "$@"
+fi
+
 for workload in "${workloads[@]}" ; do
     # Use a separate counter for each workload/runtime
     counter=0
-    process_workload_options "$workload"
     call_api -w "$workload" test "$job_runtime"
 done
+
+if [[ -n "$postrun" && -x "$postrun" ]] ; then
+    echo "Running post-run"
+    "$postrun" "$@"
+fi

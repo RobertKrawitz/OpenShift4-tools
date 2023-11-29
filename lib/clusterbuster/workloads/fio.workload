@@ -28,7 +28,7 @@ declare -ag ___fio_ioengines=(libaio)
 declare -g  ___fio_job_file=generic.jobfile
 declare -gi ___fio_ramp_time=5
 declare -gi ___fio_filesize=; ___fio_filesize=$(parse_size "4Gi")
-declare -g  ___fio_workdir="/tmp"
+declare -g  ___fio_workdir="/var/tmp/clusterbuster"
 declare -g  ___fio_processed_job_file
 declare -ig  ___fio_drop_cache=1
 
@@ -212,18 +212,6 @@ EOF
 }
 
 function fio_report_options() {
-    function mk_num_list() {
-	echo "[$(IFS=','; echo "$*")]"
-    }
-    function mk_str_list() {
-	local _strings=()
-	local _arg
-	for _arg in "$@" ; do
-	    _strings+=("\"$_arg\"")
-	done
-	echo "[$(IFS=','; echo "${_strings[*]}")]"
-    }
-
     cat <<EOF
 "fio_options": "${___fio_options:-}",
 "fio_job_file": "$(base64 -w 0 < "$___fio_processed_job_file")",
