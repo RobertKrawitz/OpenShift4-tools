@@ -20,7 +20,7 @@
 
 declare -ag ___byo_args=()
 declare -ag ___byo_files=()
-declare -g ___byo_workdir=/var/tmp/cb-work
+declare -g ___byo_workdir=/var/tmp/clusterbuster/cb-work
 declare -g ___byo_workload=
 declare -g ___byo_name=
 declare -ig ___byo_drop_cache=0
@@ -100,14 +100,6 @@ function byo_workload_reporting_class() {
 }
 
 function byo_report_options() {
-    function mk_str_list() {
-	local _strings=()
-	local _arg
-	for _arg in "$@" ; do
-	    _strings+=("\"$_arg\"")
-	done
-	echo "[$(IFS=','; echo "${_strings[*]}")]"
-    }
     cat <<EOF
 "byo_workload": "$___byo_workload",
 "byo_workdir": "$___byo_workdir",

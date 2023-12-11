@@ -33,3 +33,7 @@ use-python-venv=1
 cleanup=1
 restart=0
 deployment-type=replicaset
+
+volume:files,fio:!vm=:emptydir:/var/tmp/clusterbuster
+volume:files:vm=test-pvc:pvc:/var/tmp/clusterbuster:size=auto:inodes=auto
+volume:fio:vm=test-pvc:pvc:/var/tmp/clusterbuster:size=auto

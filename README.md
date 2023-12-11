@@ -71,7 +71,7 @@ etc. OpenShift 4 clusters.
 
 - **monitor-cluster-resources** -- monitor CPU, memory, and pod
   utilization per-node in real time.
-  
+
 - **net-traffic** -- report information about network traffic similar
   to iostat.
 

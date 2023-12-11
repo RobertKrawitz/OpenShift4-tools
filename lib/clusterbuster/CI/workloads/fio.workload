@@ -31,52 +31,99 @@ declare -gi ___fio_ramptime
 declare -gi ___fio_job_timeout
 declare -gi ___fio_drop_cache
 declare -gi ___fio_pod_memsize
-declare -gi ___fio_use_emptydisk
+declare -ga ___fio_volumes=()
 
 function fio_test() {
+    function roundup() {
+	local num=${1:-1}
+	local base=${2:-1048576}
+	local answer=$((((num + (base - 1)) / base) * base))
+	((answer <= 0)) && answer=$base
+	echo "$answer"
+    }
+
     local default_job_runtime=$1
-    if ((___fio_job_runtime <= 0)) ; then
-	___fio_job_runtime=$default_job_runtime
-    fi
-    ___fio_job_timeout=$(compute_timeout "$___fio_job_timeout")
-    if ((___fio_absolute_filesize <= 0 || ___fio_max_absolute_filesize <= 0)) ; then
-	local ___fio_node_memory=
-	___fio_node_memory=$(get_node_memory "$client_pin_node") || fatal "Cannot retrieve node memory."
-	if ((___fio_absolute_filesize <= 0)) ; then
-	    ___fio_absolute_filesize=$(computeit "$___fio_node_memory * $___fio_relative_filesize")
-	fi
-	if ((___fio_max_absolute_filesize <= 0)) ; then
-	    ___fio_max_absolute_filesize=$(computeit "$___fio_node_memory * $___fio_max_relative_filesize")
-	fi
-    fi
     local -i ninst
-    local memory_annotation=
-    if ((___fio_pod_memsize > 0)) ; then
-	# shellcheck disable=SC2089
-	memory_annotation=--pod-annotation="io.katacontainers.config.hypervisor.default_memory: \"$___fio_pod_memsize\""
-    fi
-    for ninst in "${___fio_ninst[@]}" ; do
-	local filesize
-	filesize=$(computeit "$___fio_absolute_filesize / $ninst")
-	if ((filesize > ___fio_max_absolute_filesize)) ; then
-	    filesize=$___fio_max_absolute_filesize
-	fi
-	job_name="${ninst}P"
-	# shellcheck disable=SC2090
-	run_clusterbuster -j "$job_name" -w fio -t "$___fio_job_timeout" -R "$___fio_job_runtime" -- \
-			  --replicas="$ninst" \
-			  --fio-blocksize="$(IFS=,; echo "${___fio_blocksizes[*]}")" \
-			  --fio-patterns="$(IFS=,; echo "${___fio_patterns[*]}")" \
-			  --fio-ioengines="$(IFS=,; echo "${___fio_ioengines[*]}")" \
-			  --fio-iodepths="$(IFS=,; echo "${___fio_iodepths[*]}")" \
-			  --fio-fdatasyncs="$(IFS=,; echo "${___fio_fdatasyncs[*]}")" \
-			  --fio-directs="$(IFS=,; echo "${___fio_directs[*]}")" \
-			  --fio_filesize="$filesize" \
-			  --fio_ramp_time="$___fio_ramptime" \
-			  --fio_workdir="$___fio_workdir" \
-			  --fio-drop-cache="$___fio_drop_cache" \
-			  --vm-emptydisk="$(((((___fio_absolute_filesize * 11 / 10) + 1048575) / 1048576) * 1048576)):/var/tmp" \
-			  ${memory_annotation:+"$memory_annotation"}
+    # shellcheck disable=SC2090
+    for runtimeclass in "${runtimeclasses[@]}" ; do
+	process_workload_options "$workload" "${runtimeclass:-pod}"
+	local -i counter=0
+	for ninst in "${___fio_ninst[@]}" ; do
+	    if ((___fio_job_runtime <= 0)) ; then
+		___fio_job_runtime=$default_job_runtime
+	    fi
+	    ___fio_job_timeout=$(compute_timeout "$___fio_job_timeout")
+	    if ((___fio_absolute_filesize <= 0 || ___fio_max_absolute_filesize <= 0)) ; then
+		local ___fio_node_memory=
+		___fio_node_memory=$(get_node_memory "$client_pin_node") || fatal "Cannot retrieve node memory."
+		if ((___fio_absolute_filesize <= 0)) ; then
+		    ___fio_absolute_filesize=$(computeit "$___fio_node_memory * $___fio_relative_filesize")
+		fi
+		if ((___fio_max_absolute_filesize <= 0)) ; then
+		    ___fio_max_absolute_filesize=$(computeit "$___fio_node_memory * $___fio_max_relative_filesize")
+		fi
+	    fi
+	    local memory_annotation=
+	    if ((___fio_pod_memsize > 0)) && [[ $runtimeclass = kata ]] ; then
+		# shellcheck disable=SC2089
+		memory_annotation=--pod-annotation="io.katacontainers.config.hypervisor.default_memory: \"$___fio_pod_memsize\""
+	    fi
+	    local filesize
+	    filesize=$(computeit "$___fio_absolute_filesize / $ninst")
+	    if ((filesize > ___fio_max_absolute_filesize)) ; then
+		filesize=$___fio_max_absolute_filesize
+	    fi
+	    job_name="${ninst}P"
+	    local -a nvolumes=()
+	    local volspec
+	    for volspec in "${___fio_volumes[@]}" ; do
+		local arg
+		local -a args=()
+		local -a nargs=()
+		IFS=: read -ra args <<< "$volspec"
+		for arg in "${args[@]}" ; do
+		    case "$arg" in
+			size=auto*)
+			    if [[ $arg =~ size=auto(,([0-9]+[a-zA-Z]*))? ]] ; then
+				local vsize
+				vsize=${BASH_REMATCH[1]}
+				if [[ -n "$vsize" ]] ; then
+				    vsize=$(parse_size "$vsize")
+				else
+				    vsize=$((filesize * 9 / 8))
+				fi
+				vsize=$(roundup "$(parse_size "$vsize")")
+				nargs+=("size=$vsize")
+			    else
+				nargs+=("$arg")
+			    fi
+			    ;;
+			inodes=*)
+			    ;;
+			*)
+			    nargs+=("$arg")
+			    ;;
+		    esac
+		done
+		nvolumes+=("--volume=$(IFS=:; echo "${nargs[*]}")")
+	    done
+	    run_clusterbuster_1 -r "$runtimeclass" \
+				-j "$job_name" -w fio -t "$___fio_job_timeout" -R "$___fio_job_runtime" -- \
+				--replicas="$ninst" \
+				--fio-blocksize="$(IFS=,; echo "${___fio_blocksizes[*]}")" \
+				--fio-patterns="$(IFS=,; echo "${___fio_patterns[*]}")" \
+				--fio-ioengines="$(IFS=,; echo "${___fio_ioengines[*]}")" \
+				--fio-iodepths="$(IFS=,; echo "${___fio_iodepths[*]}")" \
+				--fio-fdatasyncs="$(IFS=,; echo "${___fio_fdatasyncs[*]}")" \
+				--fio-directs="$(IFS=,; echo "${___fio_directs[*]}")" \
+				--fio_filesize="$filesize" \
+				--fio_ramp_time="$___fio_ramptime" \
+				--fio_workdir="$___fio_workdir" \
+				--fio-drop-cache="$___fio_drop_cache" \
+				"${nvolumes[@]}" \
+				${memory_annotation:+"$memory_annotation"}
+	    counter=$((counter+1))
+	done
     done
 }
 
@@ -89,7 +136,7 @@ function fio_initialize_options() {
     ___fio_ioengines=(sync libaio)
     ___fio_ninst=(1 4)
     ___fio_job_runtime=0
-    ___fio_workdir=/var/tmp
+    ___fio_workdir=/var/tmp/clusterbuster
     ___fio_absolute_filesize=0
     ___fio_max_absolute_filesize=0
     ___fio_relative_filesize=2
@@ -98,14 +145,18 @@ function fio_initialize_options() {
     ___fio_job_timeout=9000
     ___fio_drop_cache=1
     ___fio_pod_memsize=
-    ___fio_use_emptydisk=1
+    ___fio_volumes=()
 }
 
 function fio_process_option() {
     local opt=$1
-    read -r noptname1 noptname optvalue workload <<< "$(parse_option -w "$opt")"
-    [[ -n "$workload" && $workload != fio ]] && return 2
+    local noptname1
+    local noptname
+    local optvalue
+    # shellcheck disable=SC2034
+    read -r noptname1 noptname optvalue <<< "$(parse_ci_option "$opt" "$workload" "${runtimeclass:-pod}")"
     case "$noptname1" in
+	'')		 								;;
 	fioblock*)       readarray -t ___fio_blocksizes <<< "$(parse_size "$optvalue")"	;;
 	fiopat*)         readarray -t ___fio_patterns <<< "${optvalue//,/ }"		;;
 	fiodirect*)      readarray -t ___fio_directs <<< "$(bool "$optvalue")"		;;
@@ -123,6 +174,7 @@ function fio_process_option() {
 	fio*timeout)     ___fio_job_timeout=$optvalue					;;
 	fiodrop*)	 ___fio_drop_cache=$(bool "$optvalue")				;;
 	fio*memsize)     ___fio_pod_memsize=$(parse_size "$optvalue")			;;
+	volume)		 ___fio_volumes+=("$optvalue")					;;
 	*) 		 return 1							;;
     esac
 }
@@ -130,6 +182,8 @@ function fio_process_option() {
 function fio_help_options() {
     cat <<EOF
    Fio test options:
+        There should be sufficient space under the work directory to hold the desired file
+        size, provided if need be by a volume.
         --fio-block-sizes=n[,n...]
                                 Space or comma separated list of block
                                 sizes to test.  Default is $(IFS=,; echo "${___fio_blocksizes[*]}").

@@ -27,31 +27,38 @@ declare -g ___uperf_use_annotation
 
 function uperf_test() {
     local default_job_runtime=$1
-    if ((___uperf_job_runtime <= 0)) ; then
-	___uperf_job_runtime=$default_job_runtime
-    fi
-    ___uperf_job_timeout=$(compute_timeout "$___uperf_job_timeout")
+    local runtimeclass
+    for runtimeclass in "${runtimeclasses[@]}" ; do
+	process_workload_options "$workload" "${runtimeclass:-pod}"
+	if ((___uperf_job_runtime <= 0)) ; then
+	    ___uperf_job_runtime=$default_job_runtime
+	fi
+	___uperf_job_timeout=$(compute_timeout "$___uperf_job_timeout")
 
-    local -i msg_size
-    local -i nthr
-    local -i ninst
-    local test_type
-    for msg_size in "${___uperf_msg_sizes[@]}" ; do
-	for nthr in "${___uperf_nthrs[@]}" ; do
-	    for ninst in "${___uperf_ninst[@]}" ; do
-		for test_type in "${___uperf_test_types[@]}" ; do
-		    local job_name="${msg_size}B-${nthr}i-${ninst}P-${test_type}"
-		    run_clusterbuster -j "$job_name" -w uperf -t "$___uperf_job_timeout" -R "$___uperf_job_runtime" -- \
-				      --replicas="$ninst" \
-				      --uperf_msg_size="$msg_size" \
-				      --uperf_test_type="$test_type" \
-				      --uperf_proto=tcp \
-				      --uperf_nthr="$nthr" \
-				      ${uperf_interface:+--uperf_interface=$___uperf_interface:} \
-				      ${uperf_interface_server:+--uperf_interface_server=$___uperf_interface_server:} \
-				      ${uperf_interface_client:+--uperf_interface_client=$___uperf_interface_client:} \
-				      --uperf_interface="$___uperf_interface" \
-				      ${___uperf_use_annotation:+--pod-annotation="io.katacontainers.config.hypervisor.default_vcpus: \"$nthr\""}
+	local -i msg_size
+	local -i nthr
+	local -i ninst
+	local test_type
+	local counter=0
+	for msg_size in "${___uperf_msg_sizes[@]}" ; do
+	    for nthr in "${___uperf_nthrs[@]}" ; do
+		for ninst in "${___uperf_ninst[@]}" ; do
+		    for test_type in "${___uperf_test_types[@]}" ; do
+			local job_name="${msg_size}B-${nthr}i-${ninst}P-${test_type}"
+			run_clusterbuster_1 -r "$runtimeclass" \
+					    -j "$job_name" -w uperf -t "$___uperf_job_timeout" -R "$___uperf_job_runtime" -- \
+					    --replicas="$ninst" \
+					    --uperf_msg_size="$msg_size" \
+					    --uperf_test_type="$test_type" \
+					    --uperf_proto=tcp \
+					    --uperf_nthr="$nthr" \
+					    ${uperf_interface:+--uperf_interface=$___uperf_interface:} \
+					    ${uperf_interface_server:+--uperf_interface_server=$___uperf_interface_server:} \
+					    ${uperf_interface_client:+--uperf_interface_client=$___uperf_interface_client:} \
+					    --uperf_interface="$___uperf_interface" \
+					    ${___uperf_use_annotation:+--pod-annotation="io.katacontainers.config.hypervisor.default_vcpus: \"$nthr\""}
+			counter=$((counter+1))
+		    done
 		done
 	    done
 	done
@@ -73,9 +80,13 @@ function uperf_initialize_options() {
 
 function uperf_process_option() {
     local opt=$1
-    read -r noptname1 noptname optvalue workload <<< "$(parse_option -w "$opt")"
-    [[ -n "$workload" && $workload != uperf ]] && return 2
+    local noptname1
+    local noptname
+    local optvalue
+    # shellcheck disable=SC2034
+    read -r noptname1 noptname optvalue <<< "$(parse_ci_option "$opt" "$workload" "${runtimeclass:-pod}")"
     case "$noptname1" in
+	'')	       										;;
 	uperfmsg*)     readarray -t ___uperf_msg_sizes <<< "$(parse_size "$optvalue")"		;;
 	uperfnthr*)    readarray -t ___uperf_nthrs <<< "$(parse_size "$optvalue")"		;;
 	uperfninst*)   readarray -t ___uperf_ninst <<< "$(parse_size "$optvalue")"		;;

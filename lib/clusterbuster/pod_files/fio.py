@@ -60,7 +60,7 @@ class fio_client(clusterbuster_pod_client):
         blocks = int((filesize + blocksize - 1) / blocksize)
         dirname = os.path.dirname(filename)
         if not self._isdir(dirname):
-            os.makedirs(dirname)
+            os.makedirs(dirname, exist_ok=True)
         self._timestamp("Starting file creation")
         subprocess.run(['dd', 'if=/dev/zero', f'of={filename}', f'bs={str(blocksize)}', f'count={str(blocks)}'])
         self._timestamp("File created")
@@ -147,7 +147,7 @@ Drop cache:  {self.fio_drop_cache}""")
                     nfile = f"{tmpdir}/{match.group(2)}"
                     with open(jobfile, mode='r') as infile:
                         lines = [line.strip() for line in infile.readlines()]
-                        with open(nfile, mode='w') as outfile:
+                        with open(nfile, mode='wt') as outfile:
                             for line in lines:
                                 if re.match(r'filename\s*=\s*', line):
                                     print(f'{line}/{localid}/{localid}', file=outfile)
@@ -158,18 +158,37 @@ Drop cache:  {self.fio_drop_cache}""")
         return new_jobfiles
 
     def runit(self, process: int):
-        localid = self._idname(separator='-')
-        localrundir = f"{self.rundir}/{localid}"
-        tmp_jobsfiledir = f"/tmp/fio-{localid}.job"
-        os.makedirs(tmp_jobsfiledir)
-        os.makedirs(localrundir)
-        os.chdir(localrundir)
-        jobfiles = self.get_jobfiles(self.jobfilesdir, tmp_jobsfiledir, localid)
-        if not jobfiles:
-            raise Exception("Error: no jobfiles provided!")
-        for jobfile in jobfiles:
-            self.runone(jobfile)
-        shutil.rmtree(self.rundir, ignore_errors=True)
+        dirs_to_remove = []
+        try:
+            odir = os.getcwd()
+        except Exception:
+            odir = '/'
+        try:
+            localid = self._idname(separator='-')
+            localrundir = os.path.join(self.rundir, localid)
+            tmp_jobsfiledir = os.path.join(self.rundir, f'fio-{localid}.job')
+            self._timestamp(f"Trying to create jobdir {tmp_jobsfiledir}")
+            try:
+                dirs_to_remove.append(tmp_jobsfiledir)
+                os.makedirs(tmp_jobsfiledir)
+            except FileExistsError:
+                self._timestamp(f"{tmp_jobsfiledir} already exists!")
+            self._timestamp(f"Trying to create rundir {tmp_jobsfiledir}")
+            try:
+                dirs_to_remove.append(localrundir)
+                os.makedirs(localrundir)
+            except FileExistsError:
+                self._timestamp(f"{tmp_jobsfiledir} already exists!")
+            os.chdir(localrundir)
+            jobfiles = self.get_jobfiles(self.jobfilesdir, tmp_jobsfiledir, localid)
+            if not jobfiles:
+                raise Exception("Error: no jobfiles provided!")
+            for jobfile in jobfiles:
+                self.runone(jobfile)
+        finally:
+            os.chdir(odir)
+            for dir in dirs_to_remove:
+                shutil.rmtree(dir, ignore_errors=True)
 
 
 fio_client().run_workload()

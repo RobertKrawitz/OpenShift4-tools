@@ -24,6 +24,7 @@ declare -gi ___files_job_timeout
 declare -ga ___files_params
 declare -gi ___files_min_direct
 declare -gi ___files_drop_cache
+declare -ga ___files_volumes
 
 function files_test() {
     function roundup() {
@@ -31,59 +32,87 @@ function files_test() {
 	local -i interval=$2
 	echo $((((base + interval - 1) / interval) * interval))
     }
-    ___files_job_timeout=$(compute_timeout "$___files_job_timeout")
-    if [[ -z "${___files_params[*]}" ]] ; then
-	for ninst in "${___files_ninst[@]}" ; do
-	    for dirs in "${___files_dirs_per_volume[@]}" ; do
-		for files in "${___files_per_dir[@]}" ; do
-		    for blocksize in "${___files_block_sizes[@]}" ; do
-			for size in "${___files_sizes[@]}" ; do
-			    for direct in "${___files_directs[@]}" ; do
-				if ((! direct || blocksize >= ___files_min_direct)) ; then
-				    ___files_params+=("${ninst}:${dirs}:${files}:${blocksize}:${size}:${direct}")
-				fi
+    for runtimeclass in "${runtimeclasses[@]}" ; do
+	process_workload_options "$workload" "${runtimeclass:-pod}"
+	___files_job_timeout=$(compute_timeout "$___files_job_timeout")
+	if [[ -z "${___files_params[*]}" ]] ; then
+	    for ninst in "${___files_ninst[@]}" ; do
+		for dirs in "${___files_dirs_per_volume[@]}" ; do
+		    for files in "${___files_per_dir[@]}" ; do
+			for blocksize in "${___files_block_sizes[@]}" ; do
+			    for size in "${___files_sizes[@]}" ; do
+				for direct in "${___files_directs[@]}" ; do
+				    if ((! direct || blocksize >= ___files_min_direct)) ; then
+					___files_params+=("${ninst}:${dirs}:${files}:${blocksize}:${size}:${direct}")
+				    fi
+				done
 			    done
 			done
 		    done
 		done
 	    done
+	fi
+	local -i ninst
+	local ___files_dirs_per_volume
+	local ___files_per_dir
+	local ___files_block_size
+	local file_size
+	local ___files_direct
+	local options
+	local counter=0
+	for options in "${___files_params[@]}" ; do
+	    read -r ninst ___files_dirs_per_volume ___files_per_dir ___files_block_size file_size ___files_direct <<< "$(parse_size -n "${options//:/ }")"
+	    if [[ -z "$___files_direct" ]] ; then
+		echo "Unparsable options $options" 1>&2
+		continue
+	    fi
+	    if ((___files_block_size > file_size && file_size > 0)) ; then
+		___files_block_size=$file_size
+	    fi
+	    local -i fs_block_size=4096 # Need a better way than hard coding this; assumes ext4
+	    local -i inode_size_bytes=256 # Need a better way than hard coding this; assumes ext4
+	    job_name="${ninst}P-${___files_dirs_per_volume}D-${___files_per_dir}F-${___files_block_size}B-${file_size}S-${___files_direct}T"
+	    local -i bytes_per_file=file_size
+	    if ((bytes_per_file < fs_block_size)) ; then bytes_per_file=fs_block_size; fi
+	    bytes_per_file=$(roundup "$bytes_per_file" "$fs_block_size")
+	    local -i inodes_required=$((1024 + ___files_dirs_per_volume + (___files_dirs_per_volume * ___files_per_dir)))
+	    local -i bytes_required=$(((inodes_required * 256) + (bytes_per_file * ___files_dirs_per_volume * ___files_per_dir)))
+	    # Add 12.5% overhead and round up to next MB
+	    bytes_required=$(roundup $((bytes_required * 9 / 8)) 1048576)
+	    ((bytes_required < 32 * 1048576)) && bytes_required=$((32 * 1048576))
+	    # shellcheck disable=SC2090
+	    local -a nvolumes=()
+	    local volspec
+	    for volspec in "${___files_volumes[@]}" ; do
+		local arg
+		local -a args=()
+		local -a nargs=()
+		local -a fsopts=()
+		IFS=: read -ra args <<< "$volspec"
+		for arg in "${args[@]}" ; do
+		    # shellcheck disable=SC2206
+		    case "$arg" in
+			size=auto*)   nargs+=("size=$bytes_required")   ;;
+			inodes=auto*) nargs+=("inodes=$inodes_required");;
+			fsopts=*)     fsopts+=(${arg/fsopts=/})	        ;;
+			*)	      nargs+=("$arg")		        ;;
+		    esac
+		done
+		[[ -n "${fsopts[*]}" ]] && nargs+=("fsopts=${fsopts[*]}")
+		nvolumes+=("--volume=$(IFS=:; echo "${nargs[*]}")")
+	    done
+
+	    run_clusterbuster_1 -r "$runtimeclass" \
+				-j "$job_name" -w files -t "$___files_job_timeout" -- \
+				--replicas="$ninst" \
+				--dirs_per_volume="$___files_dirs_per_volume" \
+				--files_per_dir="$___files_per_dir" \
+				--file_block_size="$___files_block_size" \
+				--files_direct="$___files_direct" \
+				--filesize="$file_size" \
+				"${nvolumes[@]}"
+	    counter=$((counter+1))
 	done
-    fi
-    local -i ninst
-    local ___files_dirs_per_volume
-    local ___files_per_dir
-    local ___files_block_size
-    local file_size
-    local ___files_direct
-    local options
-    for options in "${___files_params[@]}" ; do
-	read -r ninst ___files_dirs_per_volume ___files_per_dir ___files_block_size file_size ___files_direct <<< "$(parse_size -n "${options//:/ }")"
-	if [[ -z "$___files_direct" ]] ; then
-	    echo "Unparsable options $options" 1>&2
-	    continue
-	fi
-	if ((___files_block_size > file_size && file_size > 0)) ; then
-	    ___files_block_size=$file_size
-	fi
-	local -i fs_block_size=4096 # Need a better way than hard coding this; assumes ext4
-	local -i inode_size_bytes=256 # Need a better way than hard coding this; assumes ext4
-	local -i bytes_per_file=file_size
-	if ((bytes_per_file < fs_block_size)) ; then bytes_per_file=fs_block_size; fi
-	bytes_per_file=$(roundup "$bytes_per_file" "$fs_block_size")
-	local -i inodes_required=$((1024 + ___files_dirs_per_volume + (___files_dirs_per_volume * ___files_per_dir)))
-	local -i bytes_required=$(((inodes_required * 256) + (bytes_per_file * ___files_dirs_per_volume * ___files_per_dir)))
-	# Add 12.5% overhead and round up to next MB
-	bytes_required=$(roundup $((bytes_required * 9 / 8)) 1048576)
-	job_name="${ninst}P-${___files_dirs_per_volume}D-${___files_per_dir}F-${___files_block_size}B-${file_size}S-${___files_direct}T"
-	# shellcheck disable=SC2090
-	run_clusterbuster -j "$job_name" -w files -t "$___files_job_timeout" -- \
-			  --replicas="$ninst" \
-			  --dirs_per_volume="$___files_dirs_per_volume" \
-			  --files_per_dir="$___files_per_dir" \
-			  --file_block_size="$___files_block_size" \
-			  --files_direct="$___files_direct" \
-			  --filesize="$file_size" \
-			  --vm-emptydisk="$bytes_required:fsopts=-N ${inodes_required}:/var/tmp"
     done
 }
 
@@ -98,13 +127,19 @@ function files_initialize_options() {
     ___files_params=()
     ___files_min_direct=1024
     ___files_drop_cache=1
+    ___files_volumes=()
 }
 
 function files_process_option() {
     local opt=$1
-    read -r noptname1 noptname optvalue workload <<< "$(parse_option -w "$opt")"
-    [[ -n "$workload" && $workload != files ]] && return 2
+    local noptname1
+    local noptname
+    local optvalue
+    # shellcheck disable=SC2034
+    read -r noptname1 noptname optvalue <<< "$(parse_ci_option "$opt" "$workload" "${runtimeclass:-pod}")"
+    # shellcheck disable=SC2206
     case "$noptname1" in
+	'')		 									;;
 	filesninst*)     readarray -t ___files_ninst <<< "$(parse_size "$optvalue")"		;;
 	filesdirs*)	 readarray -t ___files_dirs_per_volume <<< "$(parse_size "$optvalue")"	;;
 	filesperdir*)    readarray -t ___files_per_dir <<< "$(parse_size "$optvalue")"		;;
@@ -115,6 +150,7 @@ function files_process_option() {
 	files*params)    ___files_params+=(${optvalue//,/ })					;;
 	filesmindir*)    ___files_min_direct=$(parse_size "$optvalue")				;;
 	filesdrop*)	 ___files_drop_cache=$(bool "$optvalue")				;;
+	volume)		 ___files_volumes+=("$optvalue")					;;
 	*) 		 return 1								;;
     esac
 }
@@ -122,6 +158,7 @@ function files_process_option() {
 function files_help_options() {
     cat <<EOF
     Files test options:
+    	The files
         --files-timeout=seconds
                                 Time the job out after specified time.  Default
                                 is the global timeout default.

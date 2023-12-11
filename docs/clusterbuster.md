@@ -512,9 +512,9 @@ To create a new workload, you need to do the following:
 ### Create A Deployment Type
 
 Clusterbuster currently supports running workloads as pods,
-ReplicaSets, or Deployments (with very minimal differences between the
-latter two).  At present, the object types are hard-coded into
-Clusterbuster; at some point I intend to refactor those.
+ReplicaSets, Deployments, or VMs (with very minimal differences
+between the latter two).  At present, the object types are hard-coded
+into Clusterbuster; at some point I intend to refactor those.
 
 All of the object types are created from `create_standard_deployment`,
 which dispatches to the appropriate object creation based on the value

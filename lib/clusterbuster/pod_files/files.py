@@ -20,7 +20,7 @@ class files_client(clusterbuster_pod_client):
             if len(self._args) > 6:
                 self.dir_list = self._args[6:]
             else:
-                self.dir_list = ['/tmp']
+                self.dir_list = ['/var/tmp/clusterbuster']
             self.dirs = self._toSize(self._args[0])
             self.files_per_dir = self._toSize(self._args[1])
             self.blocksize = self._toSize(self._args[2])
@@ -46,9 +46,9 @@ class files_client(clusterbuster_pod_client):
         buf = mmap.mmap(-1, self.blocksize)
         buf.write(b'a' * self.blocksize)
         ops = 0
-        files_created=0
+        files_created = 0
         for bdir in self.dir_list:
-            direc = f"{bdir}/p{pid}/{self._container()}"
+            direc = f"{bdir}/{self.localid}"
             os.makedirs(direc)
             ops = ops + 2
             for subdir in range(self.dirs):
@@ -78,7 +78,7 @@ class files_client(clusterbuster_pod_client):
         dbuf = ''
         ops = 0
         for bdir in self.dir_list:
-            direc = f"{bdir}/p{pid}/{self._container()}"
+            direc = f"{bdir}/{self.localid}"
             ops = ops + 2
             for subdir in range(self.dirs):
                 dirname = f"{direc}/{subdir}"
@@ -109,11 +109,8 @@ class files_client(clusterbuster_pod_client):
     def removethem(self, pid: int, oktofail: bool = False):
         ops = 0
         for bdir in self.dir_list:
-            pdir = f"{bdir}/p{pid}"
-            if oktofail and not self._isdir(pdir):
-                continue
-            direc = f"{pdir}/{self._container()}"
-            if oktofail and not self._isdir(bdir):
+            direc = f"{bdir}/{self.localid}"
+            if oktofail and not self._isdir(direc):
                 continue
             for subdir in range(self.dirs):
                 dirname = f"{direc}/{subdir}"
@@ -128,8 +125,6 @@ class files_client(clusterbuster_pod_client):
                 self.remdir(dirname, oktofail)
                 ops = ops + 1
             self.remdir(direc, oktofail)
-            ops = ops + 1
-            self.remdir(pdir, oktofail)
             ops = ops + 1
         return ops
 
@@ -167,6 +162,7 @@ class files_client(clusterbuster_pod_client):
         return answer
 
     def runit(self, process: int):
+        self.localid = self._idname(separator='-')
         self.removethem(process, True)
         data_start_time = self._adjusted_time()
 
