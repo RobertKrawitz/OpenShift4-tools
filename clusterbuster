@@ -3102,7 +3102,7 @@ EOF
 	    if ! __OC get serviceaccount -n "$namespace" "$namespace" >/dev/null 2>&1 ; then
 		_OC create serviceaccount -n "$namespace" "$namespace" 2>&1 | report_if_desired
 	    fi
-	    _OC label serviceaccount -n "$namespace" "$namespace" "${basename}=true" 2>&1 | report_if_desired
+	    _OC label serviceaccount --overwrite -n "$namespace" "$namespace" "${basename}=true" 2>&1 | report_if_desired
 	    _OC adm policy add-scc-to-user -n "$namespace" privileged -z "$namespace" 2>&1 | report_if_desired
 	fi
     fi
@@ -4403,7 +4403,7 @@ function validate_volumes() {
 	    continue
 	fi
 	mount_volume_map["$mountpoint"]="$volspec"
-	mount_name_map["$mountpoint"]="$name"
+	[[ -n "$name" ]] && mount_name_map["$mountpoint"]="$name"
 	# Remove a mountpoint from the list
 	[[ -z "$type" ]] && continue
 	args=("${args[@]:3}")
