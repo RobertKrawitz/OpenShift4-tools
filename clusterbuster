@@ -2104,6 +2104,33 @@ EOF
 }
 
 function _retrieve_artifacts() {
+    function _describe_pod() {
+	local namespace=$1
+	local pod=$2
+	local poddesc="$artifactdir/Describe/${namespace}:${pod}"
+	if __OC describe pod -n "$namespace" "$pod" > "${poddesc}.tmp" ; then
+	    mv "${poddesc}.tmp" "$poddesc"
+	    [[ -s "$poddesc" ]] || echo "Warning: empty description for ${namespace}:${pod}" 1>&2
+	else
+	    echo "Unable to retrieve pod description for ${namespace}:${pod}" 1>&2
+	    rm -f "${poddesc}.tmp"
+	    false
+	fi
+    }
+    function _log_container() {
+	local namespace=$1
+	local pod=$2
+	local container=$3
+	local clog="$artifactdir/Logs/${namespace}:${pod}:${container}"
+	if __OC logs -n "$namespace" "$pod" -c "$container" > "${clog}.tmp" ; then
+	    mv "${clog}.tmp" "$clog"
+	    [[ -s "$clog" ]] || echo "Warning: empty logs for ${namespace}:${pod}:${container}" 1>&2
+	else
+	    echo "Unable to retrieve container log for ${namespace}:${pod}:${container}" 1>&2
+	    rm -f "${clog}.tmp"
+	    false
+	fi
+    }
     local always_retrieve_artifacts=${1:-}
     get_run_started || return 1
     get_run_failed && always_retrieve_artifacts=1
@@ -2112,10 +2139,10 @@ function _retrieve_artifacts() {
 	mkdir -p "$artifactdir/Logs"
 	mkdir -p "$artifactdir/Describe"
 	touch "$artifactdir/.artifacts"
-	local -i failcount=0
 	local -A jobs_pending
 	local job
 	local -A pods_described=()
+	local -A containers_logged=()
 	local namespace
 	local pod
 	local container
@@ -2129,34 +2156,35 @@ function _retrieve_artifacts() {
 	    fi
 	    local podname="${namespace}:${pod}"
 	    local name="${podname}:${container}"
-	    if [[ -n "${pods_described[$podname]:-}" ]] ; then
-		__OC logs -n "$namespace" -c "$container" "$pod" 2>/dev/null > "$artifactdir/Logs/$name" &
-	    else
-		(__OC logs -n "$namespace" -c "$container" "$pod" 2>/dev/null > "$artifactdir/Logs/$name"; __OC describe pod -n "$namespace" "$pod" 2>/dev/null > "$artifactdir/Describe/$podname") &
-		pods_described[$podname]=1
+	    if [[ -z "${pods_described[$podname]:-}" ]] ; then
+		if ((parallel_log_retrieval > 1)) ; then
+		    _describe_pod "$namespace" "$pod" &
+		    jobs_pending[$!]=$podname
+		else
+		    _describe_pod "$namespace" "$pod"
+		fi
+		pods_described[$name]=1
 	    fi
-	    jobs_pending[$!]=$name
+	    if [[ -z "${containers_logged[$name]:-}" ]] ; then
+		if ((parallel_log_retrieval > 1)) ; then
+		    _log_container "$namespace" "$pod" "$container" &
+		    jobs_pending[$!]=$name
+		else
+		    _log_container "$namespace" "$pod" "$container"
+		fi
+		containers_logged[$name]=1
+	    fi
 	    if (( ${#jobs_pending[@]} > parallel_log_retrieval )) ; then
-		for job in "${!jobs_pending[@]}" ; do
-		    wait "$job" || {
-			rm -f "$artifactdir/Logs/$name"
-			failcount=$((failcount+1))
-			if ((failcount <= 5)) ; then
-			    echo "Unable to retrieve logs for pod $name" 1>&2
-			fi
-		    }
+		local -a jobs_to_wait=("${!jobs_pending[@]}")
+		for job in "${jobs_to_wait[@]}" ; do
+		    wait "$job" 2>/dev/null
 		    unset "jobs_pending[$job]"
 		done
 	    fi
 	done <<< "$(__OC get pod -A -l "${basename}-id=$uuid" -ojson 2>/dev/null | jq -r '[foreach .items[]? as $item ([[],[]];0; (if ($item.kind == "Pod") then ([foreach $item.spec.containers[]? as $container ([[],[]];0; $item.metadata.namespace + " " + $item.metadata.name + " " + $container.name + " " + $item.status.phase)]) else null end))] | flatten | map (select (. != null))[]')"
-	for job in "${!jobs_pending[@]}" ; do
-	    wait "$job" || {
-		rm -f "$artifactdir/Logs/$name"
-		failcount=$((failcount+1))
-		if ((failcount <= 5)) ; then
-		    echo "Unable to retrieve logs for pod $name" 1>&2
-		fi
-	    }
+	local -a jobs_to_wait=("${!jobs_pending[@]}")
+	for job in "${jobs_to_wait[@]}" ; do
+	    wait "$job" 2>/dev/null
 	    unset "jobs_pending[$job]"
 	done
 	if [[ $deployment_type = vm && -f "$VIRTCTL" && -f "$vm_ssh_keyfile" ]] ; then
@@ -2165,9 +2193,6 @@ function _retrieve_artifacts() {
 		# virtctl scp assumes that any colons in the destination filename are remote.
 		"$VIRTCTL" scp -i "$vm_ssh_keyfile" -t "-oStrictHostKeyChecking=no" -t "-oGlobalKnownHostsFile=/dev/null" -t "-oUserKnownHostsFile=/dev/null" -t "-oLogLevel ERROR" "$vm.$namespace:/var/log/cloud-init-output.log" "$artifactdir/VMLogs/$namespace.$vm" </dev/null && mv "$artifactdir/VMLogs/$namespace.$vm" "$artifactdir/VMLogs/$namespace:$vm"
 	    done <<< "$(__OC get vm -A -l "${basename}-id=$uuid" --no-headers | awk '{print $1, $2}')"
-	fi
-	if ((failcount > 5)) ; then
-	    echo "+ $((failcount - 5)) more" 1>&2
 	fi
     fi
 }
@@ -4277,7 +4302,7 @@ function run_clusterbuster_2() {
 	do_cleanup -p 1>&2 || return 1
     fi
     if ((cleanup_always)) ; then
-	trap 'echo "Cleaning up" 1>&2; doit=1; do_cleanup -f; if ((get_sync_logs_pid > 0)) ; then wait "$get_sync_logs_pid"; get_sync_logs_pid=0; fi; killthemall ""; wait; remove_tmpdir; doit=1; do_cleanup -f; exit 1' TERM INT HUP
+	trap 'echo "Cleaning up" 1>&2; doit=1; if ((cleanup_always)) ; then cleanup_always=0; do_cleanup -f; if ((get_sync_logs_pid > 0)) ; then wait "$get_sync_logs_pid"; get_sync_logs_pid=0; fi; fi; killthemall ""; wait; remove_tmpdir; doit=1; do_cleanup -f; exit 1' TERM INT HUP
     else
 	trap 'echo "Not cleaning up" 1>&2; if ((get_sync_logs_pid > 0)) ; then wait "$get_sync_logs_pid"; get_sync_logs_pid=0; fi; killthemall ""; wait; remove_tmpdir; exit 1' TERM HUP INT
     fi
@@ -4335,7 +4360,9 @@ function run_clusterbuster_1() {
     if ((create_namespaces_only)) ; then
 	setup_namespaces
     else
-	run_clusterbuster_2
+	# This needs to be run in a subshell so that we do not redirect the
+	# stderr of the top level and lock things up.
+	(run_clusterbuster_2)
 	status=$?
 	if (( (cleanup_always || (cleanup && status == 0)) && doit)) ; then
 	    do_cleanup || {
