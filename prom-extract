@@ -132,7 +132,7 @@ def get_prometheus_timestamp():
             with openshift.project('openshift-monitoring'):
                 result = openshift.selector('pod/prometheus-k8s-0').object().execute(['date', '+%s.%N'],
                                                                                      container_name='prometheus')
-                return datetime.utcfromtimestamp(float(result.out()))
+                return datetime.fromtimestamp(float(result.out()), timezone.utc)
         except (KeyboardInterrupt, BrokenPipeError):
             efail('')
         except Exception as err:
