@@ -184,10 +184,21 @@ function _document_workloads() {
 }
 
 function load_workloads() {
+    local OPTIND=0
+    local OPTARG
+    local opt
+    local suffix=.workload
+    while getopts 's:' opt "$@" ; do
+	case "$opt" in
+	    s) suffix="$OPTARG" ;;
+	    *)			;;
+	esac
+    done
+    shift $((OPTIND-1))
     local -a path=$1
     local -a subdir=${2:-}
     local -a workloads
-    readarray -t workloads <<< "$(find_files_on_path "${subdir}/workloads" "*.workload" "$path")"
+    readarray -t workloads <<< "$(find_files_on_path "${subdir}/workloads" "*${suffix}" "$path")"
     local dir
     local workload
     for workload in "${workloads[@]}" ; do

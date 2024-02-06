@@ -1503,7 +1503,7 @@ function run_status_monitor() {
     if [[ -n "$artifactdir" ]] ; then
 	mkdir -p "$artifactdir"
 	rm -f "$artifactdir/.artifacts"
-	run_status_monitor_1 "$@" | stdbuf -i0 -o0 -e0 tee >(grep -v '\+\+Mark\+\+' | timestamp >"${artifactdir}/monitor.log")
+	run_status_monitor_1 "$@" | stdbuf -i0 -o0 -e0 tee >(grep -v '+\+Mark\+\+' | timestamp >"${artifactdir}/monitor.log")
     else
 	run_status_monitor_1 "$@"
     fi
@@ -1988,10 +1988,6 @@ EOF
 }
 
 function _report_metadata_and_objects() {
-    function readable_timestamp_report() {
-	local rawtime=${1:-}
-	date -u '+%Y-%m-%dT%T%:z' ${rawtime:+"--date=@$rawtime"}
-    }
     local status=$1
     local enddate=
     enddate=$(date +%s.%N)
@@ -2080,7 +2076,7 @@ function _get_sync_logs() {
     local tfile1=
     local tfile2=
     local -i retval=1
-    trap 'if [[ -n "$tfile2" && -f "$tfile2" ]] ; then rm -f "$tfile1" "$tfile2" ; fi; if ((! reported)) ; _report_failure; reported=1; fi; retrieve_successful_logs=1 _retrieve_artifacts 2; return 1' TERM
+    trap 'if [[ -n "$tfile2" && -f "$tfile2" ]] ; then rm -f "$tfile1" "$tfile2" ; fi; if ((! reported)) ; then _report_failure; reported=1; fi; retrieve_successful_logs=1 _retrieve_artifacts 2; return 1' TERM
     tfile1=$(mktemp ${cb_tempdir:+-p "$cb_tempdir"} -t '_clusterbusterlogs1.XXXXXXXXXX') || fatal "Cannot create temporary file"
     tfile2=$(mktemp ${cb_tempdir:+-p "$cb_tempdir"} -t '_clusterbusterlogs2.XXXXXXXXXX') || fatal "Cannot create temporary file"
     "$@" > "$tfile1" && {
@@ -2103,34 +2099,37 @@ EOF
     return $retval
 }
 
+function _describe_pod() {
+    local namespace=$1
+    local pod=$2
+    local poddesc="$artifactdir/Describe/${namespace}:${pod}"
+    if __OC describe pod -n "$namespace" "$pod" > "${poddesc}.tmp" ; then
+	mv "${poddesc}.tmp" "$poddesc"
+	[[ -s "$poddesc" ]] || echo "Warning: empty description for ${namespace}:${pod}" 1>&2
+    else
+	echo "Unable to retrieve pod description for ${namespace}:${pod}" 1>&2
+	rm -f "${poddesc}.tmp"
+	false
+    fi
+}
+
+function _log_container() {
+    local namespace=$1
+    local pod=$2
+    local container=$3
+    local clog="$artifactdir/Logs/${namespace}:${pod}:${container}"
+    if __OC logs -n "$namespace" "$pod" -c "$container" > "${clog}.tmp" ; then
+	mv "${clog}.tmp" "$clog"
+	[[ -s "$clog" ]] || echo "Warning: empty logs for ${namespace}:${pod}:${container}" 1>&2
+    else
+	echo "Unable to retrieve container log for ${namespace}:${pod}:${container}" 1>&2
+	rm -f "${clog}.tmp"
+	false
+    fi
+}
+
+
 function _retrieve_artifacts() {
-    function _describe_pod() {
-	local namespace=$1
-	local pod=$2
-	local poddesc="$artifactdir/Describe/${namespace}:${pod}"
-	if __OC describe pod -n "$namespace" "$pod" > "${poddesc}.tmp" ; then
-	    mv "${poddesc}.tmp" "$poddesc"
-	    [[ -s "$poddesc" ]] || echo "Warning: empty description for ${namespace}:${pod}" 1>&2
-	else
-	    echo "Unable to retrieve pod description for ${namespace}:${pod}" 1>&2
-	    rm -f "${poddesc}.tmp"
-	    false
-	fi
-    }
-    function _log_container() {
-	local namespace=$1
-	local pod=$2
-	local container=$3
-	local clog="$artifactdir/Logs/${namespace}:${pod}:${container}"
-	if __OC logs -n "$namespace" "$pod" -c "$container" > "${clog}.tmp" ; then
-	    mv "${clog}.tmp" "$clog"
-	    [[ -s "$clog" ]] || echo "Warning: empty logs for ${namespace}:${pod}:${container}" 1>&2
-	else
-	    echo "Unable to retrieve container log for ${namespace}:${pod}:${container}" 1>&2
-	    rm -f "${clog}.tmp"
-	    false
-	fi
-    }
     local always_retrieve_artifacts=${1:-}
     get_run_started || return 1
     get_run_failed && always_retrieve_artifacts=1
@@ -2349,31 +2348,32 @@ EOF
     done
 }
 
+function _resources_yaml() {
+    local token
+    local -A resource_map=()
+    local resource
+    local value
+    # Remove duplicate resources
+    for token in "$@" ; do
+	resource=${token%%=*}
+	value=${token#*=}
+	resource_map[$resource]=$value
+    done
+    for resource in "${!resource_map[@]}" ; do
+	echo "$resource: ${resource_map[$resource]}"
+    done
+}
+
 function container_resources_yaml() {
-    function resources() {
-	local token
-	local -A resource_map=()
-	local resource
-	local value
-	# Remove duplicate resources
-	for token in "$@" ; do
-	    resource=${token%%=*}
-	    value=${token#*=}
-	    resource_map[$resource]=$value
-	done
-	for resource in "${!resource_map[@]}" ; do
-	    echo "$resource: ${resource_map[$resource]}"
-	done
-    }
     if (( ${#resource_limits[@]} + ${#resource_requests[@]} )) ; then
 	echo "resources:"
 	if (( ${#resource_limits[@]} )) ; then
 	    echo "  limits:"
-	    indent 4 resources "${resource_limits[@]}"
+	    indent 4 _resources_yaml "${resource_limits[@]}"
 	fi
 	if (( ${#resource_requests[@]} )) ; then
 	    echo "  requests:"
-	    indent 4 resources "${resource_requests[@]}"
+	    indent 4 _resources_yaml "${resource_requests[@]}"
 	fi
     fi
 }
@@ -3041,10 +3041,11 @@ function report_if_desired() {
     fi
 }
 
+function _ns() {
+    ((use_namespaces)) && echo -n "-n $namespace"
+}
+
 function _create_object_from_file() {
-    function _ns() {
-	((use_namespaces)) && echo -n "-n $namespace"
-    }
     if (($# < 3)) ; then
 	warn "_create_object_from_file: type, namespace, and name must be specified"
 	return 1
@@ -3250,20 +3251,21 @@ $(indent 4 _create_service_ports "svc-${deployment}" "$@")
 EOF
 }
 
+function list_ports() {
+    local portnum
+    for portnum in "$@" ; do
+	cat <<EOF
+- port: $portnum
+  name: "svc-${deployment}-${portnum}"
+EOF
+    done
+}
+
 function create_external_service() {
     local namespace=$1
     local deployment=$2
     local external_name=$3
     shift 3
-    function list_ports() {
-	local portnum
-	for portnum in "$@" ; do
-	    cat <<EOF
-- port: $portnum
-  name: "svc-${deployment}-${portnum}"
-EOF
-	done
-    }
     create_object -t Service -n "$namespace" "svc-${deployment}" <<EOF
 apiVersion: v1
 kind: Service
@@ -3456,76 +3458,83 @@ EOF
     done
 }
 
-function create_vm_deployment() {
-    function vm_evict_strategy() {
-	if ((vm_evict_migrate)) ; then
-	    echo "evictionStrategy: LiveMigrate"
-	fi
-    }
-    function run_as_container() {
-	local -a ports=("${!workload_service_ports[@]}")
-	local port
-	local -a nports
-	for port in "${ports[@]}" ; do
-	    nports+=("-p ${port}:${port}")
+function _vm_evict_strategy() {
+    if ((vm_evict_migrate)) ; then
+	echo "evictionStrategy: LiveMigrate"
+    fi
+}
+
+function _run_as_container() {
+    local -a ports=("${!workload_service_ports[@]}")
+    local port
+    local -a nports
+    for port in "${ports[@]}" ; do
+	nports+=("-p ${port}:${port}")
+    done
+    if ((vm_run_as_container)) ; then
+	local setup_command=
+	local sysctls=
+	local key
+	local value
+	for key in "${!__sysctls[@]}" ; do
+	    sysctls+=" '--sysctl=$key=${__sysctls[$key]}'"
 	done
-	if ((vm_run_as_container)) ; then
-	    local setup_command=
-	    local sysctls=
-	    local key
-	    local value
-	    for key in "${!__sysctls[@]}" ; do
-		sysctls+=" '--sysctl=$key=${__sysctls[$key]}'"
-	    done
-	    echo "podman run --rm --privileged $sysctls -P ${nports[*]} $(standard_environment -C) '-v${system_configmap_mount_dir}:${system_configmap_mount_dir}' '-v${user_configmap_mount_dir}:${user_configmap_mount_dir}' '$container_image' $setup_command"
-	fi
-    }
-    function install_required_packages() {
-	local -a packages_needed=()
-	readarray -t packages_needed <<< "$(vm_required_packages)"
-	if [[ $vm_run_as_container -eq 0 && -n "${packages_needed[*]}" ]] ; then
-	    echo "- \"dnf install -y ${packages_needed[*]}"\"
-	fi
-    }
-    function setup_commands() {
-	sed -E -e 's/(^.+$)/- "\1"/' <<< "$(vm_setup_commands)"
-	if ((vm_run_as_container)) ; then
-	    echo "- sudo dnf install -y podman"
-	fi
-    }
-    function setup_sysctls() {
-	if ((! vm_run_as_container)) ; then
-	    local key
-	    for key in "${!__sysctls[@]}" ; do
-		echo "- \"sysctl -w '$key=${__sysctls[$key]}'\""
-	    done
-	fi
-    }
-    function insert_ssh_keys() {
-	local file
-	for file in "$@" ; do
-	    if [[ -z "$file" ]] ; then continue; fi
-	    if [[ -f "$file" ]] ; then
-		local ftype
-		ftype=$(file "$file")
-		case "$ftype" in
-		    *'private key')
-			warn "$file is a private key, not inserting!" ;;
-		    *'public key')
-			local contents
-			read -r contents < "$file"
-			cat <<EOF
+	echo "podman run --rm --privileged $sysctls -P ${nports[*]} $(standard_environment -C) '-v${system_configmap_mount_dir}:${system_configmap_mount_dir}' '-v${user_configmap_mount_dir}:${user_configmap_mount_dir}' '$container_image' $setup_command"
+    fi
+}
+
+function _install_required_packages() {
+    local -a packages_needed=()
+    readarray -t packages_needed <<< "$(vm_required_packages)"
+    if [[ $vm_run_as_container -eq 0 && -n "${packages_needed[*]}" ]] ; then
+	echo "- \"dnf install -y ${packages_needed[*]}"\"
+    fi
+}
+
+function _setup_commands() {
+    sed -E -e 's/(^.+$)/- "\1"/' <<< "$(vm_setup_commands)"
+    if ((vm_run_as_container)) ; then
+	echo "- sudo dnf install -y podman"
+    fi
+}
+
+function _setup_sysctls() {
+    if ((! vm_run_as_container)) ; then
+	local key
+	for key in "${!__sysctls[@]}" ; do
+	    echo "- \"sysctl -w '$key=${__sysctls[$key]}'\""
+	done
+    fi
+}
+
+function _insert_ssh_keys() {
+    local file
+    for file in "$@" ; do
+	if [[ -z "$file" ]] ; then continue; fi
+	if [[ -f "$file" ]] ; then
+	    local ftype
+	    ftype=$(file "$file")
+	    case "$ftype" in
+		*'private key')
+		    warn "$file is a private key, not inserting!" ;;
+		*'public key')
+		    local contents
+		    read -r contents < "$file"
+		    cat <<EOF
 - "echo '$contents' >> \"$HOME/.ssh/authorized_keys\" && chmod 600 \"$HOME/.ssh/authorized_keys\""
 EOF
-			;;
-		    *)
-			warn "Do not recognize type of $file ($ftype), not inserting" ;;
-		esac
-	    else
-		warn "$file does not exist or is not a plain file"
-	    fi
-	done
-    }
+		    ;;
+		*)
+		    warn "Do not recognize type of $file ($ftype), not inserting" ;;
+	    esac
+	else
+	    warn "$file does not exist or is not a plain file"
+	fi
+    done
+}
+
+
+function create_vm_deployment() {
     get_sysctls
     local node_class=client
     local namespace=$1
@@ -3571,7 +3580,7 @@ $(indent 6 standard_deployment_metadata_yaml "$namespace" client)
 $(indent 6 standard_pod_metadata_yaml "$namespace" client)
     spec:
 ${scheduler:+$(indent 6 <<< "schedulerName: $scheduler")}
-$(indent 6 vm_evict_strategy)
+$(indent 6 _vm_evict_strategy)
       domain:
         cpu:
           cores: $vm_cores
@@ -3612,12 +3621,12 @@ $(indent 8 volumes_yaml -n "$namespace" "$instance" "$secret_count")
 $(indent 16 vm_volume_mounts_yaml)
                 - "mount -o ro /dev/disk/by-id/ata-QEMU_HARDDISK_systemconfigmap '$system_configmap_mount_dir'"
                 - "mount -o ro /dev/disk/by-id/ata-QEMU_HARDDISK_userconfigmap '$user_configmap_mount_dir'"
-$(indent 16 insert_ssh_keys "${vm_ssh_keyfile}.pub")
-                $(install_required_packages)
-$(indent 16 setup_commands)
-$(indent 16 setup_sysctls)
+$(indent 16 _insert_ssh_keys "${vm_ssh_keyfile}.pub")
+                $(_install_required_packages)
+$(indent 16 _setup_commands)
+$(indent 16 _setup_sysctls)
               runcmd:
-                - "$(standard_environment -V) $(run_as_container)$(if [[ -n "${arglist_function}" ]] ; then
+                - "$(standard_environment -V) $(_run_as_container)$(if [[ -n "${arglist_function}" ]] ; then
      ARGLIST_FORMAT=vm "${arglist_function}" "${system_configmap_mount_dir}/" "$@" "0" -- \
      "$sync_nonce" "$namespace" "c0" "$basetime" "$baseoffset" "$(ts)" "$exit_at_end" "$sync_service" \
      "$sync_port_num" "$sync_ns_port_num" "$drop_cache_service" "$drop_cache_port_num" ; fi)"
