@@ -41,6 +41,21 @@ class ClusterBusterLoaderInvalidResults(ClusterBusterLoaderException):
         super().__init__(f"Invalid results in {name}")
 
 
+class ClusterBusterLoaderBadStatus(ClusterBusterLoaderException):
+    def __init__(self, error):
+        super().__init__(f'Status should be Pass, Fail, or No Result; actual was {error}')
+
+
+class ClusterBusterLoaderDuplicateReport(ClusterBusterLoaderException):
+    def __init__(self, name):
+        super().__init__(f"Duplicate report name {name}")
+
+
+class ClusterBusterLoaderNoDir(ClusterBusterLoaderException):
+    def __init__(self, arg):
+        super().__init__(f"No directory found in {arg}")
+
+
 simpleVarsToCheck = ['uuid', 'run_host', 'cnv_version', 'kata_version', 'kata_containers_version']
 
 
@@ -181,7 +196,7 @@ class LoadReportSet:
                     elif report['Status'] == 'Fail':
                         status['failed'].append(metadata['job_name'])
                     elif report['Status'] != 'No Result':
-                        raise ValueError(f'Status should be Pass, Fail, or No Result; actual was {report["Status"]}')
+                        raise ClusterBusterLoaderBadStatus(report["Status"])
         if status.get('result', None) is None:
             status['result'] = 'PASS' if not status['failed'] else 'FAIL'
         elif status['result'] == 'INCOMPLETE' and status['failed']:
@@ -261,7 +276,7 @@ class ClusterBusterLoader:
                 else:
                     raise ValueError(f"Unexpected key {key} in name {arg}")
         if dirname is None:
-            raise ValueError(f"No directory name found in {arg}")
+            raise ClusterBusterLoaderNoDir(arg)
         if run_name is None and not name_suffixes:
             run_name = dirname.rstrip('/').split('/')[-1]
         else:
@@ -296,7 +311,7 @@ class ClusterBusterLoader:
             spec = self._create_report_spec(arg)
             if spec is not None:
                 if spec['run_name'] in reports:
-                    raise ValueError(f'Duplicate report name {spec["run_name"]}')
+                    raise ClusterBusterLoaderDuplicateReport(spec["run_name"])
                 reports[spec['run_name']] = spec
         if not reports:
             print('No reports found', file=sys.stderr)

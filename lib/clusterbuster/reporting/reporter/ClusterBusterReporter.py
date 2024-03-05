@@ -147,8 +147,6 @@ class ClusterBusterReporter:
                                                               extras=extras)
                     if report:
                         answers.append(report)
-                    answers.append(ClusterBusterReporter.report_one(os.path.dirname(item), data, report_format,
-                                                                    extras=extras))
                 except (KeyboardInterrupt, BrokenPipeError):
                     sys.exit(1)
                 except TypeError:
@@ -204,8 +202,9 @@ class ClusterBusterReporter:
     def list_report_formats():
         return ['none', 'summary', 'verbose', 'raw', 'raw-python',
                 'json-summary', 'json', 'json-verbose',
-                'parseable-summary', 'parseable-verbose',
-                'json-summary-python', 'json-python', 'json-verbose-python',
+                'parseable', 'parseable-summary', 'parseable-verbose',
+                'json-summary-python', 'json-python',
+                'json-verbose-python', 'parseable-python',
                 'parseable-summary-python', 'parseable-verbose-python'
                 ]
 
@@ -246,6 +245,10 @@ class ClusterBusterReporter:
         :param indent: Per-level indentation
         :param report_width: Width of the report
         """
+        if report_format == 'parseable':
+            report_format = 'parseable-summary'
+        if report_format == 'parseable-python':
+            report_format = 'parseable-summary-python'
         parser = argparse.ArgumentParser(description='Parse report')
         parser.add_argument('--no-summary', action='store_true', help='Do not print standard summary')
         self._base_args, self.__extra_args = parser.parse_known_args(extras)

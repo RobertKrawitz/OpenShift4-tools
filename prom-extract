@@ -28,11 +28,11 @@ def efail(*args, **kwargs):
 
 
 try:
+    import sys
     from prometheus_api_client import PrometheusConnect
     import argparse
     from jinja2 import Template
     import selectors
-    import sys
     import time
     import os
     from datetime import datetime, timezone, timedelta
