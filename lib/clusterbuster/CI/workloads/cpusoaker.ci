@@ -60,7 +60,7 @@ function cpusoaker_test() {
     local -A runtimes_tested=()
     local runtime
     for runtime in "${runtimeclasses[@]}" ; do
-	process_workload_options "$workload" "${runtimeclass:-pod}"
+	process_workload_options "$workload" "${runtime:-pod}"
 	if ((___cpusoaker_replica_increment < 1)) ; then
 	    echo "Replica increment must be at least 1" 1>&2
 	    return 1

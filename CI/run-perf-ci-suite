@@ -504,7 +504,7 @@ $(list_profiles '                                - ')
                                 distinct string to aid in later identification.
 
     All other options listed below may be of the form
-    --option:<workload><runtime>=value to specify that the value should apply
+    --option:<workload>:<runtime>=value to specify that the value should apply
     only to a particular workload and runtimeclass.  Either workload or
     runtimeclass may be omitted or be of the form
     :workload
@@ -639,6 +639,8 @@ function test_parse() {
 
 function check_clusterbuster_option() {
     local option=$1
+    option=${option//-/}
+    option=${option//_/}
     if [[ -z "${known_clusterbuster_options[*]}" ]] ; then
 	local arg
 	while read -r arg ; do
@@ -704,16 +706,12 @@ function process_workload_options() {
 	local optvalue
 	local optworkload
 	# shellcheck disable=SC2034
-	read -r noptname1 noptname optvalue <<< "$(parse_option "$option" "$workload" "$runtimeclass")"
+	read -r noptname1 noptname optvalue <<< "$(parse_ci_option "$option" "$workload" "$runtimeclass")"
 	if [[ -n "$noptname1" ]] ; then
 	    optvalue=$(splitarg "$optvalue")
-	    if ! call_api -A -a -w "$workload" process_option "$option" ; then
-		if check_clusterbuster_option "$noptname1" ; then
-		    extra_clusterbuster_args+=("--$noptname=$optvalue")
-		else
-		    stack_trace
-		    fatal "Unknown option $option ($noptname1)"
-		fi
+	    if ! call_api -a -w "$workload" process_option "$option" &&
+		    check_clusterbuster_option "$noptname1" ; then
+		extra_clusterbuster_args+=("--$noptname=$optvalue")
 	    fi
 	fi
     done

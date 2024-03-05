@@ -69,9 +69,12 @@ class files_client(clusterbuster_pod_client):
                             if answer != self.blocksize:
                                 raise os.IOError(f"Incomplete write to {filename} (file {files_created}): {answer} bytes, expect {self.blocksize}")
                             ops = ops + 1
-                        except Exception as exc:
+                        except IOError as exc:
                             raise Exception(f"Write failed to {filename} (file {files_created}): {exc}") from None
-                    os.close(fd)
+                    try:
+                        os.close(fd)
+                    except IOError as exc:
+                        raise Exception(f"Unable to close {filename} (file {files_created}): {exc}") from None
         return ops
 
     def readthem(self, pid: int, oktofail: bool = False):
