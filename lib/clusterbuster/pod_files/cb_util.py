@@ -36,11 +36,20 @@ class cb_util:
     def __init__(self, offset: float = 0, no_timestamp: bool = False):
         self.__offset = offset
         self.__no_timestamp = no_timestamp
+        self.__initial_connect_time = None
 
     def _set_offset(self, offset: float = 0):
         old_offset = self.__offset
         self.__offset = offset
         return old_offset
+
+    def _get_initial_connect_time(self):
+        """
+        Return the local timestamp immediately prior to the first
+        successful attempt to connect to the sync controller.  This
+        should be used for computing the sync rtt.
+        """
+        return self.__initial_connect_time
 
     def _ts(self):
         return datetime.utcfromtimestamp(time.time() - self.__offset).strftime('%Y-%m-%dT%T.%f')
@@ -258,6 +267,7 @@ class cb_util:
         """
         retries = 0
         initial_time = time.time()
+        first_start = self._get_initial_connect_time()
         while True:
             try:
                 try:
@@ -268,6 +278,8 @@ class cb_util:
                 # We call gethostbyname() each time through the loop because
                 # the remote hostname might not exist immediately.
                 caddr = self._resolve_host(addr)
+                if first_start is None:
+                    self.__initial_connect_time = time.time()
                 sock.connect((caddr, port))
                 if retries:
                     self._timestamp(f"Connected after {retries} retries")

@@ -408,11 +408,12 @@ oc logs -n '{self._namespace()}' '{self._podname()}' -c '{self._container()}'
             request['have'][f'{ifname}@{self.__pod}.{self.__namespace}'] = addr
         data = self.__do_sync_command('TNET', json.dumps(request))
         try:
-            [local_sync_start, remote_sync_start, absolute_sync_start,
+            [local_presync_start, remote_sync_start, absolute_sync_start,
              remote_sync_base, remote_sync, sync_base_start_time] = self._fsplit(data.decode('ascii'))
         except Exception as err:
             self._timestamp(f"Could not parse response from server: {data}: {err}")
             os._exit(1)
+        local_sync_start = self._get_initial_connect_time()
         local_sync = float(time.time())
         local_sync_rtt = local_sync - local_sync_start
         remote_sync_rtt = remote_sync - remote_sync_start
@@ -429,6 +430,7 @@ oc logs -n '{self._namespace()}' '{self._podname()}' -c '{self._container()}'
             'controller_crtime': self.__crtime,
             'local_offset_from_sync': local_offset_from_sync,
             'local_start_time': adjusted_start_time,
+            'local_presync_start': local_presync_start,
             'local_sync': local_sync,
             'local_sync_rtt': local_sync_rtt,
             'local_sync_start': local_sync_start,
