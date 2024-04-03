@@ -498,27 +498,30 @@ $(print_workloads_supporting_reporting '                        - ')
                         - mount_path is the path on which to mount the volume
                             (required).
                         Options currently supported include the following:
-                           - claimName is the name of a PVC if it differs
-                             from the volume name.  This allows use of
-                             different PVCs; all occurrences of %N
-                             are replaced by the namespace of the pod
-                             mounting the volume; all instances of %i
-                             are replaced by the instance of the pod
-                             within the namespace.
-                           - size in bytes (required for emptydisk; ignored for
-                             other volume types).
-                           - inodes in number (optional for emptydisk; ignored
-                             for other volume types).
-                           - bus (VMs; ignored for pods): bus to be used
-                             for the volume (default virtio)
-                           - cache (VMs): caching mode (none, writeback,
-                             writethrough; default none)
-                           - fstype (VMs): filesystem type to format
-                             the volume to; empty means to not format
-                             the volume (filesystem must already be present).
-                             fsopts (VMs): options to use for formatting
-                             the filesystem.
-                           - mountopts (VMs): mount options to be used.
+                          - claimName is the name of a PVC if it differs
+                            from the volume name.  This allows use of
+                            different PVCs; all occurrences of %N
+                            are replaced by the namespace of the pod
+                            mounting the volume; all instances of %i
+                            are replaced by the instance of the pod
+                            within the namespace.
+                          - size in bytes (required for emptydisk; ignored for
+                            other volume types).
+                          - inodes in number (optional for emptydisk; ignored
+                            for other volume types).
+                          - bus (VMs; ignored for pods): bus to be used
+                            for the volume (default virtio)
+                          - cache (VMs): caching mode (none, writeback,
+                            writethrough; default none)
+                          - fstype (VMs): filesystem type to format
+                            the volume to; empty means to not format
+                            the volume (filesystem must already be present).
+                            fsopts (VMs): options to use for formatting
+                            the filesystem.
+                          - mountopts (VMs): mount options to be used.
+                          - nfsserv (VMs): NFS server for NFS-based PVCs.
+                          - nfsshare (VMs): NFS share name for NFS-based
+                            PVCs.  Default to '/'.                         
                         Notes:
                           - A previously declared mount can be overridden
                             by specifying a later mount with the same
@@ -1667,7 +1670,7 @@ function _fail_helper()  {
 	local podstatus
 	podstatus=$(____OC get pod -ojsonpath='{.status.phase}' "${sync_pod[@]}" 2>/dev/null)
 	case "$podstatus" in
-	    Succeeded|Terminated)
+	    Succeeded|Terminated|Completed)
 		return
 		;;
 	    Running)
@@ -1775,7 +1778,7 @@ function _get_sync_logs_poll() {
 		set_run_failed "Status of pod $pod failed!"
 		return 1
 		;;
-	    ''|Succeeded)	# Might be an old pod not yet deleted
+	    ''|Succeeded|Completed)	# Might be an old pod not yet deleted
 		if ((pod_status_found)) ; then
 		    echo "Unexpected status '$status' of pod $pod!" 1>&2
 		    return 1
@@ -2099,16 +2102,17 @@ EOF
     return $retval
 }
 
-function _describe_pod() {
+function _describe_entity() {
     local namespace=$1
-    local pod=$2
-    local poddesc="$artifactdir/Describe/${namespace}:${pod}"
-    if __OC describe pod -n "$namespace" "$pod" > "${poddesc}.tmp" ; then
-	mv "${poddesc}.tmp" "$poddesc"
-	[[ -s "$poddesc" ]] || echo "Warning: empty description for ${namespace}:${pod}" 1>&2
+    local name=$2
+    local entitytype=${3:-pod}
+    local namedesc="$artifactdir/Describe/${3:+$3+}${namespace}:${name}"
+    if __OC describe "${entitytype}" -n "$namespace" "$name" > "${namedesc}.tmp" ; then
+	mv "${namedesc}.tmp" "$namedesc"
+	[[ -s "$namedesc" ]] || echo "Warning: empty $entitytype description for ${namespace}:${name}" 1>&2
     else
-	echo "Unable to retrieve pod description for ${namespace}:${pod}" 1>&2
-	rm -f "${poddesc}.tmp"
+	echo "Unable to retrieve $entitytype description for ${namespace}:${name}" 1>&2
+	rm -f "${namedesc}.tmp"
 	false
     fi
 }
@@ -2157,10 +2161,10 @@ function _retrieve_artifacts() {
 	    local name="${podname}:${container}"
 	    if [[ -z "${pods_described[$podname]:-}" ]] ; then
 		if ((parallel_log_retrieval > 1)) ; then
-		    _describe_pod "$namespace" "$pod" &
+		    _describe_entity "$namespace" "$pod" &
 		    jobs_pending[$!]=$podname
 		else
-		    _describe_pod "$namespace" "$pod"
+		    _describe_entity "$namespace" "$pod"
 		fi
 		pods_described[$name]=1
 	    fi
@@ -2186,11 +2190,34 @@ function _retrieve_artifacts() {
 	    wait "$job" 2>/dev/null
 	    unset "jobs_pending[$job]"
 	done
+	if [[ $runtime_class = vm ]] ; then
+	    local vm
+	    local entitytype
+	    local ignore
+	    for entitytype in vm vmi ; do
+		jobs_to_wait=()
+		# shellcheck disable=SC2034
+		while read -r namespace vm ignore ; do
+		    if ((parallel_log_retrieval > 1)) ; then
+			_describe_entity "$namespace" "$vm" "$entitytype"&
+			jobs_pending[$!]=$podname
+		    else
+			_describe_entity "$namespace" "$vm" "$entitytype"
+		    fi
+		    pods_described[$name]=1
+		done <<< "$(__OC get "${entitytype}" -A -l "${basename}-id=$uuid" --no-headers 2>/dev/null)"
+		local -a jobs_to_wait=("${!jobs_pending[@]}")
+		for job in "${jobs_to_wait[@]}" ; do
+		    wait "$job" 2>/dev/null
+		    unset "jobs_pending[$job]"
+		done
+	    done
+	fi
 	if [[ $deployment_type = vm && -f "$VIRTCTL" && -f "$vm_ssh_keyfile" ]] ; then
 	    [[ ! -d "$artifactdir/VMLogs" ]] && mkdir "$artifactdir/VMLogs"
 	    while read -r namespace vm ; do
 		# virtctl scp assumes that any colons in the destination filename are remote.
-		"$VIRTCTL" scp -i "$vm_ssh_keyfile" -t "-oStrictHostKeyChecking=no" -t "-oGlobalKnownHostsFile=/dev/null" -t "-oUserKnownHostsFile=/dev/null" -t "-oLogLevel ERROR" "$vm.$namespace:/var/log/cloud-init-output.log" "$artifactdir/VMLogs/$namespace.$vm" </dev/null && mv "$artifactdir/VMLogs/$namespace.$vm" "$artifactdir/VMLogs/$namespace:$vm"
+		"$VIRTCTL" scp -i "$vm_ssh_keyfile" -t "-oStrictHostKeyChecking=no" -t "-oGlobalKnownHostsFile=/dev/null" -t "-oUserKnownHostsFile=/dev/null" -t "-oLogLevel ERROR" "root@$vm.$namespace:/var/log/cloud-init-output.log" "$artifactdir/VMLogs/$namespace.$vm" </dev/null 1>&2 && mv "$artifactdir/VMLogs/$namespace.$vm" "$artifactdir/VMLogs/$namespace:$vm"
 	    done <<< "$(__OC get vm -A -l "${basename}-id=$uuid" --no-headers | awk '{print $1, $2}')"
 	fi
     fi
@@ -3427,6 +3454,8 @@ function vm_volume_mounts_yaml() {
 	local fsopts=
 	local bus=virtio
 	local inodes=
+	local nfssrv=
+	local nfsshare=/
 	for arg in "${args[@]}" ; do
 	    local opt
 	    local value
@@ -3437,21 +3466,27 @@ function vm_volume_mounts_yaml() {
 		mountopts) mountopts="$value" ;;
 		fstype)    fstype="$value"    ;;
 		fsopts)    fsopts="$value"    ;;
+		nfssrv)    nfssrv="$value"    ;;
+		nfsshare)  nfsshare="$value"  ;;
 		*)			      ;;
 	    esac
 	done
-	[[ "${type,,}" = emptydisk ]] && name="cbemptydisk$((emptydiskid++))"
-	name="${bus}-${name}"
-	if [[ -n "$fstype" ]] ; then
-	    local sinodes=
-	    [[ $fstype = ext* ]] && sinodes=${inodes:+"-N '$inodes'"}
-	    local force=
-	    [[ $fstype = xfs ]] && force=-f
-	    # shellcheck disable=SC2016
-	    command="'mkfs.${fstype}' $force $sinodes $fsopts '/dev/disk/by-id/$name' && "
+	if [[ -n "${nfssrv}" ]] ; then
+	    local remote="${nfssrv}:${nfsshare}"
+	    command="mkdir -p '$mountpoint' && mount $mountopts '$remote' '$mountpoint' && chmod 777 '$mountpoint'"
+	else
+	    [[ "${type,,}" = emptydisk ]] && name="cbemptydisk$((emptydiskid++))"
+	    name="${bus}-${name}"
+	    if [[ -n "$fstype" ]] ; then
+		local sinodes=
+		[[ $fstype = ext* ]] && sinodes=${inodes:+"-N '$inodes'"}
+		local force=
+		[[ $fstype = xfs ]] && force=-f
+		# shellcheck disable=SC2016
+		command="'mkfs.${fstype}' $force $sinodes $fsopts '/dev/disk/by-id/$name' && "
+	    fi
+	    command+="mkdir -p '$mountpoint' && mount $mountopts '/dev/disk/by-id/$name' '$mountpoint' && chmod 777 '$mountpoint'"
 	fi
-	command+="mkdir -p '$mountpoint' && mount $mountopts '/dev/disk/by-id/$name' '$mountpoint' && chmod 777 '$mountpoint'"
-	set +x
 	cat <<EOF
 - "$command"
 EOF
@@ -3521,7 +3556,7 @@ function _insert_ssh_keys() {
 		    local contents
 		    read -r contents < "$file"
 		    cat <<EOF
-- "echo '$contents' >> \"$HOME/.ssh/authorized_keys\" && chmod 600 \"$HOME/.ssh/authorized_keys\""
+- "echo '$contents' >> \"/root/.ssh/authorized_keys\" && chmod 600 \"/root/.ssh/authorized_keys\""
 EOF
 		    ;;
 		*)
