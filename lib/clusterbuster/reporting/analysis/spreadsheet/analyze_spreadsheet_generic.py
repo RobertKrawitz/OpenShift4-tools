@@ -91,11 +91,11 @@ class SpreadsheetAnalysis(ClusterBusterAnalyzeSummaryGeneric):
                         multiplier = v.get('multiplier', 1)
                         base = v.get('base', None)
                         answer += f'{name}{unit}{tab}'
-                        answer += tab.join([prettyprint(datum, multiplier=multiplier, base=base)
+                        answer += tab.join([prettyprint(datum, multiplier=multiplier, base=base, parseable=True)
                                             for datum in self._get_run_data(v_data, 'Total', metric)])
                     else:
                         answer += f'{name}'
-                        answer += '\t' + tab.join([prettyprint(datum, precision=3, base=base)
+                        answer += '\t' + tab.join([prettyprint(datum, precision=3, base=base, parseable=True)
                                                    for datum in self._get_run_data(v_data, 'Total', metric)])
                     answer += "\n"
                 answer += "\n"
@@ -122,14 +122,14 @@ Operation: {name}{unit}
 """
                 for key in self._get_all_keys(var):
                     report_answer += f'{key}{tab}'
-                    report_answer += tab.join([prettyprint(datum, multiplier=multiplier, base=base)
+                    report_answer += tab.join([prettyprint(datum, multiplier=multiplier, base=base, parseable=True)
                                                for datum in self._get_run_data(var, key, "value")]) + '\n'
                 answers.append(report_answer)
                 for op in 'ratio', 'min_ratio', 'max_ratio':
                     report_answer = f"{self._op_map[op]} {tab.join(self._runs)}" + '\n'
                     have_data = False
                     for key in self._get_all_keys(var):
-                        report_line = tab.join([prettyprint(datum, precision=3, base=base)
+                        report_line = tab.join([prettyprint(datum, precision=3, base=base, parseable=True)
                                                 for datum in self._get_run_data(var, key, op)]) + '\n'
                         if re.search(report_line, r'[0-9]'):
                             have_data = True
@@ -142,7 +142,7 @@ Operation: {name}{unit}
     def _print_safe(self, data: dict, d1, d2, d3, multiplier: float = 1):
         try:
             val = self._safe_get(data, [d1, d2, d3])
-            return prettyprint(val * multiplier, precision=3, base=0)
+            return prettyprint(val * multiplier, precision=3, base=0, parseable=True)
         except (KeyboardInterrupt, BrokenPipeError):
             sys.exit()
         except Exception:
