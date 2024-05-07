@@ -218,14 +218,14 @@ def handle_result(tmp_sync_file_base: str, expected_clients: int, tbuf: str):
         fatal(f"Can't write to sync file {tmp_sync_file}: {error}")
 
 
-def reply_timestamp(start_time: float, base_start_time: float, ts_clients: list):
+def reply_timestamp(ts_clients: list):
     start = ytime()
     timebase._timestamp("Returning client sync start time, sync start time, sync sent time")
     for client in ts_clients:
-        time = ytime()
         client_fd, client_ts = client
-        tbuf = f"{client_ts} {start_time} {start} {time} {base_start_time}"
-        client_fd.send(tbuf.encode('ascii'))
+        client_ts['reply_start'] = start
+        client_ts['reply_time'] = ytime()
+        client_fd.send(json.dumps(client_ts).encode('ascii'))
     end = ytime()
     et = end - start
     timebase._timestamp(f"Sending sync time took {et} seconds")
@@ -313,7 +313,13 @@ def sync_one(sock, tmp_sync_file_base: str, tmp_error_file: str, start_time: flo
                         continue
                 else:
                     ignore, ts, ignore = payload.split()
-                ts_clients.append([client, f"{ts} {ytime()}"])
+                ts_clients.append([client,
+                                   {
+                                    "client_ts": ts,
+                                    "request_time": ytime(),
+                                    "start_time": start_time,
+                                    "base_start_time": base_start_time
+                                    }])
             else:
                 fail_hard(f"Unexpected request for time sync from {payload}")
         elif command == 'rslt':
@@ -330,7 +336,7 @@ def sync_one(sock, tmp_sync_file_base: str, tmp_error_file: str, start_time: flo
             timebase._timestamp(f"Unknown command from {address}: '{command}'")
         expected_clients -= 1
     if ts_clients:
-        reply_timestamp(start_time, base_start_time, ts_clients)
+        reply_timestamp(ts_clients)
     if net_clients:
         msg = json.dumps({'have': net_clients})
         command = f'nsrq {msg}'

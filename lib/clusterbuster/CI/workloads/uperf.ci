@@ -20,9 +20,6 @@ declare -ga ___uperf_ninst
 declare -ga ___uperf_test_types
 declare -gi ___uperf_job_runtime
 declare -gi ___uperf_job_timeout
-declare -g ___uperf_interface
-declare -g ___uperf_interface_server
-declare -g ___uperf_interface_client
 declare -g ___uperf_use_annotation
 
 function uperf_test() {
@@ -52,10 +49,6 @@ function uperf_test() {
 					    --uperf_test_type="$test_type" \
 					    --uperf_proto=tcp \
 					    --uperf_nthr="$nthr" \
-					    ${uperf_interface:+--uperf_interface=$___uperf_interface:} \
-					    ${uperf_interface_server:+--uperf_interface_server=$___uperf_interface_server:} \
-					    ${uperf_interface_client:+--uperf_interface_client=$___uperf_interface_client:} \
-					    --uperf_interface="$___uperf_interface" \
 					    ${___uperf_use_annotation:+--pod-annotation="io.katacontainers.config.hypervisor.default_vcpus: \"$nthr\""}
 			counter=$((counter+1))
 		    done
@@ -72,9 +65,6 @@ function uperf_initialize_options() {
     ___uperf_test_types=(stream rr)
     ___uperf_job_runtime=0
     ___uperf_job_timeout=0
-    ___uperf_interface=
-    ___uperf_interface_server=
-    ___uperf_interface_client=
     ___uperf_use_annotation=yes
 }
 
@@ -93,7 +83,6 @@ function uperf_process_option() {
 	uperftest*)    readarray -t ___uperf_test_types <<< "$(parse_optvalues "$optvalue")"	;;
 	uperf*runtime) ___uperf_job_runtime=$optvalue						;;
 	uperf*timeout) ___uperf_job_timeout=$optvalue						;;
-	uperfint*)     ___uperf_interface=$optvalue						;;
 	uperfann*)     ___uperf_use_annotation=$(bool -Y '' "$optvalue")			;;
 	*)	       return 1									;;
     esac
@@ -118,14 +107,6 @@ function uperf_help_options() {
         --uperf-timeout=seconds
                                 Time the job out after specified time.  Default
                                 is the global timeout default.
-        --uperf-interface=<interface[=pod_interface]>
-                                Specify the network interface to use.  Optional
-                                pod interface is the name of the interface on
-                                the pod (normally net1).
-        --uperf-interface-server=<interface[=pod_interface]>
-        --uperf-interface-client=<interface[=pod_interface]>
-                                Specify the interfaces for client and server
-                                separately.
         --uperf-annotate_vcpus  Provide a pod annotation for the number of
                                 vCPUs to use (default $___uperf_use_annotation)
 EOF
