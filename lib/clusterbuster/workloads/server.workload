@@ -73,7 +73,7 @@ function server_create_deployment() {
     local server_if
     server_if=$(get_net_interface server)
     for ((instance = first_deployment; instance < count + first_deployment; instance++)) ; do
-	if [[ -z "server_if" ]] ; then
+	if [[ -z "$server_if" ]] ; then
 	    create_service -k replica -e "$namespace" "${namespace}-server-server-${instance}-1" \
 			   $(seq "$___server_port" $((___server_port + ___server_port_addrs)))
 	fi

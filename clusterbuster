@@ -2201,6 +2201,19 @@ function _log_container() {
     fi
 }
 
+function _retrieve_vm_xml() {
+    local namespace=$1
+    local vm=$2
+    local clog="$artifactdir/VMXML/${namespace}_${vm}.xml"
+    if __OC exec -n "$namespace" "$(__OC get pod -n "$namespace" -l "vm.kubevirt.io/name=$vm" '-ojsonpath={.items[0].metadata.name}')" -- /bin/sh -c "cat '/var/run/libvirt/qemu/run/${namespace}_${vm}.xml'" > "${clog}.tmp" ; then
+	mv "${clog}.tmp" "$clog"
+	[[ -s "$clog" ]] || echo "Warning: empty qemu XML file for ${namespace}:${vm}" 1>&2
+    else
+	echo "Unable to retrieve qemu XML file for ${namespace}:${vm}" 1>&2
+	rm -f "${clog}.tmp"
+	false
+    fi
+}
 
 function _retrieve_artifacts() {
     local always_retrieve_artifacts=${1:-}
@@ -2259,7 +2272,8 @@ function _retrieve_artifacts() {
 	    wait "$job" 2>/dev/null
 	    unset "jobs_pending[$job]"
 	done
-	if [[ $runtime_class = vm ]] ; then
+	if [[ $deployment_type = vm ]] ; then
+	    [[ ! -d "$artifactdir/VMXML" ]] && mkdir "$artifactdir/VMXML"
 	    local vm
 	    local entitytype
 	    local ignore
@@ -2273,13 +2287,19 @@ function _retrieve_artifacts() {
 		    else
 			_describe_entity "$namespace" "$vm" "$entitytype"
 		    fi
+		    # Don't try to parallelize something that exec's into pods
+		    if [[ $entitytype = vm ]] ; then
+			_retrieve_vm_xml "$namespace" "$vm"
+		    fi
 		    pods_described[$name]=1
+		    if (( ${#jobs_pending[@]} > parallel_log_retrieval )) ; then
+			local -a jobs_to_wait=("${!jobs_pending[@]}")
+			for job in "${jobs_to_wait[@]}" ; do
+			    wait "$job" 2>/dev/null
+			    unset "jobs_pending[$job]"
+			done
+		    fi
 		done <<< "$(__OC get "${entitytype}" -A -l "${basename}-id=$uuid" --no-headers 2>/dev/null)"
-		local -a jobs_to_wait=("${!jobs_pending[@]}")
-		for job in "${jobs_to_wait[@]}" ; do
-		    wait "$job" 2>/dev/null
-		    unset "jobs_pending[$job]"
-		done
 	    done
 	fi
 	if [[ $deployment_type = vm && -f "$VIRTCTL" && -f "$vm_ssh_keyfile" ]] ; then
@@ -2440,15 +2460,17 @@ function get_net_interface() {
 }
 
 function get_net_interface_external() {
-    local net=$(get_net_interface "${1:-}")
-    echo ${net%%:*}
+    local net
+    net=$(get_net_interface "${1:-}")
+    echo "${net%%:*}"
 }
 
 function get_net_interface_local() {
-    local net=$(get_net_interface "${1:-}")
+    local net
+    net=$(get_net_interface "${1:-}")
     if [[ -n "$net" ]] ; then
 	if [[ $net = *":"* ]] ; then
-	    echo ${net#*:}
+	    echo "${net#*:}"
 	elif [[ ${deployment_type:-} = vm ]] ; then
 	    echo "$default_net_interface_vm"
 	else
@@ -3701,8 +3723,10 @@ EOF
 }
 
 function _increment_vm_addr() {
-    local -i a=${vm_net_addr[3]}
-    local -i b=${vm_net_addr[2]}
+    local -i a
+    a=${vm_net_addr[3]}
+    local -i b
+    b=${vm_net_addr[2]}
     a=$((a + 1))
     if ((a > 254)) ; then
 	a=1
@@ -3764,7 +3788,7 @@ function create_vm_deployment() {
     if [[ -n "$net_if" ]] ; then
 	pod_annotations+=("k8s.v1.cni.cncf.io/networks: $net_if")
     fi
-    local net_internal
+    local net_if
     net_if=$(get_net_interface_local "$node_class")
     while (( replica++ < replicas )) ; do
         local name="${depname}-${replica}"
