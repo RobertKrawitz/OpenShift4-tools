@@ -62,7 +62,8 @@ declare -i debugonly=0
 declare force_cleanup_timeout=
 declare -i take_prometheus_snapshot=0
 declare unique_job_prefix=
-declare snapshot_date_format='%Y_%m_%dT%H_%M_%S%z'
+# shellcheck disable=2155
+declare snapshot_date_format=$(standard_snapshot_date_format)
 declare prometheus_snapshot_start_ts=
 declare job_delay=0
 declare -i pin_jobs=1
@@ -946,7 +947,7 @@ if ((! debugonly)) ; then
 	check_runtimeclass "$runtimeclass" && runtimeclasses+=("$runtimeclass")
     done
     starting_timestamp=$(date +%s)
-    job_datestamp=$(date -u '+%Y_%m_%dT%H_%M_%S%z' --date=@"$starting_timestamp")
+    job_datestamp=$(date -u "+$(standard_snapshot_date_format)" --date=@"$starting_timestamp")
     artifactdir=${artifactdir//%s/$job_datestamp}
     if ((restart)) ; then
 	if [[ -d "$artifactdir" ]] ; then

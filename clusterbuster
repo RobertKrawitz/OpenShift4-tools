@@ -259,12 +259,13 @@ declare -i vm_start_running=1
 declare vm_memory=2Gi
 declare vm_grace_period=30
 declare vm_image='quay.io/rkrawitz/clusterbuster-vm:latest'
-declare vm_evict_migrate=1
-declare vm_run_as_container=0
+declare -i vm_evict_migrate=1
+declare -i vm_run_as_container=0
 declare -A workload_service_ports=()
 declare vm_user=cluster
 declare vm_password=buster
 declare vm_ssh_keyfile=
+declare -i vm_run_as_root=0
 # Hard code for the time being
 declare -a vm_net_addr=(192 168 129 1)
 
@@ -643,6 +644,8 @@ $(print_workloads_supporting_reporting '                        - ')
                         VMs for log retrieval or other access purposes.
                         Default none, in which case a temporary key
                         is generated.
+       --vm-run-as-root=[0,1]
+                        Run test command as root.  Default $vm_run_as_root.
 
     Tuning object creation (short equivalents):
        --scale-ns=[0,1] Scale up the number of namespaces vs.
@@ -844,7 +847,7 @@ function inject_error() {
 
 function artifact_dirname() {
     local basename=${1:-cb-%T}
-    echo "${basename//%T/$(printf "%(%Y_%m_%dT%H_%M_%S%z)T" -1)}"
+    echo "${basename//%T/$(printf "%($(standard_snapshot_date_format))T" -1)}"
 }
 
 function process_option() {
@@ -970,6 +973,7 @@ function process_option() {
 	vmrunascontainer)	    vm_run_as_container=$(bool "$optvalue")	;;
 	vmuser)			    vm_user=$optvalue				;;
 	vmpassword)		    vm_password=$optvalue			;;
+	vmrunasroot)		    vm_run_as_root=$(bool "$optvalue")		;;
 	vmsshkey*)		    vm_ssh_keyfile=$optvalue			;;
 	# Object creation
 	obj*spercall)		    objs_per_call=$optvalue			;;
@@ -1340,9 +1344,7 @@ function stack_trace() {
 	# Line number is used as a string here, not an int,
 	# since we want the length of it as a string.
 	local line="${BASH_LINENO[$(( i - 1 ))]}"
-	if [[ $src = "$__realsc__" ]] ; then
-	    src="$__topsc__"
-	fi
+	[[ $src = "$__realsc__" ]] && src="$__topsc__"
 	((${#src} > max_filename_len)) && max_filename_len=${#src}
 	((${#line} > max_line_len)) && max_line_len=${#line}
     done
@@ -1352,9 +1354,7 @@ function stack_trace() {
 	local func="${FUNCNAME[$i]:-(top level)}"
 	local -i line="${BASH_LINENO[$(( i - 1 ))]}"
 	local src="${BASH_SOURCE[$i]:-(no file)}"
-	if [[ $src = "$__realsc__" ]] ; then
-	    src="$__topsc__"
-	fi
+	[[ $src = "$__realsc__" ]] && src="$__topsc__"
 	local -i frame_arg_count=${BASH_ARGC[$i]}
 	local argstr=
 	if ((frame_arg_count > 0)) ; then
@@ -1437,7 +1437,7 @@ function get_prometheus_pod_timestamp() {
 
 function readable_timestamp() {
     local rawtime=${1:-}
-    date -u '+%Y_%m_%dT%H_%M_%S%z' ${rawtime:+"--date=@$rawtime"}
+    date -u "+$(standard_snapshot_date_format)" ${rawtime:+"--date=@$rawtime"}
 }
 
 function set_start_timestamps() {
@@ -3105,7 +3105,7 @@ EOF
 
 function _really_create_objects() {
     if [[ $doit -ne 0 && -n $accumulateddata ]] ; then
-	__OC --validate=false apply -f - 2>&1 <<< "$accumulateddata" || {
+	__OC --validate=false create -f - 2>&1 <<< "$accumulateddata" || {
 	    echo "Create objects failed:" 1>&2
 	    echo "$accumulateddata" 1>&2
 	    set_run_aborted "Failed to create objects"
@@ -3642,6 +3642,12 @@ function _run_as_container() {
     fi
 }
 
+function _run_as_root() {
+    if ((vm_run_as_root)) ; then
+	echo -n "sudo -E "
+    fi
+}
+
 function _install_required_packages() {
     local -a packages_needed=()
     readarray -t packages_needed <<< "$(vm_required_packages)"
@@ -3867,7 +3873,7 @@ $(indent 16 _insert_ssh_keys "${vm_ssh_keyfile}.pub")
 $(indent 16 _setup_commands)
 $(indent 16 _setup_sysctls)
               runcmd:
-                - "$(standard_environment -V) $(_run_as_container)$(if [[ -n "${arglist_function}" ]] ; then
+                - "$(standard_environment -V) $(_run_as_root)  $(_run_as_container)$(if [[ -n "${arglist_function}" ]] ; then
      ARGLIST_FORMAT=vm "${arglist_function}" "${system_configmap_mount_dir}/" "$@" "0" -- \
      "$sync_nonce" "$namespace" "c0" "$basetime" "$baseoffset" "$(ts)" "$exit_at_end" "$sync_service" \
      "$sync_port_num" "$sync_ns_port_num" "$drop_cache_service" "$drop_cache_port_num" ; fi)"
