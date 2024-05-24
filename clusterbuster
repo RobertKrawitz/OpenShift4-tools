@@ -129,6 +129,9 @@ declare -i affinity=0
 declare -i sync_affinity=0
 declare -A pin_nodes=()
 declare -A runtime_classes=()
+declare -A net_interfaces=()
+declare -r default_net_interface_pod=net1
+declare -r default_net_interface_vm=eth1
 declare runtime_class=
 declare scheduler=
 declare -i verbose=0
@@ -218,8 +221,9 @@ declare -i metrics_interval=30
 declare -a sync_pod=()
 declare workload_step_interval=0
 declare -i preserve_tmpdir=0
-declare vm_ssh_keyfile=
 declare -r ssh_alg=ed25519
+declare -A __sysctls=()
+declare -i __sysctls_retrieved=0
 
 declare -r sync_flag_file="/tmp/syncfile";
 declare -r sync_error_file="/tmp/syncerror";
@@ -251,16 +255,19 @@ declare default_namespace_policy=restricted
 declare -i vm_cores=1
 declare -i vm_threads=1
 declare -i vm_sockets=1
+declare -i vm_start_running=1
 declare vm_memory=2Gi
 declare vm_grace_period=30
 declare vm_image='quay.io/rkrawitz/clusterbuster-vm:latest'
-declare vm_evict_migrate=1
-declare vm_run_as_container=0
+declare -i vm_evict_migrate=1
+declare -i vm_run_as_container=0
 declare -A workload_service_ports=()
 declare vm_user=cluster
 declare vm_password=buster
-declare -A __sysctls=()
-declare -i __sysctls_retrieved=0
+declare vm_ssh_keyfile=
+declare -i vm_run_as_root=0
+# Hard code for the time being
+declare -a vm_net_addr=(192 168 129 1)
 
 declare OC=${OC:-${KUBECTL:-}}
 OC=${OC:-$(type -p oc)}
@@ -521,7 +528,7 @@ $(print_workloads_supporting_reporting '                        - ')
                           - mountopts (VMs): mount options to be used.
                           - nfsserv (VMs): NFS server for NFS-based PVCs.
                           - nfsshare (VMs): NFS share name for NFS-based
-                            PVCs.  Default to '/'.                         
+                            PVCs.  Default to '/'.
                         Notes:
                           - A previously declared mount can be overridden
                             by specifying a later mount with the same
@@ -588,6 +595,13 @@ $(print_workloads_supporting_reporting '                        - ')
                         multiple times.
        --scheduler=<scheduler>
                         Use the specified scheduler to schedule pods.
+       --interface[=:class:]=name[:internal-interface]
+                        Provide the specified network interface to the pod/VM.
+                        Class has the same meaning as for --pin-node.
+                        Internal-interface, if specified, is the name of the
+                        interface inside the pod/VM.  Normally this should not
+                        be specified, and the default (net1 for pods, eth1 for
+                        VMs) should be used.
 
     Kata Virtualization Tuning:
        --virtiofsd-writeback=[0,1]
@@ -630,6 +644,8 @@ $(print_workloads_supporting_reporting '                        - ')
                         VMs for log retrieval or other access purposes.
                         Default none, in which case a temporary key
                         is generated.
+       --vm-run-as-root=[0,1]
+                        Run test command as root.  Default $vm_run_as_root.
 
     Tuning object creation (short equivalents):
        --scale-ns=[0,1] Scale up the number of namespaces vs.
@@ -768,6 +784,24 @@ function process_pin_node() {
     fi
 }
 
+function process_interface() {
+    local if_spec=$1
+    if_spec=${if_spec// /}
+    [[ -n "$if_spec" ]] || return
+    if [[ $if_spec = *'='* ]] ; then
+	local interface=${if_spec#*=}
+	local class=${if_spec%%=*}
+	class=${class//,/ }
+	# shellcheck disable=SC2206
+	local -a classes=($class)
+	for class in "${classes[@]}" ; do
+	    net_interfaces[$class]="$interface"
+	done
+    else
+	net_interfaces[default]="$if_spec"
+    fi
+}
+
 function process_runtimeclass() {
     local runtimespec=$1
     if [[ $runtimespec = 'vm' ]] ; then
@@ -777,8 +811,9 @@ function process_runtimeclass() {
     fi
     runtimespec=${runtimespec// /}
     runtime_class=$runtimespec
-    [[ -n "$runtimespec" ]] || return
-    if [[ $runtimespec = *'='* ]] ; then
+    if [[ -z "$runtimespec" ]] ; then
+	runtime_classes=()
+    elif [[ $runtimespec = *'='* ]] ; then
 	local runtime=${runtimespec#*=}
 	local class=${runtimespec%%=*}
 	class=${class//,/ }
@@ -810,6 +845,11 @@ function inject_error() {
     warn "*** Registering error injection '$condition' = '${injected_errors[$condition]}'"
 }
 
+function artifact_dirname() {
+    local basename=${1:-cb-%T}
+    echo "${basename//%T/$(printf "%($(standard_snapshot_date_format))T" -1)}"
+}
+
 function process_option() {
     local noptname
     local noptname1
@@ -830,7 +870,7 @@ function process_option() {
 	forceabort*)		    set -e					;;
 	preservetmpdir)		    preserve_tmpdir=$(bool "$optvalue")		;;
 	# Reporting
-	artifactdir)		    artifactdir="$optvalue"			;;
+	artifactdir)		    artifactdir="$(artifact_dirname "$optvalue")";;
 	metrics|metricsfile)	    set_metrics_file "$optvalue"		;;
 	metricsepoch)		    metrics_epoch=$optvalue			;;
 	metricsinterval)	    metrics_interval=$optvalue			;;
@@ -871,6 +911,7 @@ function process_option() {
 	processes|processesperpod)  processes_per_pod=$optvalue			;;
 	jobfile)		    process_job_file "$optvalue"		;;
 	pinnode)		    process_pin_node "$optvalue"		;;
+	interface)		    process_interface "$optvalue"		;;
 	replicas)		    replicas=$optvalue				;;
 	limit|limits)		    resource_limits+=("$optvalue")		;;
 	request|requests)	    resource_requests+=("$optvalue")		;;
@@ -932,6 +973,7 @@ function process_option() {
 	vmrunascontainer)	    vm_run_as_container=$(bool "$optvalue")	;;
 	vmuser)			    vm_user=$optvalue				;;
 	vmpassword)		    vm_password=$optvalue			;;
+	vmrunasroot)		    vm_run_as_root=$(bool "$optvalue")		;;
 	vmsshkey*)		    vm_ssh_keyfile=$optvalue			;;
 	# Object creation
 	obj*spercall)		    objs_per_call=$optvalue			;;
@@ -1188,6 +1230,37 @@ function _____OC() {
     exec "$OC" "$@"
 }
 
+function __VIRTCTL() {
+    if ((doit)) ; then
+	debug kubectl "$VIRTCTL" "$@"
+	"$VIRTCTL" "$@"
+    else
+	echo '(skipped)' "$VIRTCTL" "${@@Q}" 1>&2
+    fi
+}
+
+function _VIRTCTL() {
+    debug kubectl "$VIRTCTL" "$@"
+    __VIRTCTL "$@" || fatal "__KUBEFAIL__ $VIRTCTL $* failed!"
+}
+
+function ___VIRTCTL() {
+    debug kubectl "$VIRTCTL" "$@"
+    __VIRTCTL "$@" || fatal "$VIRTCTL $* failed!"
+}
+
+function ____VIRTCTL() {
+    debug kubectl "$VIRTCTL" "$@"
+    "$VIRTCTL" "$@"
+}
+
+function _____VIRTCTL() {
+    # When the oc/kubectl command must run in the same process
+    # as the caller.
+    debug kubectl "$VIRTCTL" "$@"
+    exec "$VIRTCTL" "$@"
+}
+
 function run_on_sync() {
     get_run_aborted && return 1
     ____OC exec "${sync_pod[@]}" -- "$@"
@@ -1271,9 +1344,7 @@ function stack_trace() {
 	# Line number is used as a string here, not an int,
 	# since we want the length of it as a string.
 	local line="${BASH_LINENO[$(( i - 1 ))]}"
-	if [[ $src = "$__realsc__" ]] ; then
-	    src="$__topsc__"
-	fi
+	[[ $src = "$__realsc__" ]] && src="$__topsc__"
 	((${#src} > max_filename_len)) && max_filename_len=${#src}
 	((${#line} > max_line_len)) && max_line_len=${#line}
     done
@@ -1283,9 +1354,7 @@ function stack_trace() {
 	local func="${FUNCNAME[$i]:-(top level)}"
 	local -i line="${BASH_LINENO[$(( i - 1 ))]}"
 	local src="${BASH_SOURCE[$i]:-(no file)}"
-	if [[ $src = "$__realsc__" ]] ; then
-	    src="$__topsc__"
-	fi
+	[[ $src = "$__realsc__" ]] && src="$__topsc__"
 	local -i frame_arg_count=${BASH_ARGC[$i]}
 	local argstr=
 	if ((frame_arg_count > 0)) ; then
@@ -1368,7 +1437,7 @@ function get_prometheus_pod_timestamp() {
 
 function readable_timestamp() {
     local rawtime=${1:-}
-    date -u '+%Y_%m_%dT%H_%M_%S%z' ${rawtime:+"--date=@$rawtime"}
+    date -u "+$(standard_snapshot_date_format)" ${rawtime:+"--date=@$rawtime"}
 }
 
 function set_start_timestamps() {
@@ -2132,6 +2201,19 @@ function _log_container() {
     fi
 }
 
+function _retrieve_vm_xml() {
+    local namespace=$1
+    local vm=$2
+    local clog="$artifactdir/VMXML/${namespace}_${vm}.xml"
+    if __OC exec -n "$namespace" "$(__OC get pod -n "$namespace" -l "vm.kubevirt.io/name=$vm" '-ojsonpath={.items[0].metadata.name}')" -- /bin/sh -c "cat '/var/run/libvirt/qemu/run/${namespace}_${vm}.xml'" > "${clog}.tmp" ; then
+	mv "${clog}.tmp" "$clog"
+	[[ -s "$clog" ]] || echo "Warning: empty qemu XML file for ${namespace}:${vm}" 1>&2
+    else
+	echo "Unable to retrieve qemu XML file for ${namespace}:${vm}" 1>&2
+	rm -f "${clog}.tmp"
+	false
+    fi
+}
 
 function _retrieve_artifacts() {
     local always_retrieve_artifacts=${1:-}
@@ -2166,7 +2248,7 @@ function _retrieve_artifacts() {
 		else
 		    _describe_entity "$namespace" "$pod"
 		fi
-		pods_described[$name]=1
+		pods_described[$podname]=1
 	    fi
 	    if [[ -z "${containers_logged[$name]:-}" ]] ; then
 		if ((parallel_log_retrieval > 1)) ; then
@@ -2190,7 +2272,8 @@ function _retrieve_artifacts() {
 	    wait "$job" 2>/dev/null
 	    unset "jobs_pending[$job]"
 	done
-	if [[ $runtime_class = vm ]] ; then
+	if [[ $deployment_type = vm ]] ; then
+	    [[ ! -d "$artifactdir/VMXML" ]] && mkdir "$artifactdir/VMXML"
 	    local vm
 	    local entitytype
 	    local ignore
@@ -2204,13 +2287,19 @@ function _retrieve_artifacts() {
 		    else
 			_describe_entity "$namespace" "$vm" "$entitytype"
 		    fi
+		    # Don't try to parallelize something that exec's into pods
+		    if [[ $entitytype = vm ]] ; then
+			_retrieve_vm_xml "$namespace" "$vm"
+		    fi
 		    pods_described[$name]=1
+		    if (( ${#jobs_pending[@]} > parallel_log_retrieval )) ; then
+			local -a jobs_to_wait=("${!jobs_pending[@]}")
+			for job in "${jobs_to_wait[@]}" ; do
+			    wait "$job" 2>/dev/null
+			    unset "jobs_pending[$job]"
+			done
+		    fi
 		done <<< "$(__OC get "${entitytype}" -A -l "${basename}-id=$uuid" --no-headers 2>/dev/null)"
-		local -a jobs_to_wait=("${!jobs_pending[@]}")
-		for job in "${jobs_to_wait[@]}" ; do
-		    wait "$job" 2>/dev/null
-		    unset "jobs_pending[$job]"
-		done
 	    done
 	fi
 	if [[ $deployment_type = vm && -f "$VIRTCTL" && -f "$vm_ssh_keyfile" ]] ; then
@@ -2356,6 +2445,36 @@ function get_pin_node() {
 	    echo "${pin_nodes[$1]}"
 	elif [[ -n "${pin_nodes[default]:-}" ]] ; then
 	    echo "${pin_nodes[default]}"
+	fi
+    fi
+}
+
+function get_net_interface() {
+    if [[ -n "${1:-}" ]] ; then
+	if [[ -n "${net_interfaces[$1]:-}" ]] ; then
+	    echo "${net_interfaces[$1]:-}"
+	else
+	    echo "${net_interfaces[default]:-}"
+	fi
+    fi
+}
+
+function get_net_interface_external() {
+    local net
+    net=$(get_net_interface "${1:-}")
+    echo "${net%%:*}"
+}
+
+function get_net_interface_local() {
+    local net
+    net=$(get_net_interface "${1:-}")
+    if [[ -n "$net" ]] ; then
+	if [[ $net = *":"* ]] ; then
+	    echo "${net#*:}"
+	elif [[ ${deployment_type:-} = vm ]] ; then
+	    echo "$default_net_interface_vm"
+	else
+	    echo "$default_net_interface_pod"
 	fi
     fi
 }
@@ -2986,7 +3105,7 @@ EOF
 
 function _really_create_objects() {
     if [[ $doit -ne 0 && -n $accumulateddata ]] ; then
-	__OC --validate=false apply -f - 2>&1 <<< "$accumulateddata" || {
+	__OC --validate=false create -f - 2>&1 <<< "$accumulateddata" || {
 	    echo "Create objects failed:" 1>&2
 	    echo "$accumulateddata" 1>&2
 	    set_run_aborted "Failed to create objects"
@@ -3380,6 +3499,11 @@ function create_pod_deployment() {
     local -i replicas=$4
     local -i replica=0
     local depname="${namespace}-${workload}-${instance}"
+    local net_if=
+    net_if=$(get_net_interface_external "$node_class")
+    if [[ -n "$net_if" ]] ; then
+	pod_annotations+=("k8s.v1.cni.cncf.io/networks: $net_if")
+    fi
     while (( replica++ < replicas )) ; do
 	local name="${depname}-${replica}"
 	create_object -n "$namespace" "$name" <<EOF
@@ -3518,6 +3642,12 @@ function _run_as_container() {
     fi
 }
 
+function _run_as_root() {
+    if ((vm_run_as_root)) ; then
+	echo -n "sudo -E "
+    fi
+}
+
 function _install_required_packages() {
     local -a packages_needed=()
     readarray -t packages_needed <<< "$(vm_required_packages)"
@@ -3569,9 +3699,73 @@ EOF
 }
 
 
+function _vm_interfaces() {
+    local net_if=
+    net_if=$(get_net_interface_external "$node_class")
+    if [[ -n "$net_if" ]] ; then
+	cat <<EOF
+interfaces:
+  - name: default
+    masquerade: {}
+  - name: $net_if
+    bridge: {}
+EOF
+    fi
+}
+
+function _vm_networks() {
+    local net_if=
+    net_if=$(get_net_interface_external "$node_class")
+    if [[ -n "$net_if" ]] ; then
+	cat <<EOF
+networks:
+  - name: default
+    pod: {}
+  - name: $net_if
+    multus:
+      networkName: $net_if
+EOF
+    fi
+}
+
+function _increment_vm_addr() {
+    local -i a
+    a=${vm_net_addr[3]}
+    local -i b
+    b=${vm_net_addr[2]}
+    a=$((a + 1))
+    if ((a > 254)) ; then
+	a=1
+	b=$((b + 1))
+	if ((b > 255)) ; then
+	    fatal "Out of IP addresses to assign!"
+	fi
+    fi
+    vm_net_addr[3]=$a
+    vm_net_addr[2]=$b
+}
+
+function _vm_network_data() {
+    local vm_addr=${1:-192.192.192.192}
+    local net_if=
+    net_if=$(get_net_interface_local "$node_class")
+    if [[ -n "$net_if" ]] ; then
+	cat <<EOF
+networkData: |-
+  version: 2
+  ethernets:
+    $net_if:
+      dhcp4: false
+      dhcp6: false
+      addresses:
+        - ${vm_addr}/16
+EOF
+    fi
+}
+
 function create_vm_deployment() {
     get_sysctls
-    local node_class=client
+    local node_class=${node_class:-client}
     local namespace=$1
     local instance=$2
     local secret_count=$3
@@ -3582,6 +3776,9 @@ function create_vm_deployment() {
     local sync_ns_port_num=
     local drop_cache_service=
     local drop_cache_port_num=
+    local vm_running=true
+    local vm_addr
+    ((vm_start_running)) || vm_running=false
     pin_node=$(get_pin_node "$node_class")
     if [[ -z "$affinity_yaml" ]] ; then
 	if [[ -n "${pin_node:-}" ]] ; then
@@ -3592,12 +3789,24 @@ function create_vm_deployment() {
     fi
     local -i replica=0
     local depname="${namespace}-${workload}-${instance}"
+    local net_if=
+    net_if=$(get_net_interface_external "$node_class")
+    if [[ -n "$net_if" ]] ; then
+	pod_annotations+=("k8s.v1.cni.cncf.io/networks: $net_if")
+    fi
+    local net_if
+    net_if=$(get_net_interface_local "$node_class")
     while (( replica++ < replicas )) ; do
         local name="${depname}-${replica}"
         local vmname
 	vmname=$(mkpodname "$name")
 	IFS=: read -r sync_service sync_port_num sync_ns_port_num <<< "$(get_sync)"
 	IFS=: read -r drop_cache_service drop_cache_port_num <<< "$(get_drop_cache "$namespace" "$instance" "$replica")"
+	vm_addr=$(IFS=.; echo "${vm_net_addr[*]}")
+	# We can't do this as part of retrieving the VM addr because that
+	# gets read from a subshell.  Incrementing the VM address needs
+	# to be done at top level.
+	_increment_vm_addr
         create_object -t VM -n "$namespace" "$name" <<EOF
 apiVersion: kubevirt.io/v1
 kind: VirtualMachine
@@ -3606,7 +3815,7 @@ $(indent 2 standard_labels_yaml -c "$node_class" -l "$workload" "$namespace" "$i
   name: "$vmname"
 $(indent 2 standard_deployment_metadata_yaml "$namespace" client)
 spec:
-  running: true
+  running: $vm_running
   template:
     metadata:
 $(indent 6 standard_labels_yaml -c "$node_class" -l "$workload" "$namespace" "$instance" "$replica")
@@ -3635,7 +3844,9 @@ $(indent 12 vm_volume_devices_yaml)
             - name: userconfigmap-${namespace}
               serial: userconfigmap
               volumeName: userconfigmap-${namespace}
+$(indent 10 _vm_interfaces)
 $(indent 8 container_resources_yaml)
+$(indent 6 _vm_networks)
       terminationGracePeriodSeconds: $vm_grace_period
 $(indent 6 <<< "$affinity_yaml")
       volumes:
@@ -3645,6 +3856,7 @@ $(indent 8 volumes_yaml -n "$namespace" "$instance" "$secret_count")
             image: $vm_image
         - name: cloudinitdisk
           cloudInitNoCloud:
+$(indent 12 _vm_network_data "$vm_addr")
             userData: |-
               #cloud-config
               ${vm_user:+user: $vm_user}
@@ -3661,7 +3873,7 @@ $(indent 16 _insert_ssh_keys "${vm_ssh_keyfile}.pub")
 $(indent 16 _setup_commands)
 $(indent 16 _setup_sysctls)
               runcmd:
-                - "$(standard_environment -V) $(_run_as_container)$(if [[ -n "${arglist_function}" ]] ; then
+                - "$(standard_environment -V) $(_run_as_root)  $(_run_as_container)$(if [[ -n "${arglist_function}" ]] ; then
      ARGLIST_FORMAT=vm "${arglist_function}" "${system_configmap_mount_dir}/" "$@" "0" -- \
      "$sync_nonce" "$namespace" "c0" "$basetime" "$baseoffset" "$(ts)" "$exit_at_end" "$sync_service" \
      "$sync_port_num" "$sync_ns_port_num" "$drop_cache_service" "$drop_cache_port_num" ; fi)"
@@ -3674,6 +3886,12 @@ function create_replication_deployment() {
     local instance=$2
     local -i replicas=$4
     local name="${namespace}-${workload}-${instance}"
+    local pod_annotations=("${pod_annotations[@]}")
+    local net_if=
+    net_if=$(get_net_interface_external "$node_class")
+    if [[ -n "$net_if" ]] ; then
+	pod_annotations+=("k8s.v1.cni.cncf.io/networks: $net_if")
+    fi
     create_object -t "$deployment_type" -n "$namespace" "$name" <<EOF
 apiVersion: apps/v1
 kind: $deployment_type
@@ -4063,6 +4281,20 @@ function create_all_deployments() {
     wait "${pids[@]}" || killthemall "Unable to create deployments"
 }
 
+function create_deployments_post_hook() {
+    if [[ $deployment_type = vm && $vm_start_running -eq 0 ]] ; then
+	local namespace
+	local name
+	if [[ -z "$VIRTCTL" ]] ; then
+	    warn "*** Unable to find virtctl command, cannot start VMs!"
+	    return
+	fi
+	while read -r namespace name ; do
+	    "$VIRTCTL" start -n "$namespace" "$name"
+	done < <(__OC get vm -A -l "${basename}-xuuid=$xuuid")
+    fi
+}
+
 function create_all_objects() {
     local found_objtype
     local objtype=$1
@@ -4072,7 +4304,7 @@ function create_all_objects() {
 	if [[ $line = *'__KUBEFAIL__ '* ]] ; then
 	    echo "${line#__KUBEFAIL__ }" 1>&2
 	    return 1
-	elif [[ $line =~ ^[[:digit:]]{4}(-[[:digit:]]{2}){2}T([[:digit:]]{2}:){2}[[:digit:]]{2}\.[[:digit:]]{6}\ +(([-a-z0-9]+)(\.[-a-z0-9]*)?)/([-a-z0-9]+)\ +created$ ]] ; then
+	elif [[ $line =~ ^[[:digit:]]{4}(-[[:digit:]]{2}){2}T([[:digit:]]{2}:){2}[[:digit:]]{2}\.[[:digit:]]{6}\ +((([-a-z0-9]+)(\.[-a-z0-9]*)?)/([-a-z0-9]+))\ +created$ ]] ; then
 	    if (( report_object_creation )) ; then
 		echo "$line" 1>&2
 	    fi
@@ -4091,6 +4323,9 @@ function create_all_objects() {
 	    fi
 	fi
     done < <("create_all_${objtype}" "$@" 2>&1)
+    if [[ $(type -t "create_${objtype}_post_hook") = function ]] ; then
+	"create_${objtype}_post_hook" "${objects_created[@]}"
+    fi
 }
 
 function _do_cleanup_1() {

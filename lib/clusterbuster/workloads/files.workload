@@ -37,8 +37,6 @@ function files_arglist() {
     local secret_count=$3
     local replicas=$4
     local containers_per_pod=$5
-    local dc_service=
-    local dc_port=0
     while [[ "$1" != '--' ]] ; do shift; done; shift
     local -i file_blocks=$((___file_size/___file_block_size))
     mk_yaml_args "python3" "${mountdir}files.py" "$@" \

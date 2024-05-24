@@ -62,7 +62,8 @@ declare -i debugonly=0
 declare force_cleanup_timeout=
 declare -i take_prometheus_snapshot=0
 declare unique_job_prefix=
-declare snapshot_date_format='%Y_%m_%dT%H_%M_%S%z'
+# shellcheck disable=2155
+declare snapshot_date_format=$(standard_snapshot_date_format)
 declare prometheus_snapshot_start_ts=
 declare job_delay=0
 declare -i pin_jobs=1
@@ -470,6 +471,7 @@ $(_document_workloads)
                                 specified, it should be either client,
                                 server, or pin.
         --no-pin-nodes          Do not pin jobs to nodes.
+        --use-pin-node=[1/0]    Pin (or not) jobs to nodes.
         --runtime=seconds       Run the job for the given number of seconds,
                                 if applicable (this does not apply to the
                                 files test).  May be overridden by
@@ -650,6 +652,11 @@ function check_clusterbuster_option() {
     [[ -n "${known_clusterbuster_options[$option]:-}" ]]
 }
 
+function artifact_dirname() {
+    local basename=${1:-cb-ci-%T}
+    echo "${basename//%T/$(printf "%($snapshot_date_format)T" -1)}"
+}
+
 function process_option() {
     local option=$1
     local noptname
@@ -667,11 +674,11 @@ function process_option() {
 	serverpin*) server_pin_node=$optvalue						;;
 	syncpin*) sync_pin_node=$optvalue						;;
 	nopinnode) pin_jobs=0								;;
-	pinnode*) pin_jobs=$(bool "$optvalue")						;;
+	usepinnode*) pin_jobs=$(bool "$optvalue")					;;
 	pin*) set_pin_node "$optvalue"							;;
 	jobruntime|runtime) job_runtime=$optvalue					;;
 	jobtimeout|timeout) job_timeout=$optvalue					;;
-	artifactdir) artifactdir="${optvalue:-${artifactdir:-$(pwd)}}"			;;
+	artifactdir) artifactdir="$(artifact_dirname "${optvalue:-}")"			;;
 	analyze*) analyze_results="$optvalue"						;;
 	reportformat*) report_format=$optvalue						;;
 	analysisformat*) analysis_format=$optvalue					;;
@@ -868,6 +875,7 @@ function run_clusterbuster_1() {
     # shellcheck disable=SC2090
     doit "$__clusterbuster__" ${dontdoit:+"$dontdoit"} --uuid="$uuid" \
 	 --precleanup --image-pull-policy=IfNotPresent \
+	 --retrieve-successful-logs=1 \
 	 --metrics --report="$report_format" --workload="$workload" \
 	 "${debugargs[@]}" \
 	 ${job_runtime:+"--workload_runtime=$job_runtime"} \
@@ -939,7 +947,7 @@ if ((! debugonly)) ; then
 	check_runtimeclass "$runtimeclass" && runtimeclasses+=("$runtimeclass")
     done
     starting_timestamp=$(date +%s)
-    job_datestamp=$(date -u '+%Y_%m_%dT%H_%M_%S%z' --date=@"$starting_timestamp")
+    job_datestamp=$(date -u "+$(standard_snapshot_date_format)" --date=@"$starting_timestamp")
     artifactdir=${artifactdir//%s/$job_datestamp}
     if ((restart)) ; then
 	if [[ -d "$artifactdir" ]] ; then
@@ -960,8 +968,8 @@ if ((! debugonly)) ; then
     fi
 
     if [[ -n "$artifactdir" && ! -d "$artifactdir" ]] ; then
-	exec > >(tee -a "$artifactdir/stdout.kata-perf-suite.log")
-	exec 2> >(tee -a "$artifactdir/stderr.kata-perf-suite.log" >&2)
+	exec > >(tee -a "$artifactdir/stdout.perf-ci-suite.log")
+	exec 2> >(tee -a "$artifactdir/stderr.perf-ci-suite.log" >&2)
     fi
 
     if ((use_python_venv)) ; then

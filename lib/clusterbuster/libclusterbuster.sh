@@ -26,6 +26,10 @@ declare -Ag debug_conditions=()
 shopt -s extdebug
 export PIDS_TO_NOT_KILL="$$ $BASHPID"
 
+function standard_snapshot_date_format() {
+    echo '%Y_%m_%dT%H_%M_%S%z'
+}
+
 function timestamp() {
     while IFS= read -r 'LINE' ; do
 	printf "%s %s\n" "$(TZ=GMT-0 date '+%Y-%m-%dT%T.%N' | cut -c1-26)" "$LINE"

@@ -408,8 +408,13 @@ oc logs -n '{self._namespace()}' '{self._podname()}' -c '{self._container()}'
             request['have'][f'{ifname}@{self.__pod}.{self.__namespace}'] = addr
         data = self.__do_sync_command('TNET', json.dumps(request))
         try:
-            [local_presync_start, remote_sync_start, absolute_sync_start,
-             remote_sync_base, remote_sync, sync_base_start_time] = self._fsplit(data.decode('ascii'))
+            reply = json.loads(data.decode('ascii'))
+            local_presync_start = reply['client_ts']
+            remote_sync_start = reply['request_time']
+            absolute_sync_start = reply['start_time']
+            remote_sync_base = reply['base_start_time']
+            remote_sync = reply['reply_start']
+            sync_base_start_time = reply['reply_time']
         except Exception as err:
             self._timestamp(f"Could not parse response from server: {data}: {err}")
             os._exit(1)
@@ -449,8 +454,9 @@ oc logs -n '{self._namespace()}' '{self._podname()}' -c '{self._container()}'
             'local_offset_from_base': local_offset_from_base,
             }
         self._timestamp("Timing parameters:")
+        json.dump(self.__timing_parameters, sys.stderr)
         for key, val in self.__timing_parameters.items():
-            self._timestamp('%-32s %.6f' % (key, val))
+            self._timestamp('%-32s %f' % (key, val))
             self.__basetime += self.__baseoffset
             self.__crtime += self.__baseoffset
         self.__timing_initialized = True
@@ -463,8 +469,7 @@ oc logs -n '{self._namespace()}' '{self._podname()}' -c '{self._container()}'
         lcommand = command.lower()
         if lcommand == 'sync' and (token is None or token == ''):
             token = f'{self._ts()} {self.__pod}-{random.randrange(1000000000)}'
-        token = f'{self.__sync_nonce} {lcommand} {token}'.replace('%s', str(time.time()))
-        self._timestamp(f"do_sync_command {command} {len(token)}")
+        token = f'{self.__sync_nonce} {lcommand} {token}'.replace('"%s"', str(time.time()))
         try:
             return self._send_message(self.__synchost, port, token, timeout=timeout)
         except Exception as err:

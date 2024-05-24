@@ -22,7 +22,7 @@ class files_analysis(SpreadsheetAnalysis):
     """
 
     def __init__(self, workload: str, data: dict, metadata: dict):
-        dimensions = ['By Pod Count', 'By Dirs', 'By Files', 'By Blocksize', 'By Filesize', '-By Direct']
+        dimensions = ['By Pod Count', 'By Dirs', 'By Files', 'By Blocksize', 'By Filesize', 'By Direct']
         variables = [
             {
              'var': 'create.elapsed_time',
