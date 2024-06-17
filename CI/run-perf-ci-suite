@@ -610,33 +610,33 @@ function test_parse() {
 	fi
     }
 
-    _test_parse volume:files,fio:!vm=test-pvc:pvc:/var/tmp/clusterbuster:size=auto:inodes=auto files vm
-    _test_parse volume:files,fio:!vm=test-pvc:pvc:/var/tmp/clusterbuster:size=auto:inodes=auto files pod
-    _test_parse volume:files,fio:!vm=test-pvc:pvc:/var/tmp/clusterbuster:size=auto:inodes=auto files kata
-    _test_parse volume:files,fio:vm=test-pvc:pvc:/var/tmp/clusterbuster:size=auto:inodes=auto files vm
-    _test_parse volume:files,fio:vm=test-pvc:pvc:/var/tmp/clusterbuster:size=auto:inodes=auto files pod
-    _test_parse volume:files,fio:vm=test-pvc:pvc:/var/tmp/clusterbuster:size=auto:inodes=auto files kata
-    _test_parse volume:files,fio:!vm=test-pvc:pvc:/var/tmp/clusterbuster:size=auto:inodes=auto fio vm
-    _test_parse volume:files,fio:!vm=test-pvc:pvc:/var/tmp/clusterbuster:size=auto:inodes=auto fio pod
-    _test_parse volume:files,fio:!vm=test-pvc:pvc:/var/tmp/clusterbuster:size=auto:inodes=auto fio kata
-    _test_parse volume:files,fio:vm=test-pvc:pvc:/var/tmp/clusterbuster:size=auto:inodes=auto fio vm
-    _test_parse volume:files,fio:vm=test-pvc:pvc:/var/tmp/clusterbuster:size=auto:inodes=auto fio pod
-    _test_parse volume:files,fio:vm=test-pvc:pvc:/var/tmp/clusterbuster:size=auto:inodes=auto fio kata
-    _test_parse volume:files,fio:!vm=test-pvc:pvc:/var/tmp/clusterbuster:size=auto:inodes=auto cpusoaker vm
-    _test_parse volume:files,fio:!vm=test-pvc:pvc:/var/tmp/clusterbuster:size=auto:inodes=auto cpusoaker pod
-    _test_parse volume:files,fio:!vm=test-pvc:pvc:/var/tmp/clusterbuster:size=auto:inodes=auto cpusoaker kata
-    _test_parse volume:files,fio:vm=test-pvc:pvc:/var/tmp/clusterbuster:size=auto:inodes=auto cpusoaker vm
-    _test_parse volume:files,fio:vm=test-pvc:pvc:/var/tmp/clusterbuster:size=auto:inodes=auto cpusoaker pod
-    _test_parse volume:files,fio:vm=test-pvc:pvc:/var/tmp/clusterbuster:size=auto:inodes=auto cpusoaker kata
-    _test_parse volume:files:!pod,!kata=test-pvc:pvc:/var/tmp/clusterbuster:size=auto:inodes=auto files vm
-    _test_parse volume:files:vm=test-pvc:pvc:/var/tmp/clusterbuster:size=auto:inodes=auto
-    _test_parse volume:files:vm=test-pvc:pvc:/var/tmp/clusterbuster:size=auto:inodes=auto files
-    _test_parse volume:files:vm,kata=test-pvc:pvc:/var/tmp/clusterbuster:size=auto:inodes=auto files vm
-    _test_parse volume:files:pod,kata=test-pvc:pvc:/var/tmp/clusterbuster:size=auto:inodes=auto files vm
-    _test_parse volume:files:!vm=test-pvc:pvc:/var/tmp/clusterbuster:size=auto:inodes=auto files vm
-    _test_parse volume:files:vm=test-pvc:pvc:/var/tmp/clusterbuster:size=auto:inodes=auto fio
-    _test_parse volume:files,fio:vm=test-pvc:pvc:/var/tmp/clusterbuster:size=auto:inodes=auto fio vm
-    _test_parse volume:files,fio:!vm=:emptydir:/var/tmp/clusterbuster:size=auto fio
+    _test_parse volume:files,fio:!vm=test-pvc:pvc:/var/opt/clusterbuster:size=auto:inodes=auto files vm
+    _test_parse volume:files,fio:!vm=test-pvc:pvc:/var/opt/clusterbuster:size=auto:inodes=auto files pod
+    _test_parse volume:files,fio:!vm=test-pvc:pvc:/var/opt/clusterbuster:size=auto:inodes=auto files kata
+    _test_parse volume:files,fio:vm=test-pvc:pvc:/var/opt/clusterbuster:size=auto:inodes=auto files vm
+    _test_parse volume:files,fio:vm=test-pvc:pvc:/var/opt/clusterbuster:size=auto:inodes=auto files pod
+    _test_parse volume:files,fio:vm=test-pvc:pvc:/var/opt/clusterbuster:size=auto:inodes=auto files kata
+    _test_parse volume:files,fio:!vm=test-pvc:pvc:/var/opt/clusterbuster:size=auto:inodes=auto fio vm
+    _test_parse volume:files,fio:!vm=test-pvc:pvc:/var/opt/clusterbuster:size=auto:inodes=auto fio pod
+    _test_parse volume:files,fio:!vm=test-pvc:pvc:/var/opt/clusterbuster:size=auto:inodes=auto fio kata
+    _test_parse volume:files,fio:vm=test-pvc:pvc:/var/opt/clusterbuster:size=auto:inodes=auto fio vm
+    _test_parse volume:files,fio:vm=test-pvc:pvc:/var/opt/clusterbuster:size=auto:inodes=auto fio pod
+    _test_parse volume:files,fio:vm=test-pvc:pvc:/var/opt/clusterbuster:size=auto:inodes=auto fio kata
+    _test_parse volume:files,fio:!vm=test-pvc:pvc:/var/opt/clusterbuster:size=auto:inodes=auto cpusoaker vm
+    _test_parse volume:files,fio:!vm=test-pvc:pvc:/var/opt/clusterbuster:size=auto:inodes=auto cpusoaker pod
+    _test_parse volume:files,fio:!vm=test-pvc:pvc:/var/opt/clusterbuster:size=auto:inodes=auto cpusoaker kata
+    _test_parse volume:files,fio:vm=test-pvc:pvc:/var/opt/clusterbuster:size=auto:inodes=auto cpusoaker vm
+    _test_parse volume:files,fio:vm=test-pvc:pvc:/var/opt/clusterbuster:size=auto:inodes=auto cpusoaker pod
+    _test_parse volume:files,fio:vm=test-pvc:pvc:/var/opt/clusterbuster:size=auto:inodes=auto cpusoaker kata
+    _test_parse volume:files:!pod,!kata=test-pvc:pvc:/var/opt/clusterbuster:size=auto:inodes=auto files vm
+    _test_parse volume:files:vm=test-pvc:pvc:/var/opt/clusterbuster:size=auto:inodes=auto
+    _test_parse volume:files:vm=test-pvc:pvc:/var/opt/clusterbuster:size=auto:inodes=auto files
+    _test_parse volume:files:vm,kata=test-pvc:pvc:/var/opt/clusterbuster:size=auto:inodes=auto files vm
+    _test_parse volume:files:pod,kata=test-pvc:pvc:/var/opt/clusterbuster:size=auto:inodes=auto files vm
+    _test_parse volume:files:!vm=test-pvc:pvc:/var/opt/clusterbuster:size=auto:inodes=auto files vm
+    _test_parse volume:files:vm=test-pvc:pvc:/var/opt/clusterbuster:size=auto:inodes=auto fio
+    _test_parse volume:files,fio:vm=test-pvc:pvc:/var/opt/clusterbuster:size=auto:inodes=auto fio vm
+    _test_parse volume:files,fio:!vm=:emptydir:/var/opt/clusterbuster:size=auto fio
 }
 
 function check_clusterbuster_option() {
@@ -730,10 +730,10 @@ fi
 
 while getopts 'hn-:B:' opt ; do
     case "$opt" in
-	-) process_option "$OPTARG"	;;
-	h) help				;;
-	n) debugonly=1; dontdoit=-n	;;
-	*)				;;
+	-) process_option "$OPTARG"			;;
+	h) help						;;
+	n) debugonly=$((debugonly+1)); dontdoit=-n	;;
+	*)						;;
     esac
 done
 
@@ -793,14 +793,18 @@ function to_hms() {
 
 function doit() {
     echo "${@@Q}"
-    if ((! debugonly)) ; then
-	exec "$@" &
-	job_pid=$!
-	wait "$job_pid"
-	local status=$?
-	job_pid=
-	return $status
-    fi
+    case "$debugonly" in
+	0|'')
+	    exec "$@" &
+	    job_pid=$!
+	    wait "$job_pid"
+	    local status=$?
+	    job_pid=
+	    return $status
+	    ;;
+	1) ;;
+	*) "$@" ;;
+    esac
 }
 
 function check_runtimeclass() {
