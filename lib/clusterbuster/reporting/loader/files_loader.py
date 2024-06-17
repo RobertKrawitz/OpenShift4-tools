@@ -13,10 +13,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .ClusterBusterLoader import LoadOneReport
+from .ClusterBusterLoader import ClusterBusterLoadOneReportBase
 
 
-class files_loader(LoadOneReport):
+class files_loader(ClusterBusterLoadOneReportBase):
     def __init__(self, name: str, report: dict, data: dict, extras=None):
         super().__init__(name, report, data, extras=extras)
 

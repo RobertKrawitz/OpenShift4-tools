@@ -13,10 +13,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .ClusterBusterLoader import LoadOneReport
+from .ClusterBusterLoader import ClusterBusterLoadOneReportBase
 
 
-class uperf_loader(LoadOneReport):
+class uperf_loader(ClusterBusterLoadOneReportBase):
     def __init__(self, name: str, report: dict, data: dict, extras=None):
         super().__init__(name, report, data, extras=extras)
 

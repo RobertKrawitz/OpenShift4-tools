@@ -36,24 +36,27 @@ class ClusterBusterReporterException(ClusterBusterReportingException):
         super().__init__(args)
 
 
-class ClusterBusterReporterJobMismatchException(ClusterBusterReporterException):
+class _ClusterBusterReporterJobMismatchException(ClusterBusterReporterException):
     def __init__(self, var: str, val1, val2):
         super().__init__(f"Mismatched {var} in status ({val1} vs {val2})")
 
 
-class ClusterBusterBadReportException(ClusterBusterReportingException):
+class _ClusterBusterBadReportException(ClusterBusterReportingException):
     def __init__(self, item):
-        super().__init__(f"{item} is not a ClusterBuster report")
+        if item is None:
+            super().__init__("No ClusterBuster report found")
+        else:
+            super().__init__(f"{item} is not a ClusterBuster report")
 
 
-class ClusterBusterUnrecognizedWorkloadException(ClusterBusterReportingException):
+class _ClusterBusterUnrecognizedWorkloadException(ClusterBusterReportingException):
     def __init__(self, item):
         super().__init__(f"{item}: cannot identify workload")
 
 
-class ClusterBusterUnrecognizedItemException(ClusterBusterReportingException):
+class _ClusterBusterUnrecognizedItemException(ClusterBusterReportingException):
     def __init__(self, item):
-        super().init__(f"Unrecognized item {item}")
+        super().__init__(f"Unrecognized item {item}")
 
 
 class ClusterBusterReporter:
@@ -69,7 +72,7 @@ class ClusterBusterReporter:
         except KeyError:
             pass
         if not isValid:
-            raise ClusterBusterBadReportException(item)
+            raise _ClusterBusterBadReportException(item)
         jdata['metadata']['RunArtifactDir'] = item
         if report_format == 'none' or report_format is None:
             return
@@ -85,7 +88,7 @@ class ClusterBusterReporter:
             try:
                 workload = jdata["metadata"]["workload"]
             except KeyError:
-                raise ClusterBusterUnrecognizedWorkloadException(item)
+                raise _ClusterBusterUnrecognizedWorkloadException(item)
         if 'runtime_class' not in jdata['metadata']:
             try:
                 runtime_class = jdata['metadata']['options']['runtime_classes'].get('default')
@@ -178,7 +181,8 @@ class ClusterBusterReporter:
             elif isinstance(item, dict):
                 jdata = item
             else:
-                raise ClusterBusterUnrecognizedItemException(f"Unrecognized item {item}")
+                print(item)
+                raise _ClusterBusterUnrecognizedItemException(item)
             answers.append(ClusterBusterReporter.report_one(None, jdata, report_format, extras=extras))
         return answers
 

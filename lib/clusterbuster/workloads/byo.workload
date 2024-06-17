@@ -20,7 +20,7 @@
 
 declare -ag ___byo_args=()
 declare -ag ___byo_files=()
-declare -g ___byo_workdir=/var/tmp/clusterbuster/cb-work
+declare -g ___byo_workdir=/var/opt/clusterbuster/cb-work
 declare -g ___byo_workload=
 declare -g ___byo_name=
 declare -ig ___byo_drop_cache=0

@@ -24,6 +24,7 @@ import subprocess
 import signal
 import random
 import traceback
+import shutil
 from cb_util import cb_util
 
 
@@ -81,10 +82,7 @@ class clusterbuster_pod_client(cb_util):
             os.environ['__CB_SYNCPORT'] = str(self.__syncport)
             os.environ['__CB_DROP_CACHE_HOST'] = self.__drop_cache_host
             os.environ['__CB_SYNC_NONCE'] = self.__sync_nonce
-            if self.__drop_cache_port:
-                os.environ['__CB_DROP_CACHE_PORT'] = str(self.__drop_cache_port)
-            else:
-                os.environ['__CB_DROP_CACHE_PORT'] = ''
+            os.environ['__CB_DROP_CACHE_PORT'] = str(self.__drop_cache_port) if self.__drop_cache_port else ''
             try:
                 child = os.fork()
             except Exception as err:
@@ -129,6 +127,7 @@ class clusterbuster_pod_client(cb_util):
         if self.__processes < 1:
             self.__processes = 1
         pid_count = 0
+        pid_hash = dict()
         for i in range(self.__processes):
             try:
                 try:
@@ -139,7 +138,7 @@ class clusterbuster_pod_client(cb_util):
                 if child == 0:  # Child
                     self.__is_worker = True
                     self.__child_idx = i
-                    self._timestamp(f"About to run subprocess {i}")
+                    self._timestamp(f"About to run subprocess {i} (pid {os.getpid()})")
                     try:
                         start_time = self._adjusted_time()
                         user, system = self._cputimes()
@@ -149,7 +148,7 @@ class clusterbuster_pod_client(cb_util):
                             user, system = self._cputimes(user, system)
                             self._report_results(start_time, end_time, start_time - end_time,
                                                  user, system, {'Note': 'No results provided'})
-                        self._timestamp(f"{os.getpid()} complete")
+                        self._timestamp(f"Process {i} (pid {os.getpid()}) complete")
                         self.__finish()
                     except Exception as err:
                         # If something goes wrong with the workload that isn't caught,
@@ -157,6 +156,7 @@ class clusterbuster_pod_client(cb_util):
                         self.__finish(False, message=f'{err}\n{traceback.format_exc()}')
                     raise Exception("runWorkload should not reach this point!")
                 else:
+                    pid_hash[child] = i
                     pid_count = pid_count + 1
             except Exception as err:
                 self.__finish(False, message=f"Subprocess {i} failed: {err}")
@@ -165,11 +165,11 @@ class clusterbuster_pod_client(cb_util):
             try:
                 pid, status = os.wait()
                 if status & 255:
-                    messages.append(f"Process {pid} killed by signal {status & 255}")
+                    messages.append(f"Process {i} (pid {pid}) killed by signal {status & 255}")
                 elif status / 256:
-                    messages.append(f"Process {pid} failed with status {int(status / 256)}")
+                    messages.append(f"Process {i} (pid {pid}) failed with status {int(status / 256)}")
                 else:
-                    self._timestamp(f"Process {pid} completed normally")
+                    self._timestamp(f"Process {i} (pid {pid}) completed successfully")
                 pid_count = pid_count - 1
             except Exception as err:
                 self.__finish(False, message=f'Wait failed: {err}')
@@ -333,7 +333,10 @@ class clusterbuster_pod_client(cb_util):
         return self.__drop_cache_port
 
     def _run_command(self, *cmd):
-        """ Run specified command
+        """
+        Run specified command
+        :param cmd: Command to be run
+        :return: process status, stdout, stderr
         """
         command = []
         for arg in cmd:
@@ -348,6 +351,48 @@ class clusterbuster_pod_client(cb_util):
         self._timestamp(f"Running {' '.join(command)}")
         process = subprocess.run(command, capture_output=True, text=True)
         return (True if process.returncode == 0 else False), process.stdout, process.stderr
+
+    def _cleanup_tree(self, tree, doit: bool = True, sync: bool = True):
+        """
+        Clean up an entire directory tree other than the root.  Errors are ignored.
+        This is safe to call from multiple concurrent callers
+        This routine attempts to remove all subdirectories and files once.
+        It then syncs back to the controller and then checks that the tree
+        is in fact empty.
+        If optional parameter doit is False, don't actually perform the cleanup.
+        This is useful if there are multiple processes that will be run as part
+        of the workload, when it's only necessary for one to perform the cleanup.
+        All processes should call cleanup_tree so that appropriate synchronization
+        is done.
+        :param tree: Filesystem tree to be cleaned up
+        :param skip: Skip actually doing anything.
+        :return: True if cleanup succeeded, False otherwise
+        """
+        self._timestamp(f"Cleaning up {tree}")
+        if doit and os.path.exists(tree):
+            for f in os.listdir(tree):
+                self._timestamp(f"Looking at {f}")
+                if f == '.' or f == '..':
+                    pass
+                f = os.path.join(tree, f)
+                self._timestamp(f"Now looking at {f}")
+                try:
+                    if os.path.isdir(f):
+                        self._timestamp(f"Attempting to clean up subdir {f}")
+                        shutil.rmtree(f, True)
+                    else:
+                        self._timestamp(f"Attempting to clean up file {f}")
+                        os.remove(f)
+                except (FileNotFoundError, PermissionError):
+                    pass
+        if sync:
+            self._sync_to_controller(f"Cleanup {tree}")
+        if doit and os.path.exists(tree):
+            for f in os.listdir(tree):
+                if f == '.' or f == '..':
+                    pass
+                return False
+        return True
 
     def __wait_forever(self):
         self._timestamp('Waiting forever')

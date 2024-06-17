@@ -13,10 +13,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from ..ClusterBusterAnalysis import ClusterBusterAnalyzeOne
+from ..ClusterBusterAnalysis import ClusterBusterAnalyzeOneBase
 
 
-class CIAnalysis(ClusterBusterAnalyzeOne):
+class CIAnalysis(ClusterBusterAnalyzeOneBase):
     """
     Analyze files data
     """

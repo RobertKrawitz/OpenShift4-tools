@@ -22,7 +22,7 @@ class fio_analysis(SpreadsheetAnalysis):
     """
 
     def __init__(self, workload: str, data: dict, metadata: dict):
-        dimensions = ['By Pod Count', 'By Engine', 'By I/O Depth', '-By Fdatasync', '-By Direct', 'By Operation', 'By Blocksize']
+        dimensions = ['By Pod Count', 'By Engine', 'By I/O Depth', '-By Fdatasync', 'By Direct', 'By Operation', 'By Blocksize']
         variables = [
             {
              'var': 'throughput',
@@ -35,6 +35,18 @@ class fio_analysis(SpreadsheetAnalysis):
              'name': 'IO/sec',
              'base': 0,
              'detail': False
+             },
+            {
+             'var': 'latency_avg',
+             'name': 'Avg latency (msec)',
+             'base': 0,
+             'multiplier': .000001
+             },
+            {
+             'var': 'latency_max',
+             'name': 'Max latency (msec)',
+             'base': 0,
+             'multiplier': .000001
              }
              ]
         filters = {

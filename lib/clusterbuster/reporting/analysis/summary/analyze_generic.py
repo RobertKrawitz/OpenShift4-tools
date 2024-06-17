@@ -13,11 +13,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from ..ClusterBusterAnalysis import ClusterBusterAnalyzeOne
+from ..ClusterBusterAnalysis import ClusterBusterAnalyzeOneBase
 from math import log, exp
 
 
-class ClusterBusterAnalyzeSummaryGeneric(ClusterBusterAnalyzeOne):
+class ClusterBusterAnalyzeSummaryGeneric(ClusterBusterAnalyzeOneBase):
     """
     Analyze data from multi-dimensional workloads
     """

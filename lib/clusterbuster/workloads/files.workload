@@ -101,7 +101,7 @@ function files_process_options() {
     if (( ___file_block_size <= 0)) ; then
 	___file_block_size=___file_size
     fi
-    [[ -z "${___files_dirs[*]}" ]] && ___files_dirs=(/var/tmp/clusterbuster)
+    [[ -z "${___files_dirs[*]}" ]] && ___files_dirs=(/var/opt/clusterbuster)
 }
 
 function files_requires_drop_cache() {

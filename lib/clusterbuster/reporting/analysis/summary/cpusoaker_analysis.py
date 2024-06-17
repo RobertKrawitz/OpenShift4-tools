@@ -13,10 +13,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from ..ClusterBusterAnalysis import ClusterBusterAnalyzeOne
+from ..ClusterBusterAnalysis import ClusterBusterAnalyzeOneBase
 
 
-class cpusoaker_analysis(ClusterBusterAnalyzeOne):
+class cpusoaker_analysis(ClusterBusterAnalyzeOneBase):
     """
     Analyze cpusoaker data
     """

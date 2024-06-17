@@ -69,7 +69,10 @@ def analyze_clusterbuster(f):
         dir_args = args.files
     if args.workload:
         dir_args = [f'{f}:job_pattern=^({"|".join(args.workload)})-' for f in dir_args]
-    analyze_clusterbuster_1(f, ClusterBusterLoader(extras).loadFromSpecs(dir_args), extras)
+    try:
+        analyze_clusterbuster_1(f, ClusterBusterLoader(extras).loadFromSpecs(dir_args), extras)
+    except ClusterBusterReportingException as exc:
+        print(f"Report failed: {exc}")
 
 
 try:

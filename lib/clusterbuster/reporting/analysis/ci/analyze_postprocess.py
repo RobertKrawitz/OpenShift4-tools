@@ -17,7 +17,7 @@ from ..ClusterBusterAnalysis import ClusterBusterAnalysisException, ClusterBuste
 import argparse
 
 
-class ClusterBusterAnalysisJobMismatchException(ClusterBusterAnalysisException):
+class _ClusterBusterAnalysisJobMismatchException(ClusterBusterAnalysisException):
     def __init__(self, var: str, job: str, val1, val2):
         super().__init__(f"Mismatched {var} in {job}: ({val1} vs {val2})")
 
@@ -38,8 +38,8 @@ class AnalyzePostprocess(ClusterBusterPostprocessBase):
             if self._report['metadata'][var] is None:
                 self._report['metadata'][var] = you.get(var, None)
             elif you.get(var, None) is not None and you[var] != self._report['metadata'][var]:
-                raise ClusterBusterAnalysisJobMismatchException(var, job, you[var],
-                                                                self._report['metadata'][var])
+                raise _ClusterBusterAnalysisJobMismatchException(var, job, you[var],
+                                                                 self._report['metadata'][var])
 
     def Postprocess(self):
         self._report['metadata'] = {
