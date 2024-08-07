@@ -35,6 +35,6 @@ cleanup=1
 restart=0
 deployment-type=replicaset
 
-volume:files,fio:pod,kata=:emptydir:/var/tmp/clusterbuster
-volume:files:vm=:emptydisk:/var/tmp/clusterbuster:fstype=ext4:size=auto:inodes=auto
-volume:fio:vm=:emptydisk:/var/tmp/clusterbuster:size=auto
+volume:files,fio:pod,kata=:emptydir:/var/opt/clusterbuster
+volume:files:vm=:emptydisk:/var/opt/clusterbuster:fstype=ext4:size=auto:inodes=auto
+volume:fio:vm=:emptydisk:/var/opt/clusterbuster:size=auto

@@ -23,7 +23,7 @@ class fio_analysis(ClusterBusterAnalyzeSummaryGeneric):
 
     def __init__(self, workload: str, data: dict, metadata: dict):
         dimensions = ['By Pod Count', 'By Engine', 'By I/O Depth', '-By Fdatasync', '-By Direct', 'By Operation', 'By Blocksize']
-        variables = ['throughput', 'iops']
+        variables = ['throughput', 'iops', 'latency_avg', 'latency_max']
         filters = {
             'By Direct': self.__filter_direct
             }

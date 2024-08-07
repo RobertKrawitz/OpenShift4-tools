@@ -13,11 +13,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .ClusterBusterLoader import LoadOneReport
+from .ClusterBusterLoader import ClusterBusterLoadOneReportBase
 import sys
 
 
-class fio_loader(LoadOneReport):
+class fio_loader(ClusterBusterLoadOneReportBase):
     def __init__(self, name: str, report: dict, data: dict, extras=None):
         super().__init__(name, report, data, extras=extras)
 
@@ -38,6 +38,7 @@ class fio_loader(LoadOneReport):
             self._MakeHierarchy(self._data, ['fio', self._count, ioengine, iodepth, fdatasync,
                                              direct, pattern, blocksize, self._name, 'total'])
             root = self._data['fio'][self._count][ioengine][iodepth][fdatasync][direct][pattern][blocksize][self._name]
+            lat_counter = 0
             for op, data in result.items():
                 if 'data_rate' in result[op]:
                     self._MakeHierarchy(root, [op, 'throughput'], result[op]['data_rate'])
@@ -49,3 +50,15 @@ class fio_loader(LoadOneReport):
                     if 'iops' not in root['total']:
                         root['total']['iops'] = 0
                     root['total']['iops'] += result[op]['io_rate']
+                if 'lat_ns' in result[op]:
+                    lat_counter = lat_counter + 1
+                    self._MakeHierarchy(root, [op, 'latency_avg'], result[op]['lat_ns']['mean'])
+                    self._MakeHierarchy(root, [op, 'latency_max'], result[op]['lat_ns']['max'])
+                    if 'latency_avg' not in root['total']:
+                        root['total']['latency_avg'] = 0
+                        root['total']['latency_max'] = 0
+                    root['total']['latency_avg'] += result[op]['lat_ns']['mean']
+                    if result[op]['lat_ns']['max'] > root['total']['latency_avg']:
+                        root['total']['latency_max'] = result[op]['lat_ns']['max']
+            if lat_counter > 0:
+                root['total']['latency_avg'] /= lat_counter

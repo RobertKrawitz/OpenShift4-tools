@@ -25,24 +25,28 @@ class ClusterBusterAnalysisException(ClusterBusterReportingException):
         super().__init__(args)
 
 
-class ClusterBusterAnalysisIncompatibleReportTypes(ClusterBusterAnalysisException):
+class _ClusterBusterAnalysisIncompatibleReportTypes(ClusterBusterAnalysisException):
     def __init__(self, workload, report_type, you):
         super().__init__("Incompatible report types for %s: expect %s, found %s" %
                          (workload, report_type, you.__class__.__name__))
 
 
-class ClusterBusterAnalysisBadReportType(ClusterBusterAnalysisException):
+class _ClusterBusterAnalysisBadReportType(ClusterBusterAnalysisException):
     def __init__(self, report_type):
         super().__init__("Unexpected report type %s, expect either str or dict" %
                          (report_type.__name__))
 
 
-class ClusterBusterAnalysisImportFailed(ClusterBusterAnalysisException):
+class _ClusterBusterAnalysisImportFailed(ClusterBusterAnalysisException):
     def __init__(self, report_type, exc):
         super().__init__(f"Failed to import module {report_type}: {exc}")
 
 
-class ClusterBusterAnalyzeOne:
+class ClusterBusterAnalyzeOneBase:
+    """
+    Base class for all workload and report type analysis classes.
+    This class should not be instantiated directly.
+    """
     def __init__(self, workload: str, data: dict, metadata: dict):
         self._workload = workload
         self._data = data
@@ -55,8 +59,6 @@ class ClusterBusterAnalyzeOne:
                 obj = obj[key]
                 keys = keys[1:]
             return obj
-        except (KeyboardInterrupt, BrokenPipeError):
-            sys.exit()
         except KeyError:
             return default
 
@@ -64,7 +66,7 @@ class ClusterBusterAnalyzeOne:
         pass
 
 
-class ClusterBusterAnalysisBase:
+class _ClusterBusterAnalysisBase:
     def __init__(self):
         pass
 
@@ -75,7 +77,11 @@ class ClusterBusterAnalysisBase:
         return ['uuid', 'run_host', 'openshift_version', 'kata_containers_version', 'kata_version', 'cnv_version']
 
 
-class ClusterBusterPostprocessBase(ClusterBusterAnalysisBase):
+class ClusterBusterPostprocessBase(_ClusterBusterAnalysisBase):
+    """
+    Base class for postprocessors.
+    This class should not be instantiated directly.
+    """
     def __init__(self, report, status, metadata, extras=None):
         self._report = report
         self._status = status
@@ -83,7 +89,7 @@ class ClusterBusterPostprocessBase(ClusterBusterAnalysisBase):
         self._extra_args = extras
 
 
-class ClusterBusterAnalysis(ClusterBusterAnalysisBase):
+class ClusterBusterAnalysis(_ClusterBusterAnalysisBase):
     """
     Analyze ClusterBuster reports
     """
@@ -116,7 +122,7 @@ class ClusterBusterAnalysis(ClusterBusterAnalysisBase):
             try:
                 return import_module(report, status, metadata, extras=self._extras).Postprocess()
             except TypeError as exc:
-                raise ClusterBusterAnalysisImportFailed(self._report_type, exc) from None
+                raise _ClusterBusterAnalysisImportFailed(self._report_type, exc) from None
         else:
             return report
 
@@ -160,7 +166,7 @@ class ClusterBusterAnalysis(ClusterBusterAnalysisBase):
                         if report_type is None:
                             report_type = type(report[workload])
                         elif not isinstance(report[workload], report_type):
-                            raise ClusterBusterAnalysisIncompatibleReportTypes(workload, report_type, report[workload])
+                            raise _ClusterBusterAnalysisIncompatibleReportTypes(workload, report_type, report[workload])
             except (KeyboardInterrupt, BrokenPipeError):
                 sys.exit()
             except Exception as exc:
@@ -181,4 +187,4 @@ class ClusterBusterAnalysis(ClusterBusterAnalysisBase):
         elif report_type is None:
             return None
         else:
-            raise ClusterBusterAnalysisBadReportType(report_type)
+            raise _ClusterBusterAnalysisBadReportType(report_type)

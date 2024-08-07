@@ -136,7 +136,7 @@ function fio_initialize_options() {
     ___fio_ioengines=(sync libaio)
     ___fio_ninst=(1 4)
     ___fio_job_runtime=0
-    ___fio_workdir=/var/tmp/clusterbuster
+    ___fio_workdir=/var/opt/clusterbuster
     ___fio_absolute_filesize=0
     ___fio_max_absolute_filesize=0
     ___fio_relative_filesize=2

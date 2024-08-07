@@ -26,40 +26,55 @@ import argparse
 from ..reporting_exceptions import ClusterBusterReportingException
 
 
+def _generateMismatchStr(var: str, name: str, val1, val2):
+    return f"Mismatched {var} in result {name}: ({val1} vs {val2})"
+
+
 class ClusterBusterLoaderException(ClusterBusterReportingException):
     def __init__(self, *args):
         super().__init__(args)
 
 
-class ClusterBusterLoaderJobMismatchException(ClusterBusterLoaderException):
+class _ClusterBusterLoaderJobMismatchException(ClusterBusterLoaderException):
     def __init__(self, var: str, name: str, val1, val2):
-        super().__init__(f"Mismatched {var} in result {name}: ({val1} vs {val2})")
+        super().__init__(_generateMismatchStr(var, name, val1, val2))
 
 
-class ClusterBusterLoaderInvalidResults(ClusterBusterLoaderException):
+class _ClusterBusterLoaderInvalidResults(ClusterBusterLoaderException):
     def __init__(self, name):
         super().__init__(f"Invalid results in {name}")
 
 
-class ClusterBusterLoaderBadStatus(ClusterBusterLoaderException):
+class _ClusterBusterLoaderBadStatus(ClusterBusterLoaderException):
     def __init__(self, error):
         super().__init__(f'Status should be Pass, Fail, or No Result; actual was {error}')
 
 
-class ClusterBusterLoaderDuplicateReport(ClusterBusterLoaderException):
+class _ClusterBusterLoaderBadResult(ClusterBusterLoaderException):
+    def __init__(self, error):
+        super().__init__(f'Result should be PASS, INCOMPLETE, FAIL INCOMPLETE, or FAIL; actual was {error}')
+
+
+class _ClusterBusterLoaderDuplicateReport(ClusterBusterLoaderException):
     def __init__(self, name):
         super().__init__(f"Duplicate report name {name}")
 
 
-class ClusterBusterLoaderNoDir(ClusterBusterLoaderException):
+class _ClusterBusterLoaderNoDir(ClusterBusterLoaderException):
     def __init__(self, arg):
         super().__init__(f"No directory found in {arg}")
 
 
-simpleVarsToCheck = ['uuid', 'run_host', 'cnv_version', 'kata_version', 'kata_containers_version']
+simpleVarsToCheck = {
+    'uuid': 'Note',
+    'run_host': 'Warning',
+    'cnv_version': 'Error',
+    'kata_version': 'Warning',
+    'kata_containers_version': 'Error'
+    }
 
 
-class LoadOneReport:
+class ClusterBusterLoadOneReportBase:
     def __init__(self, name: str, report: dict, data: dict, extras=None):
         self._name = name
         self._data = data
@@ -76,6 +91,8 @@ class LoadOneReport:
                 self._status = self._report['Status']
             else:
                 self._status = 'Success'
+        except (KeyboardInterrupt, BrokenPipeError) as exc:
+            raise (exc) from None
         except Exception:
             if getattr(self, '_status', None) is None:
                 self._status = 'Fail'
@@ -113,14 +130,14 @@ class LoadOneReport:
             me = self._metadata
             you = data['metadata']['jobs'][name]
             if not args.allow_mismatch:
-                for var in simpleVarsToCheck:
-                    self.__CheckMatch(var, name, me, you)
+                for var, action in simpleVarsToCheck.items():
+                    self.__CheckMatch(var, name, me, you, failOnError=action)
                 self.__CheckMatch('openshift_version', name, me['kubernetes_version'],
                                   you, 'openshiftVersion')
                 self.__CheckMatch('server_version', name, me['kubernetes_version'],
                                   you, 'serverVersion')
         if self._metadata['kind'] != 'clusterbusterResults':
-            raise ClusterBusterLoaderInvalidResults()
+            raise _ClusterBusterLoaderInvalidResults()
         if 'runtime_class' in self._metadata:
             self._runtime_env = self._metadata['runtime_class']
         else:
@@ -133,11 +150,14 @@ class LoadOneReport:
         self._count = self._summary['total_instances']
         self._workload = self._metadata['workload']
 
-    def __CheckMatch(self, var: str, name: str, me: dict, you: dict, me_var=None):
+    def __CheckMatch(self, var: str, name: str, me: dict, you: dict, me_var=None, failOnError: str = "Fail"):
         if me_var is None:
             me_var = var
         if me.get(me_var) != you[var]:
-            raise ClusterBusterLoaderJobMismatchException(var, name, me.get(me_var), you[var])
+            if failOnError == "Fail":
+                raise _ClusterBusterLoaderJobMismatchException(var, name, me.get(me_var), you[var])
+            else:
+                print(f"{failOnError}: {_generateMismatchStr(var, name, me.get(me_var), you[var])}", file=sys.stderr)
 
     def _MakeHierarchy(self, hierarchy: dict, keys: list, value: dict = None):
         key = keys.pop(0)
@@ -152,7 +172,7 @@ class LoadOneReport:
         pass
 
 
-class LoadReportSet:
+class _ClusterBusterLoadReportSet:
     """
     Analyze ClusterBuster reports
     """
@@ -196,7 +216,7 @@ class LoadReportSet:
                     elif report['Status'] == 'Fail':
                         status['failed'].append(metadata['job_name'])
                     elif report['Status'] != 'No Result':
-                        raise ClusterBusterLoaderBadStatus(report["Status"])
+                        raise _ClusterBusterLoaderBadStatus(report["Status"])
         if status.get('result', None) is None:
             status['result'] = 'PASS' if not status['failed'] else 'FAIL'
         elif status['result'] == 'INCOMPLETE' and status['failed']:
@@ -276,7 +296,7 @@ class ClusterBusterLoader:
                 else:
                     raise ValueError(f"Unexpected key {key} in name {arg}")
         if dirname is None:
-            raise ClusterBusterLoaderNoDir(arg)
+            raise _ClusterBusterLoaderNoDir(arg)
         if run_name is None and not name_suffixes:
             run_name = dirname.rstrip('/').split('/')[-1]
         else:
@@ -301,6 +321,42 @@ class ClusterBusterLoader:
             return None
         return answer
 
+    def _computeResult(self, r1: str, r2: str):
+        if r1 == 'FAIL' or r2 == 'FAIL':
+            return 'FAIL'
+        elif r1 == 'FAIL INCOMPLETE' or r2 == 'FAIL INCOMPLETE':
+            return 'FAIL INCOMPLETE'
+        elif r1 == 'INCOMPLETE' or r2 == 'INCOMPLETE':
+            return 'INCOMPLETE'
+        elif r1 == 'PASS' and r2 == 'PASS':
+            return 'PASS'
+        elif r1 != 'PASS':
+            raise _ClusterBusterLoaderBadResult(r1)
+        else:
+            raise _ClusterBusterLoaderBadResult(r2)
+
+    def _mergeLists(self, l1: list, l2: list):
+        answer = l1
+        for d in l2:
+            if d not in answer:
+                answer.append(d)
+        return answer
+
+    def _mergeRun(self, name: str, r1: dict, r2: dict):
+        answer = {'metadata': {}}
+        try:
+            m1 = r1['metadata']
+            m2 = r2['metadata']
+            answer['metadata']['result'] = self._computeResult(m1['result'], m2['result'])
+            answer['metadata']['job_start'] = m1['job_start'] if m1['job_start'] < m2['job_start'] else m2['job_start']
+            answer['metadata']['job_end'] = m1['job_end'] if m1['job_end'] > m2['job_end'] else m2['job_end']
+            answer['metadata']['job_runtime'] = m1['job_runtime'] + m2['job_runtime']
+            answer['metadata']['failed'] = self._mergeLists(m1['failed'], m2['failed'])
+            answer['dirs'] = self._mergeLists(r1['dirs'], r2['dirs'])
+            return answer
+        except KeyError:
+            raise _ClusterBusterLoaderInvalidResults(f'Bad metadata in {name}')
+
     def loadFromSpecs(self, specs: list):
         answer = {
                   'metadata': {'jobs': {}},
@@ -311,13 +367,15 @@ class ClusterBusterLoader:
             spec = self._create_report_spec(arg)
             if spec is not None:
                 if spec['run_name'] in reports:
-                    raise ClusterBusterLoaderDuplicateReport(spec["run_name"])
-                reports[spec['run_name']] = spec
+                    reports[spec['run_name']] = self._mergeRun(spec['run_name'], reports[spec['run_name']], spec)
+                    # raise _ClusterBusterLoaderDuplicateReport(spec["run_name"])
+                else:
+                    reports[spec['run_name']] = spec
         if not reports:
             print('No reports found', file=sys.stderr)
             return None
         for name, report in reports.items():
             if 'baseline' not in answer['metadata']:
                 answer['metadata']['baseline'] = name
-            LoadReportSet(reports[name], name, answer, extras=self._extras).Load()
+            _ClusterBusterLoadReportSet(reports[name], name, answer, extras=self._extras).Load()
         return answer

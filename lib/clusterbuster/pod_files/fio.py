@@ -4,7 +4,6 @@ import os
 import subprocess
 import re
 import json
-import shutil
 import tempfile
 
 from clusterbuster_pod_client import clusterbuster_pod_client
@@ -48,6 +47,9 @@ class fio_client(clusterbuster_pod_client):
             return None
 
     def prepare_data_file(self, jobfile: str):
+        self._timestamp("Jobfile:")
+        with open(jobfile) as job:
+            self._timestamp(job.read())
         with open(jobfile) as job:
             lines = [line.strip() for line in job.readlines()]
             for line in lines:
@@ -164,6 +166,7 @@ Drop cache:  {self.fio_drop_cache}""")
         except Exception:
             odir = '/'
         try:
+            self._cleanup_tree(self.rundir, process == 0)
             localid = self._idname(separator='-')
             localrundir = os.path.join(self.rundir, localid)
             tmp_jobsfiledir = os.path.join(self.rundir, f'fio-{localid}.job')
@@ -187,8 +190,7 @@ Drop cache:  {self.fio_drop_cache}""")
                 self.runone(jobfile)
         finally:
             os.chdir(odir)
-            for dir in dirs_to_remove:
-                shutil.rmtree(dir, ignore_errors=True)
+            self._cleanup_tree(self.rundir, process == 0)
 
 
 fio_client().run_workload()

@@ -20,7 +20,7 @@ class files_client(clusterbuster_pod_client):
             if len(self._args) > 6:
                 self.dir_list = self._args[6:]
             else:
-                self.dir_list = ['/var/tmp/clusterbuster']
+                self.dir_list = ['/var/opt/clusterbuster']
             self.dirs = self._toSize(self._args[0])
             self.files_per_dir = self._toSize(self._args[1])
             self.blocksize = self._toSize(self._args[2])
@@ -165,6 +165,8 @@ class files_client(clusterbuster_pod_client):
         return answer
 
     def runit(self, process: int):
+        for tree in self.dir_list:
+            self._cleanup_tree(tree)
         self.localid = self._idname(separator='-')
         self.removethem(process, True)
         data_start_time = self._adjusted_time()

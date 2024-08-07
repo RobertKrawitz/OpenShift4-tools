@@ -163,7 +163,7 @@ declare -i scale_deployments=1
 declare -i sync_start=1
 declare -a volumes=()
 declare -A mount_volume_map=()
-declare common_workdir=/var/tmp/clusterbuster
+declare common_workdir=/var/opt/clusterbuster
 declare -i report=0
 declare report_format=summary
 declare -i precleanup=1
@@ -377,7 +377,7 @@ Extended Options:
                         starts before it starts running.
        --postdelay=N    Delay for the specified time after workload
                         completes.
-       --stepinterval=N	Delay the specified time between steps of the workload.
+       --stepinterval=N Delay the specified time between steps of the workload.
        --timeout=N      Time out reporting after N seconds
        --report_object_creation=<1,0>
                         Report creation of individual objects (default 1)
@@ -536,9 +536,9 @@ $(print_workloads_supporting_reporting '                        - ')
                           - A previously declared mount can be removed by
                             specifying a mount with the same mountpoint
                             and empty name and type.  Example:
-                            --volume=:emptydir:/var/tmp/clusterbuster
-                            --volume=::/var/tmp/clusterbuster
-                            will result in no mount on /var/tmp/clusterbuster
+                            --volume=:emptydir:/var/opt/clusterbuster
+                            --volume=::/var/opt/clusterbuster
+                            will result in no mount on /var/opt/clusterbuster
                             unless later overridden.
                           - All previously declared mounts can be removed
                             by specifying a mount with no name, type,
@@ -551,8 +551,13 @@ $(print_workloads_supporting_reporting '                        - ')
        --container_image=<image>
                         Image to use (default $container_image).
                         Does not apply to "classic" or "pause" workloads.
-       --deployment_type=<pod,deployment,vm>
-                        Deploy via individual pods, deployments or vm (default $deployment_type)
+       --deployment_type=<pod,deployment,replicaset,vm>
+                        Deploy via individual pods, deployments, replica sets,
+                        or vms (default $deployment_type).
+                        Note that functionality that relies on fixed pod
+                        names or recognition of distinct pods (e. g.
+                        the %i functionality in volumes) will not work
+                        correctly with deployments or replicasets.
        --external_sync=host:port
                         Sync to external host rather than internally
        --request=<resource=value>
@@ -720,12 +725,12 @@ EOF
 }
 
 function help() {
-    _help_extended | "${PAGER:-more}"
+    _help_extended "$@" | "${PAGER:-more}"
     exit 1
 }
 
 function help_extended() {
-    _help_extended | "${PAGER:-more}"
+    _help_extended "$@" | "${PAGER:-more}"
     exit 1
 }
 
@@ -2806,6 +2811,17 @@ EOF
     fi
 }
 
+function expand_volume() {
+    local scoped_name=$1
+    local namespace=${2:+$2}
+    local instance=${3:+$3}
+    local replica=${4:+$4}
+    scoped_name=${scoped_name//%N/$namespace}
+    scoped_name=${scoped_name//%i/$instance}
+    scoped_name=${scoped_name//%r/$replica}
+    echo "$scoped_name"
+}
+
 function volume_mounts_yaml() {
     local OPTIND=0
     local use_extra_volumes=1
@@ -2817,13 +2833,13 @@ function volume_mounts_yaml() {
     done
     shift $((OPTIND-1))
     local namespace=$1
-    local deployment=${2:-1}
+    local instance=${2:-1}
     local secrets=${3:-1}
     (( secrets + ${#configmap_files[@]} + ${#volumes[@]} + has_system_configmap + has_user_configmap )) || return;
     local -i i
     echo volumeMounts:
     for ((i = 0; i < secrets; i++)) ; do
-	local name="secret-${namespace}-${deployment}-$i"
+	local name="secret-${namespace}-${instance}-$i"
 	cat <<EOF
 - name: $name
   mountPath: /etc/$name
@@ -2853,6 +2869,7 @@ EOF
 	    local name=${args[0]}
 	    local type=${args[1]}
 	    local mountpoint=${args[2]}
+	    name=$(expand_volume "$name" "$namespace" "$instance" "$replica")
 
 	    args=("${args[@]:3}")
 	    case "${type,,}" in
@@ -2936,17 +2953,6 @@ function standard_pod_metadata_yaml() {
     annotations_yaml "$class"
 }
 
-function expand_volume() {
-    local scoped_name=$1
-    local namespace=${2:+$2}
-    local instance=${3:+$3}
-    local replica=${4:+$4}
-    scoped_name=${scoped_name//%N/$namespace}
-    scoped_name=${scoped_name//%i/$instance}
-    scoped_name=${scoped_name//%r/$replica}
-    echo "$scoped_name"
-}
-
 function extra_volumes_yaml() {
     local volspec
     local -i emptyvolid=0
@@ -2974,7 +2980,7 @@ function extra_volumes_yaml() {
 		done
 		claim_name=$(expand_volume "$claim_name" "$namespace" "$instance" "$replica")
 		cat <<EOF
-- name: $name
+- name: $claim_name
   persistentVolumeClaim:
     claimName: $claim_name
 ${size:+    capacity: "$size"}
@@ -3532,6 +3538,7 @@ function vm_volume_devices_yaml() {
 	local name=${args[0]}
 	local type=${args[1]}
 	local mountpoint=${args[2]}
+	name=$(expand_volume "$name" "$namespace" "$instance" "$replica")
 	[[ ${type,,} = emptydir ]] && continue
 	args=("${args[@]:3}")
 	local opt
@@ -3600,6 +3607,7 @@ function vm_volume_mounts_yaml() {
 	    command="mkdir -p '$mountpoint' && mount $mountopts '$remote' '$mountpoint' && chmod 777 '$mountpoint'"
 	else
 	    [[ "${type,,}" = emptydisk ]] && name="cbemptydisk$((emptydiskid++))"
+	    name=$(expand_volume "$name" "$namespace" "$instance" "$replica")
 	    name="${bus}-${name}"
 	    if [[ -n "$fstype" ]] ; then
 		local sinodes=
@@ -3763,6 +3771,18 @@ EOF
     fi
 }
 
+function _vm_container_disk_yaml() {
+    if [[ -n "${vm_image:-}" ]] ; then
+	cat <<EOF
+- name: containerdisk
+  disk:
+    bus: virtio
+  containerDisk:
+    image: $vm_image
+EOF
+    fi
+}
+
 function create_vm_deployment() {
     get_sysctls
     local node_class=${node_class:-client}
@@ -3834,9 +3854,7 @@ $(indent 6 _vm_evict_strategy)
           guest: $vm_memory
         devices:
           disks:
-            - name: containerdisk
-              disk:
-                bus: virtio
+$(indent 12 _vm_container_disk_yaml)
 $(indent 12 vm_volume_devices_yaml)
             - name: systemconfigmap-${namespace}
               serial: systemconfigmap
@@ -3864,7 +3882,7 @@ $(indent 12 _vm_network_data "$vm_addr")
               ${vm_password:+password: $vm_password}
               chpasswd: { expire: False }
               bootcmd:
-                - "mkdir '$system_configmap_mount_dir' '$user_configmap_mount_dir'"
+                - "mkdir -p '$system_configmap_mount_dir' '$user_configmap_mount_dir'"
 $(indent 16 vm_volume_mounts_yaml)
                 - "mount -o ro /dev/disk/by-id/ata-QEMU_HARDDISK_systemconfigmap '$system_configmap_mount_dir'"
                 - "mount -o ro /dev/disk/by-id/ata-QEMU_HARDDISK_userconfigmap '$user_configmap_mount_dir'"
@@ -4223,11 +4241,19 @@ function create_all_secrets() {
 function create_system_configmap() {
     local -a systemfiles
     readarray -t systemfiles < <(list_configmaps | grep .)
+    if [[ -n "$artifactdir" && -n "${systemfiles[*]}" ]] ; then
+	mkdir -p "$artifactdir/SYSFILES" || fatal "Can't create system artifacts directory"
+	cp -p "${systemfiles[@]}" "$artifactdir/SYSFILES"
+    fi
     if [[ ${#systemfiles[@]} -gt 0 && $sync_start -ne 0 && -n "$sync_namespace" && $sync_in_first_namespace -eq 0 ]] ; then
 	create_configmaps "$sync_namespace" "systemconfigmap" "${systemfiles[@]}"
     fi
     local -a userfiles
     readarray -t userfiles < <(list_user_configmaps | grep .)
+    if [[ -n "$artifactdir" && -n "${userfiles[*]}" ]] ; then
+	mkdir -p "$artifactdir/USERFILES" || fatal "Can't create user artifacts directory"
+	cp -p "${userfiles[@]}" "$artifactdir/USERFILES"
+    fi
     for ((i = 0; i < parallel_configmaps; i++)) ; do
 	create_objects_n configmaps "$parallel_configmaps" "$objs_per_call_configmaps" "$i" "$sleep_between_configmaps" "systemconfigmap" "${systemfiles[@]}"&
 	pids+=("$!")
@@ -4602,6 +4628,8 @@ function run_clusterbuster_2() {
 	    # causing upstream broken pipes and loss of error data.
 	    exec 2> >(trap '' TERM INT HUP USR1 USR2; stdbuf -i0 -o0 -e0 tee >(trap '' TERM INT HUP USR1 USR2; stdbuf -i0 -o0 -e0 tr "\r" "\n" > "$artifactdir/stderr.log") >&2)
 	fi
+    else
+	artifactdir=
     fi
     setup_namespaces || return 1
     create_all_objects namespaces || return 1
@@ -4890,7 +4918,7 @@ while getopts ":B:Eef:Hhno:P:w:QqvN-:" opt ; do
 	v) process_option "verbose=1"		 ;;
 	w) process_option "workload=$OPTARG"     ;;
 	-) process_option "$OPTARG"		 ;;
-	*) help "$OPTARG"			 ;;
+	*) help "Unknown option -$OPTARG"	 ;;
     esac
 done
 
