@@ -26,6 +26,7 @@ import stat
 import math
 import subprocess
 from resource import getrusage, RUSAGE_SELF, RUSAGE_CHILDREN
+import signal
 
 
 class cb_util:
@@ -34,6 +35,40 @@ class cb_util:
     between the controller and clients
     """
     def __init__(self, offset: float = 0, no_timestamp: bool = False):
+        # If we're pid 1, we're the container init.
+        # We need to wait() for anything we don't care about so zombies
+        # don't build up.  It must specifically be pid 1 that wait()s
+        # so we fork as early as possible.
+        if os.getpid() == 1:
+            try:
+                child = os.fork()
+            except Exception as err:
+                print(f"Fork failed: {err}", file=sys.stderr)
+                os.exit(1)
+            if child != 0:
+                while True:
+                    # We don't ever want to inadvertently exit from an
+                    # exception!
+                    try:
+                        pid, status = os.wait()
+                        try:
+                            wstatus = os.waitstatus_to_exitcode(status)
+                        except ValueError:
+                            print(f'(pid 1) Got unexpected exit status {status} from {pid}')
+                            wstatus = 1
+                        except Exception as exc:
+                            print(f'(pid 1) Caught exception {exc}, continuing')
+                        # If our worker exits, that's our cue to terminate.
+                        if pid == child:
+                            os.exit(wstatus)
+                        else:
+                            print(f'(pid 1) Caught exit from {pid} status {wstatus}', file=sys.stderr)
+                    except Exception as exc:
+                        # Maybe a bit too paranoid here, but...
+                        try:
+                            print(f'(pid 1) Caught exception {exc}, continuing')
+                        except Exception:
+                            pass
         self.__offset = offset
         self.__no_timestamp = no_timestamp
         self.__initial_connect_time = None
