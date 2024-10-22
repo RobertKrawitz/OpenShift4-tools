@@ -520,6 +520,9 @@ $(print_workloads_supporting_reporting '                        - ')
                             for the volume (default virtio)
                           - cache (VMs): caching mode (none, writeback,
                             writethrough; default none)
+                          - dedicatedIOThread (VMs): whether to use a
+                            dedicated I/O thread (true, false; default not
+                            specified)
                           - fstype (VMs): filesystem type to format
                             the volume to; empty means to not format
                             the volume (filesystem must already be present).
@@ -812,6 +815,10 @@ function process_runtimeclass() {
     if [[ $runtimespec = 'vm' ]] ; then
 	deployment_type=vm
 	runtime_class=vm
+	return
+    fi
+    if [[ $runtimespec = 'pod' ]] ; then
+	runtime_class=
 	return
     fi
     runtimespec=${runtimespec// /}
@@ -3545,19 +3552,22 @@ function vm_volume_devices_yaml() {
 	local value
 	local bus=virtio
 	local cache=
+	local dedicatedIOThread=
 	local arg
 	for arg in "${args[@]}" ; do
 	    IFS='=' read -r opt value <<< "$arg"
 	    case "$opt" in
-		bus)   bus="$value"   ;;
-		cache) cache="$value" ;;
-		*)		      ;;
+		bus)   bus="$value"   			  ;;
+		cache) cache="$value" 			  ;;
+		dedicatediothread) dedicatedIOThread=true ;;
+		*)		      			  ;;
 	    esac
 	done
 	[[ "${type,,}" = emptydisk ]] && name="cbemptydisk$((emptydiskid++))"
 	cat <<EOF
 - name: $name
   serial: $name
+${dedicatedIOThread:+  dedicatedIOThread: $dedicatedIOThread}
   disk:
     bus: $bus
 ${cache:+    cache: $cache}
