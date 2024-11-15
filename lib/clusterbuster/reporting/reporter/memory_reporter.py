@@ -91,6 +91,16 @@ class memory_reporter(ClusterBusterReporter):
         self.net_start_time = None
         self.net_end_time = None
         self.timeline = None
+        self.scan = None
+        print(jdata.keys(), file=sys.stderr)
+        try:
+            scantype = jdata['metadata']['options']['workload_options']['memory_scan']
+            if scantype == 1:
+                self.scan = 'Sequential'
+            elif scantype == 2:
+                self.scan = 'Random'
+        except KeyError:
+            pass
         for obj in jdata.get('api_objects', []):
             try:
                 name = f'{obj["metadata"]["name"]}.{obj["metadata"]["namespace"]}'
@@ -150,6 +160,8 @@ class memory_reporter(ClusterBusterReporter):
         if 'Results' in self._jdata and 'worker_results' in self._jdata['Results']:
             events = {}
             for result in self._jdata['Results']['worker_results']:
+                if "pod" not in result or "namespace" not in result:
+                    continue
                 name = f'{result["pod"]}.{result["namespace"]}'
                 node = self.pod_node[name]
                 if node not in timeline:
@@ -330,11 +342,12 @@ class memory_reporter(ClusterBusterReporter):
         ClusterBusterReporter._generate_summary(self, results)
         self.build_timeline()
         results['Pages Scanned'] = self._prettyprint(self.work_total,
-                                                     precision=3, base=1000, suffix=' it')
+                                                     precision=3, base=1000, suffix=' pp')
         if self.net_end_time is not None and self.net_start_time is not None:
             results['Pages Scanned/sec'] = self._prettyprint(self._safe_div(self.work_total,
                                                                             self.net_end_time - self.net_start_time),
                                                              precision=3, base=1000, suffix=' pp/sec')
+        results['Scan Pattern'] = self.scan
         if self.args.timeline_file:
             if self.timeline:
                 timeline_report = self.format_timeline(timeline_format=self.args.timeline_format)

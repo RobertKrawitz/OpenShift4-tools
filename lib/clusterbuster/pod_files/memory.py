@@ -6,6 +6,7 @@ from random import randint, seed, random
 import resource
 import math
 import os
+import numpy.random
 
 from clusterbuster_pod_client import clusterbuster_pod_client
 
@@ -18,10 +19,12 @@ class memory_client(clusterbuster_pod_client):
     def __init__(self):
         try:
             super().__init__()
+            self._timestamp(self._args[5])
+            self._timestamp(' '.join(self._args))
             self._set_processes(int(self._args[0]))
             self.__runtime = float(self._args[1])
             self.__memory = self.parse_param(self._args[2])
-            self.__scan = bool(int(self._args[3]))
+            self.__scan = int(self._args[3])
             self.__stride = int(self._args[4])
             self.__iterations = int(self._args[5])
             self.__idle = self.parse_param(self._args[6])
@@ -33,8 +36,8 @@ class memory_client(clusterbuster_pod_client):
             self.__start_probability = None if self._args[12] == '' else float(self._args[12])
             if self.__start_probability is not None and (self.__start_probability < 0 or self.__start_probability > 1):
                 raise ValueError(f"Start probability must be between 0 and 1 ({self.__start_probability})")
-            if self.__runtime > 0:
-                self.__iterations = int(self.__runtime)
+#            if self.__runtime > 0:
+#                self.__iterations = int(self.__runtime)
             if not self.__stride or self.__stride <= 0:
                 self.__stride = resource.getpagesize()
         except Exception as err:
@@ -51,7 +54,7 @@ class memory_client(clusterbuster_pod_client):
         answer[2] = max(1, min(answer[2], answer[1] - answer[0]))
         return answer
 
-    def runone_op(self, start_time: float, iteration: int, size: int, stride: int, runtime: float, scan: bool):
+    def runone_op(self, start_time: float, iteration: int, size: int, stride: int, runtime: float, scan: int):
         pages = int(size / stride)
         # It's a lot more efficient space-wise to create a small byte array
         # and expand it than to create the entire byte array at once.
@@ -61,21 +64,58 @@ class memory_client(clusterbuster_pod_client):
         memory_blk = bytearray(b'a')
         memory_blk *= size
         alloc_time = self._adjusted_time()
+        if self.__sync_between_iterations:
+            self._sync_to_controller(self._idname([f'postalloc-{iteration}', f' {runtime:.3f} ',
+                                                   f' {prealloc_time:.3f} ', f' {alloc_time:.3f} ',
+                                                   f' {alloc_time-prealloc_time:.3f} ', self._ts()]))
         run_pages = 0
         if scan:
-            while runtime < 0 or self._adjusted_time() - alloc_time < runtime:
-                char = 32 + (run_pages % 192)
+            end_time = runtime + time.time()
+            rng = None
+            # Per https://stackoverflow.com/questions/2709818/fastest-way-to-generate-1-000-000-random-numbers-in-python
+            # this is a much faster way to generate a large number of random numbers (obviously at some
+            # memory cost).  Since we're accessing just one word out of each page, we want
+            # the random number generation to be fast.
+            #
+            # On a Ryzen 3900, it's about 10x faster; random.randint() gets about 1.1E+06 random numbers/sec
+            # while numpy.random with 1000 integers at a time gets about 1.0E+07 random numbers/sec.
+            # Doing more than 1000 yields a small benefit (about 1.1E+07 for 10000 integers),
+            # but at a more significant memory cost.
+            #
+            # Also the time for the rng.integers() call increases as the number of integers per block increases;
+            # for 100 it's about 12 usec, for 1000 it's about 25 usec, and for 10000 it's about 150 usec
+            # (on an unloaded system).  On a heavily loaded system we can expect that to increase some,
+            # possibly enough to affect the loop termination time significantly.
+            pageidx = []
+            curpageidx = 0
+            if scan == 2:
+                numbers_per_block = 1000
+                rng = numpy.random.default_rng()
+                pageidx = rng.integers(pages, high=None, size=numbers_per_block).tolist()
+            while runtime < 0 or time.time() < end_time:
                 for i in range(pages):
-                    memory_blk[i * stride] = char
-                run_pages += 1
+                    if scan == 2:
+                        if curpageidx >= numbers_per_block:
+                            pageidx = rng.integers(pages, high=None, size=numbers_per_block).tolist()
+                            curpageidx = 0
+                        pp = pageidx[curpageidx]
+                        curpageidx += 1
+                    else:
+                        pp = i
+                    char = 32 + (run_pages % 192)
+                    if runtime >= 0 and i % 1000 == 0 and time.time() >= end_time:
+                        break
+                    memory_blk[pp * stride] = char
+                    run_pages += 1
         elif runtime >= 0:
             time.sleep(runtime)
         else:
             signal.pause()
         prefree_time = self._adjusted_time()
         if self.__sync_between_iterations:
-            self._sync_to_controller(self._idname([iteration]))
-        return [run_pages * pages, prealloc_time, alloc_time, prefree_time]
+            self._sync_to_controller(self._idname([f'prefree-{iteration}', f' {prefree_time:.3f} ',
+                                                   f' {prefree_time-alloc_time:.3f} ', self._ts()]))
+        return [run_pages, prealloc_time, alloc_time, prefree_time]
 
     def runone_child(self, fd, *args):
         os.write(fd, ' '.join([str(val) for val in self.runone_op(*args)]))
@@ -166,8 +206,9 @@ class memory_client(clusterbuster_pod_client):
                 self._timestamp(f"Presleeping {sleep_time}")
                 time.sleep(sleep_time)
         for iteration in range(self.__iterations):
+            self._timestamp(f'Iteration {iteration}/{self.__iterations}')
             if self.__sync_between_iterations:
-                self._sync_to_controller(self._idname([iteration]))
+                self._sync_to_controller(self._idname([f'iteration-{iteration}', self._ts()]))
             run_size = self.randval(self.__memory)
             run_size = self.__stride * int((run_size + self.__stride - 1) / self.__stride)
             run_time = self.randval(self.__iteration_runtime)
@@ -203,7 +244,7 @@ class memory_client(clusterbuster_pod_client):
         user, system = self._cputimes(user, system)
         data_end_time = self._adjusted_time()
         extras = {
-            'scan': self.__scan,
+            'scan': bool(self.__scan),
             'total_pages': pages,
             'iterations': iteration + 1,
             'runtime': data_end_time - data_start_time,

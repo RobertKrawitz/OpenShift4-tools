@@ -51,10 +51,10 @@ class cb_util:
         """
         return self.__initial_connect_time
 
-    def _ts(self):
-        return datetime.utcfromtimestamp(time.time() - self.__offset).strftime('%Y-%m-%dT%T.%f')
+    def _ts(self, t=None):
+        return datetime.utcfromtimestamp((t if t is not None else time.time()) - self.__offset).strftime('%Y-%m-%dT%T.%f')
 
-    def _get_timestamp(self, string):
+    def _get_timestamp(self, string: str = ''):
         """
         Return a string with a timestamp prepended to the first line
         and any other lines indented
@@ -152,7 +152,7 @@ class cb_util:
         elif arg is None:
             return 0
         elif isinstance(arg, str):
-            m = re.match(r'(-?[0-9]+(\.[0-9]+)?)(([kmgt]?)(i?)(b?)?)?', arg.lower())
+            m = re.match(r'(-?[0-9]+(\.[0-9]+)?)(([kmgtpezy]?)(i?)(b?)?)?', arg.lower())
             if m:
                 mantissa = float(m.group(1))
                 modifier = m.group(4)
@@ -166,6 +166,14 @@ class cb_util:
                     base = 3
                 elif modifier == 't':
                     base = 4
+                elif modifier == 'p':
+                    base = 5
+                elif modifier == 'e':
+                    base = 6
+                elif modifier == 'z':
+                    base = 7
+                elif modifier == 'y':
+                    base = 8
                 if binary:
                     return int(mantissa * (1024 ** base))
                 else:

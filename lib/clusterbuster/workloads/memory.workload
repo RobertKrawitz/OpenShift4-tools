@@ -55,8 +55,9 @@ function memory_help_options() {
                         are provided, a random value between the two
                         is used for each iteration.  Step allows specifying
                         the step size.
-       --memory-scan=<0,1>
-                        Write scan memory continuously
+       --memory-scan=<0,1,random>
+                        Write-scan memory continuously.  "Random" results
+                        in pages being scanned in random order.
        --memory-stride=<size>
                         Stride the specified number of bytes
                         when scanning.  Default is system pagesize.
@@ -100,6 +101,14 @@ function memory_help_options() {
 EOF
 }
 
+function ___memory_scan_order() {
+    local optvalue="${1:-}"
+    case "${optvalue,,}" in
+	rand*) echo 2 		;;
+	*)     bool "$optvalue" ;;
+    esac
+}
+
 function memory_process_options() {
     local opt
     local -a unknown_opts=()
@@ -107,7 +116,7 @@ function memory_process_options() {
 	read -r noptname1 noptname optvalue <<< "$(parse_option "$opt")"
 	case "$noptname1" in
 	    memorysize)		 ___memory_size=$(parse_size -d, "$optvalue")		  ;;
-	    memoryscan)		 ___memory_scan=$(bool "$optvalue")			  ;;
+	    memoryscan)		 ___memory_scan=$(___memory_scan_order "$optvalue")	  ;;
 	    memorystride*)	 ___memory_stride=$(parse_size "$optvalue")		  ;;
 	    memoryiterations)    ___memory_iterations=$(parse_size "$optvalue")		  ;;
 	    memoryiterationrun*) ___memory_iteration_runtime=$(parse_size -d, "$optvalue");;
@@ -122,6 +131,7 @@ function memory_process_options() {
     if [[ -n "${unknown_opts[*]:-}" ]] ; then
 	warn "Notice: the following options are not known: ${unknown_opts[*]}"
     fi
+    container_image="quay.io/rkrawitz/clusterbuster-workloads:latest"
 }
 
 function memory_report_options() {

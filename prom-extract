@@ -41,20 +41,11 @@ try:
     import urllib3
     import uuid
     import yaml
+    import openshift_client
 except (KeyboardInterrupt, BrokenPipeError):
     efail('')
 except ModuleNotFoundError as exc:
     efail(f"prom-extract failed: {exc}")
-
-# Both openshift and openshift_client provide packages named openshift.
-# Make sure that we have the correct one.
-try:
-    import openshift
-    _ = openshift.project
-except (KeyboardInterrupt, BrokenPipeError):
-    efail('')
-except (ModuleNotFoundError, AttributeError) as exc:
-    efail(f"prom-extract failed: {exc} (need to install Python 'openshift_client', not 'openshift')")
 
 
 def run_command(cmd, fail_on_bad_status=True, report_stderr_async=True,
@@ -98,8 +89,8 @@ def run_command(cmd, fail_on_bad_status=True, report_stderr_async=True,
 
 def get_prometheus_default_url():
     try:
-        with openshift.project('openshift-monitoring'):
-            return 'https://%s' % openshift.selector(['route/prometheus-k8s']).objects()[0].as_dict()['spec']['host']
+        with openshift_client.project('openshift-monitoring'):
+            return 'https://%s' % openshift_client.selector(['route/prometheus-k8s']).objects()[0].as_dict()['spec']['host']
     except (KeyboardInterrupt, BrokenPipeError):
         efail('')
     except Exception as err:
@@ -107,12 +98,12 @@ def get_prometheus_default_url():
 
 
 def get_prometheus_token_by_version():
-    with openshift.project('openshift-monitoring'):
-        openshift_version = openshift.get_server_version().split('-')[0].split('.')
+    with openshift_client.project('openshift-monitoring'):
+        openshift_version = openshift_client.get_server_version().split('-')[0].split('.')
         if int(openshift_version[0]) > 4 or (int(openshift_version[0]) == 4 and int(openshift_version[1]) > 10):
-            return openshift.invoke('sa', ['new-token', '-n', 'openshift-monitoring', 'prometheus-k8s']).out().strip()
+            return openshift_client.invoke('sa', ['new-token', '-n', 'openshift-monitoring', 'prometheus-k8s']).out().strip()
         else:
-            return openshift.get_serviceaccount_auth_token('prometheus-k8s')
+            return openshift_client.get_serviceaccount_auth_token('prometheus-k8s')
 
 
 def get_prometheus_token():
@@ -129,8 +120,8 @@ def get_prometheus_timestamp():
     while retries > 0:
         retries = retries - 1
         try:
-            with openshift.project('openshift-monitoring'):
-                result = openshift.selector('pod/prometheus-k8s-0').object().execute(['date', '+%s.%N'],
+            with openshift_client.project('openshift-monitoring'):
+                result = openshift_client.selector('pod/prometheus-k8s-0').object().execute(['date', '+%s.%N'],
                                                                                      container_name='prometheus')
                 return datetime.fromtimestamp(float(result.out()), timezone.utc)
         except (KeyboardInterrupt, BrokenPipeError):
@@ -144,7 +135,7 @@ def get_prometheus_timestamp():
 
 def get_nodes():
     try:
-        return json.loads([n.as_dict() for n in openshift.selector(['node']).objects()])
+        return json.loads([n.as_dict() for n in openshift_client.selector(['node']).objects()])
     except (KeyboardInterrupt, BrokenPipeError):
         efail('')
     except Exception as err:
@@ -156,7 +147,7 @@ def generate_uuid():
 
 
 def get_object(kind, name):
-    return openshift.selector('%s/%s' % (kind, name)).objects()[0].as_dict()
+    return openshift_client.selector('%s/%s' % (kind, name)).objects()[0].as_dict()
 
 
 try:
@@ -282,7 +273,7 @@ try:
                             bad_object = True
                     if not bad_object:
                         try:
-                            with openshift.project(api_object['namespace']):
+                            with openshift_client.project(api_object['namespace']):
                                 try:
                                     apiobj = get_object(api_object['kind'], api_object['name'])
                                     if apiobj is not None:
@@ -342,8 +333,8 @@ try:
                 'jobStart': startTime.isoformat(timespec='seconds'),
                 'jobEnd': endTime.isoformat(timespec='seconds'),
                 'uuid': args.uuid,
-                'cluster_version': openshift.get_server_version(),
-                'nodes': [n.as_dict() for n in openshift.selector('nodes').objects()],
+                'cluster_version': openshift_client.get_server_version(),
+                'nodes': [n.as_dict() for n in openshift_client.selector('nodes').objects()],
                 'command': args.command,
             },
             'rundata': {

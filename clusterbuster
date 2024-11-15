@@ -122,6 +122,8 @@ declare -i objs_item_count=0
 declare -i port=7777
 declare -i sync_port=7778
 declare -i drop_cache_port=7779
+declare -i sync_watchdog_port_num=7780
+declare -i sync_watchdog_timeout=0
 declare -i sync_ns_port=7753
 declare -i sync_in_first_namespace=0
 declare sync_host=
@@ -256,6 +258,7 @@ declare -i vm_cores=1
 declare -i vm_threads=1
 declare -i vm_sockets=1
 declare -i vm_start_running=1
+declare vm_run_strategy=
 declare vm_memory=2Gi
 declare vm_grace_period=30
 declare vm_image='quay.io/rkrawitz/clusterbuster-vm:latest'
@@ -274,6 +277,7 @@ OC=${OC:-$(type -p oc)}
 OC=${OC:-$(type -p kubectl)}	# kubectl might not work, though...
 OC=$(type -p "$OC")
 
+declare __virtctl_local_ssh=UNKNOWN
 declare VIRTCTL=${VIRTCTL:-$(type -p virtctl)}
 
 function fatal() {
@@ -391,6 +395,12 @@ Extended Options:
                         architecture of this platform.
        --containerimage=<image>
                         Use the specified container image.
+       --sync_watchdog_timeout=<timeout>
+                        Set watchdog timer for all pods/VMs.  After pods/VMs
+                        start, if the watchdog is not reset within the
+                        timeout, the run is aborted.  Currently not set
+                        (timeout = 0); if set to a value greater than
+                        zero, that is the watchdog period.
 
     Reporting Options:
        --report=<format>
@@ -651,6 +661,11 @@ $(print_workloads_supporting_reporting '                        - ')
                         is generated.
        --vm-run-as-root=[0,1]
                         Run test command as root.  Default $vm_run_as_root.
+       --vm-start-running=[0,1]
+                        Start the VMs in running state (otherwise are started
+                        separately).  Default $vm_start_running.
+       --vm-run_strategy=<strategy>
+                        Specify the desired run strategy for VMs.
 
     Tuning object creation (short equivalents):
        --scale-ns=[0,1] Scale up the number of namespaces vs.
@@ -900,6 +915,7 @@ function process_option() {
 	basename)		    basename=$optvalue				;;
 	arch)			    arch=$optvalue				;;
 	createnamespacesonly)	    create_namespaces_only=1			;;
+	watchdogtimeout)	    watchdog_timeout=$(parse_size "$optvalue")  ;;
 	# Object definition
 	workdir)		    common_workdir=$optvalue			;;
 	configmapfile)		    configmap_files+=("$optvalue")		;;
@@ -980,6 +996,8 @@ function process_option() {
 	vmpassword)		    vm_password=$optvalue			;;
 	vmrunasroot)		    vm_run_as_root=$(bool "$optvalue")		;;
 	vmsshkey*)		    vm_ssh_keyfile=$optvalue			;;
+	vmstart*)		    vm_start_running=$(bool "$optvalue")	;;
+	vmrunstrategy)		    vm_run_strategy="$optvalue"			;;
 	# Object creation
 	obj*spercall)		    objs_per_call=$optvalue			;;
 	parallel)		    parallel=$optvalue				;;
@@ -1235,10 +1253,35 @@ function _____OC() {
     exec "$OC" "$@"
 }
 
+# Newer versions of virtctl need --local-ssh to force virtctl to use the local
+# ssh/scp, which is required to use options to shut off unauthenticated host
+# messages which require interaction.  Some older versions of virtctl, such as
+# the version in Fedora 38, do not accept this option.
+#
+# There's no obvious "clean" way to determine what's needed.  According to the
+# virtctl change log, this was introduced around 0.56, but Fedora 38 has
+# 0.58.1 and does not accept this option.
+function _VIRTCTL_BASE() {
+    local subcmd=${1:-}
+    shift
+    if [[ $subcmd = ssh || $subcmd = scp ]] ; then
+	if [[ $__virtctl_local_ssh = UNKNOWN ]] ; then
+	    if virtctl ssh --help </dev/null 2>&1 |grep -q -e '--local-ssh[= \t]' ; then
+		__virtctl_local_ssh=--local-ssh
+	    else
+		__virtctl_local_ssh=
+	    fi
+	fi
+	"$VIRTCTL" "$subcmd" ${__virtctl_local_ssh:+"$__virtctl_local_ssh"} "$@"
+    else
+	"$VIRTCTL" "$subcmd" "$@"
+    fi
+}
+
 function __VIRTCTL() {
     if ((doit)) ; then
 	debug kubectl "$VIRTCTL" "$@"
-	"$VIRTCTL" "$@"
+	_VIRTCTL_BASE "$@"
     else
 	echo '(skipped)' "$VIRTCTL" "${@@Q}" 1>&2
     fi
@@ -1256,7 +1299,7 @@ function ___VIRTCTL() {
 
 function ____VIRTCTL() {
     debug kubectl "$VIRTCTL" "$@"
-    "$VIRTCTL" "$@"
+    _VIRTCTL_BASE "$@"
 }
 
 function _____VIRTCTL() {
@@ -1632,7 +1675,7 @@ function _monitor_pods() {
 	    unset "starting_pods[$pod]"
 	    unset "running_pods[$pod]"
 	    case "$lstatus" in
-		error|failed)
+		error|failed|oomkilled)
 		    echo "Pod -n $namespace $name $status!" 1>&2
 		    echo "Tail end of logs:" 1>&2
 		    # TODO: Need to get logs from each container
@@ -1744,7 +1787,7 @@ function _fail_helper()  {
 	local podstatus
 	podstatus=$(____OC get pod -ojsonpath='{.status.phase}' "${sync_pod[@]}" 2>/dev/null)
 	case "$podstatus" in
-	    Succeeded|Terminated|Completed)
+	    Succeeded|Terminated|Completed|OOMKilled)
 		return
 		;;
 	    Running)
@@ -1847,7 +1890,7 @@ function _get_sync_logs_poll() {
 		pod_status_found=1
 		sleep 1
 		;;
-	    Error|Failed)
+	    Error|Failed|OOMKilled)
 		pod_status_found=1
 		set_run_failed "Status of pod $pod failed!"
 		return 1
@@ -1888,7 +1931,7 @@ function _get_sync_logs_poll() {
 function get_sync_logs_poll() {
     local tfile
     tfile=$(mktemp ${cb_tempdir:+-p "$cb_tempdir"} -t '_clusterbusterlogs.XXXXXXXXXX') || fatal "Cannot create temporary file"
-    trap 'retrieve_successful_logs=1 _retrieve_artifacts 1; if [[ -n "${tfile:-}" && -f "$tfile" ]] ; then rm -f "$tfile"; unset tfile; fi; echo "Status: Fail"; return 1' INT TERM HUP USR1
+    trap '(retrieve_successful_logs=1 _retrieve_artifacts 1); if [[ -n "${tfile:-}" && -f "$tfile" ]] ; then rm -f "$tfile"; unset tfile; fi; echo "Status: Fail"; return 1' INT TERM HUP USR1
     _get_sync_logs_poll > "$tfile"
     local status=$?
     if ((status == 0)) ; then
@@ -2224,6 +2267,7 @@ function _retrieve_artifacts() {
     local always_retrieve_artifacts=${1:-}
     get_run_started || return 1
     get_run_failed && always_retrieve_artifacts=1
+    trap 'echo "Interrupt received; aborting" 1>&2; exit' INT TERM HUP
     if [[ -n "$artifactdir" && ! -f "$artifactdir/.artifacts" ]] ; then
 	report_if_desired "Retrieving run artifacts" 1>&2
 	mkdir -p "$artifactdir/Logs"
@@ -2311,7 +2355,7 @@ function _retrieve_artifacts() {
 	    [[ ! -d "$artifactdir/VMLogs" ]] && mkdir "$artifactdir/VMLogs"
 	    while read -r namespace vm ; do
 		# virtctl scp assumes that any colons in the destination filename are remote.
-		"$VIRTCTL" scp -i "$vm_ssh_keyfile" -t "-oStrictHostKeyChecking=no" -t "-oGlobalKnownHostsFile=/dev/null" -t "-oUserKnownHostsFile=/dev/null" -t "-oLogLevel ERROR" "root@$vm.$namespace:/var/log/cloud-init-output.log" "$artifactdir/VMLogs/$namespace.$vm" </dev/null 1>&2 && mv "$artifactdir/VMLogs/$namespace.$vm" "$artifactdir/VMLogs/$namespace:$vm"
+		____VIRTCTL scp -i "$vm_ssh_keyfile" -t "-oBatchMode=yes" -t "-oStrictHostKeyChecking=no" -t "-oGlobalKnownHostsFile=/dev/null" -t "-oUserKnownHostsFile=/dev/null" -t "-oLogLevel ERROR" "root@$vm.$namespace:/var/log/cloud-init-output.log" "$artifactdir/VMLogs/$namespace.$vm" </dev/null 1>&2 && mv "$artifactdir/VMLogs/$namespace.$vm" "$artifactdir/VMLogs/$namespace:$vm"
 	    done <<< "$(__OC get vm -A -l "${basename}-id=$uuid" --no-headers | awk '{print $1, $2}')"
 	fi
     fi
@@ -2626,7 +2670,8 @@ $(indent 2 generate_environment)
 $(if [[ -n "${arglist_function}" ]] ; then
      "${arglist_function}" "${system_configmap_mount_dir}/" "$@" "$container" -- \
      "$sync_nonce" "$namespace" "c$container" "$basetime" "$baseoffset" "$(ts)" "$exit_at_end" "$sync_service" \
-     "$sync_port_num" "$sync_ns_port_num" "$drop_cache_service" "$drop_cache_port_num" | indent 2 ; fi)
+     "$sync_port_num" "$sync_ns_port_num" "$sync_watchdog_port_num" "$sync_watchdog_timeout" \
+     "$drop_cache_service" "$drop_cache_port_num" | indent 2 ; fi)
 $(indent 2 volume_mounts_yaml "$namespace" "${instance}" "$secret_count")
 $(indent 2 <<< "${security_context:-}")
 EOF
@@ -3783,6 +3828,14 @@ EOF
     fi
 }
 
+function _vm_run_yaml() {
+    if [[ -n "$vm_run_strategy" ]] ; then
+	echo "runStrategy: $vm_run_strategy"
+    else
+	echo "running: $vm_running"
+    fi
+}
+
 function create_vm_deployment() {
     get_sysctls
     local node_class=${node_class:-client}
@@ -3835,7 +3888,7 @@ $(indent 2 standard_labels_yaml -c "$node_class" -l "$workload" "$namespace" "$i
   name: "$vmname"
 $(indent 2 standard_deployment_metadata_yaml "$namespace" client)
 spec:
-  running: $vm_running
+$(indent 2 _vm_run_yaml)
   template:
     metadata:
 $(indent 6 standard_labels_yaml -c "$node_class" -l "$workload" "$namespace" "$instance" "$replica")
@@ -3894,7 +3947,8 @@ $(indent 16 _setup_sysctls)
                 - "$(standard_environment -V) $(_run_as_root)  $(_run_as_container)$(if [[ -n "${arglist_function}" ]] ; then
      ARGLIST_FORMAT=vm "${arglist_function}" "${system_configmap_mount_dir}/" "$@" "0" -- \
      "$sync_nonce" "$namespace" "c0" "$basetime" "$baseoffset" "$(ts)" "$exit_at_end" "$sync_service" \
-     "$sync_port_num" "$sync_ns_port_num" "$drop_cache_service" "$drop_cache_port_num" ; fi)"
+     "$sync_port_num" "$sync_ns_port_num" "$sync_watchdog_port_num" "$sync_watchdog_timeout" \
+     "$drop_cache_service" "$drop_cache_port_num" ; fi)"
 EOF
     done
 }
@@ -4050,6 +4104,8 @@ $(indent 2 standard_environment)
   - "$workload_step_interval"
   - "$sync_port"
   - "$sync_ns_port"
+  - "$sync_watchdog_port_num"
+  - "$sync_watchdog_timeout"
   - "$expected_clients"
   - "$initial_expected_clients"
 $(indent 2 volume_mounts_yaml -V "$namespace" 0 0)
@@ -4308,16 +4364,17 @@ function create_all_deployments() {
 }
 
 function create_deployments_post_hook() {
-    if [[ $deployment_type = vm && $vm_start_running -eq 0 ]] ; then
+    if [[ $deployment_type = vm && ($vm_run_strategy != Always || $vm_start_running -eq 0) ]] ; then
 	local namespace
 	local name
 	if [[ -z "$VIRTCTL" ]] ; then
 	    warn "*** Unable to find virtctl command, cannot start VMs!"
 	    return
 	fi
-	while read -r namespace name ; do
+	# shellcheck disable=SC2034
+	while read -r namespace name ignore ; do
 	    "$VIRTCTL" start -n "$namespace" "$name"
-	done < <(__OC get vm -A -l "${basename}-xuuid=$xuuid")
+	done < <(__OC get vm --no-headers -A -l "${basename}-xuuid=$xuuid")
     fi
 }
 
@@ -4827,6 +4884,8 @@ function validate_options() {
     (( !objs_per_call_secrets )) && objs_per_call_secrets=$objs_per_call
     (( !objs_per_call_namespaces )) && objs_per_call_namespaces=$objs_per_call
     (( !objs_per_call_deployments )) && objs_per_call_deployments=$objs_per_call
+
+    (( sync_watchdog_timeout <= 0 )) && sync_watchdog_port_num=0
 
     [[ -n "$report_format" ]] && report=1
 

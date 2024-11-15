@@ -30,7 +30,8 @@ def fformat(num: float, precision: int = 5):
 
 
 def prettyprint(num: float, precision: int = 5, integer: int = 0, base: int = None,
-                suffix: str = '', multiplier: float = 1, parseable: bool = False):
+                suffix: str = '', multiplier: float = 1, parseable: bool = False,
+                use_small_units: bool = True):
     """
     Return a pretty printed version of a number.
     Base 100:  print percent
@@ -85,7 +86,13 @@ def prettyprint(num: float, precision: int = 5, integer: int = 0, base: int = No
         base = 1024
     elif base != -10 or base != -1 or base != -1000:
         raise ValueError(f'Illegal base {base} for prettyprint; must be 1000 or 1024')
-    if base > 0 and abs(num) >= base ** 5:
+    if base > 0 and abs(num) >= base ** 8:
+        return f'{fformat(num / (base ** 8), precision=precision)} Y{infix}{suffix}'
+    elif base > 0 and abs(num) >= base ** 7:
+        return f'{fformat(num / (base ** 7), precision=precision)} Z{infix}{suffix}'
+    elif base > 0 and abs(num) >= base ** 6:
+        return f'{fformat(num / (base ** 6), precision=precision)} E{infix}{suffix}'
+    elif base > 0 and abs(num) >= base ** 5:
         return f'{fformat(num / (base ** 5), precision=precision)} P{infix}{suffix}'
     elif base > 0 and abs(num) >= base ** 4:
         return f'{fformat(num / (base ** 4), precision=precision)} T{infix}{suffix}'
@@ -95,15 +102,23 @@ def prettyprint(num: float, precision: int = 5, integer: int = 0, base: int = No
         return f'{fformat(num / (base ** 2), precision=precision)} M{infix}{suffix}'
     elif base > 0 and abs(num) >= base ** 1:
         return f'{fformat(num / base, precision=precision)} K{infix}{suffix}'
-    elif abs(num) >= 1 or num == 0:
+    elif abs(num) >= 1 or num == 0 or not use_small_units:
         if integer:
             precision = 0
         return f'{fformat(num, precision=precision)} {suffix}'
     elif abs(num) >= 10 ** -3:
-        return f'{fformat(num * (1000), precision=precision)} m{suffix}'
+        return f'{fformat(num * (1000 ** 1), precision=precision)} m{suffix}'
     elif abs(num) >= 10 ** -6:
         return f'{fformat(num * (1000 ** 2), precision=precision)} u{suffix}'
     elif abs(num) >= 10 ** -9:
         return f'{fformat(num * (1000 ** 3), precision=precision)} n{suffix}'
-    else:
+    elif abs(num) >= 10 ** -12:
         return f'{fformat(num * (1000 ** 4), precision=precision)} p{suffix}'
+    elif abs(num) >= 10 ** -15:
+        return f'{fformat(num * (1000 ** 5), precision=precision)} f{suffix}'
+    elif abs(num) >= 10 ** -18:
+        return f'{fformat(num * (1000 ** 6), precision=precision)} a{suffix}'
+    elif abs(num) >= 10 ** -21:
+        return f'{fformat(num * (1000 ** 7), precision=precision)} z{suffix}'
+    else:
+        return f'{fformat(num * (1000 ** 8), precision=precision)} y{suffix}'

@@ -9,6 +9,7 @@ RUN microdnf --setopt=install_weak_deps=0 --enablerepo=crb install -y \
     microdnf --setopt=install_weak_deps=0 install -y \
       fio \
       fio-engine-libaio \
+      python3-numpy \
       sysbench \
       uperf && \
     microdnf -y clean all && \

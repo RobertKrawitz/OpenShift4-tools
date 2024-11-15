@@ -48,6 +48,8 @@ class clusterbuster_pod_client(cb_util):
             self.__external_sync_only = True
             self.__enable_sync = True
             self.__pod = os.environ.get('__CB_HOSTNAME', socket.gethostname())
+            self.__sync_ns_port = None
+            self.__sync_watchdog_port = None
         else:
             self.__external_sync_only = False
             print(f'Args: {" ".join(argv)}', file=sys.stderr)
@@ -67,9 +69,11 @@ class clusterbuster_pod_client(cb_util):
             self.__synchost = argv[8]
             self.__syncport = int(argv[9])
             self.__sync_ns_port = int(argv[10])
-            self.__drop_cache_host = argv[11]
+            self.__sync_watchdog_port = int(argv[11])
+            self.__sync_watchdog_timeout = int(argv[12])
+            self.__drop_cache_host = argv[13]
             try:
-                self.__drop_cache_port = int(argv[12])
+                self.__drop_cache_port = int(argv[14])
             except Exception:
                 self.__drop_cache_port = None
             self.__is_worker = False
@@ -94,7 +98,7 @@ class clusterbuster_pod_client(cb_util):
                         signal.pause()
             if child == 0:
                 self.__pod = os.environ.get('__CB_HOSTNAME', socket.gethostname())
-                self._args = argv[13:]
+                self._args = argv[15:]
                 self.__timing_parameters = {}
                 self.__timing_initialized = False
                 if initialize_timing_if_needed:
@@ -102,6 +106,10 @@ class clusterbuster_pod_client(cb_util):
                 self._set_offset(self.__timing_parameters.get('local_offset_from_sync', 0))
                 self.__processes = 1
                 self.__requested_ip_addresses = [f'{self.__pod}.{self.__namespace}']
+                self._timestamp(f'Ready to start watchdog client in {self.__pod}.{self.__namespace}')
+                if self.__enable_sync and self.__sync_watchdog_port is not None and self.__sync_watchdog_port > 0:
+                    self._timestamp(f"About to start watchdog client in {self.__pod}.{self.__namespace}")
+                    self.__run_watchdog()
             else:
                 try:
                     pid, status = os.wait()
@@ -165,14 +173,23 @@ class clusterbuster_pod_client(cb_util):
             try:
                 pid, status = os.wait()
                 if status & 255:
-                    messages.append(f"Process {i} (pid {pid}) killed by signal {status & 255}")
+                    messages.append(self._timestamp(f"Process {i} (pid {pid}) killed by signal {status & 255}"))
+                    try:
+                        messages.append(self._run_cmd("dmesg"))
+                    except Exception as err:
+                        messages.append(f'Cannot retrieve kernel messages: {err}')
                 elif status / 256:
-                    messages.append(f"Process {i} (pid {pid}) failed with status {int(status / 256)}")
+                    messages.append(self._timestamp(f"Process {i} (pid {pid}) failed with status {int(status / 256)}"))
                 else:
                     self._timestamp(f"Process {i} (pid {pid}) completed successfully")
                 pid_count = pid_count - 1
             except Exception as err:
-                self.__finish(False, message=f'Wait failed: {err}')
+                messages.append(self._timestamp(f'Wait failed: {err}'))
+                try:
+                    messages.append(self._run_cmd("dmesg"))
+                except Exception as err:
+                    messages.append(f'Cannot retrieve kernel messages: {err}')
+                self.__finish(False, message='\n'.join(messages))
         self._timestamp(f'{self._run_cmd("lscpu")}\n{self._run_cmd("dmesg")}')
         if messages:
             self.__finish(False, message='\n'.join(messages))
@@ -435,7 +452,7 @@ oc logs -n '{self._namespace()}' '{self._podname()}' -c '{self._container()}'
                 answer[if_addr] = self.__host_table[if_addr]
             else:
                 request['rqst'].append(if_addr)
-        if len(request['rqst']) > 0:
+        if len(request['rqst']) > 0 and self.__sync_ns_port > 0:
             ns_answer = json.loads(self.__do_sync_command('nsrq', json.dumps(request), port=self.__sync_ns_port))
             self._timestamp(f"Requested addresses {addresses}, got {ns_answer}")
             for if_addr, addr in ns_answer.items():
@@ -505,6 +522,24 @@ oc logs -n '{self._namespace()}' '{self._podname()}' -c '{self._container()}'
             self.__basetime += self.__baseoffset
             self.__crtime += self.__baseoffset
         self.__timing_initialized = True
+
+    def __run_watchdog(self):
+        try:
+            child = os.fork()
+        except Exception as err:
+            print(f'Fork for watchdog failed: {err}', file=sys.stderr)
+        if child == 0:
+            firsttime = True
+            while True:
+                try:
+                    if not firsttime:
+                        time.sleep(self.__sync_watchdog_timeout)
+                    firsttime = False
+                    self._timestamp("About to pat the watchdog")
+                    with self._connect_to(self.__synchost, self.__sync_watchdog_port):
+                        pass
+                except Exception:
+                    pass
 
     def __do_sync_command(self, command: str, token: str = '', timeout: float = None, port: int = None):
         if not self.__enable_sync:
