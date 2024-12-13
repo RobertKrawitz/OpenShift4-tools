@@ -1852,11 +1852,6 @@ done
 
 shift $((OPTIND-1))
 
-if [[ -z "${KUBECONFIG:-}" ]] ; then
-    echo "KUBECONFIG must be set (recommend $HOME/ocp4-upi-install-1/auth/kubeconfig)"
-    exit 1
-fi
-
 if [[ ${command##*/} = ocp4-upi-util ]] ; then
     (( $# >= 1 )) || __usage
     command=${1##*/}
