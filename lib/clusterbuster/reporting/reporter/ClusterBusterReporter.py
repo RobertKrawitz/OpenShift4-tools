@@ -422,7 +422,10 @@ class ClusterBusterReporter:
         return len(self._rows)-1
 
     def _get_metric_value(self, metric_name: str, time: float, selector: dict = None):
-        return self.metrics.get_value_by_key(metric_name, time, selector)
+        try:
+            return self.metrics.get_value_by_key(metric_name, time, selector)
+        except AttributeError:
+            return None
 
     def __format_memory_value(self, number):
         return self._prettyprint(number, precision=3, suffix='B')
@@ -431,7 +434,8 @@ class ClusterBusterReporter:
         return self._prettyprint(number, precision=3, base=1000, suffix='B/sec')
 
     def __format_pkt_rate_value(self, number):
-        return self._prettyprint(number, precision=3, base=1000, suffix='pkts/sec')
+        return self._prettyprint(number, precision=3, base=1000, suffix='pkts/sec',
+                                 use_small_units=False)
 
     def __format_cpu_value(self, number):
         return self._prettyprint(number, precision=3, base=100, suffix='%')
@@ -604,7 +608,7 @@ class ClusterBusterReporter:
         """
         return fformat(num, precision=precision)
 
-    def _prettyprint(self, num: float, precision: float = 5, integer: int = 0, base: int = 1024, suffix: str = ''):
+    def _prettyprint(self, num: float, base: int = 1024, **kwargs):
         """
         Return a pretty printed version of a float.
         Base 100:  print percent
@@ -625,8 +629,7 @@ class ClusterBusterReporter:
             return num
         if base is None:
             base = 1024
-        return prettyprint(num, precision=precision, integer=integer, base=base, suffix=suffix,
-                           parseable='parseable' in self._format)
+        return prettyprint(num, base=base, parseable='parseable' in self._format, **kwargs)
 
     def _safe_div(self, num: float, denom: float, precision: int = None, as_string: bool = False,
                   number_only: bool = False):

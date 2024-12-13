@@ -19,24 +19,36 @@ import re
 import json
 import os
 import sys
+import signal
 from cb_util import cb_util
 
 offset_from_controller = 0
 timebase = cb_util(offset_from_controller)
 nameserver_pid = None
+watchdog_pid = None
 sync_nonce = None
 
 
 def kill_nameserver(timebase: cb_util):
-    global nameserver_pid
+    global nameserver_pid, watchdog_pid
     if nameserver_pid:
-        timebase._timestamp("Killing nameserver")
-        os.kill(nameserver_pid, 9)
+        timebase._timestamp(f"Killing nameserver {nameserver_pid}")
+        try:
+            os.kill(nameserver_pid, 9)
+        except Exception as exc:
+            timebase._timestamp(f"Unable to kill nameserver: {exc}")
+    if watchdog_pid:
+        timebase._timestamp(f"Killing watchdog {watchdog_pid}")
+        try:
+            os.kill(watchdog_pid, 9)
+        except Exception:
+            pass
+        timebase._timestamp(f"Killed {watchdog_pid}")
 
 
 def fatal(string: str):
-    timebase._timestamp(string)
-    kill_nameserver
+    timebase._timestamp(f'Fatal error: {string}')
+    kill_nameserver(timebase)
     sys.exit(1)
 
 
@@ -48,6 +60,65 @@ def ytime():
 def touch(file: str):
     with open(file, "w") as f:
         f.write('')
+
+
+class watchdog:
+    def __init__(self, timebase: cb_util, port: int, backlog: int = 5,
+                 timeout: int = 60, caller: int = None, status_file: str = None,
+                 caller_signal: int = signal.SIGUSR1):
+        global alarm_status_file, alarm_caller, alarm_signal
+        self.timebase = timebase
+        self.addrs = dict()
+        self.caller = caller
+        self.caller_signal = caller_signal
+        self.timeout = timeout * 4
+        self.status_file = status_file
+
+        self.timebase._timestamp("Starting watchdog")
+        try:
+            self.sock = timebase._listen(port=port, backlog=backlog)
+        except Exception as err:
+            self.fatal(f"listen failed: {err}")
+
+    def watchdog_timeout(self, failures):
+        if self.status_file:
+            try:
+                with open(self.status_file, "w", encoding="ascii") as status:
+                    print(f"Watchdog timeout: failures {failures}", file=status)
+            except Exception:
+                pass
+        else:
+            self.timebase._timestamp(f"Watchdog timeout: failures {failures}")
+            self.timebase._timestamp(f"caller {self.caller} signal {self.caller_signal}")
+        if self.caller is not None and self.caller_signal is not None:
+            self.timebase._timestamp(f"kill -{self.caller_signal} {self.caller}")
+            os.kill(self.caller, self.caller_signal)
+        sys.exit(1)
+
+    def check_watchdog(self):
+        now = time.time()
+        failures = [addr for addr, time in self.addrs.items() if now - time > self.timeout]
+        if failures:
+            self.watchdog_timeout(failures)
+
+    def handle_sigalrm(self, signum, frame):
+        signal.alarm(0)
+        self.check_watchdog()
+
+    def run(self):
+        signal.signal(signal.SIGALRM, self.handle_sigalrm)
+        while True:
+            # Don't start the timer until we have actual clients
+            client, address = self.sock.accept()
+            address = address[0]
+            client.close()
+            if address in self.addrs:
+                timebase._timestamp(f"Resetting watchdog for address {address} {self.addrs[address]} -> {int(time.time())}")
+            else:
+                timebase._timestamp(f"Registering watchdog for address {address} {int(time.time())}")
+            self.addrs[address] = int(time.time())
+            self.check_watchdog()
+            signal.alarm(self.timeout)
 
 
 class nameserver:
@@ -232,6 +303,7 @@ def reply_timestamp(ts_clients: list):
 
 
 def fail_hard(payload: str):
+    timebase._timestamp(f"Message: {payload}")
     if tmp_error_file:
         try:
             with open(tmp_error_file, "w") as tmp:
@@ -245,8 +317,6 @@ def fail_hard(payload: str):
         timebase._timestamp(f"Waiting for error file {error_file} to be removed")
         while timebase._isfile(error_file):
             time.sleep(1)
-    else:
-        timebase._timestamp("Message: {payload}")
     os._exit(1)
 
 
@@ -259,6 +329,7 @@ def sync_one(sock, tmp_sync_file_base: str, tmp_error_file: str, start_time: flo
         fatal(f"listen failed: {err}")
     ts_clients = []
     net_clients = {}
+    known_addresses = {}
     # Ensure that the client file descriptors do not get gc'ed,
     # closing it prematurely.  This is used when we don't
     # need to send a meaningful reply.  Without this, we do get some
@@ -286,14 +357,17 @@ def sync_one(sock, tmp_sync_file_base: str, tmp_error_file: str, start_time: flo
             timebase._timestamp(f"Received request with incorrect nonce {nonce} from {address}: {tbuf}")
             continue
         protected_clients.append(client)
+        if address in known_addresses:
+            fail_hard(f"Unexpected duplicate request received from {address}: {tbuf}")
+        known_addresses[address] = 1
         command = tbuf[0:4].lower()
+        payload = tbuf[4:].lstrip()
         if expected_command:
             if command != expected_command:
-                fatal(f"Unexpected command {command} from {address}, expected {expected_command}")
+                fail_hard(f"Unexpected command {command} from {address}, expected {expected_command}, payload {payload}")
         else:
             expected_command = command
-        payload = tbuf[4:].lstrip()
-        timebase._timestamp(f"Accepted connection from {address}, command {command}, payload {len(payload)}")
+        timebase._timestamp(f"Accepted connection from {address}, command {command}, payload {payload if command == 'sync' else len(payload)}")
         if command == 'time' or command == 'tnet':
             timebase._timestamp(f"Time request {payload}")
             if first_pass:
@@ -348,6 +422,51 @@ def sync_one(sock, tmp_sync_file_base: str, tmp_error_file: str, start_time: flo
         return 0
 
 
+def finish():
+    if postdelay > 0:
+        timebase._timestamp(f"Waiting {postdelay} seconds before end")
+        time.sleep(postdelay)
+
+    if timebase._isfile(tmp_error_file):
+        fatal("Job failed, exiting")
+
+    result = {
+        'controller_timing': controller_timestamp_data
+        }
+
+    data = []
+
+    if tmp_sync_files:
+        for f in tmp_sync_files:
+            try:
+                with open(f, "r") as fp:
+                    content = fp.read()
+                    datum = json.loads(content)
+                    data.append(datum)
+            except Exception as exc:
+                timebase._timestamp(f"Could not load JSON from {f}: {exc}")
+                data.append(dict())
+    else:
+        data = [dict() for i in expected_clients]
+    result['worker_results'] = data
+
+    try:
+        with open(tmp_sync_file_base, 'w') as tmp:
+            tmp.write(json.dumps(timebase._clean_numbers(result), sort_keys=True, indent=1))
+    except Exception as exc:
+        fatal(f"Can't write to sync file {tmp_sync_file_base}: {exc}")
+    try:
+        os.rename(tmp_sync_file_base, sync_file)
+    except Exception as exc:
+        fatal(f"Can't rename {tmp_sync_file_base} to {sync_file}: {exc}")
+    timebase._timestamp(f"Waiting for sync file {sync_file} to be removed")
+    while timebase._isfile(sync_file):
+        time.sleep(1)
+    timebase._timestamp(f"Sync file {sync_file} removed, exiting")
+    kill_nameserver(timebase)
+    sys.exit(0)
+
+
 print(sys.argv, file=sys.stderr)
 try:
     sync_nonce = sys.argv[1]
@@ -359,8 +478,10 @@ try:
     step_interval = float(sys.argv[7])
     listen_port = int(sys.argv[8])
     ns_port = int(sys.argv[9])
-    expected_clients = int(sys.argv[10])
-    initial_expected_clients = int(sys.argv[11])
+    watchdog_port = int(sys.argv[10])
+    watchdog_timeout = int(sys.argv[11])
+    expected_clients = int(sys.argv[12])
+    initial_expected_clients = int(sys.argv[13])
     if initial_expected_clients < 0:
         initial_expected_clients = expected_clients
 except Exception as exc:
@@ -388,6 +509,8 @@ timebase._timestamp(f"Max timebase error {offset_from_controller}")
 timebase._set_offset(-offset_from_controller)
 start_time += offset_from_controller
 timebase._timestamp(f"Adjusted timebase by {offset_from_controller} seconds {base_start_time} => {start_time}")
+
+# Set up nameserver
 try:
     child = os.fork()
 except Exception as exc:
@@ -398,6 +521,29 @@ if child == 0:
     sys.exit()
 else:
     nameserver_pid = child
+
+
+def watchdog_handler(signum, frame):
+    timebase._timestamp("Watchdog timeout")
+    finish()
+
+
+# Set up watchdog
+if watchdog_port:
+    pid = os.getpid()
+    try:
+        child = os.fork()
+    except Exception as exc:
+        fatal(f"Fork failed: {exc}")
+    if child == 0:
+        timebase._timestamp("About to launch watchdog")
+        watchdog(timebase, watchdog_port, caller=pid).run()
+        sys.exit()
+    else:
+        signal.signal(signal.SIGUSR1, watchdog_handler)
+        watchdog_pid = child
+
+
 timebase._timestamp("Starting sync")
 first_pass = True
 while True:
@@ -438,45 +584,4 @@ while True:
     elif status != 0:
         fatal("Job failed, exiting")
 
-if postdelay > 0:
-    timebase._timestamp(f"Waiting {postdelay} seconds before end")
-    time.sleep(postdelay)
-
-if timebase._isfile(tmp_error_file):
-    fatal("Job failed, exiting")
-
-result = {
-    'controller_timing': controller_timestamp_data
-    }
-
-data = []
-
-if tmp_sync_files:
-    for f in tmp_sync_files:
-        try:
-            with open(f, "r") as fp:
-                content = fp.read()
-                datum = json.loads(content)
-                data.append(datum)
-        except Exception as exc:
-            timebase._timestamp(f"Could not load JSON from {f}: {exc}")
-            data.append(dict())
-else:
-    data = [dict() for i in expected_clients]
-result['worker_results'] = data
-
-try:
-    with open(tmp_sync_file_base, 'w') as tmp:
-        tmp.write(json.dumps(timebase._clean_numbers(result), sort_keys=True, indent=1))
-except Exception as exc:
-    fatal(f"Can't write to sync file {tmp_sync_file_base}: {exc}")
-try:
-    os.rename(tmp_sync_file_base, sync_file)
-except Exception as exc:
-    fatal(f"Can't rename {tmp_sync_file_base} to {sync_file}: {exc}")
-timebase._timestamp(f"Waiting for sync file {sync_file} to be removed")
-while timebase._isfile(sync_file):
-    time.sleep(1)
-timebase._timestamp(f"Sync file {sync_file} removed, exiting")
-kill_nameserver(timebase)
-sys.exit(0)
+finish()
