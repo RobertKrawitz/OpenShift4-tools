@@ -92,7 +92,6 @@ class memory_reporter(ClusterBusterReporter):
         self.net_end_time = None
         self.timeline = None
         self.scan = None
-        print(jdata.keys(), file=sys.stderr)
         try:
             scantype = jdata['metadata']['options']['workload_options']['memory_scan']
             if scantype == 1:

@@ -26,7 +26,6 @@ import stat
 import math
 import subprocess
 from resource import getrusage, RUSAGE_SELF, RUSAGE_CHILDREN
-import signal
 
 
 class cb_util:
@@ -56,6 +55,8 @@ class cb_util:
                         except ValueError:
                             print(f'(pid 1) Got unexpected exit status {status} from {pid}')
                             wstatus = 1
+                        except ChildProcessError:
+                            pass
                         except Exception as exc:
                             print(f'(pid 1) Caught exception {exc}, continuing')
                         # If our worker exits, that's our cue to terminate.
@@ -63,6 +64,8 @@ class cb_util:
                             os.exit(wstatus)
                         else:
                             print(f'(pid 1) Caught exit from {pid} status {wstatus}', file=sys.stderr)
+                    except ChildProcessError:
+                        time.sleep(1)
                     except Exception as exc:
                         # Maybe a bit too paranoid here, but...
                         try:

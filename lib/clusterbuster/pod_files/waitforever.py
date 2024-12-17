@@ -16,7 +16,7 @@ class waitforever_client(clusterbuster_pod_client):
             self._abort(f"Init failed! {err} {' '.join(self._args)}")
 
     def runit(self, process: int):
-        self._timestamp(f"Starting waitforever")
+        self._timestamp("Starting waitforever")
         signal.pause()
 
 
