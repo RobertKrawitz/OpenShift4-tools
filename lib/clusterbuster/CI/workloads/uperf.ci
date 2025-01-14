@@ -25,7 +25,9 @@ declare -g ___uperf_use_annotation
 function uperf_test() {
     local default_job_runtime=$1
     local runtimeclass
+    # shellcheck disable=SC2154
     for runtimeclass in "${runtimeclasses[@]}" ; do
+	# shellcheck disable=SC2154
 	process_workload_options "$workload" "${runtimeclass:-pod}"
 	if ((___uperf_job_runtime <= 0)) ; then
 	    ___uperf_job_runtime=$default_job_runtime
@@ -71,10 +73,9 @@ function uperf_initialize_options() {
 function uperf_process_option() {
     local opt=$1
     local noptname1
-    local noptname
+    local _noptname
     local optvalue
-    # shellcheck disable=SC2034
-    read -r noptname1 noptname optvalue <<< "$(parse_ci_option "$opt" "$workload" "${runtimeclass:-pod}")"
+    read -r noptname1 _noptname optvalue <<< "$(parse_ci_option "$opt" "$workload" "${runtimeclass:-pod}")"
     case "$noptname1" in
 	'')	       										;;
 	uperfmsg*)     readarray -t ___uperf_msg_sizes <<< "$(parse_size "$optvalue")"		;;
@@ -89,6 +90,7 @@ function uperf_process_option() {
 }
 
 function uperf_help_options() {
+    # shellcheck disable=SC2154
     cat <<EOF
     Uperf test options:
         --uperf-msg-sizes=n[,n...]

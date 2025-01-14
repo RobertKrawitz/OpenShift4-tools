@@ -311,9 +311,11 @@ class clusterbuster_pod_client(cb_util):
                 answer[key] = val
         self._timestamp(f"Report results: {self._namespace()}, {self._podname()}, {self._container()}, {os.getpid()}")
         try:
-            answer = json.dumps(self._clean_numbers(answer))
-        except Exception as exc:
+            answer = json.dumps(self._sanitize_json(answer))
+        except TypeError as exc:
             self.__fail(f"Cannot convert results to JSON: {exc}")
+        except Exception as exc:
+            self.__fail(f"Unexpected error when converting results to JSON: {exc}")
         self.__do_sync_command('RSLT', answer)
         self.__reported_results = True
 

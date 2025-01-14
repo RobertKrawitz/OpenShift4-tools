@@ -91,7 +91,7 @@ class memory_reporter(ClusterBusterReporter):
         self.net_start_time = None
         self.net_end_time = None
         self.timeline = None
-        self.scan = None
+        self.scan = "None"
         try:
             scantype = jdata['metadata']['options']['workload_options']['memory_scan']
             if scantype == 1:
@@ -100,17 +100,19 @@ class memory_reporter(ClusterBusterReporter):
                 self.scan = 'Random'
         except KeyError:
             pass
+        self._add_explicit_timeline_vars(['cases.alloc_time', 'cases.prefree_time', 'cases.runtime', 'cases.run_start_time'])
+        self._add_accumulators(['total_pages', 'cases.runtime', 'cases.prefree_time', 'cases.run_start_time'])
         for obj in jdata.get('api_objects', []):
             try:
                 name = f'{obj["metadata"]["name"]}.{obj["metadata"]["namespace"]}'
                 if obj.get('kind', None) == 'Pod':
-                    node = obj['spec']['nodeName']
+                    self.pod_node[name] = obj['spec']['nodeName']
                 elif obj.get('kind', None) == 'VirtualMachineInstance':
-                    node = list(obj['status']['activePods'].values())[0]
-                self.pod_node[name] = node
+                    self.pod_node[name] = list(obj['status']['activePods'].values())[0]
             except KeyError:
                 pass
         self._set_header_components(['namespace', 'pod', 'container', 'process_id'])
+        self._add_fields_to_copy(["result.scan"])
         self.columns = deepcopy(self.COLUMNS)
         if self.args.timeline_column:
             for arg in self.args.timeline_column:
@@ -340,13 +342,17 @@ class memory_reporter(ClusterBusterReporter):
         # function correctly.
         ClusterBusterReporter._generate_summary(self, results)
         self.build_timeline()
-        results['Pages Scanned'] = self._prettyprint(self.work_total,
+        results['Pages Scanned'] = self._prettyprint(self._summary['total_pages'],
                                                      precision=3, base=1000, suffix=' pp')
+        self._summary['job_runtime'] = self._summary['last_prefree_time'] - self._summary['last_alloc_time']
         if self.net_end_time is not None and self.net_start_time is not None:
-            results['Pages Scanned/sec'] = self._prettyprint(self._safe_div(self.work_total,
-                                                                            self.net_end_time - self.net_start_time),
+            results['Pages Scanned/sec'] = self._prettyprint(self._safe_div(self._summary['total_pages'],
+                                                                            self._summary['job_runtime']),
                                                              precision=3, base=1000, suffix=' pp/sec')
+            self._summary['pages_scanned_sec'] = self._safe_div(self._summary['total_pages'],
+                                                                self._summary['job_runtime'])
         results['Scan Pattern'] = self.scan
+        self._summary['scan_pattern'] = self.scan
         if self.args.timeline_file:
             if self.timeline:
                 timeline_report = self.format_timeline(timeline_format=self.args.timeline_format)
@@ -362,3 +368,10 @@ class memory_reporter(ClusterBusterReporter):
 
     def _generate_row(self, results: dict, row: dict):
         ClusterBusterReporter._generate_row(self, results, row)
+        runtime = row['prefree_time'] - row['run_start_time'] if 'run_start_time' in row else row['runtime']
+        result = {}
+        result['Pages Scanned/sec'] = self._prettyprint(self._safe_div(row['total_pages'], runtime),
+                                                        precision=3, base=1000, suffix=' pp/sec')
+        row['pages_scanned_sec'] = self._safe_div(row['total_pages'], runtime)
+        result['Pages Scanned'] = self._prettyprint(row['total_pages'], precision=3, base=1000, suffix=' pp/sec')
+        self._insert_into(results, [row['namespace'], row['pod'], row['container'], str(row['process_id'])], result)

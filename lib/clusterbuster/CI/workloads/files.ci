@@ -32,7 +32,9 @@ function files_test() {
 	local -i interval=$2
 	echo $((((base + interval - 1) / interval) * interval))
     }
+    # shellcheck disable=SC2154
     for runtimeclass in "${runtimeclasses[@]}" ; do
+	# shellcheck disable=SC2154
 	process_workload_options "$workload" "${runtimeclass:-pod}"
 	___files_job_timeout=$(compute_timeout "$___files_job_timeout")
 	if [[ -z "${___files_params[*]}" ]] ; then
@@ -76,7 +78,7 @@ function files_test() {
 	    if ((bytes_per_file < fs_block_size)) ; then bytes_per_file=fs_block_size; fi
 	    bytes_per_file=$(roundup "$bytes_per_file" "$fs_block_size")
 	    local -i inodes_required=$((1024 + ___files_dirs_per_volume + (___files_dirs_per_volume * ___files_per_dir)))
-	    local -i bytes_required=$(((inodes_required * 256) + (bytes_per_file * ___files_dirs_per_volume * ___files_per_dir)))
+	    local -i bytes_required=$(((inodes_required * inode_size_bytes) + (bytes_per_file * ___files_dirs_per_volume * ___files_per_dir)))
 	    # Add 12.5% overhead and round up to next MB
 	    bytes_required=$(roundup $((bytes_required * 9 / 8)) 1048576)
 	    ((bytes_required < 32 * 1048576)) && bytes_required=$((32 * 1048576))
@@ -133,10 +135,9 @@ function files_initialize_options() {
 function files_process_option() {
     local opt=$1
     local noptname1
-    local noptname
+    local _noptname
     local optvalue
-    # shellcheck disable=SC2034
-    read -r noptname1 noptname optvalue <<< "$(parse_ci_option "$opt" "$workload" "${runtimeclass:-pod}")"
+    read -r noptname1 _noptname optvalue <<< "$(parse_ci_option "$opt" "$workload" "${runtimeclass:-pod}")"
     # shellcheck disable=SC2206
     case "$noptname1" in
 	'')		 									;;

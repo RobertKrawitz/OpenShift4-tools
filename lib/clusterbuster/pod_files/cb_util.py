@@ -239,7 +239,7 @@ class cb_util:
         else:
             return []
 
-    def _clean_numbers(self, ref):
+    def _sanitize_json(self, ref):
         """
         Perl to_json encodes infinity as inf and NaN as nan.
         This results in invalid JSON.  It's our responsibility to sanitize
@@ -249,21 +249,21 @@ class cb_util:
         :param ref: object to be cleaned
         :return: object cleaned of any NaN or infinity values
         """
-        def _clean_numbers_impl(ref, pathto: str = ''):
+        def _sanitize_json_impl(ref, pathto: str = ''):
             errors = []
             warnings = []
             if isinstance(ref, dict):
                 answer = dict()
                 for key, val in ref.items():
-                    a1, e1, w1 = _clean_numbers_impl(val, f'{pathto}.{key}')
+                    a1, e1, w1 = _sanitize_json_impl(val, f'{pathto}.{key}')
                     answer[key] = a1
                     errors.extend(e1)
                     warnings.extend(w1)
                 return answer, errors, warnings
-            elif isinstance(ref, list):
+            elif isinstance(ref, (list, tuple)):
                 answer = []
                 for index in range(len(ref)):
-                    a1, e1, w1 = _clean_numbers_impl(ref[index], f'{pathto}[{index}]')
+                    a1, e1, w1 = _sanitize_json_impl(ref[index], f'{pathto}[{index}]')
                     answer.append(a1)
                     errors.extend(e1)
                     warnings.extend(w1)
@@ -271,17 +271,18 @@ class cb_util:
             elif isinstance(ref, float) and (math.isnan(ref) or math.isinf(ref)):
                 warnings.append(f"Warning: illegal float value {ref} at {pathto} converted to None")
                 return None, errors, warnings
-            elif ref is None or isinstance(ref, float) or isinstance(ref, str) or isinstance(ref, int):
+            elif ref is None or isinstance(ref, (float, str, int, bool)):
                 return ref, errors, warnings
             else:
                 errors.append(f"    Object {pathto} ({ref}) cannot be serialized")
                 return ref, errors, warnings
 
-        [answer, errors, warnings] = _clean_numbers_impl(ref)
+        [answer, errors, warnings] = _sanitize_json_impl(ref)
+        # Log any warnings before raising any errors.
         if warnings:
             self._timestamp("\n".join(warnings))
         if errors:
-            raise Exception('\n' + '\n'.join(errors))
+            raise TypeError('\n' + '\n'.join(errors))
         else:
             return answer
 

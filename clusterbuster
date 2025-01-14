@@ -66,7 +66,6 @@ fi
 
 # Unfortunate that there's no way to tell shellcheck to always source
 # specific files.
-# shellcheck disable=SC2034
 
 # See the bash change log, differences between 4.4-beta2 and 4.4-rc2:
 # a.  Using ${a[@]} or ${a[*]} with an array without any assigned elements when
@@ -1601,7 +1600,7 @@ function retrieve_prometheus_snapshot() {
     if __OC exec -n openshift-monitoring prometheus-k8s-0 -c prometheus -- /bin/sh -c "tar cf - . -C /prometheus --transform 's,^[.],./${promdb_name},' .; true" > "$promdb_path" ; then
 	report_if_desired "Prometheus snapshot retrieved" 1>&2
     else
-	echo "Unable to retrieve Prometheus snapshot" 1>&2
+	timestamp "Unable to retrieve Prometheus snapshot" 1>&2
     fi
 }
 
@@ -1645,8 +1644,6 @@ function _monitor_pods() {
     if [[ -n "${injected_errors[timeout]:-}" ]] ; then
 	warn "*** Injecting forced timeout error"
     fi
-    # shellcheck disable=2034
-    local -i running_pod_count=0
     local -i finished_pod_count=0
     local -i other_pod_count=0
     local -A pod_status=()
@@ -1935,10 +1932,69 @@ function _get_sync_logs_poll() {
     return 0
 }
 
+function generate_emergency_report() {
+    cat <<EOF
+{
+ "Status": "Fail",
+ "metadata": {
+  "kind": "clusterbusterResults",
+  "job_name": "$job_name",
+  "uuid": "$uuid",
+  "workload": "$requested_workload",
+  "workload_reporting_class": "$(_workload_reporting_class)",
+  "command_line": [$(quote_list "${saved_argv[@]}")],
+  "expanded_command_line": [$(quote_list "${processed_options[@]}")],
+  "workload_metadata": {$(indent_hang 1 generate_workload_metadata)},
+  "options": {
+   "basename": "$basename",
+   "containers_per_pod": $containers_per_pod,
+   "deployments_per_namespace": $deps_per_namespace,
+   "namespaces": $namespaces,
+   "bytes_transfer": $bytes_transfer,
+   "bytes_transfer_max": $bytes_transfer_max,
+   "workload_run_time": $workload_run_time,
+   "workload_run_time_max": $workload_run_time_max,
+   "headless_services": $headless_services,
+   "drop_cache": $drop_node_cache,
+   "always_drop_cache": $drop_all_node_cache,
+   "pin_nodes": {$(_report_pin_nodes)},
+   "secrets": $secrets,
+   "replicas": $replicas,
+   "container_image": "$container_image",
+   "node_selector": "$node_selector",
+ $(indent 2 container_resources_json)
+   "runtime_classes": {$(_report_runtime_classes)},
+   "target_data_rate": $target_data_rate,
+   "workload_options": {
+ $(indent 3 call_api -w "$requested_workload" "report_options")
+   }
+  }
+ }
+}
+EOF
+}
+
+function handle_poll_l2_trap() {
+    echo "Artifact retrieval failed; generating emergency report" | timestamp 1>&2
+    generate_emergency_report
+    return 1
+}
+
+function handle_poll_l1_trap() {
+    trap 'handle_poll_l2_trap; return 1' INT TERM HUP USR1
+    echo "Attempting to retrieve artifacts" | timestamp 1>&2
+    (retrieve_successful_logs=1 _retrieve_artifacts 1)
+    if [[ -n "${tfile:-}" && -f "$tfile" ]] ; then
+	rm -f "$tfile"
+	unset tfile
+    fi
+    return 1
+}
+
 function get_sync_logs_poll() {
     local tfile
     tfile=$(mktemp ${cb_tempdir:+-p "$cb_tempdir"} -t '_clusterbusterlogs.XXXXXXXXXX') || fatal "Cannot create temporary file"
-    trap '(retrieve_successful_logs=1 _retrieve_artifacts 1); if [[ -n "${tfile:-}" && -f "$tfile" ]] ; then rm -f "$tfile"; unset tfile; fi; echo "Status: Fail"; return 1' INT TERM HUP USR1
+    trap 'handle_poll_l1_trap; return 1' INT TERM HUP USR1
     _get_sync_logs_poll > "$tfile"
     local status=$?
     if ((status == 0)) ; then
@@ -2180,6 +2236,7 @@ EOF
 }
 
 function _report_failure() {
+    trap - TERM
     cat <<EOF
 {
  "Results": {},
@@ -2233,9 +2290,9 @@ function _describe_entity() {
     local namedesc="$artifactdir/Describe/${3:+$3+}${namespace}:${name}"
     if __OC describe "${entitytype}" -n "$namespace" "$name" > "${namedesc}.tmp" ; then
 	mv "${namedesc}.tmp" "$namedesc"
-	[[ -s "$namedesc" ]] || echo "Warning: empty $entitytype description for ${namespace}:${name}" 1>&2
+	[[ -s "$namedesc" ]] || timestamp "Warning: empty $entitytype description for ${namespace}:${name}" 1>&2
     else
-	echo "Unable to retrieve $entitytype description for ${namespace}:${name}" 1>&2
+	timestamp "Unable to retrieve $entitytype description for ${namespace}:${name}" 1>&2
 	rm -f "${namedesc}.tmp"
 	false
     fi
@@ -2248,9 +2305,14 @@ function _log_container() {
     local clog="$artifactdir/Logs/${namespace}:${pod}:${container}"
     if __OC logs -n "$namespace" "$pod" -c "$container" > "${clog}.tmp" ; then
 	mv "${clog}.tmp" "$clog"
-	[[ -s "$clog" ]] || echo "Warning: empty logs for ${namespace}:${pod}:${container}" 1>&2
+	if [[ ! -s "$clog" ]] ; then
+	    # volumecontainerdisk container logs from VMs are usually empty
+	    if [[ $pod != 'virt-launcher-'* || $container != volumecontainerdisk ]] ; then
+		timestamp "Warning: empty logs for ${namespace}:${pod}:${container}" 1>&2
+	    fi
+	fi
     else
-	echo "Unable to retrieve container log for ${namespace}:${pod}:${container}" 1>&2
+	timestamp "Unable to retrieve container log for ${namespace}:${pod}:${container}" 1>&2
 	rm -f "${clog}.tmp"
 	false
     fi
@@ -2260,11 +2322,13 @@ function _retrieve_vm_xml() {
     local namespace=$1
     local vm=$2
     local clog="$artifactdir/VMXML/${namespace}_${vm}.xml"
-    if __OC exec -n "$namespace" "$(__OC get pod -n "$namespace" -l "vm.kubevirt.io/name=$vm" '-ojsonpath={.items[0].metadata.name}')" -- /bin/sh -c "cat '/var/run/libvirt/qemu/run/${namespace}_${vm}.xml'" > "${clog}.tmp" ; then
+    local podname=
+    podname="$(__OC get pod -n "$namespace" -l "vm.kubevirt.io/name=$vm" '-ojsonpath={.items[0].metadata.name}')"
+    if [[ -n "$podname" ]] && __OC exec -n "$namespace" "$podname" -- /bin/sh -c "cat '/var/run/libvirt/qemu/run/${namespace}_${vm}.xml'" > "${clog}.tmp" ; then
 	mv "${clog}.tmp" "$clog"
-	[[ -s "$clog" ]] || echo "Warning: empty qemu XML file for ${namespace}:${vm}" 1>&2
+	[[ -s "$clog" ]] || timestamp "Warning: empty qemu XML file for ${namespace}:${vm}" 1>&2
     else
-	echo "Unable to retrieve qemu XML file for ${namespace}:${vm}" 1>&2
+	timestamp "Unable to retrieve qemu XML file for ${namespace}:${vm}" 1>&2
 	rm -f "${clog}.tmp"
 	false
     fi
@@ -2274,7 +2338,7 @@ function _retrieve_artifacts() {
     local always_retrieve_artifacts=${1:-}
     get_run_started || return 1
     get_run_failed && always_retrieve_artifacts=1
-    trap 'echo "Interrupt received; aborting" 1>&2; exit' INT TERM HUP
+    trap 'timestamp "Interrupt received; aborting" 1>&2; exit 1' INT TERM HUP
     if [[ -n "$artifactdir" && ! -f "$artifactdir/.artifacts" ]] ; then
 	report_if_desired "Retrieving run artifacts" 1>&2
 	mkdir -p "$artifactdir/Logs"
@@ -2332,11 +2396,10 @@ function _retrieve_artifacts() {
 	    [[ ! -d "$artifactdir/VMXML" ]] && mkdir "$artifactdir/VMXML"
 	    local vm
 	    local entitytype
-	    local ignore
+	    local _ignore
 	    for entitytype in vm vmi ; do
 		jobs_to_wait=()
-		# shellcheck disable=SC2034
-		while read -r namespace vm ignore ; do
+		while read -r namespace vm _ignore ; do
 		    if ((parallel_log_retrieval > 1)) ; then
 			_describe_entity "$namespace" "$vm" "$entitytype"&
 			jobs_pending[$!]=$podname
@@ -2386,6 +2449,12 @@ function get_sync_logs() {
 	    # Even if reporting fails, make sure we capture the JSON
 	    _get_sync_logs "$log_cmd" > "$artifactdir/clusterbuster-report.tmp.json"
 	    status=$?
+	    if [[ ! -f "$artifactdir/clusterbuster-report.tmp.json" ||
+		      ! -s "$artifactdir/clusterbuster-report.tmp.json" ]] ; then
+		echo "Artifact retrieval failed; generating emergency report" | timestamp 1>&2
+		generate_emergency_report > "$artifactdir/clusterbuster-report.tmp.json"
+		status=1
+	    fi
 	    mv "$artifactdir/clusterbuster-report.tmp.json" "$artifactdir/clusterbuster-report.json" &&
 		print_report < "$artifactdir/clusterbuster-report.json"
 	    return $status
@@ -2395,7 +2464,7 @@ function get_sync_logs() {
 	    return $((PIPESTATUS[0] || PIPESTATUS[1]))
 	fi
     else
-	echo "Workload $requested_workload does not support reporting" 1>&2
+	timestamp "Workload $requested_workload does not support reporting" 1>&2
     fi
 }
 
@@ -4269,9 +4338,8 @@ function find_first_deployment() {
     if (( scale_deployments )) ; then
 	local ns
 	local deployment
-	local stuff
-	# shellcheck disable=SC2034
-        while read -r ns deployment stuff ; do
+	local _stuff
+        while read -r ns deployment _stuff ; do
 	    if [[ -n "$deployment" ]] ; then
 		deployment=${deployment#"${ns}"-}
 		deployment=${deployment%-*}
@@ -4381,8 +4449,7 @@ function create_deployments_post_hook() {
 	    warn "*** Unable to find virtctl command, cannot start VMs!"
 	    return
 	fi
-	# shellcheck disable=SC2034
-	while read -r namespace name ignore ; do
+	while read -r namespace name _ignore ; do
 	    "$VIRTCTL" start -n "$namespace" "$name"
 	done < <(__OC get vm --no-headers -A -l "${basename}-xuuid=$xuuid")
     fi
@@ -4417,7 +4484,7 @@ function create_all_objects() {
 	fi
     done < <("create_all_${objtype}" "$@" 2>&1)
     if [[ $(type -t "create_${objtype}_post_hook") = function ]] ; then
-	"create_${objtype}_post_hook" "${objects_created[@]}"
+	"create_${objtype}_post_hook" "${objects_created[@]}" 2>&1 | timestamp 1>&2
     fi
 }
 

@@ -44,7 +44,7 @@ class _ClusterBusterReporterJobMismatchException(ClusterBusterReporterException)
 class _ClusterBusterBadReportException(ClusterBusterReportingException):
     def __init__(self, item):
         if item is None:
-            super().__init__("No ClusterBuster report found")
+            super().__init__("No valid ClusterBuster report found")
         else:
             super().__init__(f"{item} is not a ClusterBuster report")
 
@@ -146,6 +146,7 @@ class ClusterBusterReporter:
             with open(item) as f:
                 try:
                     data = json.load(f)
+                    data['metadata']['ReportName'] = item
                     report = ClusterBusterReporter.report_one(os.path.dirname(item), data, report_format,
                                                               extras=extras)
                     if report:
@@ -163,15 +164,14 @@ class ClusterBusterReporter:
                     print(f'Cannot load {item}: {exc}', file=sys.stderr)
                 except Exception:
                     print(f'Cannot load {item}: {traceback.format_exc()}', file=sys.stderr)
-        for item in items:
-            jdata = dict()
-            if isinstance(item, str):
-                continue
+        for item in [item for item in items if not isinstance(item, str)]:
+            data = dict()
             if isinstance(item, io.TextIOBase) or item is None:
                 if item is None:
                     item = sys.stdin
                 try:
-                    jdata = json.load(item)
+                    data = json.load(item)
+                    data['metadata']['ReportName'] = 'Unknown'
                 except (KeyboardInterrupt, BrokenPipeError):
                     sys.exit(1)
                 except json.decoder.JSONDecodeError as exc:
@@ -179,15 +179,15 @@ class ClusterBusterReporter:
                 except Exception:
                     print(f'Cannot load {item}: {traceback.format_exc()}', file=sys.stderr)
             elif isinstance(item, dict):
-                jdata = item
+                data = item
+                data['metadata']['ReportName'] = 'Unknown'
             else:
-                print(item)
                 raise _ClusterBusterUnrecognizedItemException(item)
-            answers.append(ClusterBusterReporter.report_one(None, jdata, report_format, extras=extras))
+            answers.append(ClusterBusterReporter.report_one(None, data, report_format, extras=extras))
         return answers
 
     @staticmethod
-    def print_report(items, report_format: str, outfile=sys.stdout, extras=None):
+    def print_report(items, report_format: str='raw', outfile=sys.stdout, extras=None):
         answers = ClusterBusterReporter.report(items, report_format=report_format, extras=None)
         if report_format.endswith('python'):
             print(answers, file=outfile)
@@ -212,35 +212,6 @@ class ClusterBusterReporter:
                 'parseable-summary-python', 'parseable-verbose-python'
                 ]
 
-    @staticmethod
-    def get_start_and_end(jdata: dict):
-        start_time = None
-        end_time = None
-        try:
-            worker_results = jdata['Results']['worker_results']
-            for result in worker_results:
-                pod = 'Unknown_pod'
-                ns = 'Unknown_namespace'
-                container = 'Unknown_container'
-                process = 'Unknown_process'
-                try:
-                    ns = result.get('ns', 'Unknown-namespace')
-                    pod = result.get('pod', 'Unknown-pod')
-                    container = result.get('container', 'Unknown-container')
-                    process = str(result.get('process', result.get('process_id', 'Unknown-process')))
-                    start = result['timing_parameters']['xtime_adjustment']
-                    end = start + result['data_end_time']
-                    if start_time is None or start < start_time:
-                        start_time = start
-                    if end_time is None or end > end_time:
-                        end_time = end
-                except KeyError as exc:
-                    instance = f"{process}.{container}.{pod}.{ns}"
-                    print(f"Warning: could not retrieve start and end times for {instance}: {exc}", file=sys.stderr)
-        except KeyError as exc:
-            print(f"Could not retrieve start and end times: {exc}")
-        return start_time, end_time
-
     def __init__(self, jdata: dict, report_format: str, indent: int = 2, report_width=78, extras=None):
         """
         Initializer for generic ClusterBuster report
@@ -257,7 +228,7 @@ class ClusterBusterReporter:
         parser.add_argument('--no-summary', action='store_true', help='Do not print standard summary')
         self._base_args, self.__extra_args = parser.parse_known_args(extras)
         self._jdata = jdata
-        self._abs_start, self._abs_end = ClusterBusterReporter.get_start_and_end(jdata)
+        self._abs_start, self._abs_end = self.get_start_and_end()
         self._report_format = report_format
         self._format = report_format
         self._all_clients_are_on_the_same_node = self.__are_clients_all_on_same_node()
@@ -282,6 +253,39 @@ class ClusterBusterReporter:
             self.metrics = PrometheusMetrics(self._jdata['metrics'], self._abs_start, self._abs_end)
         else:
             self.metrics = None
+
+    def get_start_and_end(self):
+        """
+        Retrieve start and end time for job
+        """
+        start_time = None
+        end_time = None
+        try:
+            worker_results = self._jdata['Results']['worker_results']
+            for result in worker_results:
+                pod = 'Unknown_pod'
+                ns = 'Unknown_namespace'
+                container = 'Unknown_container'
+                process = 'Unknown_process'
+                try:
+                    ns = result.get('ns', 'Unknown-namespace')
+                    pod = result.get('pod', 'Unknown-pod')
+                    container = result.get('container', 'Unknown-container')
+                    process = str(result.get('process', result.get('process_id', 'Unknown-process')))
+                    start = result['timing_parameters']['xtime_adjustment']
+                    end = start + result['data_end_time']
+                    if start_time is None or start < start_time:
+                        start_time = start
+                    if end_time is None or end > end_time:
+                        end_time = end
+                except KeyError as exc:
+                    instance = f"{process}.{container}.{pod}.{ns}"
+                    report_name = self._jdata['metadata'].get('ReportName', 'stdin')
+                    print(f"{report_name}: Could not retrieve start and end times for {instance}: {exc}", file=sys.stderr)
+        except KeyError:
+            report_name = self._jdata['metadata'].get('ReportName', 'stdin')
+            print(f"{report_name}: Could not retrieve start and end times for run", file=sys.stderr)
+        return start_time, end_time
 
     def create_report(self):
         """
@@ -437,6 +441,10 @@ class ClusterBusterReporter:
         return self._prettyprint(number, precision=3, base=1000, suffix='pkts/sec',
                                  use_small_units=False)
 
+    def __format_io_rate_value(self, number):
+        return self._prettyprint(number, precision=3, base=1000, suffix='IO/sec',
+                                 use_small_units=False)
+
     def __format_cpu_value(self, number):
         return self._prettyprint(number, precision=3, base=100, suffix='%')
 
@@ -510,6 +518,26 @@ class ClusterBusterReporter:
                                                            printfunc=self.__format_cpu_value),
                 'Total Workers': self.metrics.get_avg_value_by_key('containerCPU-clusterbuster',
                                                                    printfunc=self.__format_cpu_value)
+                }
+            mtr['Maximum IO throughput'] = {
+                'Read bytes/sec': self.metrics.get_max_value_by_key('nodeDiskReadBytes-WorkerByNode',
+                                                                    printfunc=self.__format_byte_rate_value),
+                'Write bytes/sec': self.metrics.get_max_value_by_key('nodeDiskWrittenBytes-WorkerByNode',
+                                                                     printfunc=self.__format_byte_rate_value),
+                'Read IO/sec': self.metrics.get_max_value_by_key('nodeDiskReads-WorkerByNode',
+                                                                 printfunc=self.__format_io_rate_value),
+                'Write IO/sec': self.metrics.get_max_value_by_key('nodeDiskWrites-WorkerByNode',
+                                                                  printfunc=self.__format_io_rate_value)
+                }
+            mtr['Average IO throughput'] = {
+                'Read bytes/sec': self.metrics.get_avg_value_by_key('nodeDiskReadBytes-WorkerByNode',
+                                                                    printfunc=self.__format_byte_rate_value),
+                'Write bytes/sec': self.metrics.get_avg_value_by_key('nodeDiskWrittenBytes-WorkerByNode',
+                                                                     printfunc=self.__format_byte_rate_value),
+                'Read IO/sec': self.metrics.get_avg_value_by_key('nodeDiskReads-WorkerByNode',
+                                                                 printfunc=self.__format_io_rate_value),
+                'Write IO/sec': self.metrics.get_avg_value_by_key('nodeDiskWrites-WorkerByNode',
+                                                                  printfunc=self.__format_io_rate_value)
                 }
 
     def _add_explicit_timeline_vars(self, vars_to_update: list):
@@ -742,6 +770,10 @@ class ClusterBusterReporter:
         :return:
         """
         node = None
+        try:
+            objs = self._jdata['api_objects']
+        except KeyError:
+            return False
         for obj in self._jdata['api_objects']:
             if ((obj['kind'] == 'Pod' and
                  'clusterbuster-client' in obj['metadata']['labels'] and
@@ -831,26 +863,29 @@ class ClusterBusterReporter:
                     summary[components[0]] = {}
                 self.__update_timeline_val(components[1], row[components[0]], summary[components[0]])
         else:
-            row_val = row[var]
-            mvar = None
-            m = re.search(r'(.*)_(start|end)$', var)
-            if m:
-                mvar = f'{m.group(1)}'
-                tvar = f'{mvar}_elapsed_time'
-                svar = f'{mvar}_start'
-                evar = f'{mvar}_end'
-                if tvar not in row and svar in row and evar in row:
-                    row[tvar] = row[evar] - row[svar]
-            if f'first_{var}' not in summary or row_val < summary[f'first_{var}']:
-                summary[f'first_{var}'] = row_val
-                if var.endswith('_start'):
-                    summary[var] = row_val
-            if f'last_{var}' not in summary or row_val > summary[f'last_{var}']:
-                summary[f'last_{var}'] = row_val
-                if var.endswith('_end'):
-                    summary[var] = row_val
-            if mvar and f'last_{evar}' in summary and f'first_{svar}' in summary:
-                summary[tvar] = summary[f'last_{evar}'] - summary[f'first_{svar}']
+            try:
+                row_val = row[var]
+                mvar = None
+                m = re.search(r'(.*)_(start|end)$', var)
+                if m:
+                    mvar = f'{m.group(1)}'
+                    tvar = f'{mvar}_elapsed_time'
+                    svar = f'{mvar}_start'
+                    evar = f'{mvar}_end'
+                    if tvar not in row and svar in row and evar in row:
+                        row[tvar] = row[evar] - row[svar]
+                if f'first_{var}' not in summary or row_val < summary[f'first_{var}']:
+                    summary[f'first_{var}'] = row_val
+                    if var.endswith('_start'):
+                        summary[var] = row_val
+                if f'last_{var}' not in summary or row_val > summary[f'last_{var}']:
+                    summary[f'last_{var}'] = row_val
+                    if var.endswith('_end'):
+                        summary[var] = row_val
+                if mvar and f'last_{evar}' in summary and f'first_{svar}' in summary:
+                    summary[tvar] = summary[f'last_{evar}'] - summary[f'first_{svar}']
+            except KeyError:
+                pass
 
     def __normalize_timeline_val(self, var: str, summary: dict, offset: float):
         """
@@ -1143,7 +1178,7 @@ class ClusterBusterReporter:
         metadata = self._jdata['metadata']
         results['Overview'] = {}
         results['Overview']['Job Name'] = metadata['job_name']
-        results['Overview']['Start Time'] = metadata['cluster_start_time']
+        results['Overview']['Start Time'] = metadata.get('cluster_start_time', None)
         if 'verbose' in self._format and len(self._rows):
             results['Detail'] = {}
             self._rows.sort(key=self.__row_name)
@@ -1160,9 +1195,12 @@ class ClusterBusterReporter:
         results['Overview']['Job UUID'] = metadata['uuid']
         results['Overview']['Run host'] = metadata.get('run_host', metadata.get('runHost', ''))
         results['Overview']['Artifact Directory'] = metadata.get('artifact_directory', '')
-        results['Overview']['Kubernetes version'] = metadata['kubernetes_version']['serverVersion']['gitVersion']
-        if 'openshiftVersion' in metadata['kubernetes_version']:
-            results['Overview']['OpenShift Version'] = metadata['kubernetes_version']['openshiftVersion']
+        try:
+            results['Overview']['Kubernetes version'] = metadata['kubernetes_version']['serverVersion']['gitVersion']
+            if 'openshiftVersion' in metadata['kubernetes_version']:
+                results['Overview']['OpenShift Version'] = metadata['kubernetes_version']['openshiftVersion']
+        except KeyError:
+            pass
         key_width, integer_width = self.__compute_report_width(results)
         cmdline = ' '.join(metadata['expanded_command_line'])
         if 'parseable' in self._format:

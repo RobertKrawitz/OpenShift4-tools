@@ -110,7 +110,8 @@ Drop cache:  {self.fio_drop_cache}""")
                                     command.extend(['--output-format=json+', f'--output={outfile}', jobfile])
                                     success, data, stderr = self._run_command(command)
                                     if not success:
-                                        raise Exception(f'{" ".join(command)} failed: {stderr if stderr != "" else "Unknown error"}')
+                                        err = stderr if stderr != "" else "Unknown error"
+                                        raise Exception(f'{" ".join(command)} failed: {err}')
                                     try:
                                         with open(outfile, mode='r') as f:
                                             data = f.read()

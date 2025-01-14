@@ -16,7 +16,6 @@
 
 # Unfortunate that there's no way to tell shellcheck to always source
 # specific files.
-# shellcheck disable=SC2034
 
 # Intended to be sourced by clients of the workload API
 
@@ -31,9 +30,16 @@ function standard_snapshot_date_format() {
 }
 
 function timestamp() {
-    while IFS= read -r 'LINE' ; do
-	printf "%s %s\n" "$(TZ=GMT-0 date '+%Y-%m-%dT%T.%N' | cut -c1-26)" "$LINE"
-    done
+    function _timestamp() {
+	while IFS= read -r 'LINE' ; do
+	    printf "%s %s\n" "$(TZ=GMT-0 date '+%Y-%m-%dT%T.%N' | cut -c1-26)" "$LINE"
+	done
+    }
+    if (($#)) ; then
+	(IFS=$'\n'; echo "$*") | _timestamp
+    else
+	_timestamp
+    fi
 }
 
 function protect_pids() {
@@ -96,7 +102,7 @@ function parse_size() {
 	case "$1" in
 	    -n) delimiter=' ' ;;
 	    -d) shift; delimiter=$2; trailer=$'\n' ;;
-	    -d*) delimiter=${1:2}; tralier=$'\n' ;;
+	    -d*) delimiter=${1:2}; trailer=$'\n' ;;
 	esac
 	shift
     done
@@ -497,8 +503,8 @@ function childrenof() {
     local ppid
     local pid
     local command
-    local ignore
-    while read -r pid ppid command ignore; do
+    local _ignore
+    while read -r pid ppid command _ignore; do
 	ps_parents["$pid"]=$ppid
 	ps_commands["$pid"]=$command
     done <<< "$(ps -axo pid,ppid,command | tail -n +2)"

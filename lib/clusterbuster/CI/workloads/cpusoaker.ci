@@ -51,15 +51,17 @@ function cpusoaker_test_1() {
 			    --replicas="$replicas" --failure-status='No Result' \
 			    --cleanup-always=1 || return
 	counter=$((counter+1))
+	# shellcheck disable=SC2154
 	((debugonly && counter > 10)) && break
     done
 }
 
 function cpusoaker_test() {
     local default_job_runtime=$1
-    local -A runtimes_tested=()
     local runtime
+    # shellcheck disable=SC2154
     for runtime in "${runtimeclasses[@]}" ; do
+	# shellcheck disable=SC2154
 	process_workload_options "$workload" "${runtime:-pod}"
 	if ((___cpusoaker_replica_increment < 1)) ; then
 	    echo "Replica increment must be at least 1" 1>&2
@@ -85,10 +87,10 @@ function cpusoaker_initialize_options() {
 function cpusoaker_process_option() {
     local opt=$1
     local noptname1
-    local noptname
+    local _noptname
     local optvalue
-    # shellcheck disable=SC2034
-    read -r noptname1 noptname optvalue <<< "$(parse_ci_option "$opt" "$workload" "${runtimeclass:-pod}")"
+    read -r noptname1 _noptname optvalue <<< "$(parse_ci_option "$opt" "$workload" "${runtimeclass:-pod}")"
+    # shellcheck disable=SC2207
     case "$noptname1" in
 	'')		    						;;
 	cpusoakerstarting*) ___cpusoaker_starting_replicas=$optvalue	;;
