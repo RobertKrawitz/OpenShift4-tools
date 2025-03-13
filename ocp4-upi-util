@@ -816,9 +816,8 @@ function __setup_bm_if() {
     local uuid
     local type
     local device
-    local rest
-    # shellcheck disable=SC2034
-    while read -r name uuid type device rest ; do
+    local _rest
+    while read -r name uuid type device _rest ; do
     	if [[ $name = "$cluster_network_bridge_name" ]] ; then
     	    nmcli con del "$uuid"
     	fi

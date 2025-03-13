@@ -27,11 +27,11 @@ parser = argparse.ArgumentParser(description='Analyze ClusterBuster report')
 analysis_formats = ClusterBusterAnalysis.list_analysis_formats()
 
 parser.add_argument("-o", "--outfile", default=None, type=str, metavar='file', help='Output filename')
-parser.add_argument('--list_formats', action='store_true', help='List available report formats')
-parser.add_argument('--std_report', '--std-report', '--std', action='store_true',
+parser.add_argument("--list_formats", "--list-formats", action='store_true', help='List available report formats')
+parser.add_argument("--std_report", "--std-report", "--std", action='store_true',
                     help='Compare results for standard runtime classes')
-parser.add_argument('--kata', action='store_true', help='Compare results for standard runtime classes')
-parser.add_argument("-r", "--report-type", default=None, type=str, metavar='format',
+parser.add_argument("--kata", action='store_true', help='Compare results for standard runtime classes')
+parser.add_argument("-r", "--report-type", "--report_type", default=None, type=str, metavar='format',
                     choices=analysis_formats, help=f'Analysis format: one of {", ".join(analysis_formats)}')
 parser.add_argument("-w", "--workload", type=str, help='Workloads to process', action='append')
 parser.add_argument("files", metavar='file', type=str, nargs='+', help='Files to process')

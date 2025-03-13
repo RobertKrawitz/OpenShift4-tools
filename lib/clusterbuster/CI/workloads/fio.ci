@@ -44,8 +44,9 @@ function fio_test() {
 
     local default_job_runtime=$1
     local -i ninst
-    # shellcheck disable=SC2090
+    # shellcheck disable=SC2154
     for runtimeclass in "${runtimeclasses[@]}" ; do
+	# shellcheck disable=SC2154
 	process_workload_options "$workload" "${runtimeclass:-pod}"
 	local -i counter=0
 	for ninst in "${___fio_ninst[@]}" ; do
@@ -107,6 +108,7 @@ function fio_test() {
 		done
 		nvolumes+=("--volume=$(IFS=:; echo "${nargs[*]}")")
 	    done
+	    # shellcheck disable=SC2090
 	    run_clusterbuster_1 -r "$runtimeclass" \
 				-j "$job_name" -w fio -t "$___fio_job_timeout" -R "$___fio_job_runtime" -- \
 				--replicas="$ninst" \
@@ -151,10 +153,9 @@ function fio_initialize_options() {
 function fio_process_option() {
     local opt=$1
     local noptname1
-    local noptname
+    local _noptname
     local optvalue
-    # shellcheck disable=SC2034
-    read -r noptname1 noptname optvalue <<< "$(parse_ci_option "$opt" "$workload" "${runtimeclass:-pod}")"
+    read -r noptname1 _noptname optvalue <<< "$(parse_ci_option "$opt" "$workload" "${runtimeclass:-pod}")"
     case "$noptname1" in
 	'')		 								;;
 	fioblock*)       readarray -t ___fio_blocksizes <<< "$(parse_size "$optvalue")"	;;

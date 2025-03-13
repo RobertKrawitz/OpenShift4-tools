@@ -546,11 +546,10 @@ function _check_ci_option() {
     local workload=$2
     local runtime=$3
     if [[ $noptname = *':'* && (-n "$workload" || -n "$runtime") ]] ; then
-	local optbase=
+	local _optbase=
 	local optworkload=
 	local optruntime=
-	# shellcheck disable=SC2034
-	IFS=: read -r optbase optworkload optruntime <<< "$noptname"
+	IFS=: read -r _optbase optworkload optruntime <<< "$noptname"
 	if [[ (-z "$workload" || -z "$optworkload" || $workload = "$optworkload") &&
 		  (-z "$runtime" || -z "$optruntime" || $runtime = "$optruntime") ]] ; then
 	    true
@@ -663,7 +662,6 @@ function process_option() {
     local noptname1
     local optvalue
     local workload
-    # shellcheck disable=SC2034
     read -r noptname1 noptname optvalue <<< "$(parse_ci_option "$option")"
     optvalue=$(splitarg "$optvalue")
     case "$noptname1" in
@@ -712,7 +710,6 @@ function process_workload_options() {
 	local noptname1
 	local optvalue
 	local optworkload
-	# shellcheck disable=SC2034
 	read -r noptname1 noptname optvalue <<< "$(parse_ci_option "$option" "$workload" "$runtimeclass")"
 	if [[ -n "$noptname1" ]] ; then
 	    optvalue=$(splitarg "$optvalue")
@@ -876,7 +873,6 @@ function run_clusterbuster_1() {
     echo "*** Running $jobname at $(date -Is -u)"
     # Runtime class needs to be after any deployment_type argument so
     # that VM will override.
-    # shellcheck disable=SC2090
     doit "$__clusterbuster__" ${dontdoit:+"$dontdoit"} --uuid="$uuid" \
 	 --precleanup --image-pull-policy=IfNotPresent \
 	 --retrieve-successful-logs=1 \

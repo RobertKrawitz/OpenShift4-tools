@@ -69,8 +69,10 @@ class memory_client(clusterbuster_pod_client):
                                                    f' {prealloc_time:.3f} ', f' {alloc_time:.3f} ',
                                                    f' {alloc_time-prealloc_time:.3f} ', self._ts()]))
         run_pages = 0
+        loops = 0
+        extra_pages = 0
+        run_start_time = self._adjusted_time()
         if scan:
-            end_time = runtime + time.time()
             rng = None
             # Per https://stackoverflow.com/questions/2709818/fastest-way-to-generate-1-000-000-random-numbers-in-python
             # this is a much faster way to generate a large number of random numbers (obviously at some
@@ -92,7 +94,9 @@ class memory_client(clusterbuster_pod_client):
                 numbers_per_block = 1000
                 rng = numpy.random.default_rng()
                 pageidx = rng.integers(pages, high=None, size=numbers_per_block).tolist()
-            while runtime < 0 or time.time() < end_time:
+            done = False
+            end_time = runtime + time.time()
+            while not done:
                 for i in range(pages):
                     if scan == 2:
                         if curpageidx >= numbers_per_block:
@@ -104,9 +108,15 @@ class memory_client(clusterbuster_pod_client):
                         pp = i
                     char = 32 + (run_pages % 192)
                     if runtime >= 0 and i % 1000 == 0 and time.time() >= end_time:
+                        self._timestamp(f"Reached termination at {time.time() - end_time} after {loops} loops and {i} pages")
+                        extra_pages = i
+                        done = True
                         break
                     memory_blk[pp * stride] = char
                     run_pages += 1
+                if not done:
+                    self._timestamp(f"Completed loop {loops} offset {end_time - time.time()} from end")
+                    loops = loops + 1
         elif runtime >= 0:
             time.sleep(runtime)
         else:
@@ -115,7 +125,7 @@ class memory_client(clusterbuster_pod_client):
         if self.__sync_between_iterations:
             self._sync_to_controller(self._idname([f'prefree-{iteration}', f' {prefree_time:.3f} ',
                                                    f' {prefree_time-alloc_time:.3f} ', self._ts()]))
-        return [run_pages, prealloc_time, alloc_time, prefree_time]
+        return [run_pages, prealloc_time, alloc_time, run_start_time, prefree_time, loops, extra_pages]
 
     def runone_child(self, fd, *args):
         os.write(fd, ' '.join([str(val) for val in self.runone_op(*args)]))
@@ -142,7 +152,8 @@ class memory_client(clusterbuster_pod_client):
                     except Exception:
                         pass
                     try:
-                        run_pages, prealloc_time, alloc_time, prefree_time = [int(x) for x in os.read(r, 4096).decode().split(' ')]
+                        (run_pages, prealloc_time, alloc_time, run_start_time,
+                         prefree_time, loops, extra_pages) = [int(x) for x in os.read(r, 4096).decode().split(' ')]
                     except Exception as e:
                         self._timestamp(f"Read failed: {e}")
                 finally:
@@ -157,8 +168,10 @@ class memory_client(clusterbuster_pod_client):
                     except Exception:
                         pass
         else:
-            run_pages, prealloc_time, alloc_time, prefree_time = self.runone_op(start_time, *args)
-        return run_pages, start_time, prealloc_time, alloc_time, prefree_time, self._adjusted_time()
+            (run_pages, prealloc_time, alloc_time, run_start_time,
+             prefree_time, loops, extra_pages) = self.runone_op(start_time, *args)
+        return (run_pages, start_time, prealloc_time, alloc_time,
+                run_start_time, prefree_time, loops, extra_pages, self._adjusted_time())
 
     def randval(self, i: list):
         if i[1] == i[0]:
@@ -179,6 +192,7 @@ class memory_client(clusterbuster_pod_client):
         seed(self._idname(self.__random_seed))
         pages = 0
         elapsed_time = 0
+        job_run_time = 0
         user, system = self._cputimes()
         data_start_time = self._adjusted_time()
         if self.__runtime > 0:
@@ -220,19 +234,24 @@ class memory_client(clusterbuster_pod_client):
                 elif run_time > desired_end_time - curtime - (max_sleep if self.__sleep_first == 0 else 0):
                     run_time = desired_end_time - curtime
             self._timestamp(f"Running size {run_size} stride {self.__stride} runtime {run_time} scan {self.__scan}")
-            run_pages, start_time, prealloc_time, alloc_time, prefree_time, end_time = self.runone(iteration,
-                                                                                                   run_size, self.__stride,
-                                                                                                   run_time, self.__scan)
+            (run_pages, start_time, prealloc_time, alloc_time,
+             run_start_time, prefree_time, loops, extra_pages, end_time) = self.runone(iteration,
+                                                                                       run_size, self.__stride,
+                                                                                       run_time, self.__scan)
             runs.append({'size': run_size,
                          'runtime': run_time,
                          'start_time': start_time,
                          'prealloc_time': prealloc_time,
                          'alloc_time': alloc_time,
+                         'run_start_time': run_start_time,
                          'prefree_time': prefree_time,
                          'end_time': end_time,
                          'elapsed_time': end_time - start_time,
-                         'pages': run_pages})
+                         'pages': run_pages,
+                         'loops': loops,
+                         'extra_pages': extra_pages})
             pages += run_pages
+            job_run_time += (prefree_time - run_start_time)
             elapsed_time += elapsed_time
             curtime = self._adjusted_time()
             sleep_time = self.randval(self.__idle)
@@ -247,8 +266,8 @@ class memory_client(clusterbuster_pod_client):
             'scan': bool(self.__scan),
             'total_pages': pages,
             'iterations': iteration + 1,
-            'runtime': data_end_time - data_start_time,
-            'rate': pages / (data_end_time - data_start_time),
+            'runtime': job_run_time,
+            'rate': pages / job_run_time,
             'cases': runs
             }
         self._report_results(data_start_time, data_end_time, data_end_time - data_start_time,

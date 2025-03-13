@@ -64,6 +64,7 @@ function uperf_create_deployment() {
     if ((((replicas * containers_per_pod * processes_per_pod) + 4) > ___uperf_port_addrs)) ; then
 	___uperf_port_addrs=$(((replicas * containers_per_pod * processes_per_pod) + 4))
     fi
+    # shellcheck disable=SC2034
     container_image="quay.io/rkrawitz/clusterbuster-workloads:latest"
     create_sync_service "$namespace" \
 			"$((containers_per_pod * replicas * count))" \
@@ -135,7 +136,6 @@ function uperf_process_options() {
     for opt in "$@" ; do
 	read -r noptname1 noptname optvalue <<< "$(parse_option "$opt")"
 	# shellcheck disable=SC2206
-	# shellcheck disable=SC2034
 	case "$noptname1" in
 	    uperfmsgsize*) ___uperf_msg_sizes=(${optvalue//,/ })   ;;
 	    uperftesttype*) ___uperf_test_types=(${optvalue//,/ }) ;;

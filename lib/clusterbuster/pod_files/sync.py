@@ -367,7 +367,8 @@ def sync_one(sock, tmp_sync_file_base: str, tmp_error_file: str, start_time: flo
                 fail_hard(f"Unexpected command {command} from {address}, expected {expected_command}, payload {payload}")
         else:
             expected_command = command
-        timebase._timestamp(f"Accepted connection from {address}, command {command}, payload {payload if command == 'sync' else len(payload)}")
+        pl = payload if command == 'sync' else len(payload)
+        timebase._timestamp(f"Accepted connection from {address}, command {command}, payload {pl}")
         if command == 'time' or command == 'tnet':
             timebase._timestamp(f"Time request {payload}")
             if first_pass:
@@ -452,7 +453,9 @@ def finish():
 
     try:
         with open(tmp_sync_file_base, 'w') as tmp:
-            tmp.write(json.dumps(timebase._clean_numbers(result), sort_keys=True, indent=1))
+            tmp.write(json.dumps(timebase._sanitize_json(result), sort_keys=True, indent=1))
+    except TypeError as exc:
+        fatal(f"Invalid JSON encountered trying to write to sync file {tmp_sync_file_base}: {exc}")
     except Exception as exc:
         fatal(f"Can't write to sync file {tmp_sync_file_base}: {exc}")
     try:
