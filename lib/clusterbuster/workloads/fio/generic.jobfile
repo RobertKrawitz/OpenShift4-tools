@@ -17,6 +17,5 @@ invalidate = %{___fio_drop_cache}
 [job-tmp]
 filename =%{___fio_workdir}
 size =%{___fio_filesize}
-numjobs = 1
 
 #rate_iops=10

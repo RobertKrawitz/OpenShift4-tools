@@ -19,6 +19,7 @@ declare -ga ___fio_patterns
 declare -ga ___fio_directs
 declare -ga ___fio_fdatasyncs
 declare -ga ___fio_iodepths
+declare -ga ___fio_numjobs
 declare -ga ___fio_ioengines
 declare -ga ___fio_ninst
 declare -gi ___fio_job_runtime
@@ -116,6 +117,7 @@ function fio_test() {
 				--fio-patterns="$(IFS=,; echo "${___fio_patterns[*]}")" \
 				--fio-ioengines="$(IFS=,; echo "${___fio_ioengines[*]}")" \
 				--fio-iodepths="$(IFS=,; echo "${___fio_iodepths[*]}")" \
+				--fio-numjobs="$(IFS=,; echo "${___fio_numjobs[*]}")" \
 				--fio-fdatasyncs="$(IFS=,; echo "${___fio_fdatasyncs[*]}")" \
 				--fio-directs="$(IFS=,; echo "${___fio_directs[*]}")" \
 				--fio_filesize="$filesize" \
@@ -135,6 +137,7 @@ function fio_initialize_options() {
     ___fio_directs=(1)
     ___fio_fdatasyncs=(0)
     ___fio_iodepths=(1 4)
+    ___fio_numjobs=(1)
     ___fio_ioengines=(sync libaio)
     ___fio_ninst=(1 4)
     ___fio_job_runtime=0
@@ -163,6 +166,7 @@ function fio_process_option() {
 	fiodirect*)      readarray -t ___fio_directs <<< "$(bool "$optvalue")"		;;
 	fiofdatasync*)   readarray -t ___fio_fdatasyncs <<< "$(bool "$optvalue")"	;;
 	fioiodepth*)     readarray -t ___fio_iodepths <<< "$(parse_size "$optvalue")"	;;
+	fionumjobs*)     readarray -t ___fio_numjobs <<< "$(parse_size "$optvalue")"	;;
 	fioioeng*)       readarray -t ___fio_ioengines <<< "$optvalue"			;;
 	fioninst*)       readarray -t ___fio_ninst <<< "$(parse_size "$optvalue")"	;;
 	fioworkdir)      ___fio_workdir=$optvalue					;;
@@ -201,6 +205,10 @@ function fio_help_options() {
         --fio-iodepths=n[,n...]
                                 Space or comma separated list of I/O depths
                                 to test.  Default is $(IFS=,; echo "${___fio_iodepths[*]}").
+        --fio-numjobs=n[,n...]
+                                Space or comma separated list of number of
+                                jobs to run.
+                                to test.  Default is $(IFS=,; echo "${___fio_numjobs[*]}").
         --fio-ioengines=engine[,engine...]
                                 Space or comma separated list of I/O engines
                                 to use.  Default is $(IFS=,; echo "${___fio_ioengines[*]}").

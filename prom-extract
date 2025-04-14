@@ -15,6 +15,7 @@
 # limitations under the License.
 
 from __future__ import print_function
+import sys
 
 
 def eprint(*args, **kwargs):
@@ -27,11 +28,37 @@ def efail(*args, **kwargs):
     sys.exit(1)
 
 
+failed_modules = []
+
 try:
-    import sys
     from prometheus_api_client import PrometheusConnect
-    import argparse
+except (KeyboardInterrupt, BrokenPipeError):
+    efail('')
+except ModuleNotFoundError:
+    failed_modules.append("prometheus_api_client")
+
+
+try:
     from jinja2 import Template
+except (KeyboardInterrupt, BrokenPipeError):
+    efail('')
+except ModuleNotFoundError:
+    failed_modules.append("jinja2")
+
+
+try:
+    import openshift_client
+except (KeyboardInterrupt, BrokenPipeError):
+    efail('')
+except ModuleNotFoundError:
+    failed_modules.append("openshift_client")
+
+if failed_modules:
+    efail("prom-extract failed: the following Python modules are missing:", failed_modules)
+
+
+try:
+    import argparse
     import selectors
     import time
     import os
@@ -41,7 +68,6 @@ try:
     import urllib3
     import uuid
     import yaml
-    import openshift_client
 except (KeyboardInterrupt, BrokenPipeError):
     efail('')
 except ModuleNotFoundError as exc:
@@ -122,7 +148,7 @@ def get_prometheus_timestamp():
         try:
             with openshift_client.project('openshift-monitoring'):
                 result = openshift_client.selector('pod/prometheus-k8s-0').object().execute(['date', '+%s.%N'],
-                                                                                     container_name='prometheus')
+                                                                                            container_name='prometheus')
                 return datetime.fromtimestamp(float(result.out()), timezone.utc)
         except (KeyboardInterrupt, BrokenPipeError):
             efail('')

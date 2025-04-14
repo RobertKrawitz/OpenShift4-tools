@@ -28,6 +28,11 @@ import shutil
 from cb_util import cb_util
 
 
+class ClusterBusterPodClientException(Exception):
+    def __init__(self, *args):
+        super().__init__('\n'.join([str(arg) for arg in args]))
+
+
 class clusterbuster_pod_client(cb_util):
     """
     Python interface to the ClusterBuster pod API
@@ -158,6 +163,8 @@ class clusterbuster_pod_client(cb_util):
                                                  user, system, {'Note': 'No results provided'})
                         self._timestamp(f"Process {i} (pid {os.getpid()}) complete")
                         self.__finish()
+                    except ClusterBusterPodClientException as err:
+                        self.__finish(False, message=err)
                     except Exception as err:
                         # If something goes wrong with the workload that isn't caught,
                         # a traceback will likely be useful

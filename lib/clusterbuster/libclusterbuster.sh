@@ -171,26 +171,37 @@ function parse_option() {
     echo "$noptname1 $noptname $optvalue"
 }
 
+function _do_all_workloads() {
+    local OPTIND=0
+    local OPTARG
+    local opt
+    local -i quiet=0
+    while getopts q opt "$@" ; do
+	case "$opt" in
+	    q) quiet=1 ;;
+	    *)	       ;;
+	esac
+    done
+    shift $((OPTIND-1))
+    local api
+    for api in "$@" ; do
+	local workload
+	while read -r workload ; do
+	    if [[ -n "$workload" ]] ; then
+		if ((! quiet)) ; then echo; fi
+		call_api -w "$workload" "$api"
+	    fi
+	done <<< "$(workloads_supporting_api "$api")"
+    done
+}
+
 function _help_options_workloads() {
-    local workload
-    while read -r workload ; do
-	if [[ -z "$workload" ]] ; then
-	    continue
-	fi
-	echo
-	call_api -w "$workload" help_options
-    done <<< "$(workloads_supporting_api help_options)"
+    _do_all_workloads -q initialize_options
+    _do_all_workloads help_options
 }
 
 function _document_workloads() {
-    local workload
-    while read -r workload ; do
-	if [[ -z "$workload" ]] ; then
-	    continue
-	fi
-	echo
-	call_api -w "$workload" document
-    done <<< "$(workloads_supporting_api document)"
+    _do_all_workloads document
 }
 
 function load_workloads() {
@@ -416,6 +427,18 @@ function mk_str_list() {
 
 # Based on https://gist.github.com/akostadinov/33bb2606afe1b334169dfbf202991d36
 function stack_trace() {
+    local OPTIND=0
+    local OPTARG
+    local print_args=1
+    local print_first_args=1
+    while getopts 'qQ' opt "$@" ; do
+	case "$opt" in
+	    q) print_first_args=0 ;;
+	    Q) print_args=0 ;;
+	    *) ;;
+	esac
+    done
+    shift $((OPTIND-1))
     local -a stack=()
     local stack_size=${#FUNCNAME[@]}
     local -i start=${1:-1}
@@ -448,7 +471,7 @@ function stack_trace() {
 	[[ $src = "${__realsc__:-}" ]] && src="${__topsc__:-}"
 	local -i frame_arg_count=${BASH_ARGC[$i]}
 	local argstr=
-	if ((frame_arg_count > 0)) ; then
+	if ((frame_arg_count > 0 && print_args && (i > 1 || print_first_args) )) ; then
 	    local -i j
 	    for ((j = arg_count + frame_arg_count - 1; j >= arg_count; j--)) ; do
 		argstr+=" ${BASH_ARGV[$j]}"

@@ -6,7 +6,7 @@ import subprocess
 import mmap
 import shutil
 
-from clusterbuster_pod_client import clusterbuster_pod_client
+from clusterbuster_pod_client import clusterbuster_pod_client, ClusterBusterPodClientException
 
 
 class files_client(clusterbuster_pod_client):
@@ -60,21 +60,21 @@ class files_client(clusterbuster_pod_client):
                     try:
                         fd = os.open(filename, self.flags | os.O_WRONLY | os.O_CREAT)
                     except Exception as exc:
-                        raise Exception(f"Create failed on {filename} (file {files_created}): {exc}") from None
+                        raise ClusterBusterPodClientException(f"Create failed on {filename} (file {files_created}): {exc}") from None
                     ops = ops + 1
                     files_created = files_created + 1
                     for block in range(self.block_count):
                         try:
                             answer = os.write(fd, buf)
                             if answer != self.blocksize:
-                                raise os.IOError(f"Incomplete write to {filename} (file {files_created}): {answer} bytes, expect {self.blocksize}")
+                                raise ClusterBusterPodClientException(f"Incomplete write to {filename} (file {files_created}): {answer} bytes, expect {self.blocksize}")
                             ops = ops + 1
                         except IOError as exc:
-                            raise Exception(f"Write failed to {filename} (file {files_created}): {exc}") from None
+                            raise ClusterBusterPodClientException(f"Write failed to {filename} (file {files_created}): {exc}") from None
                     try:
                         os.close(fd)
                     except IOError as exc:
-                        raise Exception(f"Unable to close {filename} (file {files_created}): {exc}") from None
+                        raise ClusterBusterPodClientException(f"Unable to close {filename} (file {files_created}): {exc}") from None
         return ops
 
     def readthem(self, pid: int, oktofail: bool = False):

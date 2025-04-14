@@ -45,6 +45,7 @@ class fio_reporter(ClusterBusterReporter):
             pjob = f'job: {job}'
             if pjob not in dest:
                 dest[pjob] = {}
+            numjobs = self._jobs[job].get('numjobs', 1)
             for op in self._fio_operations:
                 if op not in source[job]['job_results']:
                     continue
@@ -56,7 +57,7 @@ class fio_reporter(ClusterBusterReporter):
                     dest1 = dest[pjob][pop]
                     ios = source1['total_ios']
                     nbytes = source1['io_kbytes'] * 1024
-                    runtime = source1['runtime'] / rows / 1000.0
+                    runtime = source1['runtime'] / numjobs / rows / 1000.0
                     dest1['io_bytes'] = self._prettyprint(nbytes, precision=3, suffix='B', integer=1)
                     dest1['total_ios'] = self._prettyprint(ios, base=1000, precision=3, integer=1)
                     dest1['runtime'] = self._prettyprint(runtime, base=1000, precision=3, suffix='sec')
