@@ -23,4 +23,4 @@ class fio_analysis(CIAnalysis):
 
     def __init__(self, workload: str, data: dict, metadata: dict):
         super().__init__(workload, data, metadata,
-                         ['pods', 'ioengine', 'iodepth', 'fdatasync', 'direct', 'pattern', 'blocksize', 'runtime'])
+                         ['pods', 'ioengine', 'iodepth', 'numjobs', 'fdatasync', 'direct', 'pattern', 'blocksize', 'runtime'])

@@ -31,13 +31,14 @@ class fio_loader(ClusterBusterLoadOneReportBase):
             fdatasync = job_metadata['fdatasync']
             direct = job_metadata['direct']
             ioengine = job_metadata['ioengine']
+            numjobs = job_metadata.get('numjobs', 1)
             if 'results' not in self._summary or job not in self._summary['results']:
                 print(f'Cannot load fio results for {self._metadata["job_name"]}/{job}', file=sys.stderr)
                 continue
             result = self._summary['results'][job]['job_results']
-            self._MakeHierarchy(self._data, ['fio', self._count, ioengine, iodepth, fdatasync,
+            self._MakeHierarchy(self._data, ['fio', self._count, ioengine, iodepth, numjobs, fdatasync,
                                              direct, pattern, blocksize, self._name, 'total'])
-            root = self._data['fio'][self._count][ioengine][iodepth][fdatasync][direct][pattern][blocksize][self._name]
+            root = self._data['fio'][self._count][ioengine][iodepth][numjobs][fdatasync][direct][pattern][blocksize][self._name]
             lat_counter = 0
             for op, data in result.items():
                 if 'data_rate' in result[op]:

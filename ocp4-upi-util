@@ -63,6 +63,7 @@ declare -A install_disks=()
 declare -i processed_cmdline_vars=0
 declare -A known_macaddrs=()
 declare -i checked_config=0
+declare channel=
 declare -A needs_config_file=()
 platform=$(uname -i)
 # shellcheck disable=SC2155
@@ -78,15 +79,22 @@ declare -r command_help=$(expand <<'EOF'
     Commands:
       * install <version>        Install a baremetal cluster using UPI
       * do_install <version>     (deprecated) Same as install
-        install_cnv              Install sandboxed containers into cluster
-        install_kata             Install sandboxed containers into cluster
         bootstrap_destroy        Destroy any (virtual) bootstrap node
       * setup_dnsmasq            Set up dnsmasq/haproxy configuration
       * setup_infra              Set up an infra node
         migrate_infra            Migrate infra components to set up infra node
         describe_operator <op>   Describe the specified operator
         list_operators           List available operators
-        install_operator <op>    Install the specified operator
+        install_operator <options> <op>
+                                 Install the specified operator
+                                 Options:
+                                 -n           Do not actually install the
+                                              operator
+                                 -c channel   Use the specified channel
+        install_cnv              Install sandboxed containers into cluster
+                                 Same options as install_operator
+        install_kata             Install sandboxed containers into cluster
+                                 Same options as install_operator
      The following commands all use IPMI:
       * reset_all                Reset all nodes
       * reset_masters            Reset all master nodes
@@ -1255,13 +1263,17 @@ function __get_ns_version() {
 
 function __get_operator_channel() {
     local operator=$1
-    oc get packagemanifest -n openshift-marketplace "$operator" -ojsonpath='{.status.defaultChannel}'
+    if [[ -n "$channel" ]] ; then
+	echo "$channel"
+    else
+	oc get packagemanifest -n openshift-marketplace "$operator" -ojsonpath='{.status.defaultChannel}'
+    fi
 }
 
 function __get_operator_field() {
     local operator=$1
     local field=$2
-    local channel
+    local channel=${channel:+$channel}
     channel="${3:-$(__get_operator_channel "$operator")}"
     oc get packagemanifest -n openshift-marketplace "$operator" -ojson | jq -r '[foreach .status.channels[] as $channel ([[],[]];0; (if ($channel.name == "'"$channel"'") then $channel.'"$field"' else null end))] | flatten | map (select (. != null))[]'
 }
@@ -1383,7 +1395,7 @@ function __do_install_kata() {
 	echo '*** Kata already installed'
     fi
     echo '*** Installing Kata'
-    install_operator sandboxed-containers-operator
+    install_operator "$@" sandboxed-containers-operator
     # Wait for kataconfig to exist as a CRD.
     # Probably should have a timeout here.
     until oc get kataconfig -A >/dev/null 2>&1 ; do sleep 1; done
@@ -1463,7 +1475,7 @@ function __do_install_cnv() {
 	echo '*** CNV already installed'
     fi
     echo '*** Installing CNV'
-    install_operator kubevirt-hyperconverged
+    install_operator "$@" kubevirt-hyperconverged
     # Wait for kataconfig to exist as a CRD.
     # Probably should have a timeout here.
     until oc get hyperconverged -A >/dev/null 2>&1 ; do sleep 1; done
@@ -1775,9 +1787,11 @@ function setup_infra() {
 function install_operator() {
     local -i doit=1
     local OPTIND=0
-    while getopts "n" opt "$@" ; do
+    local OPTARG
+    while getopts "nc:" opt "$@" ; do
 	case "$opt" in
 	    n) doit=0 ;;
+	    c) channel="$OPTARG" ;;
 	    *) ;;
 	esac
     done
@@ -1785,9 +1799,9 @@ function install_operator() {
     local operator
     for operator in "$@" ; do
 	if ((doit)) ; then
-	    oc apply -f <(__generate_operator_yaml "$operator")
+	    oc apply -f <(__generate_operator_yaml ${channel:+-c "$channel"} "$operator")
 	else
-	    __generate_operator_yaml "$operator"
+	    __generate_operator_yaml ${channel:+-c "$channel"} "$operator"
 	fi
     done
 }

@@ -105,3 +105,6 @@ endif
 	-virsh undefine cnv-containerdisk
 
 FORCE: ;
+
+clean:
+	rm -f *.qcow2

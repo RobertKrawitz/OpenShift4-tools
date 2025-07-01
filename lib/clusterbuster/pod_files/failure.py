@@ -2,7 +2,7 @@
 
 import time
 
-from clusterbuster_pod_client import clusterbuster_pod_client
+from clusterbuster_pod_client import clusterbuster_pod_client, ClusterBusterPodClientException
 
 
 class failure_client(clusterbuster_pod_client):
@@ -22,7 +22,7 @@ class failure_client(clusterbuster_pod_client):
         time.sleep(self.__delaytime)
 
         self._timestamp(f'About to fail after {self.__delaytime} seconds!')
-        raise Exception(f'Failing as intended after {self.__delaytime} seconds')
+        raise ClusterBusterPodClientException(f'Failing as intended after {self.__delaytime} seconds')
 
 
 failure_client().run_workload()

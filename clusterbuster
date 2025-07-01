@@ -228,6 +228,7 @@ declare -i __sysctls_retrieved=0
 
 declare -r sync_flag_file="/tmp/syncfile";
 declare -r sync_error_file="/tmp/syncerror";
+declare -r sync_done_file="/tmp/syncdone";
 declare -r controller_timestamp_file="/tmp/timing.json";
 declare uuid
 uuid=$(uuidgen -r)
@@ -268,6 +269,7 @@ declare vm_user=cluster
 declare vm_password=buster
 declare vm_ssh_keyfile=
 declare -i vm_run_as_root=0
+declare -i vm_block_multiqueue=0
 # Hard code for the time being
 declare -a vm_net_addr=(192 168 129 1)
 
@@ -668,6 +670,9 @@ $(print_workloads_supporting_reporting '                        - ')
                         separately).  Default $vm_start_running.
        --vm-run_strategy=<strategy>
                         Specify the desired run strategy for VMs.
+       --vm-block-multiqueue=<n>
+                        Specify the desired number of I/O threads for block
+                        devices.
 
     Tuning object creation (short equivalents):
        --scale-ns=[0,1] Scale up the number of namespaces vs.
@@ -1004,6 +1009,7 @@ function process_option() {
 	vmsshkey*)		    vm_ssh_keyfile=$optvalue			;;
 	vmstart*)		    vm_start_running=$(bool "$optvalue")	;;
 	vmrunstrategy)		    vm_run_strategy="$optvalue"			;;
+	vmblockmultiq*)		    vm_block_multiqueue=$optvalue		;;
 	# Object creation
 	obj*spercall)		    objs_per_call=$optvalue			;;
 	parallel)		    parallel=$optvalue				;;
@@ -1377,54 +1383,6 @@ function get_drop_cache() {
 # Logging
 ################################################################
 
-# Based on https://gist.github.com/akostadinov/33bb2606afe1b334169dfbf202991d36
-function stack_trace() {
-    local -a stack=()
-    local stack_size=${#FUNCNAME[@]}
-    local -i start=${1:-1}
-    local -i max_frames=${2:-$stack_size}
-    ((max_frames > stack_size)) && max_frames=$stack_size
-    local -i i
-    local -i max_funcname=0
-    local -i stack_size_len=${#max_frames}
-    local -i max_filename_len=0
-    local -i max_line_len=0
-
-    # to avoid noise we start with 1 to skip the stack function
-    for (( i = start; i < max_frames; i++ )); do
-	local func="${FUNCNAME[$i]:-(top level)}"
-	((${#func} > max_funcname)) && max_funcname=${#func}
-	local src="${BASH_SOURCE[$i]:-(no file)}"
-	# Line number is used as a string here, not an int,
-	# since we want the length of it as a string.
-	local line="${BASH_LINENO[$(( i - 1 ))]}"
-	[[ $src = "$__realsc__" ]] && src="$__topsc__"
-	((${#src} > max_filename_len)) && max_filename_len=${#src}
-	((${#line} > max_line_len)) && max_line_len=${#line}
-    done
-    local stack_frame_str="    (%${stack_size_len}d)   %${max_filename_len}s:%-${max_line_len}d  %${max_funcname}s%s"
-    local -i arg_count=${BASH_ARGC[0]}
-    for (( i = start; i < max_frames; i++ )); do
-	local func="${FUNCNAME[$i]:-(top level)}"
-	local -i line="${BASH_LINENO[$(( i - 1 ))]}"
-	local src="${BASH_SOURCE[$i]:-(no file)}"
-	[[ $src = "$__realsc__" ]] && src="$__topsc__"
-	local -i frame_arg_count=${BASH_ARGC[$i]}
-	local argstr=
-	if ((frame_arg_count > 0)) ; then
-	    local -i j
-	    for ((j = arg_count + frame_arg_count - 1; j >= arg_count; j--)) ; do
-		argstr+=" ${BASH_ARGV[$j]}"
-	    done
-	fi
-	# We need a dynamically generated string to get the columns correct.
-	# shellcheck disable=SC2059
-	stack+=("$(printf "$stack_frame_str" "$((i - start))" "$src" "$line" "$func" "${argstr:+ $argstr}")")
-	arg_count=$((arg_count + frame_arg_count))
-    done
-    (IFS=$'\n'; echo "${stack[*]}")
-}
-
 function set_run_started() {
     touch "${cb_tempdir}/___run_started"
 }
@@ -1435,7 +1393,7 @@ function get_run_started() {
 
 function set_run_aborted() {
     echo "Run aborted: ${*:-unknown reason}" 1>&2
-    stack_trace 1>&2
+    stack_trace -q 1>&2
     touch "${cb_tempdir}/___run_aborted"
 }
 
@@ -1455,12 +1413,12 @@ function set_run_failed() {
     if get_run_failed ; then
 	if ! get_run_aborted ; then
 	    echo "Secondary failure: ${*:-unknown reason}" 1>&2
-	    stack_trace 1 3 1>&2
+	    stack_trace -q 1 3 1>&2
 	fi
 	return
     fi
     echo "Run failed: ${*:-unknown reason}" 1>&2
-    stack_trace 1>&2
+    stack_trace -q 1>&2
     echo "${*:-unknown reason}" > "${cb_tempdir}/___run_failed"
     run_on_sync_n sh -c "echo 'Please see logs for details.' >> '$sync_error_file'" || touch "${cb_tempdir}/___run_aborted"
 }
@@ -1799,14 +1757,21 @@ function _fail_helper()  {
 		# oc exec connection from prematurely terminating.
 		# If the flag file exists, we need to exit even if there's
 		# no error flag.
-		faildata="$(run_on_sync_n sh -c "while [[ ! -f '$sync_error_file' && ! -f '$sync_flag_file' ]] ; do sleep 5; echo KEEPALIVE 1>&2; done; cat '$sync_error_file'" 2>/dev/null)"
+		#
+		# The sync_done_file is to avoid a race condition with the
+		# log helper retrieving the flag file and removing it
+		# between iterations of the failure test.  That would result
+		# in the test never exiting.
+		faildata="$(run_on_sync_n sh -c "while [[ ! -f '$sync_error_file' && ! -f '$sync_flag_file' && ! -f '$sync_done_file' ]] ; do sleep 5; echo KEEPALIVE 1>&2; done; if [[ -f '$sync_flag_file' || -f '$sync_done_file' ]] ; then echo '---OK---'; elif [[ -f '$sync_error_file' ]] ; then cat '$sync_error_file'; fi" 2>/dev/null)"
 		if [[ -n "$faildata" ]] ; then
+		    if [[ $faildata = '---OK---' ]] ; then return; fi
 		    set_run_failed "Run failed: ${nl}${faildata:-}"
 		    return
 		fi
+		sleep 1
 		;;
 	    *)
-		sleep 1;
+		sleep 1
 		;;
 	esac
     done
@@ -1840,7 +1805,16 @@ function _log_helper() {
 	# to filter out the status messages, timestamp them and send them back to stderr, and finally
 	# redirect fd 4 back to the temporary file.
 	# If that seems enough to make your head spin...well, it is.
-	if ( (run_on_sync_n sh -c "while [[ ! -f '$sync_flag_file' && ! -f '$sync_error_file' ]] ; do sleep 5; echo KEEPALIVE 1>&2; done; cat '$sync_flag_file'; sleep 5; echo DONE 1>&2") 2>&1 1>&4 | while read -r l; do if [[ $l != KEEPALIVE && $l != DONE ]] ; then echo "$l"; fi; done | timestamp 1>&2) 4> "$tmpfile" &&
+	#
+	# The sleep 5 before exiting appears to be needed because cat'ing the flag file
+	# can sometimes complete quickly, before all of the data has been read out.
+	# When that happens the reader exits before all of the data has been read.
+	# This sleep may not be entirely sufficient; it isn't entirely clear how to be
+	# certain that all of the data has been read before terminating the loop.
+	#
+	# The sync_done_file is to avoid a race condition with the fail helper, as described
+	# above.
+	if ( (run_on_sync_n sh -c "while [[ ! -f '$sync_flag_file' && ! -f '$sync_error_file' ]] ; do sleep 5; echo KEEPALIVE 1>&2; done; if [[ -f '$sync_flag_file' ]] ; then cat '$sync_flag_file'; touch '$sync_done_file'; sleep 5; echo DONE 1>&2; elif [[ -f '$sync_error_file' ]] ; then cat $sync_error_file 1>&2; echo FAILED 1>&2; fi") 2>&1 1>&4 | while read -r l; do if [[ $l != KEEPALIVE && $l != DONE ]] ; then echo "$l"; fi; done | timestamp 1>&2) 4> "$tmpfile" &&
 	       grep -q 'worker_results' "$tmpfile" && jq -c . "$tmpfile" >/dev/null 2>&1 ; then
 	    report_if_desired "Run complete, retrieving results" 1>&2
 	    cat "$tmpfile"
@@ -3910,8 +3884,26 @@ EOF
 function _vm_run_yaml() {
     if [[ -n "$vm_run_strategy" ]] ; then
 	echo "runStrategy: $vm_run_strategy"
+    elif ((vm_start_running)) ; then
+	echo "runStrategy: Always"
     else
-	echo "running: $vm_running"
+	echo "runStrategy: Halted"
+    fi
+}
+
+function _vm_block_multiqueue_cpu() {
+    if ((vm_block_multiqueue > 0)) ; then
+	cat <<EOF
+ioThreadsPolicy: supplementalPool
+ioThreads:
+  supplementalPoolThreadCount: $vm_block_multiqueue
+EOF
+    fi
+}
+
+function _vm_block_multiqueue_disk() {
+    if ((vm_block_multiqueue > 0)) ; then
+	echo "blockMultiQueue: true"
     fi
 }
 
@@ -3930,7 +3922,6 @@ function create_vm_deployment() {
     local drop_cache_port_num=
     local vm_running=true
     local vm_addr
-    ((vm_start_running)) || vm_running=false
     pin_node=$(get_pin_node "$node_class")
     if [[ -z "$affinity_yaml" ]] ; then
 	if [[ -n "${pin_node:-}" ]] ; then
@@ -3984,7 +3975,9 @@ $(indent 6 _vm_evict_strategy)
           threads: $vm_threads
         memory:
           guest: $vm_memory
+$(indent 8 _vm_block_multiqueue_cpu)
         devices:
+$(indent 10 _vm_block_multiqueue_disk)
           disks:
 $(indent 12 _vm_container_disk_yaml)
 $(indent 12 vm_volume_devices_yaml)
@@ -4442,7 +4435,7 @@ function create_all_deployments() {
 }
 
 function create_deployments_post_hook() {
-    if [[ $deployment_type = vm && ($vm_run_strategy != Always || $vm_start_running -eq 0) ]] ; then
+    if [[ $deployment_type = vm && ($vm_run_strategy != Always && $vm_start_running -eq 0) ]] ; then
 	local namespace
 	local name
 	if [[ -z "$VIRTCTL" ]] ; then
@@ -4695,12 +4688,11 @@ function do_logging() {
 }
 
 function report_object_creation() {
-    (( report_object_creation )) || return 0
     local objtype
     while read -r objtype ; do
-	[[ -n "${objtype:-}" ]] && printf "Created %${#total_objects_created}d %s%s\n" "${objects_created[$objtype]}" "$objtype" "${plurals[$((${objects_created[$objtype]} == 1))]}" 1>&2
+	[[ -n "${objtype:-}" ]] && printf "Created %${#total_objects_created}d %s%s\n" "${objects_created[$objtype]}" "$objtype" "${plurals[$((${objects_created[$objtype]} == 1))]}" | timestamp 1>&2
     done < <( (IFS=$'\n'; echo "${!objects_created[*]}") | sort)
-    printf "Created %d object%s total\n" "$total_objects_created" "${plurals[$((total_objects_created == 1))]}" 1>&2
+    printf "Created %d object%s total\n" "$total_objects_created" "${plurals[$((total_objects_created == 1))]}" | timestamp 1>&2
 }
 
 function expand_string() {
@@ -4789,7 +4781,7 @@ function run_clusterbuster_2() {
     set_run_started
 
     do_logging || return 1
-    if ! get_run_failed || ((! status)) ; then
+    if ! get_run_failed || ((! status && report_object_creation )) ; then
 	report_object_creation
     fi
     return 0

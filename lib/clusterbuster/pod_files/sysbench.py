@@ -6,7 +6,7 @@ import re
 import shutil
 import time
 
-from clusterbuster_pod_client import clusterbuster_pod_client
+from clusterbuster_pod_client import clusterbuster_pod_client, ClusterBusterPodClientException
 
 
 class sysbench_client(clusterbuster_pod_client):
@@ -63,10 +63,8 @@ class sysbench_client(clusterbuster_pod_client):
                 multiplier = [1.0 for i in range(len(key))]
             elif isinstance(multiplier, int) or isinstance(multiplier, float):
                 multiplier = [multiplier for i in range(len(key))]
-            elif not isinstance(matchidx, list) or len(matchidx) < len(key):
-                raise Exception("Non-conformant multiplier")
             if not isinstance(matchidx, list) or len(matchidx) < len(key):
-                raise Exception("Non-conformant multiplier")
+                raise ClusterBusterPodClientException("Non-conformant multiplier")
             for i in range(len(key)):
                 self.simple_check1(m, op_answer, key[i], multiplier[i], matchidx[i], is_float, is_str, is_int)
         else:
@@ -119,7 +117,7 @@ class sysbench_client(clusterbuster_pod_client):
                 line = run.stdout.readline().decode('ascii')
             status = run.wait()
             if status:
-                raise Exception(f"Sysbench failed: {status}")
+                raise ClusterBusterPodClientException(f"Sysbench failed: {status}")
         op_answer['op_end'] = self._adjusted_time()
         data_end_time = self._adjusted_time()
         elapsed_time = data_end_time - data_start_time
@@ -208,7 +206,7 @@ class sysbench_client(clusterbuster_pod_client):
                         line = run.stdout.readline().decode('ascii')
                     status = run.wait()
                     if status:
-                        raise Exception(f"Sysbench failed: {status}")
+                        raise ClusterBusterPodClientException(f"Sysbench failed: {status}")
                 op_answer['op_end'] = self._adjusted_time()
                 op_answer['user_cpu_time'], op_answer['sys_cpu_time'] = self._cputimes(op_user, op_sys)
                 self._sync_to_controller(f'{test}+{mode}+finish')

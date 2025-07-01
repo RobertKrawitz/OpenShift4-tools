@@ -8,7 +8,7 @@ import math
 import os
 import numpy.random
 
-from clusterbuster_pod_client import clusterbuster_pod_client
+from clusterbuster_pod_client import clusterbuster_pod_client, ClusterBusterPodClientException
 
 
 class memory_client(clusterbuster_pod_client):
@@ -35,7 +35,7 @@ class memory_client(clusterbuster_pod_client):
             self.__run_in_subproc = bool(int(self._args[11]))
             self.__start_probability = None if self._args[12] == '' else float(self._args[12])
             if self.__start_probability is not None and (self.__start_probability < 0 or self.__start_probability > 1):
-                raise ValueError(f"Start probability must be between 0 and 1 ({self.__start_probability})")
+                raise ClusterBusterPodClientException(f"Start probability must be between 0 and 1 ({self.__start_probability})")
 #            if self.__runtime > 0:
 #                self.__iterations = int(self.__runtime)
             if not self.__stride or self.__stride <= 0:
@@ -164,7 +164,7 @@ class memory_client(clusterbuster_pod_client):
                     try:
                         cpid, status = os.waitpid(pid)
                         if status:
-                            raise Exception(f"Child failed, status {int(status / 256)}")
+                            raise ClusterBusterPodClientException(f"Child failed, status {int(status / 256)}")
                     except Exception:
                         pass
         else:

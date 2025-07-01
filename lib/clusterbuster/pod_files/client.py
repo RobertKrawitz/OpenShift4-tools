@@ -4,7 +4,7 @@ import time
 import random
 import math
 
-from clusterbuster_pod_client import clusterbuster_pod_client
+from clusterbuster_pod_client import clusterbuster_pod_client, ClusterBusterPodClientException
 
 
 class client_client(clusterbuster_pod_client):
@@ -60,7 +60,7 @@ class client_client(clusterbuster_pod_client):
                     nleft -= nwrite
                     data_sent += nwrite
                 else:
-                    raise Exception("Unexpected zero length message sent")
+                    raise ClusterBusterPodClientException("Unexpected zero length message sent")
             nleft = self.msg_size
             read_failures = 0
             while nleft > 0:
@@ -69,7 +69,7 @@ class client_client(clusterbuster_pod_client):
                 except Exception as error:
                     self._timestamp(f"Read failed: {error}")
                     if read_failures > 2:
-                        raise error
+                        raise ClusterBusterPodClientException(error)
                     else:
                         read_failures += 1
                         continue
@@ -78,7 +78,7 @@ class client_client(clusterbuster_pod_client):
                 if nread > 0:
                     nleft -= nread
                 else:
-                    raise Exception("Unexpected zero length msg received")
+                    raise ClusterBusterPodClientException("Unexpected zero length msg received")
             en = self._adjusted_time() - rtt_start - time_overhead
             ex += en
             ex2 += en * en

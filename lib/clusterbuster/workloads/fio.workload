@@ -22,6 +22,7 @@ declare -ag ___fio_options=()
 declare -ag ___fio_blocksizes=(4096)
 declare -ag ___fio_patterns=(read)
 declare -ag ___fio_iodepths=(1)
+declare -ag ___fio_numjobs=(1)
 declare -ag ___fio_directs=(0)
 declare -ag ___fio_fdatasyncs=(1)
 declare -ag ___fio_ioengines=(libaio)
@@ -46,7 +47,7 @@ function fio_arglist() {
     while [[ "$1" != '--' ]] ; do shift; done; shift
     mk_yaml_args "python3" "${mountdir}fio.py" "$@" \
 		 "$processes_per_pod" "$___fio_workdir" "$workload_run_time" "$user_configmap_mount_dir" \
-		 "${___fio_blocksizes[*]:-}" "${___fio_patterns[*]:-}" "${___fio_iodepths[*]:-}" \
+		 "${___fio_blocksizes[*]:-}" "${___fio_patterns[*]:-}" "${___fio_iodepths[*]:-}" "${___fio_numjobs[*]:-}" \
 		 "${___fio_fdatasyncs[*]:-}" "${___fio_directs[*]:-}" "${___fio_ioengines[*]:-}" \
 		 "$___fio_ramp_time" "$___fio_drop_cache" "${___fio_options[*]:-}"
 }
@@ -80,8 +81,11 @@ function fio_help_options() {
                         Comma-separated list of names of ioengines to use
                         (default ${___fio_ioengines[*]})
        --fio-iodepth=<n>
-                        Comma-separated list of names of I/O depths to use
+                        Comma-separated list of I/O depths to use
                         I/O depth (default ${___fio_iodepths[*]})
+       --fio-numjobs=<n>
+                        Comma-separated list of job counts depths to use
+                        I/O depth (default ${___fio_numjobs[*]})
        --fio-direct=<directs>
                         Comma-separated list of whether to use direct I/O
                         (default ${___fio_directs[*]}), values are 0 or 1.
@@ -113,6 +117,7 @@ function fio_process_options() {
     local fioblksize=
     local fiopattern=
     local fioiodepth=
+    local fionumjobs=
     local fiodirect=
     local fiofdatasync=
     local fioioengine=
@@ -125,6 +130,7 @@ function fio_process_options() {
 	    fiojobfile)		___fio_job_file=$optvalue		 ;;
 	    fioioengine*)	fioioengine=$optvalue			 ;;
 	    fioiodepth*)	fioiodepth=$optvalue			 ;;
+	    fionumjobs)		fionumjobs=$optvalue			 ;;
 	    fiodirect*)		fiodirect=$optvalue			 ;;
 	    fioramptime)	___fio_ramp_time=$optvalue		 ;;
 	    fiofdatasync*)	fiofdatasync=$optvalue			 ;;
@@ -150,6 +156,10 @@ function fio_process_options() {
     if [[ -n "${fioiodepth:-}" ]] ; then
 	# shellcheck disable=SC2086
 	readarray -t ___fio_iodepths <<< "$(parse_size ${fioiodepth//,/ })"
+    fi
+    if [[ -n "${fionumjobs:-}" ]] ; then
+	# shellcheck disable=SC2086
+	readarray -t ___fio_numjobs <<< "$(parse_size ${fionumjobs//,/ })"
     fi
     if [[ -n "${fiopattern:-}" ]] ; then
 	___fio_patterns=(${fiopattern//,/ })
@@ -179,6 +189,7 @@ function fio_generate_metadata() {
     local pattern
     local -i blocksize
     local -i iodepth
+    local -i numjobs
     local -i fdatasync
     local -i direct
     local ioengine
@@ -186,21 +197,24 @@ function fio_generate_metadata() {
     for blocksize in "${___fio_blocksizes[@]}" ; do
 	for pattern in "${___fio_patterns[@]}" ; do
 	    for iodepth in "${___fio_iodepths[@]}" ; do
-		for fdatasync in "${___fio_fdatasyncs[@]}" ; do
-		    for direct in "${___fio_directs[@]}" ; do
-			for ioengine in "${___fio_ioengines[@]}" ; do
-			    jobs+=("$(cat <<EOF
-$(printf '"%04d-%s-%d-%d-%d-%d-%s"' $((jobidx)) "$pattern" "$blocksize" "$iodepth" "$fdatasync" "$direct" "$ioengine"): {
+		for numjobs in "${___fio_numjobs[@]}" ; do
+		    for fdatasync in "${___fio_fdatasyncs[@]}" ; do
+			for direct in "${___fio_directs[@]}" ; do
+			    for ioengine in "${___fio_ioengines[@]}" ; do
+				jobs+=("$(cat <<EOF
+$(printf '"%04d-%s-%d-%d-%d-%d-%d-%s"' $((jobidx)) "$pattern" "$blocksize" "$iodepth" "$numjobs" "$fdatasync" "$direct" "$ioengine"): {
  "pattern": "$pattern",
  "blocksize": $blocksize,
  "iodepth": $iodepth,
+ "numjobs": $numjobs,
  "fdatasync": $fdatasync,
  "direct": $direct,
  "ioengine": "$ioengine"
 }
 EOF
 )")
-			    jobidx=$((jobidx+1))
+				jobidx=$((jobidx+1))
+			    done
 			done
 		    done
 		done
@@ -217,6 +231,7 @@ function fio_report_options() {
 "fio_job_file": "$(base64 -w 0 < "$___fio_processed_job_file")",
 "fio_ioengine": $(mk_str_list "${___fio_ioengines[@]}"),
 "fio_iodepth": $(mk_num_list "${___fio_iodepths[@]}"),
+"fio_numjobs": $(mk_num_list "${___fio_numjobs[@]}"),
 "fio_direct": $(mk_num_list "${___fio_directs[@]}"),
 "fio_fdatasync": $(mk_num_list "${___fio_fdatasyncs[@]}"),
 "fio_ioengines": $(mk_str_list "${___fio_ioengines[@]}"),

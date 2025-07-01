@@ -31,8 +31,16 @@ function classic_document() {
 EOF
 }
 
+function classic_supports_reporting() {
+    false
+}
+
 function classic_workload_reporting_class() {
     echo generic
+}
+
+function classic_calculate_logs_required() {
+    echo 0
 }
 
 register_workload classic clusterbuster
