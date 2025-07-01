@@ -26,6 +26,7 @@ import base64
 import importlib
 import inspect
 import traceback
+import gzip
 from .metrics.PrometheusMetrics import PrometheusMetrics
 from ..prettyprint import fformat, prettyprint
 from ..reporting_exceptions import ClusterBusterReportingException
@@ -65,7 +66,7 @@ class ClusterBusterReporter:
     """
 
     @staticmethod
-    def report_one(item: str, jdata: dict, report_format: str, extras=None):
+    def __report_one(item: str, jdata: dict, report_format: str, extras=None):
         isValid = False
         try:
             isValid = jdata['metadata']['kind'] == 'clusterbusterResults'
@@ -75,13 +76,13 @@ class ClusterBusterReporter:
             raise _ClusterBusterBadReportException(item)
         jdata['metadata']['RunArtifactDir'] = item
         if report_format == 'none' or report_format is None:
-            return
+            return None, True
         if report_format == 'raw-python':
             print(jdata)
-            return
+            return None, True
         if report_format == 'raw':
             json.dump(jdata, sys.stdout, indent=2)
-            return
+            return None, True
         if 'workload_reporting_class' in jdata['metadata']:
             workload = jdata["metadata"]["workload_reporting_class"]
         else:
@@ -114,7 +115,7 @@ class ClusterBusterReporter:
             return False
         if not re.search('(^|/)([-_[:lower:][:digit:]]+)-([-[:lower:][:digit:]]+)-[0-9]+[^/]*$', dirname):
             return False
-        return os.path.isfile(os.path.join(dirname, "clusterbuster-report.json"))
+        return ClusterBusterReporter.is_report_dir(dirname)
 
     @staticmethod
     def enumerate_dirs(items: list):
@@ -124,18 +125,29 @@ class ClusterBusterReporter:
                 if os.path.splitext(item)[1] == '.json' and os.path.isfile(item):
                     answers.append(item)
                 elif os.path.isdir(item):
-                    if os.path.isfile(os.path.join(item, "clusterbuster-report.json")):
-                        answers.append(os.path.join(item, "clusterbuster-report.json"))
+                    if ClusterBusterReporter.is_report_dir(item):
+                        answers.append(ClusterBusterReporter.get_report_file(item))
                     else:
                         subitems = sorted(os.listdir(item))
                         for subitem in subitems:
                             subitem = os.path.join(item, subitem)
                             if ClusterBusterReporter.validate_dir(subitem):
-                                answers.append(os.path.join(subitem, "clusterbuster-report.json"))
+                                answers.append(ClusterBusterReporter.get_report_dir(subitem))
         return answers
 
     @staticmethod
     def report(items, report_format: str, extras=None):
+        def _open_report(report):
+            if report.endswith(".gz"):
+                return gzip.open(report, mode='rb')
+            else:
+                return open(report, mode='r')
+
+        def is_gzip(ios):
+            # Magic gzip header
+            return ios.buffer.peek(2)[:2] == b'\x1f\x8b'
+
+        report_status = True
         answers = list()
         if not items:
             items = [None]
@@ -143,12 +155,14 @@ class ClusterBusterReporter:
             items = [items]
         for item in ClusterBusterReporter.enumerate_dirs(items):
             is_valid_fn = os.path.splitext(item)[1].lower() == '.json'
-            with open(item) as f:
+            with _open_report(item) as f:
+                report = None
+                status = False
                 try:
                     data = json.load(f)
                     data['metadata']['ReportName'] = item
-                    report = ClusterBusterReporter.report_one(os.path.dirname(item), data, report_format,
-                                                              extras=extras)
+                    report, status = ClusterBusterReporter.__report_one(os.path.dirname(item), data, report_format,
+                                                                        extras=extras)
                     if report:
                         answers.append(report)
                 except (KeyboardInterrupt, BrokenPipeError):
@@ -162,15 +176,25 @@ class ClusterBusterReporter:
                         print(f'Unrecognized filename {item}, expect JSON', file=sys.stderr)
                 except (ModuleNotFoundError, SyntaxError) as exc:
                     print(f'Cannot load {item}: {exc}', file=sys.stderr)
+                except KeyError as exc:
+                    print(f'Cannot load {item}: no report section {exc}', file=sys.stderr)
                 except Exception:
                     print(f'Cannot load {item}: {traceback.format_exc()}', file=sys.stderr)
+            if not status:
+                report_status = status
         for item in [item for item in items if not isinstance(item, str)]:
+            report = None
+            status = False
             data = dict()
             if isinstance(item, io.TextIOBase) or item is None:
                 if item is None:
                     item = sys.stdin
                 try:
-                    data = json.load(item)
+                    if is_gzip(item):
+                        with gzip.GzipFile(fileobj=item.buffer, mode='r') as gz_file:
+                            data = json.load(gz_file)
+                    else:
+                        data = json.load(item)
                     data['metadata']['ReportName'] = 'Unknown'
                 except (KeyboardInterrupt, BrokenPipeError):
                     sys.exit(1)
@@ -182,13 +206,34 @@ class ClusterBusterReporter:
                 data = item
                 data['metadata']['ReportName'] = 'Unknown'
             else:
-                raise _ClusterBusterUnrecognizedItemException(item)
-            answers.append(ClusterBusterReporter.report_one(None, data, report_format, extras=extras))
-        return answers
+                print(f'Unrecognized report {item}, expect JSON', file=sys.stderr)
+            if data:
+                try:
+                    report, status = ClusterBusterReporter.__report_one(None, data, report_format, extras=extras)
+                    if report:
+                        answers.append(report)
+                except (KeyboardInterrupt, BrokenPipeError):
+                    sys.exit(1)
+                except TypeError:
+                    print(f'Cannot load {item}: not a ClusterBuster report')
+                except (json.decoder.JSONDecodeError, UnicodeDecodeError) as exc:
+                    if is_valid_fn:
+                        print(f'Cannot load {item}: JSON error: {exc}', file=sys.stderr)
+                    else:
+                        print(f'Unrecognized filename {item}, expect JSON', file=sys.stderr)
+                except (ModuleNotFoundError, SyntaxError) as exc:
+                    print(f'Cannot load {item}: {exc}', file=sys.stderr)
+                except KeyError as exc:
+                    print(f'Cannot load {item}: no report section {exc}', file=sys.stderr)
+                except Exception:
+                    print(f'Cannot load {item}: {traceback.format_exc()}', file=sys.stderr)
+            if not status:
+                report_status = status
+        return answers, report_status
 
     @staticmethod
-    def print_report(items, report_format: str='raw', outfile=sys.stdout, extras=None):
-        answers = ClusterBusterReporter.report(items, report_format=report_format, extras=None)
+    def print_report(items, report_format: str = 'raw', outfile=sys.stdout, extras=None):
+        answers, status = ClusterBusterReporter.report(items, report_format=report_format, extras=None)
         if report_format.endswith('python'):
             print(answers, file=outfile)
         elif report_format.startswith('json'):
@@ -201,6 +246,7 @@ class ClusterBusterReporter:
             answers = [answer for answer in answers if (answer is not None and answer != '')]
             if answers:
                 print(delim.join(answers), file=outfile)
+        return status
 
     @staticmethod
     def list_report_formats():
@@ -211,6 +257,19 @@ class ClusterBusterReporter:
                 'json-verbose-python', 'parseable-python',
                 'parseable-summary-python', 'parseable-verbose-python'
                 ]
+
+    @staticmethod
+    def get_report_file(d: str):
+        report_files = ['clusterbuster-report.json', 'clusterbuster-report.json.gz']
+        if os.path.isdir(d):
+            for f in report_files:
+                if os.path.isfile(os.path.join(d, f)):
+                    return os.path.join(d, f)
+        return None
+
+    @staticmethod
+    def is_report_dir(d: str):
+        return ClusterBusterReporter.get_report_file(d) is not None
 
     def __init__(self, jdata: dict, report_format: str, indent: int = 2, report_width=78, extras=None):
         """
@@ -774,7 +833,7 @@ class ClusterBusterReporter:
             objs = self._jdata['api_objects']
         except KeyError:
             return False
-        for obj in self._jdata['api_objects']:
+        for obj in objs:
             if ((obj['kind'] == 'Pod' and
                  'clusterbuster-client' in obj['metadata']['labels'] and
                  obj['metadata']['labels']['clusterbuster-client'])):
@@ -1168,12 +1227,13 @@ class ClusterBusterReporter:
                 'rows': self._rows
                 }
         answer['Status'] = self._jdata['Status']
-        return answer
+        return answer, self._jdata['Status']
 
     def __create_text_report(self):
         """
         Create textual report.
         """
+        status = True
         results = {}
         metadata = self._jdata['metadata']
         results['Overview'] = {}
@@ -1190,6 +1250,7 @@ class ClusterBusterReporter:
             results['Overview']['Status'] = 'Success'
         else:
             results['Overview']['Status'] = 'FAILED, no data generated'
+            status = False
 
         results['Overview']['Workload'] = metadata['workload']
         results['Overview']['Job UUID'] = metadata['uuid']
@@ -1200,7 +1261,7 @@ class ClusterBusterReporter:
             if 'openshiftVersion' in metadata['kubernetes_version']:
                 results['Overview']['OpenShift Version'] = metadata['kubernetes_version']['openshiftVersion']
         except KeyError:
-            pass
+            status = False
         key_width, integer_width = self.__compute_report_width(results)
         cmdline = ' '.join(metadata['expanded_command_line'])
         if 'parseable' in self._format:
@@ -1209,8 +1270,8 @@ class ClusterBusterReporter:
             cmdline = self._wrap_text(' '.join(metadata['expanded_command_line']))
         results['Overview']['Command line'] = cmdline
         if self._base_args.no_summary:
-            return ''
+            return '', status
         else:
             outfile = io.StringIO()
             self.__print_report(results, outfile=outfile, value_column=key_width, integer_width=integer_width)
-            return outfile.getvalue()
+            return outfile.getvalue(), status
