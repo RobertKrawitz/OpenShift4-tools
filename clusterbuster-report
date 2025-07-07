@@ -30,6 +30,7 @@ parser.add_argument('-o', '--format', '--output_format', '--output-format', '--o
                     '--report_format',
                     default='summary', metavar='format', type=str,
                     choices=report_formats, help=f'Report format: one of {", ".join(report_formats)}')
+parser.add_argument('-q', '--quiet', action='store_true', help='Do not actually print report')
 parser.add_argument('--list_formats', '--list-formats', action='store_true',
                     help='List available report formats')
 parser.add_argument("files", metavar='file', type=str, nargs='*', help='Files to process')
@@ -37,10 +38,13 @@ parser.add_argument("files", metavar='file', type=str, nargs='*', help='Files to
 args, extras = parser.parse_known_args()
 if args.list_formats:
     print('\n'.join(sorted(report_formats)))
-    sys.exit(1)
+    sys.exit(0)
+
+if args.quiet:
+    args.format = 'quiet'
 
 try:
-    ClusterBusterReporter.print_report(args.files, report_format=args.format, extras=extras)
+    status = ClusterBusterReporter.print_report(args.files, report_format=args.format, extras=extras)
 except (KeyboardInterrupt, BrokenPipeError):
     sys.exit(1)
 except ClusterBusterReporterException as exc:
@@ -49,3 +53,4 @@ except ClusterBusterReporterException as exc:
 except Exception:
     print(f"Decoding JSON failed: {traceback.format_exc()}", file=sys.stderr)
     sys.exit(1)
+sys.exit(0 if status else 1)

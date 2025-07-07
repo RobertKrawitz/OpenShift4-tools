@@ -182,9 +182,9 @@ class _ClusterBusterLoadReportSet:
         self.reports = {}
         dirs = run['dirs']
         if dirs:
-            self.reports = ClusterBusterReporter.report(dirs, "json-summary")
+            self.reports, report_status = ClusterBusterReporter.report(dirs, "json-summary")
         status = {
-            'result': None,
+            'result': None if report_status else 'FAIL',
             'ran': [],
             'failed': [],
             'job_start': None,
@@ -269,8 +269,7 @@ class ClusterBusterLoader:
         return [os.path.realpath(os.path.join(dirname, d))
                 for d in basedirs if (not self._matches_patterns(d, [r'\.(FAIL|tmp)']) and
                                       self._matches_patterns(d, job_patterns) and
-                                      os.path.isdir(os.path.join(dirname, d)) and
-                                      os.path.isfile(os.path.join(dirname, d, "clusterbuster-report.json")))]
+                                      ClusterBusterReporter.is_report_dir(os.path.join(dirname, d)))]
 
     def _create_report_spec(self, arg: str):
         answer = {}
@@ -309,7 +308,7 @@ class ClusterBusterLoader:
                 dirs = self._create_report_spec_from_ci(dirname, job_patterns, answer)
             elif os.access(os.path.join(dirname, "clusterbuster-ci", "clusterbuster-ci-results.json"), os.R_OK):
                 dirs = self._create_report_spec_from_ci(os.path.join(dirname, "clusterbuster-ci"), job_patterns, answer)
-            elif os.path.isfile(os.path.join(dirname, "clusterbuster-report.json")):
+            elif ClusterBusterReporter.is_report_dir(dirname):
                 dirs = [dirname]
                 run_name = dirname
             if not dirs:

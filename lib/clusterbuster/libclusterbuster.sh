@@ -171,6 +171,24 @@ function parse_option() {
     echo "$noptname1 $noptname $optvalue"
 }
 
+function is_report_dir() {
+    local dir=$1
+    [[ -n "$dir" && -d "$dir" && (-f "$dir/clusterbuster-report.json" || -f  "$dir/clusterbuster-report.json.gz") ]]
+}
+
+function print_report_json() {
+    local dir=$1
+    if is_report_dir "$dir" ; then
+	if [[ -f "$dir/clusterbuster-report.json" ]] ; then
+	    (cat "$dir/clusterbuster-report.json")
+	elif [[ -f "$dir/clusterbuster-report.json.gz" ]] ; then
+	    (gunzip -c "$dir/clusterbuster-report.json.gz")
+	fi
+    else
+	return 0
+    fi
+}
+
 function _do_all_workloads() {
     local OPTIND=0
     local OPTARG

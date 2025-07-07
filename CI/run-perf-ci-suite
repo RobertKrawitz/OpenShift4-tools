@@ -82,6 +82,7 @@ declare -i counter=0
 declare -i hard_fail_on_error=0
 declare -i restart=0
 declare -i started_prom_capture=0
+declare compress_report=
 # shellcheck disable=2155
 declare uuid=$(uuidgen -r)
 
@@ -691,6 +692,7 @@ function process_option() {
 	prometheussnapshot) take_prometheus_snapshot=$(bool "$optvalue")		;;
 	uniqueprefix) unique_job_prefix=$(bool -Y "$optvalue")				;;
 	jobdelay) job_delay=$optvalue							;;
+	compress*) compress_report="$(bool "$optvalue")"				;;
 	*) extra_args+=("$option")							;;
     esac
 }
@@ -725,11 +727,12 @@ if [[ -z "$OC" ]] ; then
     fatal "Cannot find oc or kubectl"
 fi
 
-while getopts 'hn-:B:' opt ; do
+while getopts 'hn-:B:z' opt ; do
     case "$opt" in
 	-) process_option "$OPTARG"			;;
 	h) help						;;
 	n) debugonly=$((debugonly+1)); dontdoit=-n	;;
+	z) compress_report=-z				;;
 	*)						;;
     esac
 done
@@ -853,7 +856,7 @@ function run_clusterbuster_1() {
     job_prefix=$(printf '%s-%s-%04d' "$workload" "${runtimeclass:-runc}" "$counter")
     jobname=$(printf '%s-%s-%04d-%s' "$workload" "${runtimeclass:-runc}" "$counter" "$jobname")
     jobdir=${artifactdir:+$artifactdir/$jobname}
-    if [[ $debugonly -eq 0 && -n "$jobdir" && -d "$jobdir" && -f "$jobdir/clusterbuster-report.json" ]] ; then
+    if [[ $debugonly -eq 0 ]] && is_report_dir "$jobdir" ; then
 	if ((restart)) ; then
 	    echo "$jobname is already present"
 	    return 0
@@ -874,6 +877,7 @@ function run_clusterbuster_1() {
     # Runtime class needs to be after any deployment_type argument so
     # that VM will override.
     doit "$__clusterbuster__" ${dontdoit:+"$dontdoit"} --uuid="$uuid" \
+	 ${compress_report:+"$compress_report"} \
 	 --precleanup --image-pull-policy=IfNotPresent \
 	 --retrieve-successful-logs=1 \
 	 --metrics --report="$report_format" --workload="$workload" \
@@ -952,14 +956,14 @@ if ((! debugonly)) ; then
     if ((restart)) ; then
 	if [[ -d "$artifactdir" ]] ; then
 	    for d in "$artifactdir"/* ; do
-		if [[ -d "$d" && -f "$d/clusterbuster-report.json" ]] ; then
-		    uuid=$(jq -r .metadata.uuid "$d/clusterbuster-report.json")
+		if is_report_dir "$d" ; then
+		    uuid=$(jq -r .metadata.uuid <(print_report_json "$d"))
 		    break
 		fi
 	    done
 	fi
     else
-	if [[ -n "$artifactdir" && -f "$artifactdir/clusterbuster-report.json" ]] ; then
+	if is_report_dir "$artifactdir" ; then
 	    rm -rf "$artifactdir"
 	fi
 	if [[ -n "$artifactdir" && ! -d "$artifactdir" ]] ; then

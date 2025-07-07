@@ -225,6 +225,7 @@ declare -i preserve_tmpdir=0
 declare -r ssh_alg=ed25519
 declare -A __sysctls=()
 declare -i __sysctls_retrieved=0
+declare -i compress_report=0
 
 declare -r sync_flag_file="/tmp/syncfile";
 declare -r sync_error_file="/tmp/syncerror";
@@ -347,6 +348,7 @@ Usage: ${__topsc__:-0} [options] [extra args]
        -v              Print verbose log messages.
        -w workload     workload (mandatory), one of:
 $(print_workloads '                       - ')
+       -z              Compress the report with gzip
        --opt[=val]     Set the specified option.
                        Use ${__topsc__##*/} -H to list the available options.
 EOF
@@ -402,6 +404,8 @@ Extended Options:
                         timeout, the run is aborted.  Currently not set
                         (timeout = 0); if set to a value greater than
                         zero, that is the watchdog period.
+       --compress-report=<0,1>
+                        Compress the report (-z)
 
     Reporting Options:
        --report=<format>
@@ -920,6 +924,7 @@ function process_option() {
 	parallellog*)		    parallel_log_retrieval=$optvalue		;;
 	retrievesuc*)		    retrieve_successful_logs=$(bool "$optvalue");;
 	logsuc*)		    retrieve_successful_logs=$(bool "$optvalue");;
+	compress*)		    compress_report=$(bool "$optvalue")		;;
 	# Basic options
 	jobname)		    job_name=$optvalue				;;
 	workload)		    requested_workload=$optvalue		;;
@@ -2429,8 +2434,11 @@ function get_sync_logs() {
 		generate_emergency_report > "$artifactdir/clusterbuster-report.tmp.json"
 		status=1
 	    fi
+	    local final_report_file="$artifactdir/clusterbuster-report.json"
+	    if ((compress_report)) ; then final_report_file+=".gz"; fi
 	    mv "$artifactdir/clusterbuster-report.tmp.json" "$artifactdir/clusterbuster-report.json" &&
-		print_report < "$artifactdir/clusterbuster-report.json"
+		( ((! "$compress_report")) || gzip -f "$artifactdir/clusterbuster-report.json" ) &&
+		print_report < "$final_report_file"
 	    return $status
 	else
 	    trap '' TERM
@@ -5029,7 +5037,7 @@ load_workloads "$CB_LIBPATH"
 
 set_metrics_file default
 
-while getopts ":B:Eef:Hhno:P:w:QqvN-:" opt ; do
+while getopts ":B:Eef:Hhno:P:w:QqvNz-:" opt ; do
     case "$opt" in
 	B) process_option "basename=$OPTARG"	 ;;
 	E) process_option "exit_at_end=0"	 ;;
@@ -5045,6 +5053,7 @@ while getopts ":B:Eef:Hhno:P:w:QqvN-:" opt ; do
 	q) process_option "verbose=0"		 ;;
 	v) process_option "verbose=1"		 ;;
 	w) process_option "workload=$OPTARG"     ;;
+	z) process_option "compressreport=1"	 ;;
 	-) process_option "$OPTARG"		 ;;
 	*) help "Unknown option -$OPTARG"	 ;;
     esac
