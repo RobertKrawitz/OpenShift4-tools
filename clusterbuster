@@ -48,6 +48,12 @@ function clean_startup() {
 # It's fine for the running script to be removed, since the shell still
 # has its open file descriptor.
 if [[ $# = 0 || $1 != "--DoIt=$0" ]] ; then
+    cat <<EOF
+${0##/*} in RobertKrawitz/OpenShift4-tools has been deprecated and
+will be removed from that repo on or after October 1, 2025.  It is now
+found in redhat-performance/clusterbuster.  Please update your repo
+accordingly.
+EOF
     tmpsc=$(mktemp -t "${__topsc__}".XXXXXXXXXX)
     [[ -z $tmpsc || ! -f $tmpsc || -L $tmpsc ]] && fatal "Can't create temporary script file"
     trap clean_startup EXIT SIGHUP SIGINT SIGQUIT SIGTERM

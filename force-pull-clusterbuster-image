@@ -17,6 +17,13 @@ declare OC=${OC:-${KUBECTL:-}}
 OC=${OC:-$(type -p oc)}
 OC=${OC:-$(type -p kubectl)}	# kubectl might not work, though...
 
+cat <<EOF
+${0##/*} in RobertKrawitz/OpenShift4-tools has been deprecated and
+will be removed from that repo on or after October 1, 2025.  It is now
+found in redhat-performance/clusterbuster.  Please update your repo
+accordingly.
+EOF
+
 declare image_tag=latest
 
 while getopts 't:' opt ; do
