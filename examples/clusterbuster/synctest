@@ -1,9 +1,0 @@
-# Run as
-# clusterbuster -f synctest
-
-cleanup
-workloadruntime=30
-workload=synctest
-synctest-count=5
-synctest-cluster-count=10
-synctest-sleep=1

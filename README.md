@@ -3,16 +3,14 @@
 [Robert Krawitz's](mailto:rlk@redhat.com) tools for installing
 etc. OpenShift 4 clusters.
 
-***NOTE*** Clusterbuster and related tools have been migrated to a new
-repo, redhat-performance/clusterbuster, and are deprecated from this
-repo.  They will be removed from main on or after October 1, 2025.
+***NOTE*** Clusterbuster and related tools have removed from this repo
+and now live in OpenShift4-tools/clusterbuster.
 
 <!-- markdown-toc start - Don't edit this section. Run M-x markdown-toc-generate-toc again -->
 **Table of Contents**
 
 - [OpenShift4-tools](#openshift4-tools)
     - [Cluster utilities](#cluster-utilities)
-    - [Testing tools](#testing-tools)
     - [Data reporting utilities](#data-reporting-utilities)
     - [General information tools](#general-information-tools)
     - [PBench orchestration](#pbench-orchestration)
@@ -62,125 +60,6 @@ repo.  They will be removed from main on or after October 1, 2025.
 
 - **get-nodes**: get the external (if available) or internal IP address
   of each node in a cluster.
-
-## Testing tools
-
-**NOTE** These tools are deprecated from this repo and will be removed
-on or after October 1, 2025.  The new location is
-redhat-performance/clusterbuster. Please update accordingly.
-
-- **clusterbuster** -- generate pods, namespaces, and secrets to stress
-  test a cluster.  See [documentation](docs/clusterbuster.md)
-
-- **force-pull-clusterbuster-image** - force-pull the ClusterBuster
-  images so that they are present on all nodes in a cluster.
-
-- **prom-extract**: Capture selected Prometheus data for the duration
-  of a run; report the results along with metadata and workload output
-  JSON-formatted.
-
-  `prom-extract` is written in Python.  It requires the following
-  Python3 libraries to be installed:
-
-  - **python3-pyyaml**: available via dnf/yum on Fedora, RHEL, etc.
-
-  - **prometheus-api-client**: not currently packaged.  This can be
-    installed via `pip3 install prometheus-api-client`.  *Note that
-    this is **not** the same package as `prometheus-client`, which is
-    available via dnf*.  `prometheus-api-client` provides the
-    Prometheus query API, while `prometheus-client` is a Prometheus
-    provider.
-
-	Newer versions of `prometheus-api-client` may require versions of
-    `pandas` newer than you can run.  If so, you will need to install
-    `prometheus_api_client==0.4.2`.
-
-	Note that `prometheus-api-client` does not install all of its
-    dependencies.  If `pip3 install prometheus-api-client==0.4.2`
-    fails, you will need to install the following dependencies, either
-    via your system packages or via `pip` (system packages may not
-    always provide new enough dependencies).
-
-	- A C++ compiler gcc-c++ or llvm)
-	- pandas==1.1.5
-	- cython
-	- numpy
-
-  - **openshift-client**: not currently packaged.  This can be
-    installed via `pip3 install openshift-client`.  It provides much
-    of the OpenShift client API.
-
-    Note that `openshift-client` cannot and/or does not install all
-    needed dependencies.  If `pip3 install openshift-client` fails,
-    please ensure that the following dependencies are installed (this
-    is current for RHEL 8.x and should be similar for other
-    distributions):
-
-	  - A C compiler (gcc or llvm)
-	  - python3-libs
-	  - rust
-	  - setuptools-rust
-	  - python3-wheel
-	  - python3-pip-wheel
-	  - cryptography
-	  - cargo
-	  - python3-devel
-
-  Usage:
-
-  ```
-  prom-extract _options_ -- _command args..._
-  ```
-
-  Takes the following options:
-
-  - **-u _prometheus url_**: Provide the URL to the cluster Prometheus
-    server.  This normally isn't needed; the tool can find it for
-    itself.
-
-  - **-t _prometheus token_**: Provide the authentication token for
-    the cluster Prometheus server.  This normally isn't needed.
-    Currently, username/password authentication is not needed.
-
-  - **-s _timestep_**: Reporting time step for metrics in seconds;
-    default 30.
-
-  - **-m _metrics profile_**: Profile of metrics to extract.  This is
-    the same syntax as
-    [Kube-Burner](https://kube-burner.readthedocs.io/en/latest/cli/)
-    metrics profile sytax.  Default is `metrics.yaml` in the current
-    directory.
-
-  - **--epoch _relative start_**: Start the metrics collection from
-    the specified period (default 1200 seconds) prior to the start of
-    the job run.
-
-  - **--post-settling-time _seconds_**: Continue collecting metrics
-    for the specified period (default 60 seconds) after the job
-    completes.
-
-  - **--json-from-command**: Assume that the stdout from the command
-    is well-formed JSON, and embed that JSON in the report.
-
-	If the JSON output contains a key named `results`, it will be
-    copied into a `results` key in the report; otherwise the entire
-    JSON contents will be copied into `results`.
-
-	If the JSON output contains a key named `api_objects`, these will
-    be copied into the report.  `api_objects` should be a list of
-    entries, each of which contains keys `name`, `kind`, and
-    `namespace`.  These objects should be in existence after the job
-    exits, so that they can be queried via the equivalent of `oc get
-    -ojson ...`.  Pods have abbreviated data included; other objects
-    are fully included.  These resources are not deleted.
-
-	Any remaining objects in the JSON output are copied into a
-    `run_data` key.
-
-  - **--uuid _uuid_**: Use the specified UUID as the index for the
-    report.  If not provided, one is generated and reported on
-    stderr.  This is useful for e. g. indexing the report into a
-    database.
 
 ## Data reporting utilities
 
