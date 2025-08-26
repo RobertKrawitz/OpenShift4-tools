@@ -1,5 +1,10 @@
 # ClusterBuster
 
+**ClusterBuster is deprecated from this repo
+(RobertKrawitz/OpenShift4-tools) and going forward is found in
+redhat-performance/clusterbuster.  It will be removed from this repo
+on or after October 1, 2025.**
+
 Clusterbuster is (yet another) tool for running workloads on OpenShift
 clusters.  Its purpose is to simplify running workloads from the
 command line and does not require external resources such as
