@@ -3,6 +3,10 @@
 [Robert Krawitz's](mailto:rlk@redhat.com) tools for installing
 etc. OpenShift 4 clusters.
 
+***NOTE*** Clusterbuster and related tools have been migrated to a new
+repo, redhat-performance/clusterbuster, and are deprecated from this
+repo.  They will be removed from main on or after October 1, 2025.
+
 <!-- markdown-toc start - Don't edit this section. Run M-x markdown-toc-generate-toc again -->
 **Table of Contents**
 
@@ -61,19 +65,15 @@ etc. OpenShift 4 clusters.
 
 ## Testing tools
 
+**NOTE** These tools are deprecated from this repo and will be removed
+on or after October 1, 2025.  The new location is
+redhat-performance/clusterbuster. Please update accordingly.
+
 - **clusterbuster** -- generate pods, namespaces, and secrets to stress
   test a cluster.  See [documentation](docs/clusterbuster.md)
 
 - **force-pull-clusterbuster-image** - force-pull the ClusterBuster
   images so that they are present on all nodes in a cluster.
-
-## Data reporting utilities
-
-- **monitor-cluster-resources** -- monitor CPU, memory, and pod
-  utilization per-node in real time.
-
-- **net-traffic** -- report information about network traffic similar
-  to iostat.
 
 - **prom-extract**: Capture selected Prometheus data for the duration
   of a run; report the results along with metadata and workload output
@@ -181,6 +181,14 @@ etc. OpenShift 4 clusters.
     report.  If not provided, one is generated and reported on
     stderr.  This is useful for e. g. indexing the report into a
     database.
+
+## Data reporting utilities
+
+- **monitor-cluster-resources** -- monitor CPU, memory, and pod
+  utilization per-node in real time.
+
+- **net-traffic** -- report information about network traffic similar
+  to iostat.
 
 ## General information tools
 

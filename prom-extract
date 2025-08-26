@@ -28,6 +28,13 @@ def efail(*args, **kwargs):
     sys.exit(1)
 
 
+eprint("""
+ClusterBuster and associated tools in RobertKrawitz/OpenShift4-tools have
+been deprecated and will be removed from that repo on or after
+October 1, 2025.  It is now found in redhat-performance/clusterbuster.
+Please update your repo accordingly.
+""")
+
 failed_modules = []
 
 try:

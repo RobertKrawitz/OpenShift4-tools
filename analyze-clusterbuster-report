@@ -21,6 +21,13 @@ from lib.clusterbuster.reporting.analysis.ClusterBusterAnalysis import ClusterBu
 from lib.clusterbuster.reporting.loader.ClusterBusterLoader import ClusterBusterLoader
 from lib.clusterbuster.reporting.reporting_exceptions import ClusterBusterReportingException
 
+print("""
+ClusterBuster and associated tools in RobertKrawitz/OpenShift4-tools have
+been deprecated and will be removed from that repo on or after
+October 1, 2025.  It is now found in redhat-performance/clusterbuster.
+Please update your repo accordingly.
+""", file=sys.stderr)
+
 if 'CB_LIBPATH' in os.environ:
     sys.path = [element for element in os.environ['CB_LIBPATH'].split(':')] + sys.path
 parser = argparse.ArgumentParser(description='Analyze ClusterBuster report')
